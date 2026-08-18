@@ -1,6 +1,7 @@
 import time
 import os
 import cv2
+import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
@@ -190,7 +191,127 @@ def add_item():
         db.session.add(new_item)
         db.session.commit()
         
-    return redirect(url_for('admin_index'))
+    return redirect(url_for('admin_index', tab='menu'))
+# --- 店家 Excel 批量匯入菜單 ---
+@app.route('/admin/import_excel', methods=['POST'])
+def import_menu_excel():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_index'))
+    
+    file = request.files.get('excel_file')
+    if not file or file.filename == '':
+        return "<h1>請選擇 Excel 檔案</h1><a href='/admin'>返回後台</a>", 400
+
+    try:
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        else:
+            df = pd.read_excel(file)
+
+        column_mapping = {
+            '餐點名稱': 'name',
+            '分類': 'category',
+            '單價': 'price',
+            '客製化類型': 'modifiers',
+            '簡介': 'description',
+            '熱門推薦': 'is_recommended',
+            '新品': 'is_new'
+        }
+        df.rename(columns=column_mapping, inplace=True)
+
+        if 'name' not in df.columns or 'price' not in df.columns:
+            return "<h1>檔案缺少必要欄位：「餐點名稱(name)」或「單價(price)」</h1><a href='/admin'>返回後台</a>", 400
+
+        for _, row in df.iterrows():
+            name = str(row.get('name', '')).strip()
+            if not name or pd.isna(row.get('name')):
+                continue
+
+            category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
+            
+            try:
+                price = int(float(row.get('price', 0)))
+            except (ValueError, TypeError):
+                price = 0
+
+            modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
+            if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
+                modifiers = 'none'
+
+            description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
+
+            rec_val = str(row.get('is_recommended', '')).lower()
+            is_recommended = rec_val in ['1', 'true', '是', 'yes']
+
+            new_val = str(row.get('is_new', '')).lower()
+            is_new = new_val in ['1', 'true', '是', 'yes']
+
+            new_item = MenuItem(
+                name=name,
+                category=category,
+                price=price,
+                modifiers=modifiers,
+                description=description,
+                image_path='',
+                is_recommended=is_recommended,
+                is_new=is_new
+            )
+            db.session.add(new_item)
+
+        db.session.commit()
+        return redirect(url_for('admin_index', tab='menu'))
+
+    except Exception as e:
+        db.session.rollback()
+        return f"<h1>匯入解析失敗：{e}</h1><a href='/admin'>返回後台</a>", 500
+
+# --- 店家編輯菜單品項 ---
+@app.route('/admin/edit/<int:id>', methods=['POST'])
+def edit_item(id):
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_index'))
+    
+    item = MenuItem.query.get_or_404(id)
+    
+    name = request.form.get('name')
+    category = request.form.get('category', '主餐')
+    modifiers = request.form.get('modifiers', 'none')
+    price = request.form.get('price')
+    desc = request.form.get('description', '')
+    image = request.files.get('image')
+    
+    is_recommended = request.form.get('is_recommended') == 'on'
+    is_new = request.form.get('is_new') == 'on'
+    
+    if name and price:
+        item.name = name
+        item.category = category
+        item.modifiers = modifiers
+        item.price = int(float(price))
+        item.description = desc
+        item.is_recommended = is_recommended
+        item.is_new = is_new
+        
+        # 若有上傳新圖片則替換並刪除舊圖
+        if image and image.filename != '':
+            ext = os.path.splitext(image.filename)[1] or '.jpg'
+            image_filename = f"menu_{int(time.time())}{ext}"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], image_filename)
+            image.save(filepath)
+            
+            if item.image_path:
+                old_path = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item.image_path)
+                try:
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                except Exception:
+                    pass
+            
+            item.image_path = image_filename
+            
+        db.session.commit()
+        
+    return redirect(url_for('admin_index', tab='menu'))
 
 @app.route('/admin/delete/<int:id>')
 def delete_item(id):
@@ -207,7 +328,7 @@ def delete_item(id):
             
     db.session.delete(item_to_delete)
     db.session.commit()
-    return redirect(url_for('admin_index'))
+    return redirect(url_for('admin_index', tab='menu'))
 
 @app.route('/admin/delete_user/<int:id>')
 def delete_user(id):
