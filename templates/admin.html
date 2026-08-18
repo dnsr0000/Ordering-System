@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>店家後台管理系統 - Kiosk</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(180deg, #f5f7fb 0%, #e9eef6 100%); font-family: "Microsoft JhengHei", sans-serif; }
+        .admin-login-card { max-width: 430px; margin: 80px auto; border-radius: 20px; border: none; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12); }
+        .admin-login-card .card-body { padding: 2rem; }
+        .admin-login-card .form-control { border-radius: 12px; }
+        .admin-login-card .btn-primary { border-radius: 12px; }
+        .navbar { border-bottom: 1px solid rgba(255,255,255,0.06); }
+        .nav-pills .nav-link { border-radius: 999px; }
+        .dashboard-summary-card { border: none; border-radius: 18px; box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08); }
+        .dashboard-summary-card .card-body { padding: 1.5rem; }
+        .dashboard-summary-card .card-title { font-size: 0.95rem; letter-spacing: .04em; }
+        .dashboard-summary-card .card-text { font-size: 2rem; font-weight: 700; }
+        .order-card { border-left: 6px solid #0d6efd; transition: transform 0.18s ease, box-shadow 0.18s ease; border-radius: 18px; }
+        .order-card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.08); }
+        .order-card.Pending { border-left-color: #ffc107; }
+        .order-card.Completed { border-left-color: #198754; }
+        .order-card.Cancelled { border-left-color: #6c757d; }
+        .status-select { min-width: 160px; }
+        .status-select.Pending { background-color: #fff3cd; }
+        .status-select.Completed { background-color: #d1e7dd; }
+        .status-select.Cancelled { background-color: #e2e3e5; }
+        .order-card .card-header { border-bottom: 1px solid rgba(0,0,0,0.05); }
+        .order-card .badge-status { min-width: 92px; }
+        .table th, .table td { vertical-align: middle; }
+        .table td:first-child { width: 55%; }
+        .table .text-muted small { color: #6c757d; }
+        .card-header.bg-dark, .card-header.bg-dark strong { letter-spacing: 0.04em; }
+        .table-responsive { overflow-x: auto; }
+    </style>
+</head>
+<body>
+
+{% if not session.get('admin_logged_in') %}
+
+    <!-- 未登入：店家登入表單 -->
+    <div class="container">
+        <div class="card admin-login-card p-4">
+            <div class="text-center mb-4">
+                <i class="bi bi-shield-lock-fill text-primary display-4"></i>
+                <h3 class="fw-bold mt-2">店家後台管理登入</h3>
+            </div>
+            <form action="/admin" method="POST">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">帳號 (Username)</label>
+                    <input type="text" class="form-control" name="username" placeholder="預設: 1234" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">密碼 (Password)</label>
+                    <input type="password" class="form-control" name="password" placeholder="預設: 1234" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold fs-5">登入系統</button>
+            </form>
+            <div class="text-center mt-3">
+                <a href="/" class="text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> 返回前台點餐</a>
+            </div>
+        </div>
+    </div>
+
+{% else %}
+
+    <!-- 已登入：店家後台管理看板 -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm">
+        <div class="container-fluid px-4">
+            <a class="navbar-brand fw-bold" href="/admin"><i class="bi bi-shop"></i> 店家後台管理系統</a>
+            <div class="d-flex align-items-center">
+                <span class="text-white me-3"><i class="bi bi-person-circle"></i> 管理員已登入</span>
+                <a href="/" class="btn btn-outline-light btn-sm me-2" target="_blank"><i class="bi bi-display"></i> 前台畫面</a>
+                <a href="/admin_logout" class="btn btn-danger btn-sm"><i class="bi bi-box-arrow-right"></i> 登出</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid p-4">
+        <div class="dashboard-summary mb-4">
+            <div class="row g-3">
+                <div class="col-sm-6 col-xl-3">
+                    <div class="card dashboard-summary-card">
+                        <div class="card-body">
+                            <p class="card-title text-uppercase text-secondary mb-2">全部訂單</p>
+                            <p class="card-text text-primary mb-0">{{ orders|length }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-xl-3">
+                    <div class="card dashboard-summary-card">
+                        <div class="card-body">
+                            <p class="card-title text-uppercase text-secondary mb-2">製作中</p>
+                            <p class="card-text text-warning mb-0">{{ orders|selectattr('status','equalto','Pending')|list|length }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-xl-3">
+                    <div class="card dashboard-summary-card">
+                        <div class="card-body">
+                            <p class="card-title text-uppercase text-secondary mb-2">已出餐</p>
+                            <p class="card-text text-success mb-0">{{ orders|selectattr('status','equalto','Completed')|list|length }}</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-sm-6 col-xl-3">
+                    <div class="card dashboard-summary-card">
+                        <div class="card-body">
+                            <p class="card-title text-uppercase text-secondary mb-2">會員數</p>
+                            <p class="card-text text-danger mb-0">{{ users|length }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- 頁籤選單 -->
+        <ul class="nav nav-pills mb-4 bg-white p-2 rounded shadow-sm" id="adminTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active fw-bold" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders-panel" type="button" role="tab">
+                    <i class="bi bi-card-checklist"></i> 實時訂單管理看板
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link fw-bold" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-panel" type="button" role="tab">
+                    <i class="bi bi-egg-fried"></i> 菜單品項管理
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link fw-bold" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-panel" type="button" role="tab">
+                    <i class="bi bi-people-fill"></i> 會員名冊管理
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="adminTabContent">
+            
+            <!-- 1. 實時訂單看板 Panel -->
+            <div class="tab-pane fade show active" id="orders-panel" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h4 class="fw-bold m-0"><i class="bi bi-kanban"></i> 實時訂單看板 (Live Order Manager)</h4>
+                    <button class="btn btn-outline-primary btn-sm" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i> 整理更新</button>
+                </div>
+                
+                <div class="row g-3">
+                    {% for order in orders %}
+                    <div class="col-md-6 col-lg-4">
+                        <div class="card order-card shadow-sm {{ order.status }}">
+                            <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+                                <span class="fw-bold fs-5 text-primary">#{{ order.id }}</span>
+                                <div>
+                                    <span class="badge bg-info text-dark me-1">{{ order.order_type }}</span>
+                                    <span class="badge bg-secondary me-1">{{ order.payment_method }}</span>
+                                </div>
+                            </div>
+                            <div class="card-body p-3">
+                                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 text-muted small mb-2">
+                                    <span><i class="bi bi-person"></i> {{ order.table_number }}</span>
+                                    <span><i class="bi bi-clock"></i> {{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
+                                    <span class="badge badge-status {% if order.status == 'Pending' %}bg-warning text-dark{% elif order.status == 'Completed' %}bg-success{% else %}bg-secondary{% endif %}">{{ order.status }}</span>
+                                </div>
+                                
+                                <hr class="my-2">
+                                
+                                <!-- 訂單餐點細節列表 -->
+                                <table class="table table-sm table-borderless mb-2">
+                                    <tbody>
+                                        {% for item in order.items %}
+                                        <tr>
+                                            <td>
+                                                <span class="fw-bold">{{ item.item_name }}</span>
+                                                {% if item.customization %}
+                                                    <br><small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> {{ item.customization }}</small>
+                                                {% endif %}
+                                            </td>
+                                            <td class="text-center fw-bold">x {{ item.quantity }}</td>
+                                            <td class="text-end">${{ item.price * item.quantity }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+
+                                <hr class="my-2">
+
+                                <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mt-3">
+                                    <div>
+                                        <div class="text-secondary small">總計金額</div>
+                                        <h5 class="fw-bold text-danger m-0">${{ order.total_price }}</h5>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <select class="form-select form-select-sm border-2 fw-bold status-select {{ order.status }}" 
+                                                onchange="changeOrderStatus('{{ order.id }}', this.value)">
+                                            <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
+                                            <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
+                                            <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
+                                        </select>
+                                        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="viewOrderDetails('{{ order.id }}')"><i class="bi bi-eye"></i> 詳細</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="col-12 text-center py-5 text-muted">
+                        <h5>目前尚無任何訂單紀錄！</h5>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- 2. 菜單管理 Panel -->
+            <div class="tab-pane fade" id="menu-panel" role="tabpanel">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-plus-circle"></i> 新增菜單品項</div>
+                    <div class="card-body p-3">
+                        <form action="/admin/add" method="POST" enctype="multipart/form-data" class="row g-2">
+                            <div class="col-md-2">
+                                <input type="text" class="form-control" name="name" placeholder="餐點名稱" required>
+                            </div>
+                            <div class="col-md-2">
+                                <select class="form-select" name="category">
+                                    <option value="主餐">主餐</option>
+                                    <option value="飲料">飲料</option>
+                                    <option value="點心">點心</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <select class="form-select" name="modifiers">
+                                    <option value="none">無客製化</option>
+                                    <option value="ice_sugar">飲料類 (冰塊/甜度)</option>
+                                    <option value="spicy">辣度選擇 (不辣~大辣)</option>
+                                    <option value="addons">主餐加料 (加蛋/加起司)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="number" class="form-control" name="price" placeholder="單價 ($)" required>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="file" class="form-control" name="image" accept="image/*">
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-plus-lg"></i> 新增品項</button>
+                            </div>
+                            <div class="col-12 mt-2">
+                                <input type="text" class="form-control" name="description" placeholder="餐點簡介 (可填寫)">
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-list-stars"></i> 現有菜單列表</div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>圖片</th>
+                                    <th>名稱</th>
+                                    <th>分類</th>
+                                    <th>客製化類型</th>
+                                    <th>單價</th>
+                                    <th>簡介</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in items %}
+                                <tr>
+                                    <td>{{ item.id }}</td>
+                                    <td>
+                                        {% if item.image_path %}
+                                            <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" width="45" height="45" class="rounded object-fit-cover">
+                                        {% else %}
+                                            <span class="text-muted">無圖片</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="fw-bold">{{ item.name }}</td>
+                                    <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                                    <td><span class="badge bg-info text-dark">{{ item.modifiers }}</span></td>
+                                    <td class="text-danger fw-bold">${{ item.price }}</td>
+                                    <td><small class="text-muted">{{ item.description }}</small></td>
+                                    <td>
+                                        <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除這道餐點嗎？')"><i class="bi bi-trash"></i> 刪除</a>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="8" class="text-center text-muted py-4">尚無餐點品項</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. 會員管理 Panel -->
+            <div class="tab-pane fade" id="users-panel" role="tabpanel">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-people"></i> 已註冊會員名冊</div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                <tr>
+                                    <th>ID</th>
+                                    <th>會員照片</th>
+                                    <th>姓名</th>
+                                    <th>電話號碼</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for user in users %}
+                                <tr>
+                                    <td>{{ user.id }}</td>
+                                    <td>
+                                        <img src="{{ url_for('static', filename='member/' + user.photo_path.split('\\')[-1].split('/')[-1]) }}" width="50" height="50" class="rounded-circle object-fit-cover">
+                                    </td>
+                                    <td class="fw-bold">{{ user.name }}</td>
+                                    <td>{{ user.phone }}</td>
+                                    <td>
+                                        <a href="/admin/delete_user/{{ user.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除該會員嗎？')"><i class="bi bi-trash"></i> 刪除會員</a>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="5" class="text-center text-muted py-4">尚無註冊會員</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 即時更新訂單狀態 (API)
+        function changeOrderStatus(orderId, newStatus) {
+            fetch(`/admin/update_order_status/${orderId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.message) {
+                    location.reload(); // 重新整理以反映最新的卡片樣式
+                } else {
+                    alert('更新失敗：' + data.error);
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert('網路錯誤，請稍後再試！');
+            });
+        }
+
+        function viewOrderDetails(orderId) {
+            alert('訂單編號：' + orderId + '\n請在後端管理系統中查看該訂單詳細內容。');
+        }
+    </script>
+
+{% endif %}
+
+</body>
+</html>

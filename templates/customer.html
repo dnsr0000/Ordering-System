@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>自助點餐系統 (Kiosk)</title>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Roboto', sans-serif; background: linear-gradient(150deg, #101010 0%, #1f1f1f 100%); color: #f8f9fa; }
+        .header { background: rgba(10,10,10,0.88); backdrop-filter: blur(3px); border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .menu-card { background: #1a1a1a; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; transition: transform .15s ease; }
+        .menu-card:hover { transform: translateY(-2px); border-color: #ffbf00; }
+        .menu-img { width: 80px; height: 80px; object-fit: cover; border-radius: 10px; border: 2px solid #343434; }
+        .add-to-cart-btn { background-color: #f5a500; border: none; color: #111; }
+        .add-to-cart-btn:hover { background-color: #ffc964; }
+        .btn-login { background-color: #2d9cdb; color: white; }
+        .btn-register { background-color: #28a745; color: white; }
+        .hero { min-height: 58vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, rgba(0,0,0,0.65), rgba(10,10,10,0.95)), url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 18px; margin-bottom: 25px; }
+        .hero h1 { letter-spacing: 1px; }
+        .form-control, .form-select { background: #222; color: #fff; border: 1px solid rgba(255,255,255,0.16); }
+        .form-control::placeholder, .form-select option { color: #d8d8d8; }
+        .form-control:focus, .form-select:focus { background: #2b2b2b; color: #fff; box-shadow: 0 0 0 0.2rem rgba(245,165,0,0.2); border-color: #f5a500; }
+        .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255,255,255,0.16); }
+    </style>
+</head>
+<body>
+
+{% if session.get('user_name') %}
+
+<header class="header fixed-top py-2">
+    <div class="container d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-shop-window text-warning fs-3"></i>
+            <div>
+                <div class="h5 mb-0 text-white">Restaurantly 自助點餐</div>
+                <small class="text-muted">歡迎回來，{{ session['user_name'] }}！</small>
+            </div>
+        </div>
+        <div>
+            <!-- 補回：我的訂單明細按鈕 -->
+            <button class="btn btn-outline-warning me-2" type="button" onclick="showMyOrders()">
+                <i class="bi bi-receipt"></i> 我的訂單
+            </button>
+            <button class="btn btn-outline-light me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#cart-sidebar">
+                <i class="bi bi-cart3"></i> 購物車 <span id="cart-count" class="badge bg-danger">0</span>
+            </button>
+            <a href="/logout" class="btn btn-danger">登出</a>
+        </div>
+    </div>
+</header>
+
+<main style="padding-top: 90px;">
+    <div class="container">
+        <div class="hero text-white text-center p-4 mb-4">
+            <div>
+                <h1 class="display-6">快速點餐，輕鬆結帳</h1>
+                <p class="lead">現在可直接加入購物車並在右側快速結帳。</p>
+            </div>
+        </div>
+
+        {% set hot_items = items|selectattr('is_recommended')|list %}
+        {% if hot_items %}
+        <div class="mb-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="mb-0">🔥 熱門推薦</h5>
+                <small class="text-muted">我們為你挑選的招牌</small>
+            </div>
+            <div class="row gy-2">
+                {% for item in hot_items %}
+                <div class="col-sm-4">
+                    <div class="p-2 rounded" style="background:#1d1d1d; border:1px solid rgba(255,255,255,0.1);">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div><strong>{{ item.name }}</strong><div class="text-warning">${{ item.price }}</div></div>
+                            <span class="badge bg-danger">熱門</span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="row mb-3">
+            <div class="col-md-4 mb-2">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input id="searchInput" type="text" class="form-control" placeholder="搜尋餐點名稱..." oninput="filterMenu()">
+                </div>
+            </div>
+            <div class="col-md-3 mb-2">
+                <select id="categoryFilter" class="form-select" onchange="filterMenu()">
+                    <option value="all">所有分類</option>
+                    {% for cat in categories %}
+                        <option value="{{ cat }}">{{ cat }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3 mb-2">
+                <div class="input-group">
+                    <span class="input-group-text">最高價格</span>
+                    <input id="maxPrice" type="number" class="form-control" min="0" placeholder="不限" oninput="filterMenu()">
+                </div>
+            </div>
+            <div class="col-md-2 d-flex justify-content-end mb-2">
+                <button class="btn btn-outline-light" onclick="resetFilters()"><i class="bi bi-arrow-counterclockwise"></i> 清除</button>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 mb-3">
+            <button class="btn btn-sm btn-light" onclick="sortMenu('recommended')">🔥 熱門優先</button>
+            <button class="btn btn-sm btn-light" onclick="sortMenu('new')">🆕 新品優先</button>
+            <button class="btn btn-sm btn-light" onclick="sortMenu('price_asc')">價格↑</button>
+            <button class="btn btn-sm btn-light" onclick="sortMenu('price_desc')">價格↓</button>
+        </div>
+        <div id="menuList" class="row gy-3">
+            {% for item in items %}
+            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ item.price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
+                <div class="menu-card p-3">
+                    <div class="d-flex align-items-start gap-3">
+                        {% if item.image_path %}
+                        <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}">
+                        {% else %}
+                        <div class="menu-img d-flex align-items-center justify-content-center bg-secondary text-white">無圖</div>
+                        {% endif %}
+                        <div class="flex-grow-1">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h5 class="mb-1 text-warning">{{ item.name }}</h5>
+                                    <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
+                                    {% if item.is_recommended %}<span class="badge bg-danger">熱門推薦</span>{% endif %}
+                                    {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
+                                </div>
+                                <h5 class="text-success">${{ item.price }}</h5>
+                            </div>
+                            <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
+                            <button class="btn add-to-cart-btn btn-sm" type="button"
+                                data-item-id="{{ item.id }}"
+                                data-item-name="{{ item.name }}"
+                                data-item-price="{{ item.price }}"
+                                data-item-modifiers="{{ item.modifiers or 'none' }}"
+                                onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="col-12 text-center text-white-50">
+                目前尚無菜單，請店家新增菜品。
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</main>
+
+<div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel">
+    <div class="offcanvas-header border-secondary border-bottom">
+        <h5 id="cartLabel">你的購物車</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column">
+        <div id="cart-items" class="flex-grow-1 overflow-auto mb-3">
+            <div class="text-center text-muted">購物車目前空空如也</div>
+        </div>
+        <div class="border-top border-secondary pt-3">
+            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">總計</span><span class="fw-bold text-danger">$<span id="cart-total">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">會員折扣</span><span class="text-success">$<span id="cart-discount">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">應付金額</span><span class="fw-bold text-warning">$<span id="cart-final">0.00</span></span></div>
+            <div class="mb-3">
+                <label class="form-label text-white-50">用餐方式</label>
+                <select id="orderType" class="form-select">
+                    <option value="內用">內用 (Dine-in)</option>
+                    <option value="外帶">外帶 (Take-out)</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label text-white-50">付款方式</label>
+                <select id="paymentMethod" class="form-select">
+                    <option value="Cash">現金 Cash</option>
+                    <option value="Credit Card">信用卡 Credit Card</option>
+                    <option value="Line Pay">Line Pay</option>
+                </select>
+            </div>
+            <button class="btn btn-warning w-100 fw-bold py-2" onclick="openPreview()">✅ 下單前確認</button>
+        </div>
+    </div>
+</div>
+
+<!-- 客製化彈窗 -->
+<div class="modal fade" id="modifierModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content bg-dark text-white">
+      <div class="modal-header">
+        <h5 class="modal-title" id="modifierModalTitle">客製化選擇</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="modifierModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-warning w-100 fw-bold" onclick="confirmAddToCartWithModifier()">確認加入購物車</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 訂單確認彈窗 -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-white">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-clipboard-check"></i> 訂單送出確認</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="preview-items"></div>
+        <div class="mt-3 text-end">
+          <div>總計: $<span id="preview-subtotal">0.00</span></div>
+          <div>折扣: $<span id="preview-discount">0.00</span></div>
+          <div class="fw-bold fs-5 text-warning">應付: $<span id="preview-final">0.00</span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-success fw-bold" onclick="confirmCheckout()">確認送出訂單</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 訂單明細收據彈窗 (結帳成功後彈出) -->
+<div class="modal fade text-dark" id="receiptModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-success text-white">
+        <h5 class="modal-title"><i class="bi bi-check-circle-fill"></i> 訂單送出成功！</h5>
+      </div>
+      <div class="modal-body p-4">
+        <div class="text-center mb-3">
+          <h6 class="text-muted mb-1">訂單編號</h6>
+          <h3 class="fw-bold text-success" id="receipt-order-id">#000</h3>
+        </div>
+        <hr>
+        <div class="row mb-2">
+          <div class="col-6"><strong>顧客姓名：</strong> <span id="receipt-user"></span></div>
+          <div class="col-6"><strong>用餐方式：</strong> <span id="receipt-type" class="badge bg-primary"></span></div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-12"><strong>付款方式：</strong> <span id="receipt-payment"></span></div>
+        </div>
+
+        <h6><strong>點餐明細：</strong></h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>品項</th>
+                <th>數量</th>
+                <th>單價</th>
+                <th>小計</th>
+              </tr>
+            </thead>
+            <tbody id="receipt-items-body"></tbody>
+          </table>
+        </div>
+
+        <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
+          <h5 class="mb-0">總計金額：</h5>
+          <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-success w-100 fw-bold py-2" onclick="finishOrder()">繼續點餐 (Back to Menu)</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 歷史訂單記錄彈窗 -->
+<div class="modal fade text-dark" id="historyModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title"><i class="bi bi-clock-history"></i> 我的歷史訂單記錄</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-4" style="max-height: 70vh; overflow-y: auto;" id="history-modal-body"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    let cart = [];
+    let currentSelectedItem = null;
+
+    function handleAddToCart(button) {
+        const id = button.dataset.itemId;
+        const name = button.dataset.itemName;
+        const price = Number(button.dataset.itemPrice || 0);
+        const modifiers = String(button.dataset.itemModifiers || '').toLowerCase();
+
+        if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
+            addToCart(id, name, price, '');
+            return;
+        }
+
+        currentSelectedItem = { id, name, price, modifiers };
+        const modalTitle = document.getElementById('modifierModalTitle');
+        const modalBody = document.getElementById('modifierModalBody');
+        if (modalTitle) modalTitle.textContent = `客製化選擇 - ${name}`;
+
+        let html = '';
+        if (modifiers === 'ice_sugar') {
+            html = `
+                <div class="mb-3">
+                    <label class="form-label">冰塊量</label>
+                    <select id="mod-ice" class="form-select">
+                        <option value="正常冰">正常冰</option>
+                        <option value="少冰">少冰</option>
+                        <option value="去冰">去冰</option>
+                        <option value="熱飲">熱飲</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">甜度</label>
+                    <select id="mod-sugar" class="form-select">
+                        <option value="全糖">全糖</option>
+                        <option value="半糖">半糖</option>
+                        <option value="微糖">微糖</option>
+                        <option value="無糖">無糖</option>
+                    </select>
+                </div>`;
+        } else if (modifiers === 'spicy') {
+            html = `
+                <div class="mb-3">
+                    <label class="form-label">辣度調整</label>
+                    <select id="mod-spicy" class="form-select">
+                        <option value="不辣">不辣</option>
+                        <option value="微辣">微辣</option>
+                        <option value="中辣">中辣</option>
+                        <option value="大辣">大辣</option>
+                    </select>
+                </div>`;
+        } else if (modifiers === 'addons') {
+            html = `
+                <div class="mb-3">
+                    <label class="form-label">加料選項</label>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input mod-addon" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="addon1">
+                        <label class="form-check-label" for="addon1">加荷包蛋 (+10)</label>
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input mod-addon" type="checkbox" data-extra="15" value="加起司片(+15)" id="addon2">
+                        <label class="form-check-label" for="addon2">加起司片 (+15)</label>
+                    </div>
+                </div>`;
+        } else {
+            addToCart(id, name, price, '');
+            return;
+        }
+
+        if (modalBody) modalBody.innerHTML = html;
+        const modifierModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal'));
+        modifierModal.show();
+    }
+
+    function confirmAddToCartWithModifier() {
+        if (!currentSelectedItem) return;
+
+        const customTextArr = [];
+        let extraPrice = 0;
+
+        const ice = document.getElementById('mod-ice');
+        const sugar = document.getElementById('mod-sugar');
+        const spicy = document.getElementById('mod-spicy');
+        const addons = document.querySelectorAll('.mod-addon:checked');
+
+        if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
+        if (spicy) customTextArr.push(spicy.value);
+        if (addons.length > 0) {
+            addons.forEach(cb => {
+                customTextArr.push(cb.value);
+                extraPrice += Number(cb.getAttribute('data-extra') || 0);
+            });
+        }
+
+        const customization = customTextArr.join('、');
+        const finalPrice = Number(currentSelectedItem.price || 0) + extraPrice;
+        addToCart(currentSelectedItem.id, currentSelectedItem.name, finalPrice, customization);
+
+        const modalEl = document.getElementById('modifierModal');
+        if (modalEl) {
+            const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modalInstance.hide();
+        }
+    }
+
+    function addToCart(id, name, price, customization = '') {
+        const item = cart.find(i => i.id === id && i.customization === customization);
+        if (item) item.quantity += 1;
+        else cart.push({id, name, price: Number(price || 0), quantity: 1, customization});
+        updateCartUI();
+        const toastEl = document.createElement('div');
+        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow';
+        toastEl.innerHTML = `已加入：${name} <span class="fw-bold">+1</span>`;
+        document.body.appendChild(toastEl);
+        setTimeout(() => toastEl.remove(), 1300);
+    }
+
+    function updateCartUI() {
+        const container = document.getElementById('cart-items');
+        const count = document.getElementById('cart-count');
+        const totalEl = document.getElementById('cart-total');
+        const discountEl = document.getElementById('cart-discount');
+        const finalEl = document.getElementById('cart-final');
+        const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        
+        count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
+        if (!cart.length) {
+            container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
+            totalEl.innerText = '0.00';
+            discountEl.innerText = '0.00';
+            finalEl.innerText = '0.00';
+            return;
+        }
+        container.innerHTML = cart.map((item, idx) => `
+            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
+                <div>
+                    <div class="fw-bold text-warning">${item.name}</div>
+                    ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
+                    <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
+                </div>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
+                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
+                </div>
+            </div>
+        `).join('');
+        totalEl.innerText = total.toFixed(2);
+        discountEl.innerText = '0.00';
+        finalEl.innerText = total.toFixed(2);
+    }
+
+    function changeQty(index, delta) {
+        cart[index].quantity += delta;
+        if (cart[index].quantity <= 0) cart.splice(index, 1);
+        updateCartUI();
+    }
+
+    function openPreview() {
+        if (!cart.length) { alert('購物車為空'); return; }
+        const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
+        const preview = document.getElementById('preview-items');
+        preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
+            <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
+                <div>
+                    <div>${item.name} x${item.quantity}</div>
+                    ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
+                </div>
+                <span class="fw-bold">$${(item.price * item.quantity).toFixed(2)}</span>
+            </li>`).join('') + '</ul>';
+        document.getElementById('preview-subtotal').innerText = subtotal.toFixed(2);
+        document.getElementById('preview-discount').innerText = '0.00';
+        document.getElementById('preview-final').innerText = subtotal.toFixed(2);
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('confirmModal'));
+        modal.show();
+    }
+
+    function confirmCheckout() {
+        if (!cart.length) return;
+        const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
+        const orderType = document.getElementById('orderType').value;
+        const paymentMethod = document.getElementById('paymentMethod').value;
+
+        fetch('/submit_order', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                items: cart,
+                total_price: Math.round(subtotal),
+                payment_method: paymentMethod,
+                order_type: orderType
+            })
+        })
+        .then(r => {
+            if (!r.ok) throw new Error('伺服器錯誤: ' + r.status);
+            return r.json();
+        })
+        .then(data => {
+            const confirmModalEl = document.getElementById('confirmModal');
+            if (confirmModalEl) {
+                const cm = bootstrap.Modal.getInstance(confirmModalEl);
+                if (cm) cm.hide();
+            }
+            const cartSidebarEl = document.getElementById('cart-sidebar');
+            if (cartSidebarEl) {
+                const cs = bootstrap.Offcanvas.getInstance(cartSidebarEl);
+                if (cs) cs.hide();
+            }
+
+            document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
+            document.getElementById('receipt-user').textContent = data.user_name;
+            document.getElementById('receipt-type').textContent = data.order_type;
+            document.getElementById('receipt-payment').textContent = data.payment_method;
+            document.getElementById('receipt-total').textContent = data.total_price.toFixed(2);
+
+            const itemsBody = document.getElementById('receipt-items-body');
+            itemsBody.innerHTML = data.items.map(item => `
+                <tr>
+                    <td>
+                        <div>${item.name}</div>
+                        ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
+                    </td>
+                    <td>x ${item.quantity}</td>
+                    <td>$${item.price}</td>
+                    <td>$${item.subtotal}</td>
+                </tr>
+            `).join('');
+
+            const receiptModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal'));
+            receiptModal.show();
+        })
+        .catch(e => {
+            console.error(e);
+            alert('結帳失敗，請稍後再試！');
+        });
+    }
+
+    function finishOrder() {
+        cart = [];
+        updateCartUI();
+        const receiptModalEl = document.getElementById('receiptModal');
+        if (receiptModalEl) {
+            const rm = bootstrap.Modal.getInstance(receiptModalEl);
+            if (rm) rm.hide();
+        }
+    }
+
+    function showMyOrders() {
+        fetch('/my_orders')
+        .then(res => {
+            if (!res.ok) throw new Error('HTTP status ' + res.status);
+            return res.json();
+        })
+        .then(orders => {
+            const historyBody = document.getElementById('history-modal-body');
+            if (!historyBody) return;
+
+            if (!orders || orders.length === 0) {
+                historyBody.innerHTML = '<div class="text-center text-muted py-4">目前尚無任何訂單紀錄！</div>';
+            } else {
+                historyBody.innerHTML = orders.map(o => {
+                    let statusBadge = '';
+                    if (o.status === 'Pending') {
+                        statusBadge = '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> 製作中</span>';
+                    } else if (o.status === 'Completed') {
+                        statusBadge = '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> 請取餐 / 已完成</span>';
+                    } else if (o.status === 'Cancelled') {
+                        statusBadge = '<span class="badge bg-secondary"><i class="bi bi-x-circle-fill"></i> 已取消</span>';
+                    } else {
+                        statusBadge = `<span class="badge bg-info">${o.status}</span>`;
+                    }
+
+                    return `
+                        <div class="card mb-3 border-secondary shadow-sm text-dark">
+                            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="fw-bold text-success fs-5">訂單 #${o.order_id}</span>
+                                    ${statusBadge}
+                                    <span class="badge bg-primary ms-1">${o.order_type}</span>
+                                    <span class="badge bg-outline-dark border ms-1">${o.payment_method}</span>
+                                </div>
+                                <small class="text-muted">${o.created_at}</small>
+                            </div>
+                            <div class="card-body p-3">
+                                <table class="table table-sm mb-2 align-middle">
+                                    <thead>
+                                        <tr class="text-muted">
+                                            <th>品項</th>
+                                            <th>數量</th>
+                                            <th>單價</th>
+                                            <th>小計</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${o.items.map(item => `
+                                            <tr>
+                                                <td>
+                                                    <div>${item.name}</div>
+                                                    ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
+                                                </td>
+                                                <td>x ${item.quantity}</td>
+                                                <td>$${item.price}</td>
+                                                <td>$${item.subtotal}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                                <div class="text-end fw-bold text-danger fs-6">
+                                    總金額：$${o.total_price.toFixed(2)}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            const historyModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('historyModal'));
+            historyModal.show();
+        })
+        .catch(err => {
+            console.error('Error fetching orders:', err);
+            alert('無法取得訂單記錄：' + err.message);
+        });
+    }
+
+    function sortMenu(mode) {
+        const container = document.getElementById('menuList');
+        const rows = [...container.querySelectorAll('.menu-row')];
+        rows.sort((a, b) => {
+            if (mode === 'recommended') return Number(b.dataset.recommended) - Number(a.dataset.recommended);
+            if (mode === 'new') return Number(b.dataset.new) - Number(a.dataset.new);
+            if (mode === 'price_asc') return Number(a.dataset.price) - Number(b.dataset.price);
+            if (mode === 'price_desc') return Number(b.dataset.price) - Number(a.dataset.price);
+            return 0;
+        });
+        rows.forEach(r => container.appendChild(r));
+    }
+
+    function filterMenu() {
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const max = Number(document.getElementById('maxPrice').value) || Number.POSITIVE_INFINITY;
+        const cat = document.getElementById('categoryFilter').value;
+        document.querySelectorAll('#menuList .menu-row').forEach(row => {
+            const text = row.innerText.toLowerCase();
+            const price = Number(row.dataset.price || 0);
+            const rowCat = row.dataset.category || '未分類';
+            const categoryMatch = cat === 'all' || rowCat === cat;
+            const show = text.includes(q) && price <= max && categoryMatch;
+            row.style.display = show ? '' : 'none';
+        });
+    }
+
+    function resetFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('maxPrice').value = '';
+        document.getElementById('categoryFilter').value = 'all';
+        filterMenu();
+    }
+
+    updateCartUI();
+</script>
+
+{% else %}
+
+<div class="container py-5">
+    <div class="hero text-white text-center p-4 mb-4" style="background: linear-gradient(135deg, rgba(0,0,0,0.5), rgba(10,10,10,0.9)), url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 14px; ">
+        <h1 class="display-5">歡迎使用自助點餐系統</h1>
+        <p class="lead">可先註冊加入會員，之後可直接人臉快速登入。</p>
+        <div class="d-flex justify-content-center gap-2 mt-3">
+            <a class="btn btn-register btn-lg" href="/register">加入會員</a>
+            <a class="btn btn-login btn-lg" href="/face_login">人臉快速登入</a>
+        </div>
+    </div>
+    <div class="text-center text-muted">點擊後台管理可進入店家管理</div>
+    <div class="text-center mt-3"><a class="text-white" href="/admin">後台管理</a></div>
+</div>
+
+{% endif %}
+
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="utf-8">
+    <title>加入會員 - 自助點餐系統</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-start: #0b132b;
+            --bg-mid: #1f2a44;
+            --bg-end: #415a77;
+            --panel: rgba(255,255,255,.08);
+            --panel-border: rgba(255,255,255,.12);
+            --text-light: #f8f9fa;
+            --text-muted: rgba(248,249,250,.78);
+            --accent: #f5c146;
+            --accent-strong: #ffb703;
+        }
+
+        html, body { min-height: 100%; margin: 0; font-family: 'Roboto', sans-serif; background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-mid) 45%, var(--bg-end) 100%); color: var(--text-light); }
+        body { display: flex; align-items: center; justify-content: center; }
+        .container { max-width: 980px; padding: 3rem 1rem; }
+        .card { border-radius: 24px; border: 1px solid var(--panel-border); background: rgba(13, 23, 44, 0.92); box-shadow: 0 25px 60px rgba(0,0,0,.25); }
+        .card-body { padding: 2.5rem; color: var(--text-light); }
+        .form-control, .form-select { border-radius: 14px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: var(--text-light); }
+        .form-control:focus, .form-select:focus { border-color: var(--accent); box-shadow: 0 0 0 0.15rem rgba(245,193,70,.18); background: rgba(255,255,255,.12); }
+        .form-label { color: var(--text-light); font-weight: 600; }
+        .text-muted { color: rgba(248,249,250,.85) !important; }
+        .btn-success { border-radius: 14px; padding: 0.95rem 1.25rem; background: var(--accent); border: none; color: #060b1a; font-weight: 700; }
+        .btn-success:hover { background: var(--accent-strong); }
+        .card-header-hero { min-height: 100%; background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.02)); }
+        .card-header-hero h4 { font-weight: 700; margin-bottom: 0.35rem; }
+        .card-header-hero small { color: rgba(248,249,250,.8); }
+        .btn-return { color: #f2d86c; font-weight: 600; }
+        .btn-return:hover { color: #fff; text-decoration: none; }
+        .alert-success { border-radius: 14px; background: rgba(25,135,84,.12); color: #d1e7dd; border: 1px solid rgba(25,135,84,.25); }
+        .img-preview { border-radius: 18px; border: 1px solid rgba(255,255,255,.12); }
+        @media (max-width: 767px) {
+            .card { border-radius: 18px; }
+            .card-body { padding: 1.75rem; }
+        }
+    </style>
+</head>
+<body>
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-lg-7">
+            <div class="card overflow-hidden">
+                <div class="row g-0">
+                    <div class="col-md-6 d-none d-md-block" style="background: url('https://images.unsplash.com/photo-1498654896293-37aacf113fd9?auto=format&fit=crop&w=1000&q=80') center/cover;">
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card-body p-4">
+                            <div class="d-flex align-items-center mb-4">
+                                <div class="me-2"><i class="bi bi-person-circle fs-1 text-warning"></i></div>
+                                <div>
+                                    <h4 class="mb-0">加入會員</h4>
+                                    <small class="text-muted">註冊即可快速人臉登入與結帳</small>
+                                </div>
+                            </div>
+                            <form action="/register" method="POST" enctype="multipart/form-data" class="mb-3">
+                                <div class="mb-3">
+                                    <label class="form-label">姓名</label>
+                                    <input class="form-control" type="text" name="name" value="{{ name }}" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">電話</label>
+                                    <input class="form-control" type="text" name="phone" value="{{ phone }}" required>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label class="form-label">拍攝或上傳照片</label>
+                                    <!-- 手機點擊這裡會直接跳出手機相機或相簿 -->
+                                    <input class="form-control" type="file" name="photo" accept="image/*" capture="user" required>
+                                </div>
+
+                                <input type="hidden" name="captured_photo" value="{{ captured_photo }}">
+                                {% if captured_photo %}
+                                <div class="alert alert-success p-3 mb-3 d-flex align-items-center gap-2">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                    <div>已成功擷取臉部影像，請送出完成註冊。</div>
+                                </div>
+                                <div class="mb-3 text-center">
+                                    <img src="{{ url_for('static', filename='member/' + captured_photo) }}" class="img-fluid img-preview" alt="人臉預覽">
+                                </div>
+                                {% endif %}
+
+                                <div class="d-grid gap-2 mb-3">
+                                    <button class="btn btn-success" type="submit" name="action" value="register">💾 送出照片並註冊</button>
+                                </div>
+                            </form>
+                            <div class="text-center mt-2">
+                                <a href="/" class="btn-return"><i class="bi bi-arrow-left"></i> 返回首頁</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
