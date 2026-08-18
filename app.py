@@ -10,11 +10,13 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps
 
-# 修正 1：移除重複的 app 初始化
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(BASE_DIR, 'templates')
 app = Flask(__name__, template_folder=template_dir)
 app.secret_key = 'kiosk_secret_key_123'
+
+# 修復 1：將 datetime 與 timedelta 註冊至 Jinja2 全域環境，解決 'datetime' 未定義錯誤
+app.jinja_env.globals.update(datetime=datetime, timedelta=timedelta)
 
 db_path = os.path.join(BASE_DIR, 'menu.db')
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
@@ -45,9 +47,15 @@ class MenuItem(db.Model):
     description = db.Column(db.String(200))
     image_path = db.Column(db.String(200), nullable=True)
     modifiers = db.Column(db.String(100), default='none')
-    # 修正 2：補上前端需要的熱門與新品欄位
     is_recommended = db.Column(db.Boolean, default=False)
     is_new = db.Column(db.Boolean, default=False)
+    
+    # 限時限額特價欄位
+    is_special = db.Column(db.Boolean, default=False)
+    special_price = db.Column(db.Integer, nullable=True)
+    special_stock = db.Column(db.Integer, default=0)
+    special_start = db.Column(db.DateTime, nullable=True)
+    special_end = db.Column(db.DateTime, nullable=True)
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -76,16 +84,27 @@ class OrderItem(db.Model):
 with app.app_context():
     db.create_all()
 
-    # SQLite 不會自動更新現有資料表欄位，若 menu_item 表缺少新欄位就補上
+    # SQLite 自動檢測並補充新欄位
     if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
         conn = db.engine.raw_connection()
         cursor = conn.cursor()
         cursor.execute("PRAGMA table_info(menu_item)")
         existing_columns = [row[1] for row in cursor.fetchall()]
-        if 'is_recommended' not in existing_columns:
-            cursor.execute("ALTER TABLE menu_item ADD COLUMN is_recommended BOOLEAN DEFAULT 0")
-        if 'is_new' not in existing_columns:
-            cursor.execute("ALTER TABLE menu_item ADD COLUMN is_new BOOLEAN DEFAULT 0")
+        
+        new_cols = {
+            'is_recommended': 'BOOLEAN DEFAULT 0',
+            'is_new': 'BOOLEAN DEFAULT 0',
+            'is_special': 'BOOLEAN DEFAULT 0',
+            'special_price': 'INTEGER',
+            'special_stock': 'INTEGER DEFAULT 0',
+            'special_start': 'DATETIME',
+            'special_end': 'DATETIME'
+        }
+        
+        for col_name, col_type in new_cols.items():
+            if col_name not in existing_columns:
+                cursor.execute(f"ALTER TABLE menu_item ADD COLUMN {col_name} {col_type}")
+                
         conn.commit()
         cursor.close()
         conn.close()
@@ -157,19 +176,30 @@ def admin_logout():
 
 @app.route('/admin/add', methods=['POST'])
 def add_item():
-    if not session.get('admin_logged_in'): return redirect(url_for('admin_index'))
+    if not session.get('admin_logged_in'): 
+        return redirect(url_for('admin_index'))
     
     name = request.form.get('name')
     category = request.form.get('category', '主餐') 
     modifiers = request.form.get('modifiers', 'none')
     price = request.form.get('price')
     desc = request.form.get('description')
+    
+    # 修復 2：使用小寫 image 避免與 PIL.Image 模組名稱衝突
     image = request.files.get('image')
     
-    # 修正 3：擷取前端送來的熱門與新品開關狀態
     is_recommended = request.form.get('is_recommended') == 'on'
     is_new = request.form.get('is_new') == 'on'
+    is_special = request.form.get('is_special') == 'on'
     
+    special_price = request.form.get('special_price')
+    special_stock = request.form.get('special_stock', 0)
+    special_start_str = request.form.get('special_start')
+    special_end_str = request.form.get('special_end')
+
+    special_start = datetime.strptime(special_start_str, '%Y-%m-%dT%H:%M') if special_start_str else None
+    special_end = datetime.strptime(special_end_str, '%Y-%m-%dT%H:%M') if special_end_str else None
+
     if name and price:
         image_filename = ""
         if image and image.filename != '':
@@ -185,14 +215,19 @@ def add_item():
             price=int(price), 
             description=desc, 
             image_path=image_filename,
-            is_recommended=is_recommended,  # 儲存至資料庫
-            is_new=is_new                   # 儲存至資料庫
+            is_recommended=is_recommended,
+            is_new=is_new,
+            is_special=is_special,
+            special_price=int(special_price) if special_price else None,
+            special_stock=int(special_stock) if special_stock else 0,
+            special_start=special_start,
+            special_end=special_end
         )
         db.session.add(new_item)
         db.session.commit()
         
     return redirect(url_for('admin_index', tab='menu'))
-# --- 店家 Excel 批量匯入菜單 ---
+
 @app.route('/admin/import_excel', methods=['POST'])
 def import_menu_excel():
     if not session.get('admin_logged_in'):
@@ -235,9 +270,6 @@ def import_menu_excel():
                 price = 0
 
             modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
-            if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
-                modifiers = 'none'
-
             description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
 
             rec_val = str(row.get('is_recommended', '')).lower()
@@ -265,7 +297,6 @@ def import_menu_excel():
         db.session.rollback()
         return f"<h1>匯入解析失敗：{e}</h1><a href='/admin'>返回後台</a>", 500
 
-# --- 店家編輯菜單品項 ---
 @app.route('/admin/edit/<int:id>', methods=['POST'])
 def edit_item(id):
     if not session.get('admin_logged_in'):
@@ -278,11 +309,19 @@ def edit_item(id):
     modifiers = request.form.get('modifiers', 'none')
     price = request.form.get('price')
     desc = request.form.get('description', '')
+    
+    # 修復 2：使用小寫 image 變數
     image = request.files.get('image')
     
     is_recommended = request.form.get('is_recommended') == 'on'
     is_new = request.form.get('is_new') == 'on'
+    is_special = request.form.get('is_special') == 'on'
     
+    special_price = request.form.get('special_price')
+    special_stock = request.form.get('special_stock', 0)
+    special_start_str = request.form.get('special_start')
+    special_end_str = request.form.get('special_end')
+
     if name and price:
         item.name = name
         item.category = category
@@ -291,8 +330,13 @@ def edit_item(id):
         item.description = desc
         item.is_recommended = is_recommended
         item.is_new = is_new
-        
-        # 若有上傳新圖片則替換並刪除舊圖
+        item.is_special = is_special
+        item.special_price = int(special_price) if special_price else None
+        item.special_stock = int(special_stock) if special_stock else 0
+        item.special_start = datetime.strptime(special_start_str, '%Y-%m-%dT%H:%M') if special_start_str else None
+        item.special_end = datetime.strptime(special_end_str, '%Y-%m-%dT%H:%M') if special_end_str else None
+
+        # 正確檢查小寫 image
         if image and image.filename != '':
             ext = os.path.splitext(image.filename)[1] or '.jpg'
             image_filename = f"menu_{int(time.time())}{ext}"
@@ -315,7 +359,8 @@ def edit_item(id):
 
 @app.route('/admin/delete/<int:id>')
 def delete_item(id):
-    if not session.get('admin_logged_in'): return redirect(url_for('admin_index'))
+    if not session.get('admin_logged_in'): 
+        return redirect(url_for('admin_index'))
     item_to_delete = MenuItem.query.get_or_404(id)
     
     if item_to_delete.image_path:
@@ -332,7 +377,8 @@ def delete_item(id):
 
 @app.route('/admin/delete_user/<int:id>')
 def delete_user(id):
-    if not session.get('admin_logged_in'): return redirect(url_for('admin_index'))
+    if not session.get('admin_logged_in'): 
+        return redirect(url_for('admin_index'))
     user_to_delete = User.query.get_or_404(id)
     
     try:
@@ -360,15 +406,10 @@ def customer_index():
     items = MenuItem.query.all()
     categories = sorted({item.category or '未分類' for item in items})
     
-    # 修正 4：補齊前端會員與點數顯示所需要的防呆變數
     return render_template('customer.html', 
                            items=items, 
                            categories=categories,
-                           is_member=is_member,
-                           user_points=0,
-                           points_to_cash=10,
-                           points_redemption_enabled=False,
-                           points_earning_enabled=False)
+                           is_member=is_member)
 
 @app.route('/logout')
 def logout():
@@ -377,49 +418,65 @@ def logout():
 
 @app.route('/submit_order', methods=['POST'])
 def submit_order():
-    data = request.json
-    user_name = session.get('user_name', data.get('table_number', '一般顧客'))
-    
-    new_order = Order(
-        table_number=user_name,
-        order_type=data.get('order_type', '內用'),
-        total_price=data['total_price'],
-        payment_method=data.get('payment_method', 'Cash')
-    )
-    db.session.add(new_order)
-    db.session.flush()
-
-    order_items_detail = []
-    for item in data['items']:
-        custom_text = item.get('customization', '')
-        order_item = OrderItem(
-            order_id=new_order.id,
-            item_name=item['name'],
-            quantity=item['quantity'],
-            price=item['price'],
-            customization=custom_text
-        )
-        db.session.add(order_item)
+    try:
+        data = request.json or {}
+        user_name = session.get('user_name') or data.get('table_number') or '一般顧客'
         
-        order_items_detail.append({
-            'name': item['name'],
-            'quantity': item['quantity'],
-            'price': item['price'],
-            'subtotal': item['price'] * item['quantity'],
-            'customization': custom_text
+        new_order = Order(
+            table_number=user_name,
+            order_type=data.get('order_type', '內用'),
+            total_price=int(data.get('total_price', 0)),
+            payment_method=data.get('payment_method', 'Cash')
+        )
+        db.session.add(new_order)
+        db.session.flush()
+
+        order_items_detail = []
+        for item in data.get('items', []):
+            # 支援 'name' 或 'item_name' 兩種 key 名稱
+            item_name = item.get('name') or item.get('item_name', '')
+            item_price = int(item.get('price', 0))
+            item_qty = int(item.get('quantity', 1))
+            custom_text = item.get('customization', '')
+
+            order_item = OrderItem(
+                order_id=new_order.id,
+                item_name=item_name,
+                quantity=item_qty,
+                price=item_price,
+                customization=custom_text
+            )
+            db.session.add(order_item)
+            
+            # 扣減特價商品庫存
+            db_item = MenuItem.query.filter_by(name=item_name).first()
+            if db_item and db_item.is_special and db_item.special_stock > 0:
+                db_item.special_stock = max(0, db_item.special_stock - item_qty)
+
+            order_items_detail.append({
+                'name': item_name,
+                'quantity': item_qty,
+                'price': item_price,
+                'subtotal': item_price * item_qty,
+                'customization': custom_text
+            })
+
+        db.session.commit()
+        
+        return jsonify({
+            'message': '訂單已成功送出！',
+            'order_id': new_order.id,
+            'user_name': user_name,
+            'order_type': new_order.order_type,
+            'payment_method': new_order.payment_method,
+            'total_price': new_order.total_price,
+            'items': order_items_detail
         })
 
-    db.session.commit()
-    
-    return jsonify({
-        'message': '訂單已成功送出！',
-        'order_id': new_order.id,
-        'user_name': user_name,
-        'order_type': new_order.order_type,
-        'payment_method': new_order.payment_method,
-        'total_price': new_order.total_price,
-        'items': order_items_detail
-    })
+    except Exception as e:
+        db.session.rollback()
+        print(f"下單處理失敗: {e}")
+        return jsonify({'message': f'訂單送出失敗：{str(e)}'}), 500
 
 @app.route('/my_orders')
 def my_orders():
@@ -621,6 +678,3 @@ def face_login():
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
-
-
-# 分支測試(之後刪)
