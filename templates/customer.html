@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 <head>
     <meta charset="utf-8">
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -24,6 +24,7 @@
         .form-control::placeholder, .form-select option { color: #d8d8d8; }
         .form-control:focus, .form-select:focus { background: #2b2b2b; color: #fff; box-shadow: 0 0 0 0.2rem rgba(245,165,0,0.2); border-color: #f5a500; }
         .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255,255,255,0.16); }
+        .promo-badge { font-size: 0.8rem; padding: 2px 6px; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -40,7 +41,6 @@
             </div>
         </div>
         <div>
-            <!-- 補回：我的訂單明細按鈕 -->
             <button class="btn btn-outline-warning me-2" type="button" onclick="showMyOrders()">
                 <i class="bi bi-receipt"></i> 我的訂單
             </button>
@@ -73,7 +73,14 @@
                 <div class="col-sm-4">
                     <div class="p-2 rounded" style="background:#1d1d1d; border:1px solid rgba(255,255,255,0.1);">
                         <div class="d-flex justify-content-between align-items-start">
-                            <div><strong>{{ item.name }}</strong><div class="text-warning">${{ item.price }}</div></div>
+                            <div>
+                                <strong>{{ item.name }}</strong>
+                                {% if item.is_special and item.special_price %}
+                                    <div class="text-danger fw-bold">${{ item.special_price }} <span class="text-muted text-decoration-line-through small">${{ item.price }}</span></div>
+                                {% else %}
+                                    <div class="text-warning">${{ item.price }}</div>
+                                {% endif %}
+                            </div>
                             <span class="badge bg-danger">熱門</span>
                         </div>
                     </div>
@@ -115,9 +122,11 @@
             <button class="btn btn-sm btn-light" onclick="sortMenu('price_asc')">價格↑</button>
             <button class="btn btn-sm btn-light" onclick="sortMenu('price_desc')">價格↓</button>
         </div>
+
         <div id="menuList" class="row gy-3">
             {% for item in items %}
-            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ item.price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
+            {% set current_price = item.special_price if item.is_special and item.special_price else item.price %}
+            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ current_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
                 <div class="menu-card p-3">
                     <div class="d-flex align-items-start gap-3">
                         {% if item.image_path %}
@@ -132,15 +141,38 @@
                                     <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
                                     {% if item.is_recommended %}<span class="badge bg-danger">熱門推薦</span>{% endif %}
                                     {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
+                                    {% if item.is_special %}<span class="badge bg-warning text-dark">限時特價</span>{% endif %}
                                 </div>
-                                <h5 class="text-success">${{ item.price }}</h5>
+                                <div class="text-end">
+                                    {% if item.is_special and item.special_price %}
+                                        <h5 class="text-danger mb-0">${{ item.special_price }}</h5>
+                                        <small class="text-muted text-decoration-line-through">${{ item.price }}</small>
+                                    {% else %}
+                                        <h5 class="text-success mb-0">${{ item.price }}</h5>
+                                    {% endif %}
+                                </div>
                             </div>
-                            <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
-                            <button class="btn add-to-cart-btn btn-sm" type="button"
+                            <p class="mb-2 text-muted small mt-1">{{ item.description or '無描述' }}</p>
+                            
+                            {% if item.is_special %}
+                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                                <span class="badge bg-warning text-dark promo-badge countdown-timer" 
+                                      data-item-id="{{ item.id }}" 
+                                      data-start-time="{{ item.special_start.strftime('%Y-%m-%dT%H:%M:%S') if item.special_start else '' }}"
+                                      data-end-time="{{ item.special_end.strftime('%Y-%m-%dT%H:%M:%S') if item.special_end else '' }}">
+                                    <i class="bi bi-clock-history"></i> 計算特價時間中...
+                                </span>
+                                <span class="badge bg-danger promo-badge stock-badge" id="stock-badge-{{ item.id }}">
+                                    剩餘份額：<span class="stock-count" id="stock-count-{{ item.id }}">{{ item.special_stock if item.special_stock is not none else 0 }}</span> 份
+                                </span>
+                            </div>
+                            {% endif %}
+
+                            <button class="btn add-to-cart-btn btn-sm id-cart-btn-{{ item.id }}" type="button"
                                 data-item-id="{{ item.id }}"
                                 data-item-name="{{ item.name }}"
-                                data-item-price="{{ item.price }}"
-                                data-item-modifiers="{{ item.modifiers or 'none' }}"
+                                data-item-price="{{ current_price }}"
+                                data-item-modifiers="{{ item.modifiers if item.modifiers else 'none' }}"
                                 onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
                         </div>
                     </div>
@@ -183,32 +215,30 @@
                     <option value="Line Pay">Line Pay</option>
                 </select>
             </div>
-            <button class="btn btn-warning w-100 fw-bold py-2" onclick="openPreview()">✅ 下單前確認</button>
+            <button class="btn btn-warning w-100 fw-bold py-2" type="button" onclick="openPreview()">✅ 下單前確認</button>
         </div>
     </div>
 </div>
 
-<!-- 客製化彈窗 -->
 <div class="modal fade" id="modifierModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content bg-dark text-white">
-      <div class="modal-header">
+      <div class="modal-header border-secondary">
         <h5 class="modal-title" id="modifierModalTitle">客製化選擇</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" id="modifierModalBody"></div>
-      <div class="modal-footer">
-        <button class="btn btn-warning w-100 fw-bold" onclick="confirmAddToCartWithModifier()">確認加入購物車</button>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-warning w-100 fw-bold" onclick="confirmAddToCartWithModifier()">確認加入購物車</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 訂單確認彈窗 -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content bg-dark text-white">
-      <div class="modal-header">
+      <div class="modal-header border-secondary">
         <h5 class="modal-title"><i class="bi bi-clipboard-check"></i> 訂單送出確認</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
@@ -220,15 +250,14 @@
           <div class="fw-bold fs-5 text-warning">應付: $<span id="preview-final">0.00</span></div>
         </div>
       </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-        <button class="btn btn-success fw-bold" onclick="confirmCheckout()">確認送出訂單</button>
+      <div class="modal-footer border-secondary">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button type="button" class="btn btn-success fw-bold" onclick="confirmCheckout()">確認送出訂單</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- 訂單明細收據彈窗 (結帳成功後彈出) -->
 <div class="modal fade text-dark" id="receiptModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -276,7 +305,6 @@
   </div>
 </div>
 
-<!-- 歷史訂單記錄彈窗 -->
 <div class="modal fade text-dark" id="historyModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
@@ -294,13 +322,128 @@
     let cart = [];
     let currentSelectedItem = null;
 
+    // --- 特價實時倒數與狀態邏輯 ---
+    function updateCountdowns() {
+        const timers = document.querySelectorAll('.countdown-timer');
+        const now = new Date().getTime();
+
+        timers.forEach(timer => {
+            const itemId = timer.dataset.itemId;
+            const startTimeAttr = timer.dataset.startTime;
+            const endTimeAttr = timer.dataset.endTime;
+            const btn = document.querySelector(`.id-cart-btn-${itemId}`);
+
+            let targetStartTime = startTimeAttr ? new Date(startTimeAttr).getTime() : null;
+            let targetEndTime = endTimeAttr ? new Date(endTimeAttr).getTime() : null;
+
+            // 1. 如果沒有設置特價結束時間，預設為當日 23:59:59
+            if (!targetEndTime) {
+                const defaultEnd = new Date();
+                defaultEnd.setHours(23, 59, 59, 999);
+                targetEndTime = defaultEnd.getTime();
+            }
+
+            // 2. 判斷特價尚未開始
+            if (targetStartTime && now < targetStartTime) {
+                const startDiff = targetStartTime - now;
+                const hours = Math.floor((startDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((startDiff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((startDiff % (1000 * 60)) / 1000);
+
+                const hStr = String(hours).padStart(2, '0');
+                const mStr = String(minutes).padStart(2, '0');
+                const sStr = String(seconds).padStart(2, '0');
+
+                timer.innerHTML = `<i class="bi bi-clock"></i> 距特價開始 <strong>${hStr}:${mStr}:${sStr}</strong>`;
+                timer.className = 'badge bg-info text-dark promo-badge countdown-timer';
+                return;
+            }
+
+            // 3. 判斷特價已結束
+            const diff = targetEndTime - now;
+            if (diff <= 0) {
+                timer.innerHTML = `<i class="bi bi-x-circle"></i> 特價已結束`;
+                timer.className = 'badge bg-secondary promo-badge countdown-timer';
+                if (btn && btn.getAttribute('data-is-expired') !== 'true') {
+                    btn.setAttribute('data-is-expired', 'true');
+                    btn.disabled = true;
+                    btn.innerText = '特價結束';
+                }
+            } else {
+                // 4. 特價進行中
+                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+                const hStr = String(hours).padStart(2, '0');
+                const mStr = String(minutes).padStart(2, '0');
+                const sStr = String(seconds).padStart(2, '0');
+
+                timer.innerHTML = `<i class="bi bi-stopwatch"></i> 限時特價剩 <strong>${hStr}:${mStr}:${sStr}</strong>`;
+                timer.className = 'badge bg-warning text-dark promo-badge countdown-timer';
+                
+                checkStock(itemId);
+            }
+        });
+    }
+
+    setInterval(updateCountdowns, 1000);
+    updateCountdowns();
+
+    function checkStock(itemId) {
+        const stockEl = document.getElementById(`stock-count-${itemId}`);
+        if (!stockEl) return true; // 非特價限份餐點跳過檢查
+        
+        const currentStock = Number(stockEl.innerText || 0);
+        const btn = document.querySelector(`.id-cart-btn-${itemId}`);
+
+        if (btn && btn.getAttribute('data-is-expired') === 'true') return false;
+
+        if (currentStock <= 0) {
+            if (btn) {
+                btn.disabled = true;
+                btn.classList.replace('add-to-cart-btn', 'btn-secondary');
+                btn.innerText = '已售罄';
+            }
+            return false;
+        } else {
+            if (btn && btn.disabled && btn.getAttribute('data-is-expired') !== 'true') {
+                btn.disabled = false;
+                btn.classList.replace('btn-secondary', 'add-to-cart-btn');
+                btn.innerHTML = '<i class="bi bi-cart-plus"></i> 加入購物車';
+            }
+        }
+        return true;
+    }
+
     function handleAddToCart(button) {
         const id = button.dataset.itemId;
         const name = button.dataset.itemName;
         const price = Number(button.dataset.itemPrice || 0);
-        const modifiers = String(button.dataset.itemModifiers || '').toLowerCase();
+        let modifiers = String(button.dataset.itemModifiers || '').trim().toLowerCase();
 
-        if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
+        // 檢查庫存
+        if (!checkStock(id)) {
+            alert('抱歉，該餐點特價份額已售罄或活動已結束！');
+            return;
+        }
+
+        if (modifiers === 'ice' || modifiers === 'sugar' || modifiers === 'drink') modifiers = 'ice_sugar';
+        if (modifiers === 'spicy_level' || modifiers === 'spice') modifiers = 'spicy';
+        if (modifiers === 'addon' || modifiers === 'extra') modifiers = 'addons';
+
+        if (!modifiers || modifiers === 'none' || modifiers === 'undefined' || modifiers === 'null' || modifiers === '') {
+            const n = name.toLowerCase();
+            if (n.includes('茶') || n.includes('奶') || n.includes('咖啡') || n.includes('飲') || n.includes('水') || n.includes('汁') || n.includes('拿鐵') || n.includes('糖水')) {
+                modifiers = 'ice_sugar';
+            } else if (n.includes('麵') || n.includes('湯') || n.includes('麻辣') || n.includes('鍋') || n.includes('牛肉') || n.includes('辣')) {
+                modifiers = 'spicy';
+            } else if (n.includes('飯') || n.includes('堡') || n.includes('土司') || n.includes('吐司') || n.includes('便當') || n.includes('漢堡')) {
+                modifiers = 'addons';
+            }
+        }
+
+        if (!modifiers || modifiers === 'none' || modifiers === 'null') {
             addToCart(id, name, price, '');
             return;
         }
@@ -356,13 +499,23 @@
                     </div>
                 </div>`;
         } else {
-            addToCart(id, name, price, '');
-            return;
+            html = `
+                <div class="mb-3">
+                    <label class="form-label">備註選擇</label>
+                    <select id="mod-spicy" class="form-select">
+                        <option value="正常">正常</option>
+                        <option value="不要蔥">不要蔥</option>
+                        <option value="加辣">加辣</option>
+                    </select>
+                </div>`;
         }
 
         if (modalBody) modalBody.innerHTML = html;
-        const modifierModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal'));
-        modifierModal.show();
+        const modifierModalEl = document.getElementById('modifierModal');
+        if (modifierModalEl) {
+            const modifierModal = bootstrap.Modal.getOrCreateInstance(modifierModalEl);
+            modifierModal.show();
+        }
     }
 
     function confirmAddToCartWithModifier() {
@@ -378,7 +531,7 @@
 
         if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
         if (spicy) customTextArr.push(spicy.value);
-        if (addons.length > 0) {
+        if (addons && addons.length > 0) {
             addons.forEach(cb => {
                 customTextArr.push(cb.value);
                 extraPrice += Number(cb.getAttribute('data-extra') || 0);
@@ -391,8 +544,8 @@
 
         const modalEl = document.getElementById('modifierModal');
         if (modalEl) {
-            const modalInstance = bootstrap.Modal.getOrCreateInstance(modalEl);
-            modalInstance.hide();
+            const modalInstance = bootstrap.Modal.getInstance(modalEl);
+            if (modalInstance) modalInstance.hide();
         }
     }
 
@@ -400,9 +553,21 @@
         const item = cart.find(i => i.id === id && i.customization === customization);
         if (item) item.quantity += 1;
         else cart.push({id, name, price: Number(price || 0), quantity: 1, customization});
+        
+        // 扣除特價份額 (若有的話)
+        const stockEl = document.getElementById(`stock-count-${id}`);
+        if (stockEl) {
+            let current = Number(stockEl.innerText || 0);
+            if (current > 0) {
+                current -= 1;
+                stockEl.innerText = current;
+                checkStock(id);
+            }
+        }
+
         updateCartUI();
         const toastEl = document.createElement('div');
-        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow';
+        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow z-3';
         toastEl.innerHTML = `已加入：${name} <span class="fw-bold">+1</span>`;
         document.body.appendChild(toastEl);
         setTimeout(() => toastEl.remove(), 1300);
@@ -416,62 +581,102 @@
         const finalEl = document.getElementById('cart-final');
         const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
         
-        count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
+        if (count) count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
         if (!cart.length) {
-            container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
-            totalEl.innerText = '0.00';
-            discountEl.innerText = '0.00';
-            finalEl.innerText = '0.00';
+            if (container) container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
+            if (totalEl) totalEl.innerText = '0.00';
+            if (discountEl) discountEl.innerText = '0.00';
+            if (finalEl) finalEl.innerText = '0.00';
             return;
         }
-        container.innerHTML = cart.map((item, idx) => `
-            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
-                <div>
-                    <div class="fw-bold text-warning">${item.name}</div>
-                    ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
-                    <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
+        if (container) {
+            container.innerHTML = cart.map((item, idx) => `
+                <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
+                    <div>
+                        <div class="fw-bold text-warning">${item.name}</div>
+                        ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
+                        <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
+                    </div>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-secondary text-white" type="button" onclick="changeQty(${idx}, -1)">-</button>
+                        <button class="btn btn-outline-secondary text-white" type="button" onclick="changeQty(${idx}, 1)">+</button>
+                    </div>
                 </div>
-                <div class="btn-group btn-group-sm" role="group">
-                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
-                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
-                </div>
-            </div>
-        `).join('');
-        totalEl.innerText = total.toFixed(2);
-        discountEl.innerText = '0.00';
-        finalEl.innerText = total.toFixed(2);
+            `).join('');
+        }
+        if (totalEl) totalEl.innerText = total.toFixed(2);
+        if (discountEl) discountEl.innerText = '0.00';
+        if (finalEl) finalEl.innerText = total.toFixed(2);
     }
 
     function changeQty(index, delta) {
+        if (!cart[index]) return;
+        const targetItem = cart[index];
+
+        if (delta < 0) {
+            const stockEl = document.getElementById(`stock-count-${targetItem.id}`);
+            if (stockEl) {
+                let current = Number(stockEl.innerText || 0);
+                stockEl.innerText = current + 1;
+                checkStock(targetItem.id);
+            }
+        } else if (delta > 0) {
+            if (!checkStock(targetItem.id)) {
+                alert('剩餘份額不足！');
+                return;
+            }
+            const stockEl = document.getElementById(`stock-count-${targetItem.id}`);
+            if (stockEl) {
+                let current = Number(stockEl.innerText || 0);
+                if (current > 0) {
+                    stockEl.innerText = current - 1;
+                    checkStock(targetItem.id);
+                }
+            }
+        }
+
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
         updateCartUI();
     }
 
     function openPreview() {
-        if (!cart.length) { alert('購物車為空'); return; }
+        if (!cart || cart.length === 0) {
+            alert('購物車目前是空的，請先挑選餐點！');
+            return;
+        }
         const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
         const preview = document.getElementById('preview-items');
-        preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
-            <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
-                <div>
-                    <div>${item.name} x${item.quantity}</div>
-                    ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
-                </div>
-                <span class="fw-bold">$${(item.price * item.quantity).toFixed(2)}</span>
-            </li>`).join('') + '</ul>';
-        document.getElementById('preview-subtotal').innerText = subtotal.toFixed(2);
-        document.getElementById('preview-discount').innerText = '0.00';
-        document.getElementById('preview-final').innerText = subtotal.toFixed(2);
-        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('confirmModal'));
-        modal.show();
+        if (preview) {
+            preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
+                <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
+                    <div>
+                        <div><strong>${item.name}</strong> x ${item.quantity}</div>
+                        ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
+                    </div>
+                    <span class="fw-bold text-warning">$${(item.price * item.quantity).toFixed(2)}</span>
+                </li>`).join('') + '</ul>';
+        }
+        
+        const subEl = document.getElementById('preview-subtotal');
+        const discEl = document.getElementById('preview-discount');
+        const finEl = document.getElementById('preview-final');
+        if (subEl) subEl.innerText = subtotal.toFixed(2);
+        if (discEl) discEl.innerText = '0.00';
+        if (finEl) finEl.innerText = subtotal.toFixed(2);
+
+        const modalEl = document.getElementById('confirmModal');
+        if (modalEl) {
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.show();
+        }
     }
 
     function confirmCheckout() {
-        if (!cart.length) return;
+        if (!cart || cart.length === 0) return;
         const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
-        const orderType = document.getElementById('orderType').value;
-        const paymentMethod = document.getElementById('paymentMethod').value;
+        const orderType = document.getElementById('orderType')?.value || '內用';
+        const paymentMethod = document.getElementById('paymentMethod')?.value || 'Cash';
 
         fetch('/submit_order', {
             method: 'POST',
@@ -499,27 +704,38 @@
                 if (cs) cs.hide();
             }
 
-            document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
-            document.getElementById('receipt-user').textContent = data.user_name;
-            document.getElementById('receipt-type').textContent = data.order_type;
-            document.getElementById('receipt-payment').textContent = data.payment_method;
-            document.getElementById('receipt-total').textContent = data.total_price.toFixed(2);
+            const rOrderId = document.getElementById('receipt-order-id');
+            const rUser = document.getElementById('receipt-user');
+            const rType = document.getElementById('receipt-type');
+            const rPayment = document.getElementById('receipt-payment');
+            const rTotal = document.getElementById('receipt-total');
+
+            if (rOrderId) rOrderId.textContent = '#' + data.order_id;
+            if (rUser) rUser.textContent = data.user_name;
+            if (rType) rType.textContent = data.order_type;
+            if (rPayment) rPayment.textContent = data.payment_method;
+            if (rTotal) rTotal.textContent = data.total_price.toFixed(2);
 
             const itemsBody = document.getElementById('receipt-items-body');
-            itemsBody.innerHTML = data.items.map(item => `
-                <tr>
-                    <td>
-                        <div>${item.name}</div>
-                        ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
-                    </td>
-                    <td>x ${item.quantity}</td>
-                    <td>$${item.price}</td>
-                    <td>$${item.subtotal}</td>
-                </tr>
-            `).join('');
+            if (itemsBody && data.items) {
+                itemsBody.innerHTML = data.items.map(item => `
+                    <tr>
+                        <td>
+                            <div>${item.name}</div>
+                            ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
+                        </td>
+                        <td>x ${item.quantity}</td>
+                        <td>$${item.price}</td>
+                        <td>$${item.subtotal}</td>
+                    </tr>
+                `).join('');
+            }
 
-            const receiptModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal'));
-            receiptModal.show();
+            const receiptModalEl = document.getElementById('receiptModal');
+            if (receiptModalEl) {
+                const receiptModal = bootstrap.Modal.getOrCreateInstance(receiptModalEl);
+                receiptModal.show();
+            }
         })
         .catch(e => {
             console.error(e);
@@ -598,7 +814,7 @@
                                     </tbody>
                                 </table>
                                 <div class="text-end fw-bold text-danger fs-6">
-                                    總金額：$${o.total_price.toFixed(2)}
+                                    總金額：$${Number(o.total_price).toFixed(2)}
                                 </div>
                             </div>
                         </div>
@@ -606,8 +822,11 @@
                 }).join('');
             }
 
-            const historyModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('historyModal'));
-            historyModal.show();
+            const historyModalEl = document.getElementById('historyModal');
+            if (historyModalEl) {
+                const historyModal = bootstrap.Modal.getOrCreateInstance(historyModalEl);
+                historyModal.show();
+            }
         })
         .catch(err => {
             console.error('Error fetching orders:', err);
@@ -617,6 +836,7 @@
 
     function sortMenu(mode) {
         const container = document.getElementById('menuList');
+        if (!container) return;
         const rows = [...container.querySelectorAll('.menu-row')];
         rows.sort((a, b) => {
             if (mode === 'recommended') return Number(b.dataset.recommended) - Number(a.dataset.recommended);
@@ -629,9 +849,9 @@
     }
 
     function filterMenu() {
-        const q = document.getElementById('searchInput').value.toLowerCase();
-        const max = Number(document.getElementById('maxPrice').value) || Number.POSITIVE_INFINITY;
-        const cat = document.getElementById('categoryFilter').value;
+        const q = document.getElementById('searchInput')?.value.toLowerCase() || '';
+        const max = Number(document.getElementById('maxPrice')?.value) || Number.POSITIVE_INFINITY;
+        const cat = document.getElementById('categoryFilter')?.value || 'all';
         document.querySelectorAll('#menuList .menu-row').forEach(row => {
             const text = row.innerText.toLowerCase();
             const price = Number(row.dataset.price || 0);
@@ -643,9 +863,12 @@
     }
 
     function resetFilters() {
-        document.getElementById('searchInput').value = '';
-        document.getElementById('maxPrice').value = '';
-        document.getElementById('categoryFilter').value = 'all';
+        const s = document.getElementById('searchInput');
+        const m = document.getElementById('maxPrice');
+        const c = document.getElementById('categoryFilter');
+        if (s) s.value = '';
+        if (m) m.value = '';
+        if (c) c.value = 'all';
         filterMenu();
     }
 
