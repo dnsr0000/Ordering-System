@@ -5,73 +5,58 @@
 📝 專案簡介 (Project Overview)
 本專案為一套結合網頁前端與電腦視覺技術的實體店面自助點餐機 (Kiosk) 系統。
 系統提供完整的顧客點餐介面、購物車功能，並導入人臉辨識技術 (Face Recognition) 
-實現會員快速登入。後端同時具備完善的店家管理儀表板 (Admin Dashboard)，
-可即時管理菜單與會員資料。
+實現會員快速登入[cite: 2]。後端同時具備完善的店家管理儀表板 (Admin Dashboard)，
+可即時管理菜單與會員資料[cite: 2]。
 
 🚀 核心技術與模組 (Technologies)
-- Backend: Flask (Python)
-- Database: SQLite (SQLAlchemy)
-- Computer Vision: OpenCV (DNN 模組)
-- AI Models: YuNet (Face Detection), SFace (Face Recognition)
-- Frontend: HTML5, Bootstrap 5, Vanilla JavaScript
+- Backend: Flask (Python)[cite: 2]
+- Database: SQLite (SQLAlchemy)[cite: 2]
+- Computer Vision: OpenCV (DNN 模組)[cite: 2]
+- AI Models: YuNet (Face Detection), SFace (Face Recognition)[cite: 2]
+- Frontend: HTML5, Bootstrap 5, Vanilla JavaScript (含 LocalStorage 狀態持久化)[cite: 2]
 
 📂 專案架構圖 (Project Structure)
 Project Root/
-├── app.py                                  # 核心 Backend 主程式
-├── menu.db                                 # SQLite 資料庫 (自動生成)
-├── face_detection_yunet_2023mar.onnx       # YuNet 人臉偵測模型 (需手動放入)
-├── face_recognition_sface_2021dec.onnx     # SFace 人臉識別模型 (需手動放入)
-├── static/                                 # 靜態資源與上傳檔案
-│   ├── menu/                               # 存放店家上傳的餐點照片
-│   └── member/                             # 存放會員註冊時擷取的人臉照片
-└── templates/                              # 前端 HTML 模板
-    ├── admin.html                          # 店家管理後台 (登入與儀表板)
-    ├── customer.html                       # 顧客點餐首頁 (Kiosk UI)
-    └── register.html                       # 會員註冊與相機拍攝介面
+├── app.py                                  # 核心 Backend 主程式[cite: 2]
+├── menu.db                                 # SQLite 資料庫 (向下相容自動升級)[cite: 2]
+├── face_detection_yunet_2023mar.onnx       # YuNet 人臉偵測模型[cite: 2]
+├── face_recognition_sface_2021dec.onnx     # SFace 人臉識別模型[cite: 2]
+├── static/                                 # 靜態資源與上傳檔案[cite: 2]
+│   ├── menu/                               # 存放店家上傳的餐點照片[cite: 2]
+│   └── member/                             # 存放會員註冊時擷取的人臉照片[cite: 2]
+└── templates/                              # 前端 HTML 模板[cite: 2]
+    ├── admin.html                          # 店家管理後台 (登入與儀表板)[cite: 2]
+    ├── customer.html                       # 顧客點餐首頁 (Kiosk UI)[cite: 2]
+    ├── register.html                       # 會員註冊、雙軌登入與相機拍攝介面[cite: 2]
+    └── rewards.html                        # M-Points 會員紅利回饋商城
 
 💻 安裝與執行環境 (Environment & Setup)
-1. 作業系統：Windows 11 (已於 25H2 環境測試通過)
-2. Python 版本：Python 3.8+ 
+1. 作業系統：Windows 11 (25H2)[cite: 2]
+2. Python 版本：Python 3.8+[cite: 2]
 3. 安裝必備套件 (Dependencies):
-   打開終端機 (Terminal) 執行以下指令：
-   pip install flask flask-sqlalchemy opencv-python numpy werkzeug
+   打開終端機 (Terminal) 執行以下指令：[cite: 2]
+   pip install flask flask-sqlalchemy opencv-python numpy pandas pandas openpyxl werkzeug[cite: 2]
 
 4. 啟動伺服器：
-   在專案根目錄下執行：
-   python app.py
-   伺服器啟動後，請在瀏覽器輸入：http://127.0.0.1:5000/
+   在專案根目錄下執行：[cite: 2]
+   python app.py[cite: 2]
+   伺服器啟動後，請在瀏覽器輸入：http://127.0.0.1:5000/[cite: 2]
 
 🔑 系統使用指南 (Usage Guide)
 
 【顧客端 - Kiosk】
-- 首頁提供「加入會員」與「人臉快速登入」功能。
-- 註冊時可直接授權開啟 Webcam，系統會自動擷取 (Capture) 臉部特徵。
-- 登入後將自動跳轉至點餐畫面，結帳完成後系統會自動清除 Session 並登出。
+- 雙軌登入：首頁提供「加入會員」與「會員快速登入 (人臉辨識 / 手機號碼)」功能。
+- 智能註冊：提供相機即時視訊彈窗取景，後端具備強制人臉特徵防呆機制，無人臉自動阻斷。
+- 行銷與點數：結帳可輸入折扣碼 (Promo Code) 或使用紅利折抵，點選紅利徽章可進入「M-Points 回饋商城」兌換免費餐點。
+- 購物車：支援跨頁面 localStorage 狀態保留、客製化選項 (冰塊/甜度/加料) 及熱門推薦品項一鍵下單。
 
 【店家後台 - Admin Dashboard】
-- 進入方式：於客用首頁最下方點擊隱藏連結，或直接在網址列輸入 http://127.0.0.1:5000/admin
-- 預設登入帳號 (Username)：1234
-- 預設登入密碼 (Password)：1234
-- 功能：可新增/刪除菜單 (支援圖片上傳)，以及檢視/銷毀會員資料 (採用 ID Reuse Algorithm 回收會員號碼)。
+- 進入方式：於客用首頁最下方點擊隱藏連結，或直接在網址列輸入 http://127.0.0.1:5000/admin[cite: 2]
+- 預設登入：帳號 1234 / 密碼 1234[cite: 2]
+- 營運功能：支援 Excel 批量匯入菜單、單一品項完整編輯、1:1 Cropper.js 圖片裁切、會員紅利名冊檢視。
+- 訂單管理：實時訂單狀態追蹤與切換 (製作中/已出餐)，並支援頁籤狀態記憶，重整不再迷路跳頁。
 
-⚠️ 重要注意事項與排錯 (Troubleshooting & Precautions)
-1. 純英文路徑 (ASCII Path Required)：
-   OpenCV 的 DNN 模組在讀取 ONNX 模型時不支援中文路徑。請確保專案資料夾所在的路徑 (如 Desktop) 每一層都是純英文，否則會觸發 `Can't read ONNX file` 錯誤。
-2. 攝影機權限 (Webcam Access)：
-   人臉辨識與註冊功能預設調用本機第一台攝影機 (`cv2.VideoCapture(0)`)，請確認設備有實體鏡頭且未被其他應用程式佔用。
-3. 照片清理機制：
-   若透過管理員後台刪除菜單或會員，系統會同步物理刪除 `static/menu/` 與 `static/member/` 內的關聯圖檔。請勿手動在資料夾中任意更改檔名，以免 Database 連結失效。
-
-✨ 最新功能更新 (2026/03/18)
-- 新增「會員點數機制」：會員買單可獲得點數，且可在下次結帳時折抵現金。
-- 加入「點數設定」後台管理：管理員可設定每 N 點折 1 元、點數賺取倍數、整體點數功能開關。
-- 提供會員「單一登入」：會員登入後保持 session，可直接快速點餐。
-- 前端完善購物車與結帳預覽：含品項、總價、會員折扣、點數折抵、應付金額。
-- 新增「訂單狀態管理、訂單內容編輯」：管理員可更新訂單狀態 (Pending/Preparing/Ready/Completed/Cancelled) 並直接編輯訂單內文。
-- 加入「熱門推薦」「分類篩選」「價格排序」：顧客可快速篩選/排序菜單。
-- 新增「訂單匯出 CSV」與「營收分析報表」功能。
-
-📌 使用小提醒
-1. 會員點數折抵輸入必須為數字，且不可超過可用點數（系統會自動檢查）。
-2. 若要重置所有點數，請在 admin 單一扣減會員或重新註冊帳號。
-3. 點數功能開關請在 admin > 點數設定調整；關閉後前端將不顯示點數折抵欄位。
+⚠️ 重要注意事項與排錯 (Troubleshooting)
+1. 純英文路徑 (ASCII Path Required)：OpenCV 讀取 ONNX 模型時不支援中文路徑，請確保專案路徑全英文[cite: 2]。
+2. 資料庫遷移 (Auto Migration)：系統已內建 PRAGMA table_info 檢查，啟動時會自動補齊缺失欄位，若遇極端結構衝突，可直接刪除 menu.db 重新啟動[cite: 2]。
+3. 攝影機權限：人臉辨識預設調用本機第一台攝影機 (`cv2.VideoCapture(0)`)，如無法開啟請確認瀏覽器授權[cite: 2]。
