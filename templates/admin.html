@@ -10,40 +10,18 @@
     <style>
         body { background: linear-gradient(180deg, #f5f7fb 0%, #e9eef6 100%); font-family: "Microsoft JhengHei", sans-serif; }
         .admin-login-card { max-width: 430px; margin: 80px auto; border-radius: 20px; border: none; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12); }
-        .admin-login-card .card-body { padding: 2rem; }
-        .navbar { border-bottom: 1px solid rgba(255,255,255,0.06); }
-        .nav-pills .nav-link { border-radius: 999px; }
         .dashboard-summary-card { border: none; border-radius: 18px; box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08); }
-        .dashboard-summary-card .card-body { padding: 1.5rem; }
-        .dashboard-summary-card .card-title { font-size: 0.95rem; letter-spacing: .04em; }
-        .dashboard-summary-card .card-text { font-size: 2rem; font-weight: 700; }
-        .order-card { border-left: 6px solid #0d6efd; transition: transform 0.18s ease, box-shadow 0.18s ease; border-radius: 18px; }
-        .order-card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.08); }
+        .order-card { border-left: 6px solid #0d6efd; transition: transform 0.18s ease; border-radius: 18px; }
+        .order-card:hover { transform: translateY(-4px); }
         .order-card.Pending { border-left-color: #ffc107; }
         .order-card.Completed { border-left-color: #198754; }
         .order-card.Cancelled { border-left-color: #6c757d; }
-        .status-select { min-width: 160px; }
         .status-select.Pending { background-color: #fff3cd; }
         .status-select.Completed { background-color: #d1e7dd; }
         .status-select.Cancelled { background-color: #e2e3e5; }
-        .table th, .table td { vertical-align: middle; }
-        .table-responsive { overflow-x: auto; }
         .img-preview-box { width: 100px; height: 100px; object-fit: cover; border-radius: 12px; border: 2px dashed #ccc; }
-        
-        /* 裁切視窗容器樣式 */
-        .crop-container {
-            width: 100%;
-            height: 400px;
-            background-color: #1a1a1a;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .crop-container img {
-            max-width: 100%;
-            display: block;
-        }
+        .crop-container { width: 100%; height: 400px; background-color: #1a1a1a; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        .crop-container img { max-width: 100%; display: block; }
     </style>
 </head>
 <body>
@@ -87,13 +65,14 @@
     </nav>
 
     <div class="container-fluid p-4">
+        <!-- 頂部數據卡片 -->
         <div class="dashboard-summary mb-4">
             <div class="row g-3">
                 <div class="col-sm-6 col-xl-3">
                     <div class="card dashboard-summary-card">
                         <div class="card-body">
                             <p class="card-title text-uppercase text-secondary mb-2">全部訂單</p>
-                            <p class="card-text text-primary mb-0">{{ orders|length }}</p>
+                            <p class="card-text text-primary fs-2 fw-bold mb-0">{{ orders|length }}</p>
                         </div>
                     </div>
                 </div>
@@ -101,7 +80,7 @@
                     <div class="card dashboard-summary-card">
                         <div class="card-body">
                             <p class="card-title text-uppercase text-secondary mb-2">製作中</p>
-                            <p class="card-text text-warning mb-0">{{ orders|selectattr('status','equalto','Pending')|list|length }}</p>
+                            <p class="card-text text-warning fs-2 fw-bold mb-0">{{ orders|selectattr('status','equalto','Pending')|list|length }}</p>
                         </div>
                     </div>
                 </div>
@@ -109,15 +88,15 @@
                     <div class="card dashboard-summary-card">
                         <div class="card-body">
                             <p class="card-title text-uppercase text-secondary mb-2">已出餐</p>
-                            <p class="card-text text-success mb-0">{{ orders|selectattr('status','equalto','Completed')|list|length }}</p>
+                            <p class="card-text text-success fs-2 fw-bold mb-0">{{ orders|selectattr('status','equalto','Completed')|list|length }}</p>
                         </div>
                     </div>
                 </div>
                 <div class="col-sm-6 col-xl-3">
                     <div class="card dashboard-summary-card">
                         <div class="card-body">
-                            <p class="card-title text-uppercase text-secondary mb-2">會員數</p>
-                            <p class="card-text text-danger mb-0">{{ users|length }}</p>
+                            <p class="card-title text-uppercase text-secondary mb-2">會員總數</p>
+                            <p class="card-text text-danger fs-2 fw-bold mb-0">{{ users|length }}</p>
                         </div>
                     </div>
                 </div>
@@ -125,31 +104,20 @@
         </div>
 
         <ul class="nav nav-pills mb-4 bg-white p-2 rounded shadow-sm" id="adminTab" role="tablist">
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active fw-bold" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders-panel" type="button" role="tab">
-                    <i class="bi bi-card-checklist"></i> 實時訂單管理看板
-                </button>
+            <li class="nav-item">
+                <button class="nav-link active fw-bold" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders-panel" type="button"><i class="bi bi-card-checklist"></i> 實時訂單看板</button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link fw-bold" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-panel" type="button" role="tab">
-                    <i class="bi bi-egg-fried"></i> 菜單品項管理
-                </button>
+            <li class="nav-item">
+                <button class="nav-link fw-bold" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-panel" type="button"><i class="bi bi-egg-fried"></i> 菜單品項管理</button>
             </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link fw-bold" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-panel" type="button" role="tab">
-                    <i class="bi bi-people-fill"></i> 會員名冊管理
-                </button>
+            <li class="nav-item">
+                <button class="nav-link fw-bold" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-panel" type="button"><i class="bi bi-people-fill"></i> 會員名冊與紅利</button>
             </li>
         </ul>
 
         <div class="tab-content" id="adminTabContent">
-            
+            <!-- 1. 訂單看板 -->
             <div class="tab-pane fade show active" id="orders-panel" role="tabpanel">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h4 class="fw-bold m-0"><i class="bi bi-kanban"></i> 實時訂單看板 (Live Order Manager)</h4>
-                    <button class="btn btn-outline-primary btn-sm" onclick="location.reload()"><i class="bi bi-arrow-clockwise"></i> 整理更新</button>
-                </div>
-                
                 <div class="row g-3">
                     {% for order in orders %}
                     <div class="col-md-6 col-lg-4">
@@ -158,153 +126,116 @@
                                 <span class="fw-bold fs-5 text-primary">#{{ order.id }}</span>
                                 <div>
                                     <span class="badge bg-info text-dark me-1">{{ order.order_type }}</span>
-                                    <span class="badge bg-secondary me-1">{{ order.payment_method }}</span>
+                                    <span class="badge bg-secondary">{{ order.payment_method }}</span>
                                 </div>
                             </div>
                             <div class="card-body p-3">
-                                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 text-muted small mb-2">
+                                <div class="d-flex justify-content-between text-muted small mb-2">
                                     <span><i class="bi bi-person"></i> {{ order.table_number }}</span>
                                     <span><i class="bi bi-clock"></i> {{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
-                                    <span class="badge {% if order.status == 'Pending' %}bg-warning text-dark{% elif order.status == 'Completed' %}bg-success{% else %}bg-secondary{% endif %}">{{ order.status }}</span>
                                 </div>
-                                
                                 <hr class="my-2">
-                                
                                 <table class="table table-sm table-borderless mb-2">
                                     <tbody>
                                         {% for item in order.items %}
                                         <tr>
-                                            <td>
-                                                <span class="fw-bold">{{ item.item_name }}</span>
-                                                {% if item.customization %}
-                                                <br><small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> {{ item.customization }}</small>
-                                                {% endif %}
-                                            </td>
-                                            <td class="text-center fw-bold">x {{ item.quantity }}</td>
+                                            <td>{{ item.item_name }} {% if item.customization %}<br><small class="text-danger fw-bold">{{ item.customization }}</small>{% endif %}</td>
+                                            <td class="text-center">x {{ item.quantity }}</td>
                                             <td class="text-end">${{ item.price * item.quantity }}</td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
                                 </table>
-                                
                                 <hr class="my-2">
-                                <div class="d-flex flex-column flex-sm-row justify-content-between align-items-start align-items-sm-center gap-3 mt-3">
+                                <div class="d-flex justify-content-between align-items-center mt-3">
                                     <div>
-                                        <div class="text-secondary small">總計金額</div>
+                                        <div class="text-secondary small">實付 (折扣:${{ order.discount_amount or 0 }})</div>
                                         <h5 class="fw-bold text-danger m-0">${{ order.total_price }}</h5>
                                     </div>
-                                    <div>
-                                        <select class="form-select form-select-sm border-2 fw-bold status-select {{ order.status }}" onchange="changeOrderStatus('{{ order.id }}', this.value)">
-                                            <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
-                                            <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
-                                            <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
-                                        </select>
-                                    </div>
+                                    <select class="form-select form-select-sm status-select {{ order.status }}" onchange="changeOrderStatus('{{ order.id }}', this.value)">
+                                        <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
+                                        <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
+                                        <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
+                                    </select>
                                 </div>
                             </div>
                         </div>
                     </div>
                     {% else %}
-                    <div class="col-12 text-center py-5 text-muted">
-                        <h5>目前尚無任何訂單紀錄！</h5>
-                    </div>
+                    <div class="col-12 text-center py-5 text-muted">目前尚無任何訂單紀錄</div>
                     {% endfor %}
                 </div>
             </div>
 
+            <!-- 2. 菜單管理 -->
             <div class="tab-pane fade" id="menu-panel" role="tabpanel">
                 <div class="card shadow-sm mb-4 border-success">
-                    <div class="card-header bg-success text-white fw-bold d-flex justify-content-between align-items-center">
-                        <span><i class="bi bi-file-earmark-excel-fill"></i> Excel 批量匯入菜單</span>
-                        <small class="text-white-50">支援 .xlsx / .xls / .csv 格式</small>
-                    </div>
+                    <div class="card-header bg-success text-white fw-bold"><i class="bi bi-file-earmark-excel-fill"></i> Excel 批量匯入菜單</div>
                     <div class="card-body p-3">
-                        <form action="/admin/import_excel" method="POST" enctype="multipart/form-data" class="row g-2 align-items-center">
-                            <div class="col-md-9">
-                                <input type="file" class="form-control" name="excel_file" accept=".xlsx, .xls, .csv" required>
+                        <form action="/admin/import_excel" method="POST" enctype="multipart/form-data" class="row g-3 align-items-center">
+                            <div class="col-md-8"><input type="file" class="form-control" name="excel_file" accept=".xlsx, .xls, .csv" required></div>
+                            <div class="col-md-4"><button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-upload"></i> 上傳並匯入菜單</button></div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-plus-circle"></i> 新增單一菜單品項</div>
+                    <div class="card-body p-3">
+                        <form action="/admin/add" method="POST" enctype="multipart/form-data" class="row g-2">
+                            <div class="col-md-2"><input type="text" class="form-control" name="name" placeholder="餐點名稱" required></div>
+                            <div class="col-md-2">
+                                <select class="form-select" name="category">
+                                    <option value="主餐">主餐</option><option value="飲料">飲料</option><option value="點心">點心</option>
+                                </select>
                             </div>
-                            <div class="col-md-3">
-                                <button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-upload"></i> 開始匯入</button>
+                            <div class="col-md-2">
+                                <select class="form-select" name="modifiers">
+                                    <option value="none">無客製化</option><option value="ice_sugar">飲料類 (冰塊/甜度)</option><option value="spicy">辣度選擇</option><option value="addons">主餐加料</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2"><input type="number" class="form-control" name="price" placeholder="單價 ($)" required></div>
+                            <div class="col-md-2"><input type="file" class="form-control" name="image" id="add-image-file" accept="image/*" onchange="initiateCrop(this, null)"></div>
+                            <div class="col-md-2"><button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-plus-lg"></i> 新增品項</button></div>
+                            <div class="col-md-8 mt-2"><input type="text" class="form-control" name="description" placeholder="餐點簡介 (選填)"></div>
+                            <div class="col-md-4 mt-2 d-flex align-items-center gap-3">
+                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" id="add-rec"><label class="form-check-label small fw-bold" for="add-rec">🔥 熱門推薦</label></div>
+                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" id="add-new"><label class="form-check-label small fw-bold" for="add-new">🆕 新品上市</label></div>
                             </div>
                         </form>
                     </div>
                 </div>
 
-                <div class="card shadow-sm border-0">
-                    <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                        <h5 class="fw-bold m-0"><i class="bi bi-list-stars"></i> 菜單品項列表</h5>
-                        <button class="btn btn-primary fw-bold" data-bs-toggle="modal" data-bs-target="#addItemModal">
-                            <i class="bi bi-plus-lg"></i> 新增品項
-                        </button>
-                    </div>
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-list-stars"></i> 現有菜單列表</div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
                             <table class="table table-hover align-middle mb-0">
                                 <thead class="table-light">
-                                    <tr>
-                                        <th>圖片</th>
-                                        <th>名稱</th>
-                                        <th>分類</th>
-                                        <th>單價</th>
-                                        <th>特價狀態</th>
-                                        <th>標籤</th>
-                                        <th>簡介</th>
-                                        <th class="text-center">操作</th>
-                                    </tr>
+                                    <tr><th>ID</th><th>圖片</th><th>名稱</th><th>分類</th><th>客製化</th><th>單價</th><th>標籤</th><th>簡介</th><th>操作</th></tr>
                                 </thead>
                                 <tbody>
                                     {% for item in items %}
                                     <tr>
-                                        <td>
-                                            {% if item.image_path %}
-                                            <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" width="60" height="60" class="rounded object-fit-cover">
-                                            {% else %}
-                                            <span class="badge bg-secondary">無圖片</span>
-                                            {% endif %}
-                                        </td>
+                                        <td>{{ item.id }}</td>
+                                        <td>{% if item.image_path %}<img src="{{ url_for('static', filename='menu/' + item.image_path) }}" width="45" height="45" class="rounded object-fit-cover">{% else %}<span class="text-muted small">無圖</span>{% endif %}</td>
                                         <td class="fw-bold">{{ item.name }}</td>
-                                        <td><span class="badge bg-info text-dark">{{ item.category or '未分類' }}</span></td>
-                                        <td>${{ item.price }}</td>
+                                        <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                                        <td><span class="badge bg-info text-dark">{{ item.modifiers }}</span></td>
+                                        <td class="text-danger fw-bold">${{ item.price }}</td>
+                                        <td>{% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %} {% if item.is_new %}<span class="badge bg-primary">新品</span>{% endif %}</td>
+                                        <td><small class="text-muted">{{ item.description or '' }}</small></td>
                                         <td>
-                                            {% if item.is_special %}
-                                                <span class="badge bg-danger">🔥 特價中 ${{ item.special_price }}</span><br>
-                                                <small class="text-muted">剩餘 {{ item.special_stock }} 份</small>
-                                            {% else %}
-                                                <span class="badge bg-light text-dark border">原價</span>
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            {% if item.is_recommended %}<span class="badge bg-warning text-dark me-1">🔥 熱門</span>{% endif %}
-                                            {% if item.is_new %}<span class="badge bg-primary me-1">🆕 新品</span>{% endif %}
-                                        </td>
-                                        <td class="text-muted small text-truncate" style="max-width: 200px;">{{ item.description or '' }}</td>
-                                        <td class="text-center">
-                                            <button class="btn btn-sm btn-outline-primary me-1" 
-                                                data-id="{{ item.id }}"
-                                                data-name="{{ item.name }}"
-                                                data-category="{{ item.category }}"
-                                                data-price="{{ item.price }}"
-                                                data-description="{{ item.description or '' }}"
-                                                data-modifiers="{{ item.modifiers or 'none' }}"
-                                                data-recommended="{{ '1' if item.is_recommended else '0' }}"
-                                                data-new="{{ '1' if item.is_new else '0' }}"
-                                                data-special="{{ '1' if item.is_special else '0' }}"
-                                                data-special-price="{{ item.special_price or '' }}"
-                                                data-special-stock="{{ item.special_stock or '0' }}"
-                                                data-special-start="{{ item.special_start.strftime('%Y-%m-%dT%H:%M') if item.special_start else '' }}"
-                                                data-special-end="{{ item.special_end.strftime('%Y-%m-%dT%H:%M') if item.special_end else '' }}"
-                                                data-image="{{ url_for('static', filename='menu/' + item.image_path) if item.image_path else '' }}"
-                                                onclick="openEditModal(this)">
-                                                <i class="bi bi-pencil-square"></i> 編輯
-                                            </button>
-                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('確定要刪除「{{ item.name }}」嗎？')">
-                                                <i class="bi bi-trash"></i> 刪除
-                                            </a>
+                                            <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                    data-id="{{ item.id }}" data-name="{{ item.name }}" data-category="{{ item.category }}"
+                                                    data-modifiers="{{ item.modifiers }}" data-price="{{ item.price }}"
+                                                    data-description="{{ item.description or '' }}" data-image="{{ item.image_path or '' }}"
+                                                    data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}"
+                                                    onclick="openEditModal(this)"><i class="bi bi-pencil-square"></i> 編輯</button>
+                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定刪除？')"><i class="bi bi-trash"></i> 刪除</a>
                                         </td>
                                     </tr>
-                                    {% else %}
-                                    <tr><td colspan="8" class="text-center text-muted py-4">目前菜單尚無資料，請先新增品項！</td></tr>
-                                    {% endfor %}
+                                    {% else %}<tr><td colspan="9" class="text-center text-muted py-4">尚無餐點</td></tr>{% endfor %}
                                 </tbody>
                             </table>
                         </div>
@@ -312,369 +243,204 @@
                 </div>
             </div>
 
+            <!-- 3. 會員管理 (含點數) -->
             <div class="tab-pane fade" id="users-panel" role="tabpanel">
-                <div class="card shadow-sm border-0">
-                    <div class="card-header bg-white py-3">
-                        <h5 class="fw-bold m-0"><i class="bi bi-people-fill"></i> 已註冊會員名冊</h5>
-                    </div>
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-people"></i> 會員名冊與紅利點數</div>
                     <div class="card-body p-0">
                         <div class="table-responsive">
                             <table class="table table-hover align-middle mb-0">
                                 <thead class="table-light">
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>人臉照片</th>
-                                        <th>姓名</th>
-                                        <th>電話號碼</th>
-                                    </tr>
+                                    <tr><th>ID</th><th>照片</th><th>姓名</th><th>電話號碼</th><th>累積紅利點數</th><th>操作</th></tr>
                                 </thead>
                                 <tbody>
                                     {% for user in users %}
                                     <tr>
-                                        <td>#{{ user.id }}</td>
-                                        <td>
-                                            <img src="{{ url_for('static', filename='member/' + user.photo_path.replace('\\', '/').split('/')[-1]) }}" width="50" height="50" class="rounded-circle object-fit-cover border">
-                                        </td>
+                                        <td>{{ user.id }}</td>
+                                        <td><img src="{{ url_for('static', filename='member/' + user.photo_path) }}" width="45" height="45" class="rounded-circle object-fit-cover"></td>
                                         <td class="fw-bold">{{ user.name }}</td>
                                         <td>{{ user.phone }}</td>
+                                        <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill"></i> {{ user.points or 0 }} 點</span></td>
+                                        <td><a href="/admin/delete_user/{{ user.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定刪除該會員？')"><i class="bi bi-trash"></i> 刪除會員</a></td>
                                     </tr>
-                                    {% else %}
-                                    <tr><td colspan="4" class="text-center text-muted py-4">目前尚無任何註冊會員！</td></tr>
-                                    {% endfor %}
+                                    {% else %}<tr><td colspan="6" class="text-center text-muted py-4">尚無註冊會員</td></tr>{% endfor %}
                                 </tbody>
                             </table>
                         </div>
                     </div>
                 </div>
             </div>
-
         </div>
     </div>
 
-    <div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <form action="/admin/add" method="POST" enctype="multipart/form-data">
-                    <div class="modal-header bg-primary text-white">
-                        <h5 class="modal-title fw-bold"><i class="bi bi-plus-circle"></i> 新增餐點品項</h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">餐點名稱</label>
-                                <input type="text" class="form-control" name="name" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold">分類</label>
-                                <input type="text" class="form-control" name="category" placeholder="主餐/飲料/小吃" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold">原價 ($)</label>
-                                <input type="number" class="form-control" name="price" min="0" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">客製化選項類型</label>
-                                <select class="form-select" name="modifiers">
-                                    <option value="none">無 (不提供選項)</option>
-                                    <option value="drink">飲料類 (冰塊/甜度)</option>
-                                    <option value="main">主餐類 (加蛋/加辣)</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">品項標籤</label>
-                                <div class="d-flex gap-3 mt-2">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_recommended" id="add-is-recommended">
-                                        <label class="form-check-label fw-bold text-danger" for="add-is-recommended">🔥 熱門推薦</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_new" id="add-is-new">
-                                        <label class="form-check-label fw-bold text-primary" for="add-is-new">🆕 新品上市</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-12 border-top pt-3">
-                                <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" name="is_special" id="add-is-special" onchange="toggleSpecialInputsAdd(this)">
-                                    <label class="form-check-label fw-bold text-danger" for="add-is-special">🔥 啟用限時限額特價</label>
-                                </div>
-                                <div id="add-special-settings-box" class="row g-2 d-none">
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">特價金額 ($)</label>
-                                        <input type="number" class="form-control" name="special_price">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">限額數量 (份)</label>
-                                        <input type="number" class="form-control" name="special_stock" value="0">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">開始時間</label>
-                                        <input type="datetime-local" class="form-control" name="special_start">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">結束時間</label>
-                                        <input type="datetime-local" class="form-control" name="special_end">
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label fw-bold">簡介描述</label>
-                                <textarea class="form-control" name="description" rows="2"></textarea>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label fw-bold">上傳餐點圖片 (建議 1:1)</label>
-                                <input type="file" class="form-control crop-image-input" name="image" accept="image/*" data-preview-id="add-image-preview">
-                                <div class="mt-2">
-                                    <img id="add-image-preview" src="#" class="img-preview-box d-none">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-primary fw-bold">儲存新增</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
+    <!-- 編輯商品 Modal -->
     <div class="modal fade" id="editItemModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <form id="editItemForm" action="" method="POST" enctype="multipart/form-data">
-                    <div class="modal-header bg-warning text-dark">
-                        <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square"></i> 編輯餐點品項</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">餐點名稱</label>
-                                <input type="text" class="form-control" name="name" id="edit-name" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold">分類</label>
-                                <input type="text" class="form-control" name="category" id="edit-category" required>
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label fw-bold">原價 ($)</label>
-                                <input type="number" class="form-control" name="price" id="edit-price" min="0" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">客製化選項類型</label>
-                                <select class="form-select" name="modifiers" id="edit-modifiers">
-                                    <option value="none">無 (不提供選項)</option>
-                                    <option value="drink">飲料類 (冰塊/甜度)</option>
-                                    <option value="main">主餐類 (加蛋/加辣)</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label fw-bold">品項標籤</label>
-                                <div class="d-flex gap-3 mt-2">
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_recommended" id="edit-is-recommended">
-                                        <label class="form-check-label fw-bold text-danger" for="edit-is-recommended">🔥 熱門推薦</label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" name="is_new" id="edit-is-new">
-                                        <label class="form-check-label fw-bold text-primary" for="edit-is-new">🆕 新品上市</label>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-12 border-top pt-3">
-                                <div class="form-check form-switch mb-2">
-                                    <input class="form-check-input" type="checkbox" name="is_special" id="edit-is-special" onchange="toggleSpecialInputsEdit(this)">
-                                    <label class="form-check-label fw-bold text-danger" for="edit-is-special">🔥 啟用限時限額特價</label>
-                                </div>
-                                <div id="edit-special-settings-box" class="row g-2 d-none">
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">特價金額 ($)</label>
-                                        <input type="number" class="form-control" name="special_price" id="edit-special-price">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">限額數量 (份)</label>
-                                        <input type="number" class="form-control" name="special_stock" id="edit-special-stock">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">開始時間</label>
-                                        <input type="datetime-local" class="form-control" name="special_start" id="edit-special-start">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label small fw-bold">結束時間</label>
-                                        <input type="datetime-local" class="form-control" name="special_end" id="edit-special-end">
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label fw-bold">簡介描述</label>
-                                <textarea class="form-control" name="description" id="edit-description" rows="2"></textarea>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label fw-bold">更換圖片 (若不更換請留空)</label>
-                                <input type="file" class="form-control crop-image-input" name="image" accept="image/*" data-preview-id="edit-image-preview">
-                                <div class="mt-2">
-                                    <img id="edit-image-preview" src="#" class="img-preview-box d-none">
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-warning fw-bold">更新保存</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
+                <form id="editItemForm" method="POST" enctype="multipart/form-data">
+                    <div class="modal-header bg-dark text-white">
+                        <h5 class="modal-title"><i class="bi bi-pencil-square"></i> 編輯產品資訊</h5>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        <div class="row g-3">
+                            <div class="col-md-6"><label class="form-label fw-bold">餐點名稱</label><input type="text" class="form-control" name="name" id="edit-name" required></div>
+                            <div class="col-md-3"><label class="form-label fw-bold">分類</label>
+                                <select class="form-select" name="category" id="edit-category">
+                                    <option value="主餐">主餐</option><option value="飲料">飲料</option><option value="點心">點心</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3"><label class="form-label fw-bold">客製化類型</label>
+                                <select class="form-select" name="modifiers" id="edit-modifiers">
+                                    <option value="none">無客製化</option><option value="ice_sugar">飲料類</option><option value="spicy">辣度選擇</option><option value="addons">主餐加料</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4"><label class="form-label fw-bold">單價 ($)</label><input type="number" class="form-control" name="price" id="edit-price" required></div>
+                            <div class="col-md-4 d-flex align-items-center mt-4">
+                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" id="edit-recommended"><label class="form-check-label fw-bold" for="edit-recommended">🔥 熱門推薦</label></div>
+                            </div>
+                            <div class="col-md-4 d-flex align-items-center mt-4">
+                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" id="edit-new"><label class="form-check-label fw-bold" for="edit-new">🆕 新品上市</label></div>
+                            </div>
+                            <div class="col-12"><label class="form-label fw-bold">餐點簡介描述</label><textarea class="form-control" name="description" id="edit-description" rows="2"></textarea></div>
+                            <div class="col-12 border-top pt-3 mt-3">
+                                <label class="form-label fw-bold d-block"><i class="bi bi-image"></i> 更換照片</label>
+                                <div class="d-flex align-items-center gap-3">
+                                    <img id="edit-image-preview" src="" class="img-preview-box">
+                                    <div class="flex-grow-1"><input type="file" class="form-control" name="image" id="edit-image-file" accept="image/*" onchange="initiateCrop(this, 'edit-image-preview')"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer bg-light">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-primary fw-bold px-4"><i class="bi bi-check-circle"></i> 儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 圖片裁切 Modal -->
+    <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true" style="z-index: 1060;">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content border-0 shadow-lg">
                 <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title fw-bold"><i class="bi bi-crop"></i> 調整圖片裁切區域 (1:1 正方形)</h5>
+                    <h5 class="modal-title"><i class="bi bi-crop"></i> 圖片裁切 (1:1 正方形)</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body p-0">
-                    <div class="crop-container">
-                        <img id="cropImageTarget" src="">
+                <div class="modal-body p-3">
+                    <div class="crop-container rounded-3"><img id="crop-image-target" src=""></div>
+                    <div class="d-flex justify-content-between align-items-center mt-3 text-muted small">
+                        <span>支援滑鼠滾輪縮放與旋轉調整。</span>
+                        <div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="if(cropper) cropper.rotate(-90);"><i class="bi bi-arrow-counterclockwise"></i> 向左轉</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="if(cropper) cropper.rotate(90);"><i class="bi bi-arrow-clockwise"></i> 向右轉</button>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer bg-light">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="button" class="btn btn-primary fw-bold" onclick="confirmCrop()"><i class="bi bi-check-lg"></i> 套用裁切</button>
+                    <button type="button" class="btn btn-success fw-bold px-4" onclick="confirmCrop()"><i class="bi bi-check-lg"></i> 完成裁切</button>
                 </div>
             </div>
         </div>
     </div>
 
-{% endif %}
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
-
     <script>
-        function changeOrderStatus(orderId, newStatus) {
-            fetch(`/admin/update_order_status/${orderId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.message) {
-                    location.reload();
-                } else {
-                    alert(data.error || '更新失敗');
-                }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetTab = urlParams.get('tab') || localStorage.getItem('adminActiveTab');
+        if (targetTab === 'menu') {
+            const btn = document.getElementById('menu-tab');
+            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+        } else if (targetTab === 'users') {
+            const btn = document.getElementById('users-tab');
+            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+        }
+
+        document.querySelectorAll('#adminTab button[data-bs-toggle="tab"]').forEach(tabBtn => {
+            tabBtn.addEventListener('shown.bs.tab', function (e) {
+                if (e.target.id === 'menu-tab') localStorage.setItem('adminActiveTab', 'menu');
+                else if (e.target.id === 'users-tab') localStorage.setItem('adminActiveTab', 'users');
+                else if (e.target.id === 'orders-tab') localStorage.setItem('adminActiveTab', 'orders');
             });
+        });
+    });
+
+    function changeOrderStatus(orderId, newStatus) {
+        localStorage.setItem('adminActiveTab', 'orders');
+        fetch(`/admin/update_order_status/${orderId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        }).then(r => r.json()).then(d => { 
+            if (d.message) window.location.href = '/admin'; // 轉址回純後台首頁，清除 ?tab=menu 殘留
+            else alert(d.error); 
+        });
+    }
+
+    function openEditModal(btn) {
+        const d = btn.dataset;
+        document.getElementById('editItemForm').action = '/admin/edit/' + d.id;
+        document.getElementById('edit-name').value = d.name;
+        document.getElementById('edit-category').value = d.category;
+        document.getElementById('edit-modifiers').value = d.modifiers;
+        document.getElementById('edit-price').value = d.price;
+        document.getElementById('edit-description').value = d.description || '';
+        document.getElementById('edit-recommended').checked = d.recommended === '1';
+        document.getElementById('edit-new').checked = d.new === '1';
+        document.getElementById('edit-image-file').value = '';
+        document.getElementById('edit-image-preview').src = d.image ? '/static/menu/' + d.image : 'https://dummyimage.com/100x100/e9ecef/6c757d.png&text=No+Image';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editItemModal')).show();
+    }
+
+    let cropper = null, currentFileInput = null, currentPreviewImgId = null;
+    function initiateCrop(inputElement, previewImgId) {
+        if (inputElement.files && inputElement.files[0]) {
+            currentFileInput = inputElement;
+            currentPreviewImgId = previewImgId;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                document.getElementById('crop-image-target').src = e.target.result;
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('cropModal')).show();
+            };
+            reader.readAsDataURL(inputElement.files[0]);
         }
+    }
 
-        function toggleSpecialInputsAdd(cb) {
-            document.getElementById('add-special-settings-box').classList.toggle('d-none', !cb.checked);
-        }
+    const cropModalEl = document.getElementById('cropModal');
+    cropModalEl.addEventListener('shown.bs.modal', function () {
+        if (cropper) cropper.destroy();
+        cropper = new Cropper(document.getElementById('crop-image-target'), {
+            aspectRatio: 1, viewMode: 1, autoCropArea: 0.9, responsive: true, background: false
+        });
+    });
 
-        function toggleSpecialInputsEdit(cb) {
-            document.getElementById('edit-special-settings-box').classList.toggle('d-none', !cb.checked);
-        }
-
-        function openEditModal(btn) {
-            const id = btn.dataset.id;
-            document.getElementById('editItemForm').action = `/admin/edit/${id}`;
-            document.getElementById('edit-name').value = btn.dataset.name;
-            document.getElementById('edit-category').value = btn.dataset.category;
-            document.getElementById('edit-price').value = btn.dataset.price;
-            document.getElementById('edit-description').value = btn.dataset.description;
-            document.getElementById('edit-modifiers').value = btn.dataset.modifiers;
-            document.getElementById('edit-is-recommended').checked = btn.dataset.recommended === '1';
-            document.getElementById('edit-is-new').checked = btn.dataset.new === '1';
-
-            const isSpecial = btn.dataset.special === '1';
-            const specCheckbox = document.getElementById('edit-is-special');
-            specCheckbox.checked = isSpecial;
-            toggleSpecialInputsEdit(specCheckbox);
-
-            document.getElementById('edit-special-price').value = btn.dataset.specialPrice || '';
-            document.getElementById('edit-special-stock').value = btn.dataset.specialStock || '0';
-            document.getElementById('edit-special-start').value = btn.dataset.specialStart || '';
-            document.getElementById('edit-special-end').value = btn.dataset.specialEnd || '';
-
-            const previewImg = document.getElementById('edit-image-preview');
-            if (btn.dataset.image) {
-                previewImg.src = btn.dataset.image;
-                previewImg.classList.remove('d-none');
-            } else {
-                previewImg.classList.add('d-none');
+    function confirmCrop() {
+        if (!cropper || !currentFileInput) return;
+        const canvas = cropper.getCroppedCanvas({ width: 600, height: 600 });
+        canvas.toBlob(function (blob) {
+            const croppedFile = new File([blob], "cropped_" + Date.now() + ".jpg", { type: "image/jpeg" });
+            const dt = new DataTransfer();
+            dt.items.add(croppedFile);
+            currentFileInput.files = dt.files;
+            if (currentPreviewImgId) {
+                const prev = document.getElementById(currentPreviewImgId);
+                if (prev) prev.src = canvas.toDataURL('image/jpeg');
             }
+            bootstrap.Modal.getInstance(cropModalEl).hide();
+        }, 'image/jpeg', 0.9);
+    }
 
-            new bootstrap.Modal(document.getElementById('editItemModal')).show();
-        }
+    cropModalEl.addEventListener('hidden.bs.modal', function () {
+        if (cropper) { cropper.destroy(); cropper = null; }
+    });
 
-        // Cropper.js 圖片裁切處理邏輯
-        let cropper = null;
-        let currentFileInput = null;
-        let currentPreviewImgId = null;
-        const cropModalEl = document.getElementById('cropModal');
-        const cropImgEl = document.getElementById('cropImageTarget');
-
-        document.querySelectorAll('.crop-image-input').forEach(input => {
-            input.addEventListener('change', function(e) {
-                const files = e.target.files;
-                if (files && files.length > 0) {
-                    currentFileInput = e.target;
-                    currentPreviewImgId = e.target.dataset.previewId;
-                    const file = files[0];
-                    const url = URL.createObjectURL(file);
-
-                    cropImgEl.src = url;
-                    const cropModal = new bootstrap.Modal(cropModalEl);
-                    cropModal.show();
-                }
-            });
-        });
-
-        cropModalEl.addEventListener('shown.bs.modal', function () {
-            cropper = new Cropper(cropImgEl, {
-                aspectRatio: 1,
-                viewMode: 1,
-                autoCropArea: 0.9,
-            });
-        });
-
-        cropModalEl.addEventListener('hidden.bs.modal', function () {
-            if (cropper) {
-                cropper.destroy();
-                cropper = null;
-            }
-        });
-
-        function confirmCrop() {
-            if (!cropper || !currentFileInput) return;
-
-            const canvas = cropper.getCroppedCanvas({
-                width: 600,
-                height: 600
-            });
-
-            canvas.toBlob(function (blob) {
-                const croppedFile = new File([blob], "cropped_menu_" + Date.now() + ".jpg", { type: "image/jpeg" });
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(croppedFile);
-                currentFileInput.files = dataTransfer.files;
-
-                if (currentPreviewImgId) {
-                    const previewImg = document.getElementById(currentPreviewImgId);
-                    if (previewImg) {
-                        previewImg.src = canvas.toDataURL('image/jpeg');
-                        previewImg.classList.remove('d-none');
-                    }
-                }
-
-                const cropModal = bootstrap.Modal.getInstance(cropModalEl);
-                cropModal.hide();
-            }, 'image/jpeg', 0.92);
-        }
     </script>
+{% endif %}
 </body>
 </html>

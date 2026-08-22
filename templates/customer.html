@@ -4,7 +4,6 @@
     <meta charset="utf-8">
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>自助點餐系統 (Kiosk)</title>
-    
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
@@ -18,13 +17,12 @@
         .add-to-cart-btn:hover { background-color: #ffc964; }
         .btn-login { background-color: #2d9cdb; color: white; }
         .btn-register { background-color: #28a745; color: white; }
-        .hero { min-height: 58vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, rgba(0,0,0,0.65), rgba(10,10,10,0.95)), url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 18px; margin-bottom: 25px; }
-        .hero h1 { letter-spacing: 1px; }
+        .hero { min-height: 50vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, rgba(0,0,0,0.65), rgba(10,10,10,0.95)), url('https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 18px; margin-bottom: 25px; }
         .form-control, .form-select { background: #222; color: #fff; border: 1px solid rgba(255,255,255,0.16); }
         .form-control::placeholder, .form-select option { color: #d8d8d8; }
         .form-control:focus, .form-select:focus { background: #2b2b2b; color: #fff; box-shadow: 0 0 0 0.2rem rgba(245,165,0,0.2); border-color: #f5a500; }
         .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255,255,255,0.16); }
-        .promo-badge { font-size: 0.8rem; padding: 2px 6px; border-radius: 4px; }
+        .promo-badge { background: linear-gradient(45deg, #f59e0b, #ef4444); color: #fff; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -37,7 +35,12 @@
             <i class="bi bi-shop-window text-warning fs-3"></i>
             <div>
                 <div class="h5 mb-0 text-white">Restaurantly 自助點餐</div>
-                <small class="text-muted">歡迎回來，{{ session['user_name'] }}！</small>
+                <small class="text-white-50">
+                    歡迎回來，<strong>{{ session['user_name'] }}</strong>！ 
+                    <a href="/rewards" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" style="cursor: pointer; transition: transform 0.15s ease;" title="點擊進入紅利回饋商店">
+                        <i class="bi bi-star-fill text-danger"></i> 紅利點數: <strong id="nav-user-points">{{ user_points }}</strong> 點 <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
+                    </a>
+                </small>
             </div>
         </div>
         <div>
@@ -56,32 +59,43 @@
     <div class="container">
         <div class="hero text-white text-center p-4 mb-4">
             <div>
-                <h1 class="display-6">快速點餐，輕鬆結帳</h1>
-                <p class="lead">現在可直接加入購物車並在右側快速結帳。</p>
+                <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
+                <p class="lead">消費每滿 $10 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
+                <div class="d-flex justify-content-center gap-2 flex-wrap">
+                    <span class="promo-badge"><i class="bi bi-ticket-perforated"></i> 折扣碼 VIP90 (享9折)</span>
+                    <span class="promo-badge"><i class="bi bi-ticket-perforated"></i> 折扣碼 SAVE30 (滿200折30)</span>
+                </div>
             </div>
         </div>
 
-        {% set hot_items = items|selectattr('is_recommended')|list %}
+{% set hot_items = items|selectattr('is_recommended')|list %}
         {% if hot_items %}
-        <div class="mb-3">
+        <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="mb-0">🔥 熱門推薦</h5>
-                <small class="text-muted">我們為你挑選的招牌</small>
+                <h5 class="mb-0 fw-bold text-white"><span class="text-danger">🔥</span> 熱門推薦</h5>
+                <small class="text-white-50"><i class="bi bi-hand-index-thumb"></i> 點擊卡片直接加入購物車</small>
             </div>
             <div class="row gy-2">
                 {% for item in hot_items %}
-                <div class="col-sm-4">
-                    <div class="p-2 rounded" style="background:#1d1d1d; border:1px solid rgba(255,255,255,0.1);">
-                        <div class="d-flex justify-content-between align-items-start">
-                            <div>
-                                <strong>{{ item.name }}</strong>
-                                {% if item.is_special and item.special_price %}
-                                    <div class="text-danger fw-bold">${{ item.special_price }} <span class="text-muted text-decoration-line-through small">${{ item.price }}</span></div>
-                                {% else %}
-                                    <div class="text-warning">${{ item.price }}</div>
-                                {% endif %}
-                            </div>
+                <div class="col-sm-6 col-md-4">
+                    <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
+                         style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.2s ease;"
+                         data-item-id="{{ item.id }}"
+                         data-item-name="{{ item.name }}"
+                         data-item-price="{{ item.price }}"
+                         data-item-modifiers="{{ item.modifiers or 'none' }}"
+                         onclick="handleAddToCart(this)"
+                         onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)'; this.style.background='#222b3d';"
+                         onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)'; this.style.background='#181f2c';">
+                        <div>
+                            <div class="fw-bold text-white fs-6">{{ item.name }}</div>
+                            <div class="text-warning fw-bold mt-1">${{ item.price }}</div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
                             <span class="badge bg-danger">熱門</span>
+                            <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+                                <i class="bi bi-plus-lg text-dark fw-bold"></i>
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -125,8 +139,7 @@
 
         <div id="menuList" class="row gy-3">
             {% for item in items %}
-            {% set current_price = item.special_price if item.is_special and item.special_price else item.price %}
-            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ current_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
+            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ item.price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
                 <div class="menu-card p-3">
                     <div class="d-flex align-items-start gap-3">
                         {% if item.image_path %}
@@ -139,40 +152,17 @@
                                 <div>
                                     <h5 class="mb-1 text-warning">{{ item.name }}</h5>
                                     <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
-                                    {% if item.is_recommended %}<span class="badge bg-danger">熱門推薦</span>{% endif %}
+                                    {% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %}
                                     {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
-                                    {% if item.is_special %}<span class="badge bg-warning text-dark">限時特價</span>{% endif %}
                                 </div>
-                                <div class="text-end">
-                                    {% if item.is_special and item.special_price %}
-                                        <h5 class="text-danger mb-0">${{ item.special_price }}</h5>
-                                        <small class="text-muted text-decoration-line-through">${{ item.price }}</small>
-                                    {% else %}
-                                        <h5 class="text-success mb-0">${{ item.price }}</h5>
-                                    {% endif %}
-                                </div>
+                                <h5 class="text-success">${{ item.price }}</h5>
                             </div>
-                            <p class="mb-2 text-muted small mt-1">{{ item.description or '無描述' }}</p>
-                            
-                            {% if item.is_special %}
-                            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
-                                <span class="badge bg-warning text-dark promo-badge countdown-timer" 
-                                      data-item-id="{{ item.id }}" 
-                                      data-start-time="{{ item.special_start.strftime('%Y-%m-%dT%H:%M:%S') if item.special_start else '' }}"
-                                      data-end-time="{{ item.special_end.strftime('%Y-%m-%dT%H:%M:%S') if item.special_end else '' }}">
-                                    <i class="bi bi-clock-history"></i> 計算特價時間中...
-                                </span>
-                                <span class="badge bg-danger promo-badge stock-badge" id="stock-badge-{{ item.id }}">
-                                    剩餘份額：<span class="stock-count" id="stock-count-{{ item.id }}">{{ item.special_stock if item.special_stock is not none else 0 }}</span> 份
-                                </span>
-                            </div>
-                            {% endif %}
-
-                            <button class="btn add-to-cart-btn btn-sm id-cart-btn-{{ item.id }}" type="button"
+                            <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
+                            <button class="btn add-to-cart-btn btn-sm" type="button"
                                 data-item-id="{{ item.id }}"
                                 data-item-name="{{ item.name }}"
-                                data-item-price="{{ current_price }}"
-                                data-item-modifiers="{{ item.modifiers if item.modifiers else 'none' }}"
+                                data-item-price="{{ item.price }}"
+                                data-item-modifiers="{{ item.modifiers or 'none' }}"
                                 onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
                         </div>
                     </div>
@@ -187,77 +177,114 @@
     </div>
 </main>
 
-<div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel">
+<!-- 購物車側邊欄 (Cart Sidebar) -->
+<div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel" style="width: 420px;">
     <div class="offcanvas-header border-secondary border-bottom">
-        <h5 id="cartLabel">你的購物車</h5>
+        <h5 id="cartLabel"><i class="bi bi-cart3"></i> 你的購物車</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
     </div>
     <div class="offcanvas-body d-flex flex-column">
         <div id="cart-items" class="flex-grow-1 overflow-auto mb-3">
             <div class="text-center text-muted">購物車目前空空如也</div>
         </div>
+
         <div class="border-top border-secondary pt-3">
-            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">總計</span><span class="fw-bold text-danger">$<span id="cart-total">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">會員折扣</span><span class="text-success">$<span id="cart-discount">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-2"><span class="fw-bold">應付金額</span><span class="fw-bold text-warning">$<span id="cart-final">0.00</span></span></div>
+            <!-- 優惠折扣碼區塊 -->
             <div class="mb-3">
-                <label class="form-label text-white-50">用餐方式</label>
-                <select id="orderType" class="form-select">
+                <label class="form-label text-white-50 small"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼 (Promo Code)</label>
+                <div class="input-group input-group-sm">
+                    <input type="text" id="promoInput" class="form-control text-uppercase" placeholder="例如 VIP90">
+                    <button class="btn btn-warning" type="button" onclick="applyPromoCode()">套用</button>
+                </div>
+                <div id="promo-msg" class="small mt-1"></div>
+            </div>
+
+            <!-- 紅利點數折抵區塊 -->
+            <div class="card bg-secondary bg-opacity-25 border-warning p-2 mb-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" id="usePointsToggle" onchange="togglePointsRedemption()">
+                        <label class="form-check-label small fw-bold" for="usePointsToggle">使用紅利點數折抵</label>
+                    </div>
+                    <span class="badge bg-warning text-dark">現有 <span id="cart-user-points">{{ user_points }}</span> 點</span>
+                </div>
+                <div id="points-input-box" class="mt-2" style="display:none;">
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">折抵點數</span>
+                        <input type="number" id="pointsToUse" class="form-control" min="0" value="0" oninput="calculateTotal()">
+                    </div>
+                    <small class="text-white-50">1 點折抵 $1 元，最高折抵全額。</small>
+                </div>
+            </div>
+
+            <!-- 金額結算明細 -->
+            <div class="d-flex justify-content-between mb-1 small text-white-50"><span>小計 (Subtotal)</span><span>$<span id="cart-subtotal">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-1 small text-info"><span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-1 small text-success"><span>紅利點數折抵</span><span>-$<span id="cart-points-discount">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-2 fs-5 border-top border-secondary pt-2"><span class="fw-bold">應付金額</span><span class="fw-bold text-warning">$<span id="cart-final">0.00</span></span></div>
+            <div class="d-flex justify-content-between mb-3 text-warning small"><span>🌟 本次預估獲得積點</span><span>+<span id="cart-earned-points">0</span> 點</span></div>
+
+            <div class="mb-2">
+                <select id="orderType" class="form-select form-select-sm">
                     <option value="內用">內用 (Dine-in)</option>
                     <option value="外帶">外帶 (Take-out)</option>
                 </select>
             </div>
             <div class="mb-3">
-                <label class="form-label text-white-50">付款方式</label>
-                <select id="paymentMethod" class="form-select">
+                <select id="paymentMethod" class="form-select form-select-sm">
                     <option value="Cash">現金 Cash</option>
                     <option value="Credit Card">信用卡 Credit Card</option>
                     <option value="Line Pay">Line Pay</option>
                 </select>
             </div>
-            <button class="btn btn-warning w-100 fw-bold py-2" type="button" onclick="openPreview()">✅ 下單前確認</button>
+            <button class="btn btn-warning w-100 fw-bold py-2" onclick="openPreview()">✅ 下單前確認</button>
         </div>
     </div>
 </div>
 
+<!-- 客製化彈窗 -->
 <div class="modal fade" id="modifierModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content bg-dark text-white">
-      <div class="modal-header border-secondary">
+      <div class="modal-header">
         <h5 class="modal-title" id="modifierModalTitle">客製化選擇</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body" id="modifierModalBody"></div>
-      <div class="modal-footer border-secondary">
-        <button type="button" class="btn btn-warning w-100 fw-bold" onclick="confirmAddToCartWithModifier()">確認加入購物車</button>
+      <div class="modal-footer">
+        <button class="btn btn-warning w-100 fw-bold" onclick="confirmAddToCartWithModifier()">確認加入購物車</button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- 訂單確認彈窗 -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-lg modal-dialog-centered">
+  <div class="modal-dialog modal-lg">
     <div class="modal-content bg-dark text-white">
-      <div class="modal-header border-secondary">
+      <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-clipboard-check"></i> 訂單送出確認</h5>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <div id="preview-items"></div>
-        <div class="mt-3 text-end">
-          <div>總計: $<span id="preview-subtotal">0.00</span></div>
-          <div>折扣: $<span id="preview-discount">0.00</span></div>
-          <div class="fw-bold fs-5 text-warning">應付: $<span id="preview-final">0.00</span></div>
+        <div class="mt-3 p-3 bg-secondary bg-opacity-25 rounded text-end">
+          <div>商品小計: $<span id="preview-subtotal">0.00</span></div>
+          <div class="text-info">促銷折扣: -$<span id="preview-promo">0.00</span></div>
+          <div class="text-success">點數折抵: -$<span id="preview-points">0.00</span></div>
+          <div class="fw-bold fs-4 text-warning">應付總額: $<span id="preview-final">0.00</span></div>
+          <div class="text-warning small">結帳預估新增點數: +<span id="preview-earned">0</span> 點</div>
         </div>
       </div>
-      <div class="modal-footer border-secondary">
-        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-        <button type="button" class="btn btn-success fw-bold" onclick="confirmCheckout()">確認送出訂單</button>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+        <button class="btn btn-success fw-bold px-4" onclick="confirmCheckout()">確認送出訂單</button>
       </div>
     </div>
   </div>
 </div>
 
+<!-- 訂單收據彈窗 (結帳成功後彈出) -->
 <div class="modal fade text-dark" id="receiptModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
@@ -293,9 +320,21 @@
           </table>
         </div>
 
-        <div class="d-flex justify-content-between align-items-center mt-3 pt-2 border-top">
-          <h5 class="mb-0">總計金額：</h5>
-          <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
+        <div class="bg-light p-3 rounded mt-2">
+            <div class="d-flex justify-content-between small"><span>小計：</span><span>$<span id="receipt-subtotal">0</span></span></div>
+            <div class="d-flex justify-content-between small text-success"><span>總折扣（促銷/點數）：</span><span>-$<span id="receipt-discount">0</span></span></div>
+            <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
+                <h5 class="mb-0">實付金額：</h5>
+                <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
+            </div>
+            <div class="d-flex justify-content-between small text-warning mt-2 pt-2 border-top">
+                <span>🌟 本次獲得紅利點數：</span>
+                <strong id="receipt-earned-points">+0 點</strong>
+            </div>
+            <div class="d-flex justify-content-between small text-muted">
+                <span>目前點數餘額：</span>
+                <strong id="receipt-current-points">0 點</strong>
+            </div>
         </div>
       </div>
       <div class="modal-footer">
@@ -305,6 +344,7 @@
   </div>
 </div>
 
+<!-- 歷史訂單記錄彈窗 -->
 <div class="modal fade text-dark" id="historyModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
@@ -319,131 +359,25 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    let cart = [];
+    // 1. 初始化購物車：優先讀取 localStorage（包含剛在紅利商店兌換的餐點）
+    let cart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
     let currentSelectedItem = null;
+    let currentUserPoints = Number('{{ user_points or 0 }}');
+    let appliedPromoDiscount = 0;
+    let activePromoCode = '';
 
-    // --- 特價實時倒數與狀態邏輯 ---
-    function updateCountdowns() {
-        const timers = document.querySelectorAll('.countdown-timer');
-        const now = new Date().getTime();
-
-        timers.forEach(timer => {
-            const itemId = timer.dataset.itemId;
-            const startTimeAttr = timer.dataset.startTime;
-            const endTimeAttr = timer.dataset.endTime;
-            const btn = document.querySelector(`.id-cart-btn-${itemId}`);
-
-            let targetStartTime = startTimeAttr ? new Date(startTimeAttr).getTime() : null;
-            let targetEndTime = endTimeAttr ? new Date(endTimeAttr).getTime() : null;
-
-            // 1. 如果沒有設置特價結束時間，預設為當日 23:59:59
-            if (!targetEndTime) {
-                const defaultEnd = new Date();
-                defaultEnd.setHours(23, 59, 59, 999);
-                targetEndTime = defaultEnd.getTime();
-            }
-
-            // 2. 判斷特價尚未開始
-            if (targetStartTime && now < targetStartTime) {
-                const startDiff = targetStartTime - now;
-                const hours = Math.floor((startDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                const minutes = Math.floor((startDiff % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((startDiff % (1000 * 60)) / 1000);
-
-                const hStr = String(hours).padStart(2, '0');
-                const mStr = String(minutes).padStart(2, '0');
-                const sStr = String(seconds).padStart(2, '0');
-
-                timer.innerHTML = `<i class="bi bi-clock"></i> 距特價開始 <strong>${hStr}:${mStr}:${sStr}</strong>`;
-                timer.className = 'badge bg-info text-dark promo-badge countdown-timer';
-                return;
-            }
-
-            // 3. 判斷特價已結束
-            const diff = targetEndTime - now;
-            if (diff <= 0) {
-                timer.innerHTML = `<i class="bi bi-x-circle"></i> 特價已結束`;
-                timer.className = 'badge bg-secondary promo-badge countdown-timer';
-                if (btn && btn.getAttribute('data-is-expired') !== 'true') {
-                    btn.setAttribute('data-is-expired', 'true');
-                    btn.disabled = true;
-                    btn.innerText = '特價結束';
-                }
-            } else {
-                // 4. 特價進行中
-                const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
-                const hStr = String(hours).padStart(2, '0');
-                const mStr = String(minutes).padStart(2, '0');
-                const sStr = String(seconds).padStart(2, '0');
-
-                timer.innerHTML = `<i class="bi bi-stopwatch"></i> 限時特價剩 <strong>${hStr}:${mStr}:${sStr}</strong>`;
-                timer.className = 'badge bg-warning text-dark promo-badge countdown-timer';
-                
-                checkStock(itemId);
-            }
-        });
-    }
-
-    setInterval(updateCountdowns, 1000);
-    updateCountdowns();
-
-    function checkStock(itemId) {
-        const stockEl = document.getElementById(`stock-count-${itemId}`);
-        if (!stockEl) return true; // 非特價限份餐點跳過檢查
-        
-        const currentStock = Number(stockEl.innerText || 0);
-        const btn = document.querySelector(`.id-cart-btn-${itemId}`);
-
-        if (btn && btn.getAttribute('data-is-expired') === 'true') return false;
-
-        if (currentStock <= 0) {
-            if (btn) {
-                btn.disabled = true;
-                btn.classList.replace('add-to-cart-btn', 'btn-secondary');
-                btn.innerText = '已售罄';
-            }
-            return false;
-        } else {
-            if (btn && btn.disabled && btn.getAttribute('data-is-expired') !== 'true') {
-                btn.disabled = false;
-                btn.classList.replace('btn-secondary', 'add-to-cart-btn');
-                btn.innerHTML = '<i class="bi bi-cart-plus"></i> 加入購物車';
-            }
-        }
-        return true;
+    // 儲存購物車變更至 localStorage
+    function saveCartToStorage() {
+        localStorage.setItem('kiosk_cart', JSON.stringify(cart));
     }
 
     function handleAddToCart(button) {
         const id = button.dataset.itemId;
         const name = button.dataset.itemName;
         const price = Number(button.dataset.itemPrice || 0);
-        let modifiers = String(button.dataset.itemModifiers || '').trim().toLowerCase();
+        const modifiers = String(button.dataset.itemModifiers || '').toLowerCase();
 
-        // 檢查庫存
-        if (!checkStock(id)) {
-            alert('抱歉，該餐點特價份額已售罄或活動已結束！');
-            return;
-        }
-
-        if (modifiers === 'ice' || modifiers === 'sugar' || modifiers === 'drink') modifiers = 'ice_sugar';
-        if (modifiers === 'spicy_level' || modifiers === 'spice') modifiers = 'spicy';
-        if (modifiers === 'addon' || modifiers === 'extra') modifiers = 'addons';
-
-        if (!modifiers || modifiers === 'none' || modifiers === 'undefined' || modifiers === 'null' || modifiers === '') {
-            const n = name.toLowerCase();
-            if (n.includes('茶') || n.includes('奶') || n.includes('咖啡') || n.includes('飲') || n.includes('水') || n.includes('汁') || n.includes('拿鐵') || n.includes('糖水')) {
-                modifiers = 'ice_sugar';
-            } else if (n.includes('麵') || n.includes('湯') || n.includes('麻辣') || n.includes('鍋') || n.includes('牛肉') || n.includes('辣')) {
-                modifiers = 'spicy';
-            } else if (n.includes('飯') || n.includes('堡') || n.includes('土司') || n.includes('吐司') || n.includes('便當') || n.includes('漢堡')) {
-                modifiers = 'addons';
-            }
-        }
-
-        if (!modifiers || modifiers === 'none' || modifiers === 'null') {
+        if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
             addToCart(id, name, price, '');
             return;
         }
@@ -498,29 +432,15 @@
                         <label class="form-check-label" for="addon2">加起司片 (+15)</label>
                     </div>
                 </div>`;
-        } else {
-            html = `
-                <div class="mb-3">
-                    <label class="form-label">備註選擇</label>
-                    <select id="mod-spicy" class="form-select">
-                        <option value="正常">正常</option>
-                        <option value="不要蔥">不要蔥</option>
-                        <option value="加辣">加辣</option>
-                    </select>
-                </div>`;
         }
 
         if (modalBody) modalBody.innerHTML = html;
-        const modifierModalEl = document.getElementById('modifierModal');
-        if (modifierModalEl) {
-            const modifierModal = bootstrap.Modal.getOrCreateInstance(modifierModalEl);
-            modifierModal.show();
-        }
+        const modifierModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal'));
+        modifierModal.show();
     }
 
     function confirmAddToCartWithModifier() {
         if (!currentSelectedItem) return;
-
         const customTextArr = [];
         let extraPrice = 0;
 
@@ -531,7 +451,7 @@
 
         if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
         if (spicy) customTextArr.push(spicy.value);
-        if (addons && addons.length > 0) {
+        if (addons.length > 0) {
             addons.forEach(cb => {
                 customTextArr.push(cb.value);
                 extraPrice += Number(cb.getAttribute('data-extra') || 0);
@@ -542,11 +462,7 @@
         const finalPrice = Number(currentSelectedItem.price || 0) + extraPrice;
         addToCart(currentSelectedItem.id, currentSelectedItem.name, finalPrice, customization);
 
-        const modalEl = document.getElementById('modifierModal');
-        if (modalEl) {
-            const modalInstance = bootstrap.Modal.getInstance(modalEl);
-            if (modalInstance) modalInstance.hide();
-        }
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).hide();
     }
 
     function addToCart(id, name, price, customization = '') {
@@ -554,20 +470,11 @@
         if (item) item.quantity += 1;
         else cart.push({id, name, price: Number(price || 0), quantity: 1, customization});
         
-        // 扣除特價份額 (若有的話)
-        const stockEl = document.getElementById(`stock-count-${id}`);
-        if (stockEl) {
-            let current = Number(stockEl.innerText || 0);
-            if (current > 0) {
-                current -= 1;
-                stockEl.innerText = current;
-                checkStock(id);
-            }
-        }
-
+        saveCartToStorage(); // 儲存變更
         updateCartUI();
+        
         const toastEl = document.createElement('div');
-        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow z-3';
+        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow';
         toastEl.innerHTML = `已加入：${name} <span class="fw-bold">+1</span>`;
         document.body.appendChild(toastEl);
         setTimeout(() => toastEl.remove(), 1300);
@@ -576,166 +483,201 @@
     function updateCartUI() {
         const container = document.getElementById('cart-items');
         const count = document.getElementById('cart-count');
-        const totalEl = document.getElementById('cart-total');
-        const discountEl = document.getElementById('cart-discount');
-        const finalEl = document.getElementById('cart-final');
-        const total = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
-        
-        if (count) count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
+        count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
+
         if (!cart.length) {
-            if (container) container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
-            if (totalEl) totalEl.innerText = '0.00';
-            if (discountEl) discountEl.innerText = '0.00';
-            if (finalEl) finalEl.innerText = '0.00';
+            container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
+            calculateTotal();
             return;
         }
-        if (container) {
-            container.innerHTML = cart.map((item, idx) => `
-                <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
-                    <div>
-                        <div class="fw-bold text-warning">${item.name}</div>
-                        ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
-                        <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
-                    </div>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button class="btn btn-outline-secondary text-white" type="button" onclick="changeQty(${idx}, -1)">-</button>
-                        <button class="btn btn-outline-secondary text-white" type="button" onclick="changeQty(${idx}, 1)">+</button>
-                    </div>
+
+        container.innerHTML = cart.map((item, idx) => `
+            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
+                <div>
+                    <div class="fw-bold text-warning">${item.name}</div>
+                    ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
+                    <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
                 </div>
-            `).join('');
-        }
-        if (totalEl) totalEl.innerText = total.toFixed(2);
-        if (discountEl) discountEl.innerText = '0.00';
-        if (finalEl) finalEl.innerText = total.toFixed(2);
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
+                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
+                </div>
+            </div>
+        `).join('');
+
+        calculateTotal();
     }
 
     function changeQty(index, delta) {
-        if (!cart[index]) return;
-        const targetItem = cart[index];
-
-        if (delta < 0) {
-            const stockEl = document.getElementById(`stock-count-${targetItem.id}`);
-            if (stockEl) {
-                let current = Number(stockEl.innerText || 0);
-                stockEl.innerText = current + 1;
-                checkStock(targetItem.id);
-            }
-        } else if (delta > 0) {
-            if (!checkStock(targetItem.id)) {
-                alert('剩餘份額不足！');
-                return;
-            }
-            const stockEl = document.getElementById(`stock-count-${targetItem.id}`);
-            if (stockEl) {
-                let current = Number(stockEl.innerText || 0);
-                if (current > 0) {
-                    stockEl.innerText = current - 1;
-                    checkStock(targetItem.id);
-                }
-            }
-        }
-
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
+        saveCartToStorage(); // 儲存變更
         updateCartUI();
     }
 
-    function openPreview() {
-        if (!cart || cart.length === 0) {
-            alert('購物車目前是空的，請先挑選餐點！');
+    // --- 優惠券驗證邏輯 ---
+    function applyPromoCode() {
+        const code = document.getElementById('promoInput').value.trim();
+        const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        const msgEl = document.getElementById('promo-msg');
+
+        if (!code) {
+            activePromoCode = '';
+            appliedPromoDiscount = 0;
+            msgEl.innerHTML = '';
+            calculateTotal();
             return;
         }
-        const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
-        const preview = document.getElementById('preview-items');
-        if (preview) {
-            preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
-                <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
-                    <div>
-                        <div><strong>${item.name}</strong> x ${item.quantity}</div>
-                        ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
-                    </div>
-                    <span class="fw-bold text-warning">$${(item.price * item.quantity).toFixed(2)}</span>
-                </li>`).join('') + '</ul>';
-        }
-        
-        const subEl = document.getElementById('preview-subtotal');
-        const discEl = document.getElementById('preview-discount');
-        const finEl = document.getElementById('preview-final');
-        if (subEl) subEl.innerText = subtotal.toFixed(2);
-        if (discEl) discEl.innerText = '0.00';
-        if (finEl) finEl.innerText = subtotal.toFixed(2);
 
-        const modalEl = document.getElementById('confirmModal');
-        if (modalEl) {
-            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-            modal.show();
+        fetch('/api/verify_promo', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ promo_code: code, subtotal: subtotal })
+        })
+        .then(r => r.json())
+        .then(res => {
+            if (res.valid) {
+                activePromoCode = code;
+                appliedPromoDiscount = res.discount;
+                msgEl.className = 'small mt-1 text-success';
+                msgEl.innerHTML = `<i class="bi bi-check-circle"></i> ${res.message}`;
+            } else {
+                activePromoCode = '';
+                appliedPromoDiscount = 0;
+                msgEl.className = 'small mt-1 text-danger';
+                msgEl.innerHTML = `<i class="bi bi-x-circle"></i> ${res.message}`;
+            }
+            calculateTotal();
+        });
+    }
+
+    // --- 點數切換 ---
+    function togglePointsRedemption() {
+        const toggle = document.getElementById('usePointsToggle');
+        const box = document.getElementById('points-input-box');
+        const input = document.getElementById('pointsToUse');
+        
+        if (toggle.checked) {
+            box.style.display = 'block';
+            const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+            const remaining = Math.max(0, subtotal - appliedPromoDiscount);
+            input.value = Math.min(currentUserPoints, remaining);
+        } else {
+            box.style.display = 'none';
+            input.value = 0;
         }
+        calculateTotal();
+    }
+
+    // --- 即時動態計算金額 ---
+    function calculateTotal() {
+        const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
+        const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
+
+        let pointsUsed = 0;
+        const toggle = document.getElementById('usePointsToggle');
+        if (toggle && toggle.checked) {
+            const input = document.getElementById('pointsToUse');
+            let val = Number(input.value || 0);
+            if (val > currentUserPoints) val = currentUserPoints;
+            if (val > remainingAfterPromo) val = remainingAfterPromo;
+            if (val < 0) val = 0;
+            input.value = val;
+            pointsUsed = val;
+        }
+
+        const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
+        const earnedPoints = Math.floor(finalPrice / 10);
+
+        document.getElementById('cart-subtotal').innerText = subtotal.toFixed(2);
+        document.getElementById('cart-promo-discount').innerText = appliedPromoDiscount.toFixed(2);
+        document.getElementById('cart-points-discount').innerText = pointsUsed.toFixed(2);
+        document.getElementById('cart-final').innerText = finalPrice.toFixed(2);
+        document.getElementById('cart-earned-points').innerText = earnedPoints;
+    }
+
+    function openPreview() {
+        if (!cart.length) { alert('購物車為空'); return; }
+        const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
+        const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
+        const pointsInput = document.getElementById('pointsToUse');
+        const pointsUsed = (document.getElementById('usePointsToggle').checked) ? Number(pointsInput.value || 0) : 0;
+        const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
+        const earnedPoints = Math.floor(finalPrice / 10);
+
+        const preview = document.getElementById('preview-items');
+        preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
+            <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
+                <div>
+                    <div>${item.name} x${item.quantity}</div>
+                    ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
+                </div>
+                <span class="fw-bold">$${(item.price * item.quantity).toFixed(2)}</span>
+            </li>`).join('') + '</ul>';
+
+        document.getElementById('preview-subtotal').innerText = subtotal.toFixed(2);
+        document.getElementById('preview-promo').innerText = appliedPromoDiscount.toFixed(2);
+        document.getElementById('preview-points').innerText = pointsUsed.toFixed(2);
+        document.getElementById('preview-final').innerText = finalPrice.toFixed(2);
+        document.getElementById('preview-earned').innerText = earnedPoints;
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('confirmModal')).show();
     }
 
     function confirmCheckout() {
-        if (!cart || cart.length === 0) return;
-        const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
-        const orderType = document.getElementById('orderType')?.value || '內用';
-        const paymentMethod = document.getElementById('paymentMethod')?.value || 'Cash';
+        if (!cart.length) return;
+        const orderType = document.getElementById('orderType').value;
+        const paymentMethod = document.getElementById('paymentMethod').value;
+        const pointsUsed = (document.getElementById('usePointsToggle').checked) ? Number(document.getElementById('pointsToUse').value || 0) : 0;
 
         fetch('/submit_order', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 items: cart,
-                total_price: Math.round(subtotal),
                 payment_method: paymentMethod,
-                order_type: orderType
+                order_type: orderType,
+                promo_code: activePromoCode,
+                use_points: pointsUsed
             })
         })
         .then(r => {
-            if (!r.ok) throw new Error('伺服器錯誤: ' + r.status);
+            if (!r.ok) throw new Error('伺服器錯誤');
             return r.json();
         })
         .then(data => {
-            const confirmModalEl = document.getElementById('confirmModal');
-            if (confirmModalEl) {
-                const cm = bootstrap.Modal.getInstance(confirmModalEl);
-                if (cm) cm.hide();
-            }
-            const cartSidebarEl = document.getElementById('cart-sidebar');
-            if (cartSidebarEl) {
-                const cs = bootstrap.Offcanvas.getInstance(cartSidebarEl);
-                if (cs) cs.hide();
-            }
+            bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
+            const cs = bootstrap.Offcanvas.getInstance(document.getElementById('cart-sidebar'));
+            if (cs) cs.hide();
 
-            const rOrderId = document.getElementById('receipt-order-id');
-            const rUser = document.getElementById('receipt-user');
-            const rType = document.getElementById('receipt-type');
-            const rPayment = document.getElementById('receipt-payment');
-            const rTotal = document.getElementById('receipt-total');
+            currentUserPoints = data.current_user_points;
+            document.getElementById('nav-user-points').innerText = currentUserPoints;
+            document.getElementById('cart-user-points').innerText = currentUserPoints;
 
-            if (rOrderId) rOrderId.textContent = '#' + data.order_id;
-            if (rUser) rUser.textContent = data.user_name;
-            if (rType) rType.textContent = data.order_type;
-            if (rPayment) rPayment.textContent = data.payment_method;
-            if (rTotal) rTotal.textContent = data.total_price.toFixed(2);
+            document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
+            document.getElementById('receipt-user').textContent = data.user_name;
+            document.getElementById('receipt-type').textContent = data.order_type;
+            document.getElementById('receipt-payment').textContent = data.payment_method;
+            document.getElementById('receipt-subtotal').textContent = data.subtotal.toFixed(2);
+            document.getElementById('receipt-discount').textContent = data.discount_amount.toFixed(2);
+            document.getElementById('receipt-total').textContent = data.total_price.toFixed(2);
+            document.getElementById('receipt-earned-points').textContent = `+${data.points_earned} 點`;
+            document.getElementById('receipt-current-points').textContent = `${data.current_user_points} 點`;
 
             const itemsBody = document.getElementById('receipt-items-body');
-            if (itemsBody && data.items) {
-                itemsBody.innerHTML = data.items.map(item => `
-                    <tr>
-                        <td>
-                            <div>${item.name}</div>
-                            ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
-                        </td>
-                        <td>x ${item.quantity}</td>
-                        <td>$${item.price}</td>
-                        <td>$${item.subtotal}</td>
-                    </tr>
-                `).join('');
-            }
+            itemsBody.innerHTML = data.items.map(item => `
+                <tr>
+                    <td>
+                        <div>${item.name}</div>
+                        ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
+                    </td>
+                    <td>x ${item.quantity}</td>
+                    <td>$${item.price}</td>
+                    <td>$${item.subtotal}</td>
+                </tr>
+            `).join('');
 
-            const receiptModalEl = document.getElementById('receiptModal');
-            if (receiptModalEl) {
-                const receiptModal = bootstrap.Modal.getOrCreateInstance(receiptModalEl);
-                receiptModal.show();
-            }
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal')).show();
         })
         .catch(e => {
             console.error(e);
@@ -745,98 +687,63 @@
 
     function finishOrder() {
         cart = [];
+        saveCartToStorage(); // 清空本機購物車
+        activePromoCode = '';
+        appliedPromoDiscount = 0;
+        document.getElementById('promoInput').value = '';
+        document.getElementById('promo-msg').innerHTML = '';
+        document.getElementById('usePointsToggle').checked = false;
+        document.getElementById('points-input-box').style.display = 'none';
         updateCartUI();
-        const receiptModalEl = document.getElementById('receiptModal');
-        if (receiptModalEl) {
-            const rm = bootstrap.Modal.getInstance(receiptModalEl);
-            if (rm) rm.hide();
-        }
+        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
     }
 
     function showMyOrders() {
         fetch('/my_orders')
-        .then(res => {
-            if (!res.ok) throw new Error('HTTP status ' + res.status);
-            return res.json();
-        })
+        .then(res => res.json())
         .then(orders => {
             const historyBody = document.getElementById('history-modal-body');
-            if (!historyBody) return;
-
             if (!orders || orders.length === 0) {
                 historyBody.innerHTML = '<div class="text-center text-muted py-4">目前尚無任何訂單紀錄！</div>';
             } else {
-                historyBody.innerHTML = orders.map(o => {
-                    let statusBadge = '';
-                    if (o.status === 'Pending') {
-                        statusBadge = '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> 製作中</span>';
-                    } else if (o.status === 'Completed') {
-                        statusBadge = '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> 請取餐 / 已完成</span>';
-                    } else if (o.status === 'Cancelled') {
-                        statusBadge = '<span class="badge bg-secondary"><i class="bi bi-x-circle-fill"></i> 已取消</span>';
-                    } else {
-                        statusBadge = `<span class="badge bg-info">${o.status}</span>`;
-                    }
-
-                    return `
-                        <div class="card mb-3 border-secondary shadow-sm text-dark">
-                            <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                                <div>
-                                    <span class="fw-bold text-success fs-5">訂單 #${o.order_id}</span>
-                                    ${statusBadge}
-                                    <span class="badge bg-primary ms-1">${o.order_type}</span>
-                                    <span class="badge bg-outline-dark border ms-1">${o.payment_method}</span>
-                                </div>
-                                <small class="text-muted">${o.created_at}</small>
+                historyBody.innerHTML = orders.map(o => `
+                    <div class="card mb-3 border-secondary shadow-sm text-dark">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="fw-bold text-success fs-5">訂單 #${o.order_id}</span>
+                                <span class="badge ${o.status === 'Pending' ? 'bg-warning text-dark' : (o.status === 'Completed' ? 'bg-success' : 'bg-secondary')}">${o.status}</span>
+                                <span class="badge bg-primary ms-1">${o.order_type}</span>
                             </div>
-                            <div class="card-body p-3">
-                                <table class="table table-sm mb-2 align-middle">
-                                    <thead>
-                                        <tr class="text-muted">
-                                            <th>品項</th>
-                                            <th>數量</th>
-                                            <th>單價</th>
-                                            <th>小計</th>
+                            <small class="text-muted">${o.created_at}</small>
+                        </div>
+                        <div class="card-body p-3">
+                            <table class="table table-sm mb-2 align-middle">
+                                <thead><tr class="text-muted"><th>品項</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
+                                <tbody>
+                                    ${o.items.map(item => `
+                                        <tr>
+                                            <td><div>${item.name}</div>${item.customization ? `<small class="text-danger fw-bold">${item.customization}</small>` : ''}</td>
+                                            <td>x ${item.quantity}</td>
+                                            <td>$${item.price}</td>
+                                            <td>$${item.subtotal}</td>
                                         </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${o.items.map(item => `
-                                            <tr>
-                                                <td>
-                                                    <div>${item.name}</div>
-                                                    ${item.customization ? `<small class="text-danger fw-bold"><i class="bi bi-tag-fill"></i> ${item.customization}</small>` : ''}
-                                                </td>
-                                                <td>x ${item.quantity}</td>
-                                                <td>$${item.price}</td>
-                                                <td>$${item.subtotal}</td>
-                                            </tr>
-                                        `).join('')}
-                                    </tbody>
-                                </table>
-                                <div class="text-end fw-bold text-danger fs-6">
-                                    總金額：$${Number(o.total_price).toFixed(2)}
-                                </div>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                            <div class="d-flex justify-content-between align-items-center pt-2 border-top">
+                                <small class="text-muted">使用點數折抵: $${o.points_used} | 獲得紅利: +${o.points_earned} 點</small>
+                                <div class="fw-bold text-danger fs-6">實付金額：$${o.total_price.toFixed(2)}</div>
                             </div>
                         </div>
-                    `;
-                }).join('');
+                    </div>
+                `).join('');
             }
-
-            const historyModalEl = document.getElementById('historyModal');
-            if (historyModalEl) {
-                const historyModal = bootstrap.Modal.getOrCreateInstance(historyModalEl);
-                historyModal.show();
-            }
-        })
-        .catch(err => {
-            console.error('Error fetching orders:', err);
-            alert('無法取得訂單記錄：' + err.message);
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('historyModal')).show();
         });
     }
 
     function sortMenu(mode) {
         const container = document.getElementById('menuList');
-        if (!container) return;
         const rows = [...container.querySelectorAll('.menu-row')];
         rows.sort((a, b) => {
             if (mode === 'recommended') return Number(b.dataset.recommended) - Number(a.dataset.recommended);
@@ -849,41 +756,37 @@
     }
 
     function filterMenu() {
-        const q = document.getElementById('searchInput')?.value.toLowerCase() || '';
-        const max = Number(document.getElementById('maxPrice')?.value) || Number.POSITIVE_INFINITY;
-        const cat = document.getElementById('categoryFilter')?.value || 'all';
+        const q = document.getElementById('searchInput').value.toLowerCase();
+        const max = Number(document.getElementById('maxPrice').value) || Number.POSITIVE_INFINITY;
+        const cat = document.getElementById('categoryFilter').value;
         document.querySelectorAll('#menuList .menu-row').forEach(row => {
             const text = row.innerText.toLowerCase();
             const price = Number(row.dataset.price || 0);
             const rowCat = row.dataset.category || '未分類';
             const categoryMatch = cat === 'all' || rowCat === cat;
-            const show = text.includes(q) && price <= max && categoryMatch;
-            row.style.display = show ? '' : 'none';
+            row.style.display = (text.includes(q) && price <= max && categoryMatch) ? '' : 'none';
         });
     }
 
     function resetFilters() {
-        const s = document.getElementById('searchInput');
-        const m = document.getElementById('maxPrice');
-        const c = document.getElementById('categoryFilter');
-        if (s) s.value = '';
-        if (m) m.value = '';
-        if (c) c.value = 'all';
+        document.getElementById('searchInput').value = '';
+        document.getElementById('maxPrice').value = '';
+        document.getElementById('categoryFilter').value = 'all';
         filterMenu();
     }
 
+    // 頁面載入時立即從 localStorage 刷新購物車 UI
     updateCartUI();
 </script>
-
 {% else %}
 
 <div class="container py-5">
-    <div class="hero text-white text-center p-4 mb-4" style="background: linear-gradient(135deg, rgba(0,0,0,0.5), rgba(10,10,10,0.9)), url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 14px; ">
+    <div class="hero text-white text-center p-4 mb-4" style="background: linear-gradient(135deg, rgba(0,0,0,0.5), rgba(10,10,10,0.9)), url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 14px;">
         <h1 class="display-5">歡迎使用自助點餐系統</h1>
-        <p class="lead">可先註冊加入會員，之後可直接人臉快速登入。</p>
+        <p class="lead">加入會員即送 20 點開卡禮！消費滿 $10 積 1 點，享人臉快速登入。</p>
         <div class="d-flex justify-content-center gap-2 mt-3">
             <a class="btn btn-register btn-lg" href="/register">加入會員</a>
-            <a class="btn btn-login btn-lg" href="/face_login">人臉快速登入</a>
+            <a class="btn btn-login btn-lg" href="/face_login">會員登入</a>
         </div>
     </div>
     <div class="text-center text-muted">點擊後台管理可進入店家管理</div>

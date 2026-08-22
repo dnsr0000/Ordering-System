@@ -1,106 +1,500 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
     <meta charset="utf-8">
-    <title>加入會員 - 自助點餐系統</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ '會員登入' if login_mode else '加入會員' }} - 自助點餐系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
-        :root {
-            --bg-start: #0b132b;
-            --bg-mid: #1f2a44;
-            --bg-end: #415a77;
-            --panel: rgba(255,255,255,.08);
-            --panel-border: rgba(255,255,255,.12);
-            --text-light: #f8f9fa;
-            --text-muted: rgba(248,249,250,.78);
-            --accent: #f5c146;
-            --accent-strong: #ffb703;
+        body {
+            background: linear-gradient(135deg, #0b111e 0%, #152238 100%);
+            color: #f8f9fa;
+            font-family: "Microsoft JhengHei", -apple-system, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
         }
-
-        html, body { min-height: 100%; margin: 0; font-family: 'Roboto', sans-serif; background: linear-gradient(135deg, var(--bg-start) 0%, var(--bg-mid) 45%, var(--bg-end) 100%); color: var(--text-light); }
-        body { display: flex; align-items: center; justify-content: center; }
-        .container { max-width: 980px; padding: 3rem 1rem; }
-        .card { border-radius: 24px; border: 1px solid var(--panel-border); background: rgba(13, 23, 44, 0.92); box-shadow: 0 25px 60px rgba(0,0,0,.25); }
-        .card-body { padding: 2.5rem; color: var(--text-light); }
-        .form-control, .form-select { border-radius: 14px; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); color: var(--text-light); }
-        .form-control:focus, .form-select:focus { border-color: var(--accent); box-shadow: 0 0 0 0.15rem rgba(245,193,70,.18); background: rgba(255,255,255,.12); }
-        .form-label { color: var(--text-light); font-weight: 600; }
-        .text-muted { color: rgba(248,249,250,.85) !important; }
-        .btn-success { border-radius: 14px; padding: 0.95rem 1.25rem; background: var(--accent); border: none; color: #060b1a; font-weight: 700; }
-        .btn-success:hover { background: var(--accent-strong); }
-        .card-header-hero { min-height: 100%; background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.02)); }
-        .card-header-hero h4 { font-weight: 700; margin-bottom: 0.35rem; }
-        .card-header-hero small { color: rgba(248,249,250,.8); }
-        .btn-return { color: #f2d86c; font-weight: 600; }
-        .btn-return:hover { color: #fff; text-decoration: none; }
-        .alert-success { border-radius: 14px; background: rgba(25,135,84,.12); color: #d1e7dd; border: 1px solid rgba(25,135,84,.25); }
-        .img-preview { border-radius: 18px; border: 1px solid rgba(255,255,255,.12); }
-        @media (max-width: 767px) {
-            .card { border-radius: 18px; }
-            .card-body { padding: 1.75rem; }
+        .register-container {
+            width: 100%;
+            max-width: 850px;
+            background: #0f192c;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+        }
+        .cover-img {
+            width: 100%;
+            height: 100%;
+            min-height: 540px;
+            object-fit: cover;
+        }
+        .form-section {
+            padding: 2.5rem;
+        }
+        .form-input {
+            background-color: #1a2742;
+            border: 1px solid #283a5e;
+            color: #ffffff;
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+        }
+        .form-input:focus {
+            background-color: #203152;
+            color: #ffffff;
+            border-color: #f5b738;
+            box-shadow: 0 0 0 0.25rem rgba(245, 183, 56, 0.25);
+        }
+        .form-input::placeholder {
+            color: #7e92b3;
+        }
+        .btn-submit {
+            background-color: #f3ba2f;
+            border: none;
+            color: #111827;
+            border-radius: 12px;
+            transition: all 0.2s ease;
+        }
+        .btn-submit:hover {
+            background-color: #ffd05b;
+            transform: translateY(-2px);
+        }
+        .btn-camera {
+            background-color: #243556;
+            border: 1px solid #3b527e;
+            color: #f3ba2f;
+            border-radius: 10px;
+            transition: all 0.2s ease;
+        }
+        .btn-camera:hover {
+            background-color: #314773;
+            color: #ffda79;
+        }
+        .camera-video-container {
+            width: 100%;
+            height: 280px;
+            background: #000;
+            border-radius: 16px;
+            overflow: hidden;
+            position: relative;
+        }
+        .camera-video-container video, .camera-video-container canvas {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .face-guide-circle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 190px;
+            height: 190px;
+            border: 2px dashed #f3ba2f;
+            border-radius: 50%;
+            pointer-events: none;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+        }
+        /* 登入方式切換頁籤樣式 */
+        .login-nav-tabs .nav-link {
+            color: #7e92b3;
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            font-weight: bold;
+            padding: 0.5rem 1rem;
+        }
+        .login-nav-tabs .nav-link.active {
+            color: #f3ba2f;
+            border-bottom: 2px solid #f3ba2f;
+            background: transparent;
         }
     </style>
 </head>
 <body>
-<div class="container py-5">
-    <div class="row justify-content-center">
-        <div class="col-lg-7">
-            <div class="card overflow-hidden">
-                <div class="row g-0">
-                    <div class="col-md-6 d-none d-md-block" style="background: url('https://images.unsplash.com/photo-1498654896293-37aacf113fd9?auto=format&fit=crop&w=1000&q=80') center/cover;">
+
+<div class="register-container">
+    <div class="row g-0">
+        <!-- 左側美食照片 -->
+        <div class="col-md-6 d-none d-md-block">
+            <img src="https://images.unsplash.com/photo-1553163147-622ab57be1c7?auto=format&fit=crop&w=1000&q=80" alt="美食照片" class="cover-img">
+        </div>
+
+        <!-- 右側操作面板 -->
+        <div class="col-md-6 form-section d-flex flex-column justify-content-center">
+            
+            {% if login_mode %}
+                <!-- 🌟 會員登入模式 (提供人臉辨識 / 手機號碼雙方式) -->
+                <div class="d-flex align-items-center gap-3 mb-3">
+                    <i class="bi bi-person-check text-warning display-5"></i>
+                    <div>
+                        <h3 class="fw-bold mb-0 text-white">會員快速登入</h3>
+                        <p class="text-white-50 small mb-0">請選擇辨識登入方式</p>
                     </div>
-                    <div class="col-md-6">
-                        <div class="card-body p-4">
-                            <div class="d-flex align-items-center mb-4">
-                                <div class="me-2"><i class="bi bi-person-circle fs-1 text-warning"></i></div>
-                                <div>
-                                    <h4 class="mb-0">加入會員</h4>
-                                    <small class="text-muted">註冊即可快速人臉登入與結帳</small>
+                </div>
+
+                <!-- 頁籤選單 -->
+                <ul class="nav login-nav-tabs mb-3 justify-content-center" id="loginTab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="face-tab" data-bs-toggle="tab" data-bs-target="#face-login-pane" type="button" role="tab">
+                            <i class="bi bi-camera-fill me-1"></i> 人臉辨識登入
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="phone-tab" data-bs-toggle="tab" data-bs-target="#phone-login-pane" type="button" role="tab" onclick="stopLoginCamera()">
+                            <i class="bi bi-phone me-1"></i> 手機號碼登入
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content" id="loginTabContent">
+                    <!-- 1. 人臉辨識登入面板 -->
+                    <div class="tab-pane fade show active" id="face-login-pane" role="tabpanel">
+                        <div class="camera-video-container mb-3 shadow">
+                            <video id="loginVideo" autoplay playsinline></video>
+                            <canvas id="loginCanvas" style="display: none;"></canvas>
+                            <div class="face-guide-circle"></div>
+                        </div>
+
+                        <button type="button" id="btn-login-snap" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow mb-2" onclick="performFaceLogin()">
+                            <i class="bi bi-camera-fill me-1"></i> 登入
+                        </button>
+                    </div>
+
+                    <!-- 2. 手機號碼登入面板 -->
+                    <div class="tab-pane fade" id="phone-login-pane" role="tabpanel">
+                        <div class="py-3">
+                            <div class="mb-3 text-start">
+                                <label class="form-label small fw-bold text-white">會員手機號碼</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-dark border-secondary text-white"><i class="bi bi-telephone-fill"></i></span>
+                                    <input type="tel" id="loginPhoneInput" class="form-control form-input" placeholder="例如：0912345678" autofocus>
                                 </div>
                             </div>
-                            <form action="/register" method="POST" enctype="multipart/form-data" class="mb-3">
-                                <div class="mb-3">
-                                    <label class="form-label">姓名</label>
-                                    <input class="form-control" type="text" name="name" value="{{ name }}" required>
-                                </div>
-                                <div class="mb-3">
-                                    <label class="form-label">電話</label>
-                                    <input class="form-control" type="text" name="phone" value="{{ phone }}" required>
-                                </div>
-                                
-                                <div class="mb-3">
-                                    <label class="form-label">拍攝或上傳照片</label>
-                                    <!-- 手機點擊這裡會直接跳出手機相機或相簿 -->
-                                    <input class="form-control" type="file" name="photo" accept="image/*" capture="user" required>
-                                </div>
-
-                                <input type="hidden" name="captured_photo" value="{{ captured_photo }}">
-                                {% if captured_photo %}
-                                <div class="alert alert-success p-3 mb-3 d-flex align-items-center gap-2">
-                                    <i class="bi bi-check-circle-fill"></i>
-                                    <div>已成功擷取臉部影像，請送出完成註冊。</div>
-                                </div>
-                                <div class="mb-3 text-center">
-                                    <img src="{{ url_for('static', filename='member/' + captured_photo) }}" class="img-fluid img-preview" alt="人臉預覽">
-                                </div>
-                                {% endif %}
-
-                                <div class="d-grid gap-2 mb-3">
-                                    <button class="btn btn-success" type="submit" name="action" value="register">💾 送出照片並註冊</button>
-                                </div>
-                            </form>
-                            <div class="text-center mt-2">
-                                <a href="/" class="btn-return"><i class="bi bi-arrow-left"></i> 返回首頁</a>
-                            </div>
+                            <div class="text-white-50 small mb-4">輸入註冊時填寫的手機號碼即可快速帶入會員點數與結帳。</div>
+                            <button type="button" id="btn-phone-login" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow" onclick="performPhoneLogin()">
+                                <i class="bi bi-box-arrow-in-right me-1"></i> 手機號碼登入
+                            </button>
                         </div>
                     </div>
+                </div>
+
+                <div class="d-flex justify-content-between mt-3">
+                    <a href="/" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回首頁</a>
+                    <a href="/register" class="text-warning text-decoration-none small">尚未加入會員？前往註冊 <i class="bi bi-arrow-right"></i></a>
+                </div>
+
+            {% else %}
+                <!-- 🌟 會員註冊模式 -->
+                <div class="d-flex align-items-center gap-3 mb-4">
+                    <i class="bi bi-person-circle text-warning display-4"></i>
+                    <div>
+                        <h3 class="fw-bold mb-1 text-white">加入會員</h3>
+                        <p class="text-white-50 small mb-0">註冊即可快速人臉<br>登入與結帳</p>
+                    </div>
+                </div>
+
+                <form id="registerForm" action="/register" method="POST" enctype="multipart/form-data">
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small text-white">姓名</label>
+                        <input type="text" class="form-control form-input" name="name" placeholder="請輸入姓名" required>
+                    </div>
+
+                    <div class="mb-3 text-start">
+                        <label class="form-label fw-bold small text-white">電話</label>
+                        <input type="tel" class="form-control form-input" name="phone" placeholder="請輸入手機號碼" required>
+                    </div>
+
+                    <div class="mb-4 text-start">
+                        <label class="form-label fw-bold small text-white d-block">拍攝或上傳照片</label>
+                        
+                        <!-- 開啟相機按鈕 -->
+                        <button type="button" class="btn btn-camera w-100 py-2 fw-bold mb-2 shadow-sm" onclick="openCameraModal()">
+                            <i class="bi bi-camera-fill me-1"></i> 開啟相機即時拍照
+                        </button>
+
+                        <input type="file" class="form-control form-input" name="photo" id="photoInput" accept="image/*" onchange="previewFile(this)" required>
+                        <div id="photoStatus" class="small mt-2 text-warning" style="display:none;"></div>
+                    </div>
+
+                    <button type="submit" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow">
+                        💾 送出照片並註冊
+                    </button>
+                </form>
+
+                <div class="d-flex justify-content-between mt-3">
+                    <a href="/" class="text-warning text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回首頁</a>
+                    <a href="/face_login" class="text-info text-decoration-none small">已是會員？前往登入 <i class="bi bi-arrow-right"></i></a>
+                </div>
+            {% endif %}
+
+        </div>
+    </div>
+</div>
+
+{% if not login_mode %}
+<!-- 註冊用相機彈窗 (Camera Modal) -->
+<div class="modal fade" id="cameraModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-white border-secondary shadow-lg" style="border-radius: 20px;">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold"><i class="bi bi-camera me-2 text-warning"></i>拍攝人臉照片</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" onclick="stopCamera()"></button>
+            </div>
+            <div class="modal-body p-4 text-center">
+                <div class="camera-video-container mb-3 shadow">
+                    <video id="cameraVideo" autoplay playsinline></video>
+                    <canvas id="cameraCanvas" style="display: none;"></canvas>
+                    <div id="faceGuide" class="face-guide-circle"></div>
+                </div>
+                <p class="small text-white-50 mb-0"><i class="bi bi-info-circle me-1"></i>請正對鏡頭並保持光線充足</p>
+            </div>
+            <div class="modal-footer border-secondary justify-content-between">
+                <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal" onclick="stopCamera()">取消</button>
+                <div class="d-flex gap-2">
+                    <button type="button" id="retakeBtn" class="btn btn-outline-warning" style="display:none;" onclick="retakePhoto()">
+                        <i class="bi bi-arrow-clockwise"></i> 重拍
+                    </button>
+                    <button type="button" id="snapBtn" class="btn btn-warning fw-bold px-4" onclick="snapPhoto()">
+                        <i class="bi bi-camera-fill me-1"></i> 拍照
+                    </button>
+                    <button type="button" id="confirmBtn" class="btn btn-success fw-bold px-4" style="display:none;" onclick="confirmCapturedPhoto()">
+                        <i class="bi bi-check-lg me-1"></i> 使用此照片
+                    </button>
                 </div>
             </div>
         </div>
     </div>
 </div>
+{% endif %}
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const isLoginMode = {{ 'true' if login_mode else 'false' }};
+
+    // ==========================================
+    // 1. 會員登入模式邏輯 (人臉辨識 / 手機號碼)
+    // ==========================================
+    if (isLoginMode) {
+        const loginVideo = document.getElementById('loginVideo');
+        const loginCanvas = document.getElementById('loginCanvas');
+        let loginStream = null;
+
+        function startLoginCamera() {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } 
+                })
+                .then(s => {
+                    loginStream = s;
+                    loginVideo.srcObject = s;
+                })
+                .catch(err => {
+                    console.warn("相機開啟失敗:", err);
+                });
+            }
+        }
+
+        function stopLoginCamera() {
+            if (loginStream) {
+                loginStream.getTracks().forEach(track => track.stop());
+                loginStream = null;
+            }
+        }
+
+        // 監聽頁籤切換：切回人臉頁籤時重新開啟鏡頭
+        document.getElementById('face-tab').addEventListener('shown.bs.tab', function () {
+            startLoginCamera();
+        });
+
+        // 預設開啟人臉辨識相機
+        startLoginCamera();
+
+        // 執行人臉辨識登入
+        function performFaceLogin() {
+            const btn = document.getElementById('btn-login-snap');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>人臉比對中...';
+
+            const ctx = loginCanvas.getContext('2d');
+            loginCanvas.width = loginVideo.videoWidth || 640;
+            loginCanvas.height = loginVideo.videoHeight || 480;
+            ctx.drawImage(loginVideo, 0, 0, loginCanvas.width, loginCanvas.height);
+
+            loginCanvas.toBlob(blob => {
+                if (!blob) {
+                    alert("擷取畫面失敗，請確認鏡頭正常！");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-camera-fill me-1"></i> 立即人臉辨識登入';
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('photo', blob, 'login_snapshot.jpg');
+
+                fetch('/face_login', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        stopLoginCamera();
+                        alert(`🎉 歡迎回來，${data.user_name}！`);
+                        window.location.href = '/';
+                    } else {
+                        alert(data.message || "人臉辨識未通過，請對準鏡頭重新嘗試！");
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="bi bi-camera-fill me-1"></i> 重新辨識登入';
+                    }
+                })
+                .catch(err => {
+                    console.error(err);
+                    alert("伺服器連線錯誤，請稍後再試！");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-camera-fill me-1"></i> 立即人臉辨識登入';
+                });
+            }, 'image/jpeg', 0.95);
+        }
+
+        // 執行手機號碼登入
+        function performPhoneLogin() {
+            const phone = document.getElementById('loginPhoneInput').value.trim();
+            if (!phone) {
+                alert("請輸入手機號碼！");
+                return;
+            }
+
+            const btn = document.getElementById('btn-phone-login');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>登入中...';
+
+            fetch('/phone_login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ phone: phone })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`🎉 歡迎回來，${data.user_name}！`);
+                    window.location.href = '/';
+                } else {
+                    alert(data.message || "查無此號碼！");
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i> 手機號碼登入';
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                alert("連線失敗，請稍後再試！");
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i> 手機號碼登入';
+            });
+        }
+    }
+
+    // ==========================================
+    // 2. 會員註冊模式邏輯 (相機彈窗與拍照)
+    // ==========================================
+    let regStream = null;
+    let capturedBlob = null;
+    const regVideo = document.getElementById('cameraVideo');
+    const regCanvas = document.getElementById('cameraCanvas');
+
+    function openCameraModal() {
+        const cameraModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('cameraModal'));
+        cameraModal.show();
+        retakePhoto();
+
+        navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } } 
+        })
+        .then(s => {
+            regStream = s;
+            regVideo.srcObject = s;
+            regVideo.style.display = 'block';
+            regCanvas.style.display = 'none';
+            document.getElementById('faceGuide').style.display = 'block';
+        })
+        .catch(err => {
+            console.error("相機存取失敗:", err);
+            alert("無法存取攝影機，請檢查瀏覽器權限！");
+            cameraModal.hide();
+        });
+    }
+
+    function stopCamera() {
+        if (regStream) {
+            regStream.getTracks().forEach(track => track.stop());
+            regStream = null;
+        }
+    }
+
+    function snapPhoto() {
+        const ctx = regCanvas.getContext('2d');
+        regCanvas.width = regVideo.videoWidth || 640;
+        regCanvas.height = regVideo.videoHeight || 480;
+        ctx.drawImage(regVideo, 0, 0, regCanvas.width, regCanvas.height);
+
+        regVideo.style.display = 'none';
+        regCanvas.style.display = 'block';
+        document.getElementById('faceGuide').style.display = 'none';
+
+        document.getElementById('snapBtn').style.display = 'none';
+        document.getElementById('retakeBtn').style.display = 'inline-block';
+        document.getElementById('confirmBtn').style.display = 'inline-block';
+
+        regCanvas.toBlob(blob => {
+            capturedBlob = blob;
+        }, 'image/jpeg', 0.95);
+    }
+
+    function retakePhoto() {
+        capturedBlob = null;
+        if (regVideo) regVideo.style.display = 'block';
+        if (regCanvas) regCanvas.style.display = 'none';
+        const guide = document.getElementById('faceGuide');
+        if (guide) guide.style.display = 'block';
+
+        const sBtn = document.getElementById('snapBtn');
+        const rBtn = document.getElementById('retakeBtn');
+        const cBtn = document.getElementById('confirmBtn');
+        if (sBtn) sBtn.style.display = 'inline-block';
+        if (rBtn) rBtn.style.display = 'none';
+        if (cBtn) cBtn.style.display = 'none';
+    }
+
+    function confirmCapturedPhoto() {
+        if (!capturedBlob) return;
+        const file = new File([capturedBlob], `camera_snap_${Date.now()}.jpg`, { type: "image/jpeg" });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        
+        const photoInput = document.getElementById('photoInput');
+        photoInput.files = dt.files;
+
+        const status = document.getElementById('photoStatus');
+        status.innerHTML = `<i class="bi bi-check-circle-fill text-success"></i> 已成功拍攝相片：<strong>${file.name}</strong>`;
+        status.style.display = 'block';
+
+        stopCamera();
+        bootstrap.Modal.getInstance(document.getElementById('cameraModal')).hide();
+    }
+
+    function previewFile(input) {
+        const status = document.getElementById('photoStatus');
+        if (input.files && input.files[0]) {
+            status.innerHTML = `<i class="bi bi-file-earmark-image text-info"></i> 已選取檔案：<strong>${input.files[0].name}</strong>`;
+            status.style.display = 'block';
+        } else {
+            status.style.display = 'none';
+        }
+    }
+</script>
+
 </body>
 </html>

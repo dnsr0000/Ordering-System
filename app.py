@@ -1,238 +1,646 @@
 import time
 import os
 import cv2
-import pandas as pd
 import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
-
+from PIL import Image, ImageOps
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 from flask_sqlalchemy import SQLAlchemy
-from werkzeug.utils import secure_filename
-from PIL import Image, ImageOps
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-template_dir = os.path.join(BASE_DIR, 'templates')
-app = Flask(__name__, template_folder=template_dir)
-app.secret_key = 'kiosk_secret_key_123'
+# ==============================================================================
+# 1. 應用程式基礎設定 (App Configuration)
+# ==============================================================================
+app = Flask(__name__)
+app.secret_key = "ordering_system_secret_key"
+app.permanent_session_lifetime = timedelta(days=7)
 
-# 修復 1：將 datetime 與 timedelta 註冊至 Jinja2 全域環境，解決 'datetime' 未定義錯誤
-app.jinja_env.globals.update(datetime=datetime, timedelta=timedelta)
-
-db_path = os.path.join(BASE_DIR, 'menu.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(BASE_DIR, 'menu.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-menu_path = os.path.join(BASE_DIR, 'static', 'menu')
-member_path = os.path.join(BASE_DIR, 'static', 'member')
-app.config['UPLOAD_FOLDER_MENU'] = menu_path
-app.config['UPLOAD_FOLDER_MEMBER'] = member_path
+# 建立靜態資源上傳路徑
+UPLOAD_FOLDER_MEMBER = os.path.join(BASE_DIR, 'static', 'member')
+UPLOAD_FOLDER_MENU = os.path.join(BASE_DIR, 'static', 'menu')
+os.makedirs(UPLOAD_FOLDER_MEMBER, exist_ok=True)
+os.makedirs(UPLOAD_FOLDER_MENU, exist_ok=True)
+app.config['UPLOAD_FOLDER_MEMBER'] = UPLOAD_FOLDER_MEMBER
+app.config['UPLOAD_FOLDER_MENU'] = UPLOAD_FOLDER_MENU
 
-os.makedirs(app.config['UPLOAD_FOLDER_MENU'], exist_ok=True)
-os.makedirs(app.config['UPLOAD_FOLDER_MEMBER'], exist_ok=True)
+# OpenCV 人臉辨識模型路徑
+YUNET_MODEL = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
+SFACE_MODEL = os.path.join(BASE_DIR, "face_recognition_sface_2021dec.onnx")
 
 db = SQLAlchemy(app)
 
-yunet_path = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
-sface_path = os.path.join(BASE_DIR, "face_recognition_sface_2021dec.onnx")
-
-detector = cv2.FaceDetectorYN.create(yunet_path, "", (320, 320))
-recognizer = cv2.FaceRecognizerSF.create(sface_path, "")
-
-# --- 資料庫模型 ---
-class MenuItem(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    category = db.Column(db.String(50), nullable=False, default='主餐') 
-    price = db.Column(db.Integer, nullable=False)
-    description = db.Column(db.String(200))
-    image_path = db.Column(db.String(200), nullable=True)
-    modifiers = db.Column(db.String(100), default='none')
-    is_recommended = db.Column(db.Boolean, default=False)
-    is_new = db.Column(db.Boolean, default=False)
-    
-    # 限時限額特價欄位
-    is_special = db.Column(db.Boolean, default=False)
-    special_price = db.Column(db.Integer, nullable=True)
-    special_stock = db.Column(db.Integer, default=0)
-    special_start = db.Column(db.DateTime, nullable=True)
-    special_end = db.Column(db.DateTime, nullable=True)
-
+# ==============================================================================
+# 2. 資料庫模型定義 (Database Models)
+# ==============================================================================
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
-    phone = db.Column(db.String(20), nullable=False)
+    phone = db.Column(db.String(50), nullable=False)
     photo_path = db.Column(db.String(200), nullable=False)
+    feature = db.Column(db.PickleType, nullable=True)
+    points = db.Column(db.Integer, default=0)  # 會員紅利點數
+
+class MenuItem(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    category = db.Column(db.String(50), default='主餐')
+    price = db.Column(db.Integer, nullable=False)
+    modifiers = db.Column(db.String(50), default='none')
+    description = db.Column(db.String(200), default='')
+    image_path = db.Column(db.String(200), default='')
+    is_recommended = db.Column(db.Boolean, default=False)
+    is_new = db.Column(db.Boolean, default=False)
 
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    table_number = db.Column(db.String(50))
-    order_type = db.Column(db.String(20), nullable=False, default='內用')
+    user_id = db.Column(db.Integer, nullable=True)
+    table_number = db.Column(db.String(50), default='訪客')
     total_price = db.Column(db.Integer, nullable=False)
-    payment_method = db.Column(db.String(50))
-    status = db.Column(db.String(20), default='Pending')
-    created_at = db.Column(db.DateTime, default=lambda: datetime.utcnow() + timedelta(hours=8))
-    items = db.relationship('OrderItem', backref='order', lazy=True)
+    payment_method = db.Column(db.String(50), default='Cash')
+    order_type = db.Column(db.String(50), default='內用')
+    status = db.Column(db.String(50), default='Pending')
+    points_used = db.Column(db.Integer, default=0)
+    points_earned = db.Column(db.Integer, default=0)
+    discount_amount = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
 
 class OrderItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
     item_name = db.Column(db.String(100), nullable=False)
-    quantity = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Integer, nullable=False)
+    quantity = db.Column(db.Integer, default=1)
     customization = db.Column(db.String(200), default='')
 
+# ==============================================================================
+# 3. 資料庫結構自動檢查與全面補齊升級 (Complete Auto Migration)
+# ==============================================================================
 with app.app_context():
     db.create_all()
+    
+    # 1. 檢查 User 資料表
+    user_info = db.session.execute(db.text("PRAGMA table_info(user)")).fetchall()
+    user_cols = [col[1] for col in user_info]
+    if 'feature' not in user_cols:
+        db.session.execute(db.text("ALTER TABLE user ADD COLUMN feature BLOB"))
+    if 'points' not in user_cols:
+        db.session.execute(db.text("ALTER TABLE user ADD COLUMN points INTEGER DEFAULT 0"))
 
-    # SQLite 自動檢測並補充新欄位
-    if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite:///'):
-        conn = db.engine.raw_connection()
-        cursor = conn.cursor()
-        cursor.execute("PRAGMA table_info(menu_item)")
-        existing_columns = [row[1] for row in cursor.fetchall()]
-        
-        new_cols = {
-            'is_recommended': 'BOOLEAN DEFAULT 0',
-            'is_new': 'BOOLEAN DEFAULT 0',
-            'is_special': 'BOOLEAN DEFAULT 0',
-            'special_price': 'INTEGER',
-            'special_stock': 'INTEGER DEFAULT 0',
-            'special_start': 'DATETIME',
-            'special_end': 'DATETIME'
-        }
-        
-        for col_name, col_type in new_cols.items():
-            if col_name not in existing_columns:
-                cursor.execute(f"ALTER TABLE menu_item ADD COLUMN {col_name} {col_type}")
-                
-        conn.commit()
-        cursor.close()
-        conn.close()
+    # 2. 檢查 MenuItem 資料表
+    menu_info = db.session.execute(db.text("PRAGMA table_info(menu_item)")).fetchall()
+    menu_cols = [col[1] for col in menu_info]
+    if 'modifiers' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN modifiers VARCHAR(50) DEFAULT 'none'"))
+    if 'description' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN description VARCHAR(200) DEFAULT ''"))
+    if 'image_path' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN image_path VARCHAR(200) DEFAULT ''"))
+    if 'is_recommended' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_recommended BOOLEAN DEFAULT 0"))
+    if 'is_new' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_new BOOLEAN DEFAULT 0"))
 
-# --- 圖片處理與人臉辨識函式 ---
-def save_and_fix_image(file_storage, save_path):
-    try:
-        img = Image.open(file_storage)
-        img = ImageOps.exif_transpose(img)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.thumbnail((1024, 1024))
-        img.save(save_path, "JPEG", quality=90)
-        return True
-    except Exception as e:
-        print(f"圖片轉正失敗: {e}")
-        return False
+    # 3. 檢查 Order 資料表 ("order" 為 SQL 保留字，必須加引號)
+    order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
+    order_cols = [col[1] for col in order_info]
+    if 'user_id' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN user_id INTEGER'))
+    if 'points_used' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN points_used INTEGER DEFAULT 0'))
+    if 'points_earned' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN points_earned INTEGER DEFAULT 0'))
+    if 'discount_amount' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN discount_amount INTEGER DEFAULT 0'))
+    if 'payment_method' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN payment_method VARCHAR(50) DEFAULT "Cash"'))
+    if 'order_type' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN order_type VARCHAR(50) DEFAULT "內用"'))
+    if 'status' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN status VARCHAR(50) DEFAULT "Pending"'))
 
-def get_face_feature(image_path):
-    img = cv2.imread(image_path)
-    if img is None: 
+    # 4. 檢查 OrderItem 資料表
+    order_item_info = db.session.execute(db.text("PRAGMA table_info(order_item)")).fetchall()
+    order_item_cols = [col[1] for col in order_item_info]
+    if 'customization' not in order_item_cols:
+        db.session.execute(db.text("ALTER TABLE order_item ADD COLUMN customization VARCHAR(200) DEFAULT ''"))
+
+    db.session.commit()
+
+# ==============================================================================
+# 4. 影像處理與人臉辨識演算法核心 (AI & Image Processing)
+# ==============================================================================
+def save_and_fix_image(file_storage, dest_path):
+    """讀取照片、修正 EXIF 方向旋轉問題並壓縮存檔"""
+    img = Image.open(file_storage)
+    img = ImageOps.exif_transpose(img)
+    img = img.convert("RGB")
+    img.thumbnail((800, 800))
+    img.save(dest_path, "JPEG", quality=88)
+
+def extract_feature(image_path):
+    """使用 YuNet 與 SFace 進行人臉特徵提取"""
+    if not os.path.exists(YUNET_MODEL) or not os.path.exists(SFACE_MODEL):
         return None
+
+    detector = cv2.FaceDetectorYN.create(YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+    recognizer = cv2.FaceRecognizerSF.create(SFACE_MODEL, "")
+
+    img = cv2.imread(image_path)
+    if img is None:
+        return None
+
     h, w, _ = img.shape
     detector.setInputSize((w, h))
     _, faces = detector.detect(img)
-    if faces is None or len(faces) == 0: 
-        return None
-    face_align = recognizer.alignCrop(img, faces[0])
-    return recognizer.feature(face_align)
 
-# --- 店家後台管理 ---
+    if faces is not None and len(faces) > 0:
+        aligned_face = recognizer.alignCrop(img, faces[0])
+        feature = recognizer.feature(aligned_face)
+        return feature
+    return None
+
+def compare_faces(feat1, feat2):
+    """比對兩個人臉特徵向量的餘弦相似度 (Cosine Similarity)"""
+    if feat1 is None or feat2 is None:
+        return 0.0
+    recognizer = cv2.FaceRecognizerSF.create(SFACE_MODEL, "")
+    score = recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)
+    return score
+
+# ==============================================================================
+# 5. 前台點餐與行銷優惠路由 (Customer & Marketing Routes)
+# ==============================================================================
+@app.route('/')
+def customer_index():
+    items = MenuItem.query.all()
+    categories = sorted(list(set(item.category for item in items if item.category)))
+    user_points = 0
+    
+    if session.get('user_id'):
+        user = User.query.get(session['user_id'])
+        if user:
+            user_points = user.points
+            session['user_points'] = user.points
+            
+    return render_template(
+        'customer.html',
+        items=items,
+        categories=categories,
+        user_points=user_points
+    )
+
+@app.route('/api/verify_promo', methods=['POST'])
+def verify_promo():
+    """驗證促銷優惠代碼 API"""
+    data = request.get_json() or {}
+    code = str(data.get('promo_code', '')).strip().upper()
+    subtotal = float(data.get('subtotal', 0))
+
+    if code == 'VIP90':
+        discount = round(subtotal * 0.1)
+        return jsonify({'valid': True, 'discount': discount, 'message': '已套用 VIP 9折 優惠！'})
+    elif code == 'SAVE30':
+        if subtotal >= 200:
+            return jsonify({'valid': True, 'discount': 30, 'message': '滿 $200 折 $30 成功！'})
+        else:
+            return jsonify({'valid': False, 'discount': 0, 'message': '此代碼需消費滿 $200 才可使用'})
+    elif code == 'NEW50':
+        if subtotal >= 300:
+            return jsonify({'valid': True, 'discount': 50, 'message': '滿 $300 折 $50 成功！'})
+        else:
+            return jsonify({'valid': False, 'discount': 0, 'message': '此代碼需消費滿 $300 才可使用'})
+            
+    return jsonify({'valid': False, 'discount': 0, 'message': '無效的促銷優惠代碼'})
+
+@app.route('/submit_order', methods=['POST'])
+def submit_order():
+    """處理結帳、扣抵優惠/點數、計算紅利回饋"""
+    data = request.get_json()
+    items = data.get('items', [])
+    payment_method = data.get('payment_method', 'Cash')
+    order_type = data.get('order_type', '內用')
+    promo_code = str(data.get('promo_code', '')).strip().upper()
+    use_points = int(data.get('use_points', 0))
+
+    if not items:
+        return jsonify({'error': '購物車為空'}), 400
+
+    # 1. 計算商品原始小計
+    subtotal = sum(item['price'] * item['quantity'] for item in items)
+    
+    # 2. 計算促銷代碼折扣
+    promo_discount = 0
+    if promo_code == 'VIP90':
+        promo_discount = round(subtotal * 0.1)
+    elif promo_code == 'SAVE30' and subtotal >= 200:
+        promo_discount = 30
+    elif promo_code == 'NEW50' and subtotal >= 300:
+        promo_discount = 50
+
+    remaining_amount = max(0, subtotal - promo_discount)
+
+    # 3. 計算會員紅利折抵 (1 點 = $1)
+    points_used = 0
+    user = None
+    if session.get('user_id'):
+        user = User.query.get(session['user_id'])
+        if user and use_points > 0:
+            points_used = min(user.points, use_points, remaining_amount)
+
+    final_price = max(0, remaining_amount - points_used)
+    total_discount = promo_discount + points_used
+
+    # 4. 累積新點數 (實付金額每滿 $10 累積 1 點)
+    points_earned = int(final_price // 10) if user else 0
+
+    if user:
+        user.points = user.points - points_used + points_earned
+        session['user_points'] = user.points
+
+    user_name = session.get('user_name', '訪客')
+    new_order = Order(
+        user_id=session.get('user_id'),
+        table_number=user_name,
+        total_price=final_price,
+        payment_method=payment_method,
+        order_type=order_type,
+        status='Pending',
+        points_used=points_used,
+        points_earned=points_earned,
+        discount_amount=total_discount
+    )
+    db.session.add(new_order)
+    db.session.flush()
+
+    for item in items:
+        order_item = OrderItem(
+            order_id=new_order.id,
+            item_name=item['name'],
+            price=item['price'],
+            quantity=item['quantity'],
+            customization=item.get('customization', '')
+        )
+        db.session.add(order_item)
+
+    db.session.commit()
+
+    receipt_items = []
+    for item in items:
+        receipt_items.append({
+            'name': item['name'],
+            'price': item['price'],
+            'quantity': item['quantity'],
+            'subtotal': item['price'] * item['quantity'],
+            'customization': item.get('customization', '')
+        })
+
+    return jsonify({
+        'order_id': new_order.id,
+        'user_name': user_name,
+        'subtotal': subtotal,
+        'discount_amount': total_discount,
+        'points_used': points_used,
+        'points_earned': points_earned,
+        'total_price': final_price,
+        'payment_method': payment_method,
+        'order_type': order_type,
+        'items': receipt_items,
+        'current_user_points': user.points if user else 0
+    })
+# --- 紅利回饋商店頁面 ---
+@app.route('/rewards')
+def rewards_store():
+    if not session.get('user_id'):
+        return redirect(url_for('face_login'))
+    
+    user = User.query.get(session['user_id'])
+    if not user:
+        return redirect(url_for('logout'))
+        
+    session['user_points'] = user.points
+    return render_template('rewards.html', user=user)
+
+# --- 🎁 點數兌換餐點 API ---
+@app.route('/api/redeem_reward', methods=['POST'])
+def redeem_reward():
+    if not session.get('user_id'):
+        return jsonify({'success': False, 'message': '請先登入會員！'}), 401
+        
+    user = User.query.get(session['user_id'])
+    if not user:
+        return jsonify({'success': False, 'message': '找不到會員資料！'}), 404
+        
+    data = request.get_json() or {}
+    reward_name = data.get('name')
+    required_points = int(data.get('points', 0))
+    image_url = data.get('image', '')
+    
+    if user.points < required_points:
+        return jsonify({
+            'success': False, 
+            'message': f'紅利點數不足！您目前有 {user.points} 點，兌換需要 {required_points} 點。'
+        }), 400
+        
+    # 扣除會員點數
+    user.points -= required_points
+    session['user_points'] = user.points
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'message': f'🎉 成功使用 {required_points} 點兌換【{reward_name}】！',
+        'remaining_points': user.points,
+        'redeemed_item': {
+            'id': f'reward_{int(time.time())}',
+            'name': f'🎁 [點數兌換] {reward_name}',
+            'price': 0, # 兌換品項為 0 元
+            'customization': '紅利免費兌換',
+            'quantity': 1
+        }
+    })
+
+@app.route('/my_orders')
+def my_orders():
+    """查詢當前登入使用者的歷史訂單記錄"""
+    user_id = session.get('user_id')
+    user_name = session.get('user_name')
+
+    if user_id:
+        orders = Order.query.filter_by(user_id=user_id).order_by(Order.id.desc()).all()
+    elif user_name:
+        orders = Order.query.filter_by(table_number=user_name).order_by(Order.id.desc()).all()
+    else:
+        return jsonify([])
+
+    result = []
+    for o in orders:
+        items_data = []
+        for i in o.items:
+            items_data.append({
+                'name': i.item_name,
+                'price': i.price,
+                'quantity': i.quantity,
+                'subtotal': i.price * i.quantity,
+                'customization': i.customization or ''
+            })
+        
+        result.append({
+            'order_id': o.id,
+            'table_number': o.table_number,
+            'total_price': o.total_price,
+            'points_used': o.points_used or 0,
+            'points_earned': o.points_earned or 0,
+            'payment_method': o.payment_method,
+            'order_type': o.order_type,
+            'status': o.status,
+            'created_at': o.created_at.strftime('%Y-%m-%d %H:%M') if o.created_at else '',
+            'items': items_data
+        })
+    return jsonify(result)
+
+# ==============================================================================
+# 6. 會員系統與人臉認證路由 (Member & Authentication Routes)
+# ==============================================================================
+# --- 會員註冊路由 ---
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        name = request.form.get('name')
+        phone = request.form.get('phone')
+        photo = request.files.get('photo')
+        
+        if not name or not phone or not photo or photo.filename == '':
+            return "<script>alert('請填寫完整資訊並拍攝/上傳照片！'); window.history.back();</script>", 400
+
+        filename = f"{phone}_{int(time.time())}.jpg"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], filename)
+        save_and_fix_image(photo, filepath)
+
+        feature = extract_feature(filepath)
+        if feature is None:
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
+            return "<script>alert('⚠️ 照片未偵測到清晰人臉！請正對鏡頭並重新拍攝。'); window.history.back();</script>", 400
+
+        new_user = User(name=name, phone=phone, photo_path=filename, feature=feature, points=20)
+        db.session.add(new_user)
+        db.session.commit()
+
+        session['user_id'] = new_user.id
+        session['user_name'] = new_user.name
+        session['user_points'] = new_user.points
+        return redirect(url_for('customer_index'))
+        
+    return render_template('register.html', login_mode=False)
+
+
+# --- 人臉比對快速登入路由 ---
+@app.route('/face_login', methods=['GET', 'POST'])
+def face_login():
+    if request.method == 'POST':
+        photo = request.files.get('photo')
+        if not photo:
+            return jsonify({'success': False, 'message': '未接收到拍攝照片'})
+
+        temp_path = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], f"temp_{int(time.time())}.jpg")
+        save_and_fix_image(photo, temp_path)
+
+        curr_feature = extract_feature(temp_path)
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+        if curr_feature is None:
+            return jsonify({'success': False, 'message': '未在畫面中偵測到清晰人臉，請正對鏡頭！'})
+
+        users = User.query.all()
+        best_score = 0.0
+        matched_user = None
+
+        for u in users:
+            if u.feature is not None:
+                score = compare_faces(curr_feature, u.feature)
+                if score > best_score:
+                    best_score = score
+                    matched_user = u
+
+        if best_score >= 0.363 and matched_user:
+            session['user_id'] = matched_user.id
+            session['user_name'] = matched_user.name
+            session['user_points'] = matched_user.points
+            return jsonify({
+                'success': True,
+                'user_name': matched_user.name,
+                'points': matched_user.points
+            })
+        else:
+            return jsonify({'success': False, 'message': '人臉比對未通過，請先註冊或重新對準鏡頭！'})
+            
+    return render_template('register.html', login_mode=True)
+
+# --- 手機號碼快速登入路由 ---
+@app.route('/phone_login', methods=['POST'])
+def phone_login():
+    data = request.get_json() or {}
+    phone = str(data.get('phone', '')).strip()
+
+    if not phone:
+        return jsonify({'success': False, 'message': '請輸入手機號碼！'}), 400
+
+    user = User.query.filter_by(phone=phone).first()
+    if user:
+        session['user_id'] = user.id
+        session['user_name'] = user.name
+        session['user_points'] = user.points
+        return jsonify({
+            'success': True,
+            'user_name': user.name,
+            'points': user.points
+        })
+    else:
+        return jsonify({'success': False, 'message': '查無此手機號碼，請確認號碼或先加入會員！'})
+    
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('customer_index'))
+
+# ==============================================================================
+# 7. 店家後台管理路由 (Admin Management Routes)
+# ==============================================================================
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_index():
+    """後台登入與管理總覽"""
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        if username == '1234' and password == '1234':
+        if request.form.get('username') == '1234' and request.form.get('password') == '1234':
             session['admin_logged_in'] = True
             return redirect(url_for('admin_index'))
-        else:
-            return "<h1>帳號或密碼錯誤！</h1><a href='/admin'>重新登入</a>", 401
+        return "帳號密碼錯誤！<a href='/admin'>重新登入</a>", 401
 
     if not session.get('admin_logged_in'):
         return render_template('admin.html')
-        
+
+    orders = Order.query.order_by(Order.id.desc()).all()
     items = MenuItem.query.all()
     users = User.query.all()
-    orders = Order.query.order_by(Order.created_at.desc()).all()
-    return render_template('admin.html', items=items, users=users, orders=orders)
-
-@app.route('/admin/update_order_status/<int:order_id>', methods=['POST'])
-def update_order_status(order_id):
-    if not session.get('admin_logged_in'): 
-        return jsonify({'error': 'Unauthorized'}), 401
-        
-    data = request.json
-    new_status = data.get('status')
-    order = Order.query.get_or_404(order_id)
-    if new_status:
-        order.status = new_status
-        db.session.commit()
-        return jsonify({'message': '狀態更新成功', 'status': new_status})
-    return jsonify({'error': '無效的狀態'}), 400
+    return render_template('admin.html', orders=orders, items=items, users=users)
 
 @app.route('/admin_logout')
 def admin_logout():
     session.pop('admin_logged_in', None)
-    return redirect(url_for('customer_index'))
+    return redirect(url_for('admin_index'))
 
 @app.route('/admin/add', methods=['POST'])
 def add_item():
-    if not session.get('admin_logged_in'): 
+    """手動新增菜單品項"""
+    if not session.get('admin_logged_in'):
         return redirect(url_for('admin_index'))
-    
+        
     name = request.form.get('name')
-    category = request.form.get('category', '主餐') 
+    category = request.form.get('category', '主餐')
     modifiers = request.form.get('modifiers', 'none')
     price = request.form.get('price')
-    desc = request.form.get('description')
-    
-    # 修復 2：使用小寫 image 避免與 PIL.Image 模組名稱衝突
+    desc = request.form.get('description', '')
     image = request.files.get('image')
-    
-    is_recommended = request.form.get('is_recommended') == 'on'
+    is_rec = request.form.get('is_recommended') == 'on'
     is_new = request.form.get('is_new') == 'on'
-    is_special = request.form.get('is_special') == 'on'
-    
-    special_price = request.form.get('special_price')
-    special_stock = request.form.get('special_stock', 0)
-    special_start_str = request.form.get('special_start')
-    special_end_str = request.form.get('special_end')
 
-    special_start = datetime.strptime(special_start_str, '%Y-%m-%dT%H:%M') if special_start_str else None
-    special_end = datetime.strptime(special_end_str, '%Y-%m-%dT%H:%M') if special_end_str else None
+    image_filename = ''
+    if image and image.filename != '':
+        image_filename = f"menu_{int(time.time())}.jpg"
+        filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], image_filename)
+        save_and_fix_image(image, filepath)
 
     if name and price:
-        image_filename = ""
-        if image and image.filename != '':
-            ext = os.path.splitext(image.filename)[1] or '.jpg'
-            image_filename = f"menu_{int(time.time())}{ext}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], image_filename)
-            image.save(filepath)
-            
         new_item = MenuItem(
-            name=name, 
-            category=category, 
-            modifiers=modifiers, 
-            price=int(price), 
-            description=desc, 
+            name=name,
+            category=category,
+            modifiers=modifiers,
+            price=int(price),
+            description=desc,
             image_path=image_filename,
-            is_recommended=is_recommended,
-            is_new=is_new,
-            is_special=is_special,
-            special_price=int(special_price) if special_price else None,
-            special_stock=int(special_stock) if special_stock else 0,
-            special_start=special_start,
-            special_end=special_end
+            is_recommended=is_rec,
+            is_new=is_new
         )
         db.session.add(new_item)
         db.session.commit()
         
     return redirect(url_for('admin_index', tab='menu'))
 
-@app.route('/admin/import_excel', methods=['POST'])
-def import_menu_excel():
+@app.route('/admin/edit/<int:id>', methods=['POST'])
+def edit_item(id):
+    """店家編輯菜單品項"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_index'))
+        
+    item = MenuItem.query.get_or_404(id)
+    name = request.form.get('name')
+    price = request.form.get('price')
     
+    if name and price:
+        item.name = name
+        item.category = request.form.get('category', '主餐')
+        item.modifiers = request.form.get('modifiers', 'none')
+        item.price = int(float(price))
+        item.description = request.form.get('description', '')
+        item.is_recommended = request.form.get('is_recommended') == 'on'
+        item.is_new = request.form.get('is_new') == 'on'
+
+        image = request.files.get('image')
+        if image and image.filename != '':
+            image_filename = f"menu_{int(time.time())}.jpg"
+            filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], image_filename)
+            save_and_fix_image(image, filepath)
+            
+            if item.image_path:
+                old_path = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item.image_path)
+                if os.path.exists(old_path):
+                    try:
+                        os.remove(old_path)
+                    except Exception:
+                        pass
+                        
+            item.image_path = image_filename
+
+        db.session.commit()
+        
+    return redirect(url_for('admin_index', tab='menu'))
+
+@app.route('/admin/delete/<int:id>')
+def delete_item(id):
+    """刪除菜單品項"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_index'))
+        
+    item = MenuItem.query.get_or_404(id)
+    if item.image_path:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item.image_path)
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+                
+    db.session.delete(item)
+    db.session.commit()
+    return redirect(url_for('admin_index', tab='menu'))
+
+@app.route('/admin/import_excel', methods=['POST'])
+def import_menu_excel():
+    """Excel 批量匯入菜單"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_index'))
+        
     file = request.files.get('excel_file')
     if not file or file.filename == '':
         return "<h1>請選擇 Excel 檔案</h1><a href='/admin'>返回後台</a>", 400
@@ -270,8 +678,11 @@ def import_menu_excel():
                 price = 0
 
             modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
-            description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
+            if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
+                modifiers = 'none'
 
+            description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
+            
             rec_val = str(row.get('is_recommended', '')).lower()
             is_recommended = rec_val in ['1', 'true', '是', 'yes']
 
@@ -297,384 +708,44 @@ def import_menu_excel():
         db.session.rollback()
         return f"<h1>匯入解析失敗：{e}</h1><a href='/admin'>返回後台</a>", 500
 
-@app.route('/admin/edit/<int:id>', methods=['POST'])
-def edit_item(id):
+@app.route('/admin/update_order_status/<int:id>', methods=['POST'])
+def update_order_status(id):
+    """更新訂單製作/出餐狀態"""
     if not session.get('admin_logged_in'):
-        return redirect(url_for('admin_index'))
-    
-    item = MenuItem.query.get_or_404(id)
-    
-    name = request.form.get('name')
-    category = request.form.get('category', '主餐')
-    modifiers = request.form.get('modifiers', 'none')
-    price = request.form.get('price')
-    desc = request.form.get('description', '')
-    
-    # 修復 2：使用小寫 image 變數
-    image = request.files.get('image')
-    
-    is_recommended = request.form.get('is_recommended') == 'on'
-    is_new = request.form.get('is_new') == 'on'
-    is_special = request.form.get('is_special') == 'on'
-    
-    special_price = request.form.get('special_price')
-    special_stock = request.form.get('special_stock', 0)
-    special_start_str = request.form.get('special_start')
-    special_end_str = request.form.get('special_end')
-
-    if name and price:
-        item.name = name
-        item.category = category
-        item.modifiers = modifiers
-        item.price = int(float(price))
-        item.description = desc
-        item.is_recommended = is_recommended
-        item.is_new = is_new
-        item.is_special = is_special
-        item.special_price = int(special_price) if special_price else None
-        item.special_stock = int(special_stock) if special_stock else 0
-        item.special_start = datetime.strptime(special_start_str, '%Y-%m-%dT%H:%M') if special_start_str else None
-        item.special_end = datetime.strptime(special_end_str, '%Y-%m-%dT%H:%M') if special_end_str else None
-
-        # 正確檢查小寫 image
-        if image and image.filename != '':
-            ext = os.path.splitext(image.filename)[1] or '.jpg'
-            image_filename = f"menu_{int(time.time())}{ext}"
-            filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], image_filename)
-            image.save(filepath)
-            
-            if item.image_path:
-                old_path = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item.image_path)
-                try:
-                    if os.path.exists(old_path):
-                        os.remove(old_path)
-                except Exception:
-                    pass
-            
-            item.image_path = image_filename
-            
-        db.session.commit()
+        return jsonify({'error': '未授權'}), 401
         
-    return redirect(url_for('admin_index', tab='menu'))
-
-@app.route('/admin/delete/<int:id>')
-def delete_item(id):
-    if not session.get('admin_logged_in'): 
-        return redirect(url_for('admin_index'))
-    item_to_delete = MenuItem.query.get_or_404(id)
+    order = Order.query.get_or_404(id)
+    data = request.get_json()
+    new_status = data.get('status')
     
-    if item_to_delete.image_path:
-        filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item_to_delete.image_path)
-        try:
-            if os.path.exists(filepath):
-                os.remove(filepath)
-        except Exception:
-            pass
-            
-    db.session.delete(item_to_delete)
-    db.session.commit()
-    return redirect(url_for('admin_index', tab='menu'))
+    if new_status in ['Pending', 'Completed', 'Cancelled']:
+        order.status = new_status
+        db.session.commit()
+        return jsonify({'message': '狀態更新成功', 'status': new_status})
+        
+    return jsonify({'error': '無效的狀態'}), 400
 
 @app.route('/admin/delete_user/<int:id>')
 def delete_user(id):
-    if not session.get('admin_logged_in'): 
+    """店家刪除註冊會員"""
+    if not session.get('admin_logged_in'):
         return redirect(url_for('admin_index'))
-    user_to_delete = User.query.get_or_404(id)
-    
-    try:
-        if os.path.exists(user_to_delete.photo_path):
-            os.remove(user_to_delete.photo_path)
-    except Exception:
-        pass
         
-    db.session.delete(user_to_delete)
+    user = User.query.get_or_404(id)
+    if user.photo_path:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+                
+    db.session.delete(user)
     db.session.commit()
-    return redirect(url_for('admin_index'))
+    return redirect(url_for('admin_index', tab='users'))
 
-@app.route('/')
-def customer_index():
-    user_name = session.get('user_name')
-    is_member = False
-    
-    if user_name:
-        user = User.query.filter_by(name=user_name).first()
-        if not user:
-            session.pop('user_name', None)
-        else:
-            is_member = True
-
-    items = MenuItem.query.all()
-    categories = sorted({item.category or '未分類' for item in items})
-    
-    return render_template('customer.html', 
-                           items=items, 
-                           categories=categories,
-                           is_member=is_member)
-
-@app.route('/logout')
-def logout():
-    session.pop('user_name', None)
-    return redirect(url_for('customer_index'))
-
-@app.route('/submit_order', methods=['POST'])
-def submit_order():
-    try:
-        data = request.json or {}
-        user_name = session.get('user_name') or data.get('table_number') or '一般顧客'
-        
-        new_order = Order(
-            table_number=user_name,
-            order_type=data.get('order_type', '內用'),
-            total_price=int(data.get('total_price', 0)),
-            payment_method=data.get('payment_method', 'Cash')
-        )
-        db.session.add(new_order)
-        db.session.flush()
-
-        order_items_detail = []
-        for item in data.get('items', []):
-            # 支援 'name' 或 'item_name' 兩種 key 名稱
-            item_name = item.get('name') or item.get('item_name', '')
-            item_price = int(item.get('price', 0))
-            item_qty = int(item.get('quantity', 1))
-            custom_text = item.get('customization', '')
-
-            order_item = OrderItem(
-                order_id=new_order.id,
-                item_name=item_name,
-                quantity=item_qty,
-                price=item_price,
-                customization=custom_text
-            )
-            db.session.add(order_item)
-            
-            # 扣減特價商品庫存
-            db_item = MenuItem.query.filter_by(name=item_name).first()
-            if db_item and db_item.is_special and db_item.special_stock > 0:
-                db_item.special_stock = max(0, db_item.special_stock - item_qty)
-
-            order_items_detail.append({
-                'name': item_name,
-                'quantity': item_qty,
-                'price': item_price,
-                'subtotal': item_price * item_qty,
-                'customization': custom_text
-            })
-
-        db.session.commit()
-        
-        return jsonify({
-            'message': '訂單已成功送出！',
-            'order_id': new_order.id,
-            'user_name': user_name,
-            'order_type': new_order.order_type,
-            'payment_method': new_order.payment_method,
-            'total_price': new_order.total_price,
-            'items': order_items_detail
-        })
-
-    except Exception as e:
-        db.session.rollback()
-        print(f"下單處理失敗: {e}")
-        return jsonify({'message': f'訂單送出失敗：{str(e)}'}), 500
-
-@app.route('/my_orders')
-def my_orders():
-    user_name = session.get('user_name')
-    if not user_name:
-        return jsonify({'error': '未登入'}), 401
-
-    try:
-        orders = Order.query.filter_by(table_number=user_name).order_by(Order.created_at.desc()).all()
-        result = []
-        for o in orders:
-            items_detail = []
-            for item in o.items:
-                items_detail.append({
-                    'name': item.item_name,
-                    'quantity': item.quantity,
-                    'price': item.price,
-                    'subtotal': item.price * item.quantity,
-                    'customization': item.customization
-                })
-                
-            result.append({
-                'order_id': o.id,
-                'user_name': o.table_number,
-                'order_type': getattr(o, 'order_type', '內用'),
-                'payment_method': o.payment_method,
-                'total_price': o.total_price,
-                'status': o.status,
-                'created_at': o.created_at.strftime('%Y-%m-%d %H:%M:%S') if o.created_at else '',
-                'items': items_detail
-            })
-            
-        return jsonify(result)
-    except Exception as e:
-        print(f"取得訂單記錄失敗: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == 'POST':
-        name = request.form.get('name', '')
-        phone = request.form.get('phone', '')
-        action = request.form.get('action')
-        captured_photo = request.form.get('captured_photo', '')
-        
-        if not name or not phone:
-            return "<h1>請填寫完整資料</h1><a href='/register'>返回</a>", 400
-
-        if action == 'webcam':
-            cap = cv2.VideoCapture(0)
-            win_name = 'Auto Capture - Please look at the camera'
-            cv2.namedWindow(win_name)
-            
-            temp_filename = f"temp_{phone}_{int(time.time())}.jpg"
-            temp_filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], temp_filename)
-            success_capture = False
-
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret: break
-                display_frame = frame.copy()
-                cv2.putText(display_frame, "Detecting face...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
-                detector.setInputSize((frame.shape[1], frame.shape[0]))
-                _, faces = detector.detect(frame)
-                
-                if faces is not None and len(faces) > 0:
-                    face_align = recognizer.alignCrop(frame, faces[0])
-                    feature = recognizer.feature(face_align)
-                    if feature is not None:
-                        cv2.imwrite(temp_filepath, frame)
-                        success_capture = True
-                        cv2.putText(display_frame, "Face Detected! Captured...", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                        cv2.imshow(win_name, display_frame)
-                        cv2.waitKey(1000) 
-                        break
-
-                cv2.imshow(win_name, display_frame)
-                if cv2.waitKey(1) & 0xFF == ord('q'): break
-                if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1: break
-
-            cap.release()
-            cv2.destroyAllWindows()
-
-            if not success_capture:
-                return "<h1>相機已關閉或未偵測到人臉</h1><a href='/register'>返回重新註冊</a>", 400
-            return render_template('register.html', name=name, phone=phone, captured_photo=temp_filename)
-
-        elif action == 'register':
-            photo = request.files.get('photo')
-            source_path = ""
-            
-            if photo and photo.filename != '':
-                source_path = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], f"temp_upload_{phone}.jpg")
-                save_and_fix_image(photo, source_path)
-            elif captured_photo:
-                source_path = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], captured_photo)
-                if not os.path.exists(source_path):
-                    return "<h1>找不到拍攝的照片，請重新操作！</h1><a href='/register'>返回</a>", 400
-            else:
-                return "<h1>請上傳照片或使用相機拍攝！</h1><a href='/register'>返回</a>", 400
-
-            feature = get_face_feature(source_path)
-            if feature is None:
-                if os.path.exists(source_path):
-                    os.remove(source_path)
-                return "<h1>照片中未偵測到人臉，請重新提供！</h1><a href='/register'>返回</a>", 400
-
-            existing_users = User.query.order_by(User.id).all()
-            available_id = 1
-            for u in existing_users:
-                if u.id == available_id: available_id += 1
-                else: break
-
-            new_user = User(id=available_id, name=name, phone=phone, photo_path="temp")
-            db.session.add(new_user)
-            db.session.flush() 
-
-            final_filename = f"member_{new_user.id}_{phone}.jpg"
-            final_filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], final_filename)
-            
-            os.rename(source_path, final_filepath)
-            new_user.photo_path = final_filepath
-            db.session.commit()
-            
-            session['user_name'] = new_user.name
-            return redirect(url_for('customer_index'))
-
-    return render_template('register.html', name='', phone='', captured_photo='')
-
-@app.route('/face_login')
-def face_login():
-    users = User.query.all()
-    whitelist = []
-    
-    for u in users:
-        feat = get_face_feature(u.photo_path)
-        if feat is not None:
-            whitelist.append({"name": u.name, "feature": feat})
-            
-    if not whitelist:
-        return "<h1>系統中尚未有任何有效的會員特徵，請先註冊！</h1><a href='/register'>前往註冊</a>", 400
-
-    cap = cv2.VideoCapture(0)
-    win_name = 'Face Login - Press Q to Exit'
-    cv2.namedWindow(win_name)
-    recognized_user = None
-    login_success = False
-
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        detector.setInputSize((frame.shape[1], frame.shape[0]))
-        _, faces = detector.detect(frame)
-
-        if faces is not None:
-            for face in faces:
-                face_align = recognizer.alignCrop(frame, face)
-                feature = recognizer.feature(face_align)
-                
-                best_score = 0
-                best_name = "Unknown"
-                
-                for w_user in whitelist:
-                    score = recognizer.match(w_user["feature"], feature, cv2.FaceRecognizerSF_FR_COSINE)
-                    if score > best_score:
-                        best_score = score
-                        if score > 0.36:
-                            best_name = w_user["name"]
-
-                coords = face[:-1].astype(np.int32)
-                if best_name != "Unknown":
-                    recognized_user = best_name
-                    login_success = True
-                    color = (0, 255, 0)
-                    cv2.rectangle(frame, (coords[0], coords[1]), (coords[0]+coords[2], coords[1]+coords[3]), color, 2)
-                    cv2.putText(frame, f"{best_name} - Login Success!", (coords[0], coords[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-                    break 
-                else:
-                    color = (0, 0, 255)
-                    cv2.rectangle(frame, (coords[0], coords[1]), (coords[0]+coords[2], coords[1]+coords[3]), color, 2)
-                    cv2.putText(frame, f"Unknown: {best_score:.2f}", (coords[0], coords[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-        cv2.imshow(win_name, frame)
-        if login_success:
-            cv2.waitKey(1500)
-            break
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
-        if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1: break
-
-    cap.release()
-    cv2.destroyAllWindows()
-    
-    if recognized_user:
-        session['user_name'] = recognized_user
-        return redirect(url_for('customer_index'))
-    else:
-        return "<h1>未能辨識身份</h1><a href='/'>返回首頁</a>"
-
+# ==============================================================================
+# 8. 程式進入點 (Main Entry)
+# ==============================================================================
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)
