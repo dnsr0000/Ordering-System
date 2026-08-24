@@ -326,15 +326,14 @@
 
                     if (data.is_coupon) {
                         alert(data.message);
-                        if (navigator.clipboard) navigator.clipboard.writeText(data.promo_code);
-                        window.location.href = '/';
+   
+                        window.location.reload();
                     } else {
                         let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
                         currentCart.push(data.redeemed_item);
                         localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
-
                         alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
-                        window.location.href = '/';
+                        window.location.reload();
                     }
                 } else {
                     alert(data.message);

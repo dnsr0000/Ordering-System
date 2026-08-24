@@ -540,7 +540,7 @@
                 <div>
                     <div class="fw-bold text-warning">${item.name}</div>
                     ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
-                    <small class="text-white-50">$${item.price.toFixed(2)} x ${item.quantity}</small>
+                    <small class="text-white-50">$${Math.round(item.price)} x ${item.quantity}</small>
                 </div>
                 <div class="btn-group btn-group-sm">
                     <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
@@ -660,10 +660,10 @@
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
         const earnedPoints = Math.floor(finalPrice / 100);
 
-        document.getElementById('cart-subtotal').innerText = subtotal.toFixed(2);
-        document.getElementById('cart-promo-discount').innerText = appliedPromoDiscount.toFixed(2);
-        document.getElementById('cart-points-discount').innerText = pointsUsed.toFixed(2);
-        document.getElementById('cart-final').innerText = finalPrice.toFixed(2);
+        document.getElementById('cart-subtotal').innerText = Math.round(subtotal);
+        document.getElementById('cart-promo-discount').innerText = Math.round(appliedPromoDiscount);
+        document.getElementById('cart-points-discount').innerText = Math.round(pointsUsed);
+        document.getElementById('cart-final').innerText = Math.round(finalPrice);
         document.getElementById('cart-earned-points').innerText = earnedPoints;
     }
 
@@ -683,13 +683,13 @@
                     <div>${item.name} x${item.quantity}</div>
                     ${item.customization ? `<small class="text-info">${item.customization}</small>` : ''}
                 </div>
-                <span class="fw-bold">$${(item.price * item.quantity).toFixed(2)}</span>
+                <span class="fw-bold">$${Math.round(item.price * item.quantity)}</span>
             </li>`).join('') + '</ul>';
 
-        document.getElementById('preview-subtotal').innerText = subtotal.toFixed(2);
-        document.getElementById('preview-promo').innerText = appliedPromoDiscount.toFixed(2);
-        document.getElementById('preview-points').innerText = pointsUsed.toFixed(2);
-        document.getElementById('preview-final').innerText = finalPrice.toFixed(2);
+        document.getElementById('preview-subtotal').innerText = Math.round(subtotal);
+        document.getElementById('preview-promo').innerText = Math.round(appliedPromoDiscount);
+        document.getElementById('preview-points').innerText = Math.round(pointsUsed);
+        document.getElementById('preview-final').innerText = Math.round(finalPrice);
         document.getElementById('preview-earned').innerText = earnedPoints;
 
         bootstrap.Modal.getOrCreateInstance(document.getElementById('confirmModal')).show();
@@ -729,9 +729,9 @@
             document.getElementById('receipt-user').textContent = data.user_name;
             document.getElementById('receipt-type').textContent = data.order_type;
             document.getElementById('receipt-payment').textContent = data.payment_method;
-            document.getElementById('receipt-subtotal').textContent = data.subtotal.toFixed(2);
-            document.getElementById('receipt-discount').textContent = data.discount_amount.toFixed(2);
-            document.getElementById('receipt-total').textContent = data.total_price.toFixed(2);
+            document.getElementById('receipt-subtotal').textContent = Math.round(data.subtotal);
+            document.getElementById('receipt-discount').textContent = Math.round(data.discount_amount);
+            document.getElementById('receipt-total').textContent = Math.round(data.total_price);
             document.getElementById('receipt-earned-points').textContent = `+${data.points_earned} 點`;
             document.getElementById('receipt-current-points').textContent = `${data.current_user_points} 點`;
 
@@ -769,15 +769,15 @@
         bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
     }
 
-    function showMyOrders() {
-        fetch('/my_orders')
-        .then(res => res.json())
-        .then(orders => {
+function showMyOrders() {
+        fetch('/my_orders').then(res => res.json()).then(orders => {
             const historyBody = document.getElementById('history-modal-body');
             if (!orders || orders.length === 0) {
                 historyBody.innerHTML = '<div class="text-center text-muted py-4">目前尚無任何訂單紀錄！</div>';
             } else {
-                historyBody.innerHTML = orders.map(o => `
+                historyBody.innerHTML = orders.map(o => {
+                    const promoDiscount = Math.max(0, (o.discount_amount || 0) - (o.points_used || 0));
+                    return `
                     <div class="card mb-3 border-secondary shadow-sm text-dark">
                         <div class="card-header bg-light d-flex justify-content-between align-items-center">
                             <div>
@@ -790,30 +790,23 @@
                         <div class="card-body p-3">
                             <table class="table table-sm mb-2 align-middle">
                                 <thead><tr class="text-muted"><th>品項</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
-                                <tbody>
-                                    ${o.items.map(item => `
-                                        <tr>
-                                            <td><div>${item.name}</div>${item.customization ? `<small class="text-danger fw-bold">${item.customization}</small>` : ''}</td>
-                                            <td>x ${item.quantity}</td>
-                                            <td>$${item.price}</td>
-                                            <td>$${item.subtotal}</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
+                                <tbody>${o.items.map(item => `<tr><td><div>${item.name}</div>${item.customization ? `<small class="text-danger fw-bold">${item.customization}</small>` : ''}</td><td>x ${item.quantity}</td><td>$${Math.round(item.price)}</td><td>$${Math.round(item.subtotal)}</td></tr>`).join('')}</tbody>
                             </table>
                             <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-                                <small class="text-muted">使用點數折抵: $${o.points_used} | 獲得紅利: +${o.points_earned} 點</small>
-                                <div class="fw-bold text-danger fs-6">實付金額：$${o.total_price.toFixed(2)}</div>
+                                <small class="text-muted">
+                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_used)} | 獲得紅利: +${o.points_earned} 點
+                                </small>
+                                <div class="fw-bold text-danger fs-6">實付：$${Math.round(o.total_price)}</div>
                             </div>
                         </div>
-                    </div>
-                `).join('');
+                    </div>`;
+                }).join('');
             }
             bootstrap.Modal.getOrCreateInstance(document.getElementById('historyModal')).show();
         });
     }
 
-let currentPriceOrder = null; // 'asc' 或 'desc'
+    let currentPriceOrder = null; // 'asc' 或 'desc'
 
     function togglePriceSort() {
         const btn = document.getElementById('priceSortBtn');

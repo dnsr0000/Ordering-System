@@ -279,7 +279,7 @@ def verify_promo():
         discount = min(coupon.discount_value, subtotal)
         msg = f'已折抵現金 ${int(discount)} 元！'
     else:
-        discount = round(subtotal * (1.0 - coupon.discount_value), 2)
+        discount = round(subtotal * (1.0 - coupon.discount_value))
         msg = f'已套用 {round(coupon.discount_value * 10, 1)} 折優惠，折抵 ${int(discount)} 元！'
 
     return jsonify({'valid': True, 'discount': discount, 'message': msg})
@@ -314,7 +314,7 @@ def submit_order():
                 if cp.discount_type == 'fixed':
                     promo_discount = min(cp.discount_value, subtotal)
                 else:
-                    promo_discount = round(subtotal * (1.0 - cp.discount_value), 2)
+                    promo_discount = round(subtotal * (1.0 - cp.discount_value))
         
         # 若非會員持有券，檢查公開免點數券
         if not target_user_coupon:
@@ -323,7 +323,7 @@ def submit_order():
                 if pub_cp.discount_type == 'fixed':
                     promo_discount = min(pub_cp.discount_value, subtotal)
                 else:
-                    promo_discount = round(subtotal * (1.0 - pub_cp.discount_value), 2)
+                    promo_discount = round(subtotal * (1.0 - pub_cp.discount_value))
 
     remaining_amount = max(0, subtotal - promo_discount)
 
@@ -508,8 +508,9 @@ def my_orders():
         result.append({
             'order_id': o.id,
             'table_number': o.table_number,
-            'total_price': o.total_price,
-            'points_used': o.points_used or 0,
+            'total_price': round(o.total_price),
+            'discount_amount': round(o.discount_amount or 0),
+            'points_used': round(o.points_used or 0),
             'points_earned': o.points_earned or 0,
             'payment_method': o.payment_method,
             'order_type': o.order_type,
@@ -761,7 +762,7 @@ def add_item():
             name=name,
             category=category,
             modifiers=modifiers,
-            price=int(price),
+            price=round(float(price)),
             description=desc,
             image_path=image_filename,
             is_recommended=is_rec,
@@ -786,7 +787,7 @@ def edit_item(id):
         item.name = name
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
-        item.price = int(float(price))
+        item.price = round(float(price))
         item.description = request.form.get('description', '')
         item.is_recommended = True if request.form.get('is_recommended') else False
         item.is_new = True if request.form.get('is_new') else False
@@ -872,7 +873,7 @@ def import_menu_excel():
             category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
             
             try:
-                price = int(float(row.get('price', 0)))
+                price = round(float(row.get('price', 0)))
             except (ValueError, TypeError):
                 price = 0
 
@@ -936,6 +937,32 @@ def edit_user(id):
     user.points = int(request.form.get('points') or 0)
     db.session.commit()
     return redirect(url_for('admin_dashboard', tab='users'))
+
+# --- 切換會員專屬優惠券的可用/核銷狀態 ---
+@app.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
+def toggle_user_coupon(uc_id):
+    if not session.get('admin_logged_in'):
+        return jsonify({'success': False, 'message': '未授權'}), 401
+    
+    uc = UserCoupon.query.get_or_404(uc_id)
+    uc.is_used = not uc.is_used  
+    uc.used_at = datetime.now() if uc.is_used else None
+    db.session.commit()
+    
+    # 取得該會員最新的所有票券清單回傳給前端
+    user = User.query.get(uc.user_id)
+    coupons_list = [{
+        'id': c.id,
+        'title': c.coupon.title,
+        'code': c.code,
+        'is_used': c.is_used
+    } for c in user.user_coupons]
+    
+    return jsonify({
+        'success': True,
+        'user_name': user.name,
+        'coupons': coupons_list
+    })
 
 # --- 刪除會員 ---
 @app.route('/admin/delete_user/<int:id>')
