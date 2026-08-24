@@ -3,156 +3,193 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>店家後台管理系統 - Kiosk</title>
+    <title>店家管理後台 - 自助點餐系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.css" rel="stylesheet">
     <style>
-        body { background: linear-gradient(180deg, #f5f7fb 0%, #e9eef6 100%); font-family: "Microsoft JhengHei", sans-serif; }
-        .admin-login-card { max-width: 430px; margin: 80px auto; border-radius: 20px; border: none; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12); }
-        .dashboard-summary-card { border: none; border-radius: 18px; box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08); }
-        .order-card { border-left: 6px solid #0d6efd; transition: transform 0.18s ease; border-radius: 18px; }
-        .order-card:hover { transform: translateY(-4px); }
-        .order-card.Pending { border-left-color: #ffc107; }
-        .order-card.Completed { border-left-color: #198754; }
-        .order-card.Cancelled { border-left-color: #6c757d; }
-        .status-select.Pending { background-color: #fff3cd; }
-        .status-select.Completed { background-color: #d1e7dd; }
-        .status-select.Cancelled { background-color: #e2e3e5; }
-        .img-preview-box { width: 100px; height: 100px; object-fit: cover; border-radius: 12px; border: 2px dashed #ccc; }
-        .crop-container { width: 100%; height: 400px; background-color: #1a1a1a; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-        .crop-container img { max-width: 100%; display: block; }
+        body {
+            background: #0f172a;
+            color: #f8fafc;
+            font-family: "Microsoft JhengHei", -apple-system, sans-serif;
+            min-height: 100vh;
+        }
+        .navbar-admin {
+            background: #1e293b;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .nav-pills .nav-link {
+            color: #94a3b8;
+            border-radius: 10px;
+            font-weight: 600;
+            padding: 0.6rem 1.2rem;
+            transition: all 0.2s;
+        }
+        .nav-pills .nav-link.active {
+            background-color: #f59e0b;
+            color: #0f172a;
+        }
+        .card-custom {
+            background: #1e293b;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+        }
+        .table-dark-custom {
+            --bs-table-bg: #1e293b;
+            --bs-table-color: #f8fafc;
+            --bs-table-border-color: rgba(255,255,255,0.08);
+        }
+        .form-control, .form-select {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            color: #f8fafc;
+        }
+        .form-control:focus, .form-select:focus {
+            background-color: #1e293b;
+            border-color: #f59e0b;
+            color: #fff;
+            box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
+        }
+        .form-control::placeholder { color: #64748b; }
+        .login-card {
+            max-width: 420px;
+            width: 100%;
+            background: #1e293b;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+        }
     </style>
 </head>
 <body>
 
-{% if not session.get('admin_logged_in') %}
-
-    <div class="container">
-        <div class="card admin-login-card p-4">
-            <div class="text-center mb-4">
-                <i class="bi bi-shield-lock-fill text-primary display-4"></i>
-                <h3 class="fw-bold mt-2">店家後台管理登入</h3>
+{% if not is_admin %}
+    <!-- 🔒 1. 管理員未登入畫面 -->
+    <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh; padding: 20px;">
+        <div class="card login-card p-4 text-center">
+            <div class="my-3">
+                <i class="bi bi-shield-lock-fill text-warning display-3"></i>
             </div>
+            <h3 class="fw-bold text-white mb-1">管理員登入</h3>
+            <p class="text-white-50 small mb-4">請輸入後台管理帳號與密碼</p>
+
             <form action="/admin" method="POST">
-                <div class="mb-3">
-                    <label class="form-label fw-bold">帳號 (Username)</label>
-                    <input type="text" class="form-control" name="username" placeholder="預設: 1234" required>
+                <div class="mb-3 text-start">
+                    <label class="form-label small fw-bold text-white">管理員帳號</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark border-secondary text-white-50"><i class="bi bi-person-fill"></i></span>
+                        <input type="text" class="form-control" name="username" placeholder="請輸入帳號" required autofocus>
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">密碼 (Password)</label>
-                    <input type="password" class="form-control" name="password" placeholder="預設: 1234" required>
+
+                <div class="mb-4 text-start">
+                    <label class="form-label small fw-bold text-white">登入密碼</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-dark border-secondary text-white-50"><i class="bi bi-key-fill"></i></span>
+                        <input type="password" class="form-control" name="password" placeholder="請輸入密碼" required>
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold fs-5">登入系統</button>
+
+                <button type="submit" class="btn btn-warning w-100 py-3 fw-bold fs-5 text-dark shadow mb-3">
+                    登入後台系統
+                </button>
             </form>
-            <div class="text-center mt-3">
-                <a href="/" class="text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> 返回前台點餐</a>
+
+            <div>
+                <a href="/" class="text-secondary text-decoration-none small">
+                    <i class="bi bi-arrow-left"></i> 返回點餐前台
+                </a>
             </div>
         </div>
     </div>
 
 {% else %}
-
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top shadow-sm">
-        <div class="container-fluid px-4">
-            <a class="navbar-brand fw-bold" href="/admin"><i class="bi bi-shop"></i> 店家後台管理系統</a>
-            <div class="d-flex align-items-center">
-                <span class="text-white me-3"><i class="bi bi-person-circle"></i> 管理員已登入</span>
-                <a href="/" class="btn btn-outline-light btn-sm me-2" target="_blank"><i class="bi bi-display"></i> 前台畫面</a>
-                <a href="/admin_logout" class="btn btn-danger btn-sm"><i class="bi bi-box-arrow-right"></i> 登出</a>
+    <!-- 🔓 2. 管理員後台主畫面 -->
+    <nav class="navbar navbar-admin py-3 mb-4">
+        <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-speedometer2 text-warning fs-3"></i>
+                <h4 class="mb-0 fw-bold text-white">自助點餐後台管理系統</h4>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <a href="/" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-shop me-1"></i> 前往點餐前台
+                </a>
+                <a href="/admin/logout" class="btn btn-outline-danger btn-sm fw-bold">
+                    <i class="bi bi-box-arrow-right me-1"></i> 登出後台
+                </a>
             </div>
         </div>
     </nav>
 
-    <div class="container-fluid p-4">
-        <!-- 頂部數據卡片 -->
-        <div class="dashboard-summary mb-4">
-            <div class="row g-3">
-                <div class="col-sm-6 col-xl-3">
-                    <div class="card dashboard-summary-card">
-                        <div class="card-body">
-                            <p class="card-title text-uppercase text-secondary mb-2">全部訂單</p>
-                            <p class="card-text text-primary fs-2 fw-bold mb-0">{{ orders|length }}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="card dashboard-summary-card">
-                        <div class="card-body">
-                            <p class="card-title text-uppercase text-secondary mb-2">製作中</p>
-                            <p class="card-text text-warning fs-2 fw-bold mb-0">{{ orders|selectattr('status','equalto','Pending')|list|length }}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="card dashboard-summary-card">
-                        <div class="card-body">
-                            <p class="card-title text-uppercase text-secondary mb-2">已出餐</p>
-                            <p class="card-text text-success fs-2 fw-bold mb-0">{{ orders|selectattr('status','equalto','Completed')|list|length }}</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="card dashboard-summary-card">
-                        <div class="card-body">
-                            <p class="card-title text-uppercase text-secondary mb-2">會員總數</p>
-                            <p class="card-text text-danger fs-2 fw-bold mb-0">{{ users|length }}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <ul class="nav nav-pills mb-4 bg-white p-2 rounded shadow-sm" id="adminTab" role="tablist">
-            <li class="nav-item">
-                <button class="nav-link active fw-bold" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders-panel" type="button"><i class="bi bi-card-checklist"></i> 實時訂單看板</button>
+    <div class="container-fluid px-4">
+        <ul class="nav nav-pills mb-4" id="adminTab" role="tablist">
+            <li class="nav-item me-2" role="presentation">
+                <button class="nav-link active" id="orders-tab" data-bs-toggle="tab" data-bs-target="#orders-pane" type="button" role="tab">
+                    <i class="bi bi-receipt-cutoff me-1"></i> 實時訂單看板
+                </button>
             </li>
-            <li class="nav-item">
-                <button class="nav-link fw-bold" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-panel" type="button"><i class="bi bi-egg-fried"></i> 菜單品項管理</button>
+            <li class="nav-item me-2" role="presentation">
+                <button class="nav-link" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-pane" type="button" role="tab">
+                    <i class="bi bi-grid-fill me-1"></i> 菜單品項管理
+                </button>
             </li>
-            <li class="nav-item">
-                <button class="nav-link fw-bold" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-panel" type="button"><i class="bi bi-people-fill"></i> 會員名冊與紅利</button>
+            <li class="nav-item me-2" role="presentation">
+                <button class="nav-link" id="rewards-tab" data-bs-toggle="tab" data-bs-target="#rewards-pane" type="button" role="tab">
+                    <i class="bi bi-gift-fill me-1"></i> 回饋商城管理
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-pane" type="button" role="tab">
+                    <i class="bi bi-people-fill me-1"></i> 會員名冊與紅利
+                </button>
             </li>
         </ul>
 
         <div class="tab-content" id="adminTabContent">
-            <!-- 1. 訂單看板 -->
-            <div class="tab-pane fade show active" id="orders-panel" role="tabpanel">
+            
+            <!-- 1. 實時訂單看板 -->
+            <div class="tab-pane fade show active" id="orders-pane" role="tabpanel">
                 <div class="row g-3">
                     {% for order in orders %}
-                    <div class="col-md-6 col-lg-4">
-                        <div class="card order-card shadow-sm {{ order.status }}">
-                            <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
-                                <span class="fw-bold fs-5 text-primary">#{{ order.id }}</span>
-                                <div>
-                                    <span class="badge bg-info text-dark me-1">{{ order.order_type }}</span>
+                    <div class="col-12 col-md-6 col-lg-4">
+                        <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="fw-bold text-warning mb-0">#{{ order.id }}</h5>
+                                <div class="d-flex gap-1">
+                                    <span class="badge bg-primary">{{ order.order_type }}</span>
                                     <span class="badge bg-secondary">{{ order.payment_method }}</span>
                                 </div>
                             </div>
-                            <div class="card-body p-3">
-                                <div class="d-flex justify-content-between text-muted small mb-2">
-                                    <span><i class="bi bi-person"></i> {{ order.table_number }}</span>
-                                    <span><i class="bi bi-clock"></i> {{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
-                                </div>
-                                <hr class="my-2">
-                                <table class="table table-sm table-borderless mb-2">
-                                    <tbody>
-                                        {% for item in order.items %}
-                                        <tr>
-                                            <td>{{ item.item_name }} {% if item.customization %}<br><small class="text-danger fw-bold">{{ item.customization }}</small>{% endif %}</td>
-                                            <td class="text-center">x {{ item.quantity }}</td>
-                                            <td class="text-end">${{ item.price * item.quantity }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
-                                <hr class="my-2">
-                                <div class="d-flex justify-content-between align-items-center mt-3">
+
+                            <div class="text-white-50 small mb-2 d-flex justify-content-between">
+                                <span><i class="bi bi-person me-1"></i>{{ order.user.name if order.user else '非會員' }}</span>
+                                <span><i class="bi bi-clock me-1"></i>{{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
+                            </div>
+
+                            <hr class="border-secondary my-2">
+
+                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
+                                {% for item in order.items %}
+                                <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
-                                        <div class="text-secondary small">實付 (折扣:${{ order.discount_amount or 0 }})</div>
-                                        <h5 class="fw-bold text-danger m-0">${{ order.total_price }}</h5>
+                                        <div class="text-white small fw-bold">{{ item.menu_item.name if item.menu_item else item.name }} x {{ item.quantity }}</div>
+                                        {% if item.customization %}
+                                        <small class="text-danger d-block" style="font-size: 0.75rem;">{{ item.customization }}</small>
+                                        {% endif %}
                                     </div>
-                                    <select class="form-select form-select-sm status-select {{ order.status }}" onchange="changeOrderStatus('{{ order.id }}', this.value)">
+                                    <div class="text-white-50 small">${{ (item.price * item.quantity)|int }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
+                                <div>
+                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ order.discount_amount or 0 }}</small>
+                                    <span class="text-white fw-bold fs-5">${{ order.total_price|int }}</span>
+                                </div>
+                                <div style="min-width: 130px;">
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value)">
                                         <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
                                         <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
                                         <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
@@ -161,286 +198,773 @@
                             </div>
                         </div>
                     </div>
-                    {% else %}
-                    <div class="col-12 text-center py-5 text-muted">目前尚無任何訂單紀錄</div>
                     {% endfor %}
+
+                    {% if not orders %}
+                    <div class="col-12 text-center py-5">
+                        <i class="bi bi-inbox text-secondary display-3"></i>
+                        <p class="text-white-50 mt-2">目前沒有任何訂單紀錄</p>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
-            <!-- 2. 菜單管理 -->
-            <div class="tab-pane fade" id="menu-panel" role="tabpanel">
-                <div class="card shadow-sm mb-4 border-success">
-                    <div class="card-header bg-success text-white fw-bold"><i class="bi bi-file-earmark-excel-fill"></i> Excel 批量匯入菜單</div>
-                    <div class="card-body p-3">
-                        <form action="/admin/import_excel" method="POST" enctype="multipart/form-data" class="row g-3 align-items-center">
-                            <div class="col-md-8"><input type="file" class="form-control" name="excel_file" accept=".xlsx, .xls, .csv" required></div>
-                            <div class="col-md-4"><button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-upload"></i> 上傳並匯入菜單</button></div>
-                        </form>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm mb-4">
-                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-plus-circle"></i> 新增單一菜單品項</div>
-                    <div class="card-body p-3">
-                        <form action="/admin/add" method="POST" enctype="multipart/form-data" class="row g-2">
-                            <div class="col-md-2"><input type="text" class="form-control" name="name" placeholder="餐點名稱" required></div>
-                            <div class="col-md-2">
-                                <select class="form-select" name="category">
-                                    <option value="主餐">主餐</option><option value="飲料">飲料</option><option value="點心">點心</option>
-                                </select>
-                            </div>
-                            <div class="col-md-2">
-                                <select class="form-select" name="modifiers">
-                                    <option value="none">無客製化</option><option value="ice_sugar">飲料類 (冰塊/甜度)</option><option value="spicy">辣度選擇</option><option value="addons">主餐加料</option>
-                                </select>
-                            </div>
-                            <div class="col-md-2"><input type="number" class="form-control" name="price" placeholder="單價 ($)" required></div>
-                            <div class="col-md-2"><input type="file" class="form-control" name="image" id="add-image-file" accept="image/*" onchange="initiateCrop(this, null)"></div>
-                            <div class="col-md-2"><button type="submit" class="btn btn-success w-100 fw-bold"><i class="bi bi-plus-lg"></i> 新增品項</button></div>
-                            <div class="col-md-8 mt-2"><input type="text" class="form-control" name="description" placeholder="餐點簡介 (選填)"></div>
-                            <div class="col-md-4 mt-2 d-flex align-items-center gap-3">
-                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" id="add-rec"><label class="form-check-label small fw-bold" for="add-rec">🔥 熱門推薦</label></div>
-                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" id="add-new"><label class="form-check-label small fw-bold" for="add-new">🆕 新品上市</label></div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-
-                <div class="card shadow-sm">
-                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-list-stars"></i> 現有菜單列表</div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle mb-0">
-                                <thead class="table-light">
-                                    <tr><th>ID</th><th>圖片</th><th>名稱</th><th>分類</th><th>客製化</th><th>單價</th><th>標籤</th><th>簡介</th><th>操作</th></tr>
-                                </thead>
-                                <tbody>
-                                    {% for item in items %}
-                                    <tr>
-                                        <td>{{ item.id }}</td>
-                                        <td>{% if item.image_path %}<img src="{{ url_for('static', filename='menu/' + item.image_path) }}" width="45" height="45" class="rounded object-fit-cover">{% else %}<span class="text-muted small">無圖</span>{% endif %}</td>
-                                        <td class="fw-bold">{{ item.name }}</td>
-                                        <td><span class="badge bg-secondary">{{ item.category }}</span></td>
-                                        <td><span class="badge bg-info text-dark">{{ item.modifiers }}</span></td>
-                                        <td class="text-danger fw-bold">${{ item.price }}</td>
-                                        <td>{% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %} {% if item.is_new %}<span class="badge bg-primary">新品</span>{% endif %}</td>
-                                        <td><small class="text-muted">{{ item.description or '' }}</small></td>
-                                        <td>
-                                            <button class="btn btn-outline-primary btn-sm me-1" type="button"
-                                                    data-id="{{ item.id }}" data-name="{{ item.name }}" data-category="{{ item.category }}"
-                                                    data-modifiers="{{ item.modifiers }}" data-price="{{ item.price }}"
-                                                    data-description="{{ item.description or '' }}" data-image="{{ item.image_path or '' }}"
-                                                    data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}"
-                                                    onclick="openEditModal(this)"><i class="bi bi-pencil-square"></i> 編輯</button>
-                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定刪除？')"><i class="bi bi-trash"></i> 刪除</a>
-                                        </td>
-                                    </tr>
-                                    {% else %}<tr><td colspan="9" class="text-center text-muted py-4">尚無餐點</td></tr>{% endfor %}
-                                </tbody>
-                            </table>
+            <!-- 2. 菜單品項管理 -->
+            <div class="tab-pane fade" id="menu-pane" role="tabpanel">
+                <div class="card card-custom p-4 mb-4">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-list-stars text-warning me-2"></i>菜單品項清單</h5>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-info btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#importExcelModal">
+                                <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel 菜單
+                            </button>
+                            <button class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#addItemModal">
+                                <i class="bi bi-plus-lg me-1"></i> 新增品項
+                            </button>
                         </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom align-middle">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>圖片</th>
+                                    <th>餐點名稱</th>
+                                    <th>分類</th>
+                                    <th>單價</th>
+                                    <th>標籤狀態</th>
+                                    <th>商城狀態</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in items %}
+                                <tr>
+                                    <td style="width: 70px;">
+                                        <img src="{{ url_for('static', filename='menu/' + item.image_path) if item.image_path else 'https://dummyimage.com/60x60/334155/fff&text=No+Img' }}" class="rounded-3 object-fit-cover" width="55" height="55">
+                                    </td>
+                                    <td>
+                                        <div class="fw-bold text-white">{{ item.name }}</div>
+                                        <small class="text-white-50">{{ item.description or '無描述' }}</small>
+                                    </td>
+                                    <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                                    <td class="fw-bold text-warning">${{ item.price }}</td>
+                                    <td>
+                                        {% if item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
+                                        {% if item.is_new %}<span class="badge bg-success">新品</span>{% endif %}
+                                    </td>
+                                    <td>
+                                        {% if item.is_reward %}
+                                            <span class="badge bg-warning text-dark"><i class="bi bi-gift-fill me-1"></i>{{ item.reward_points }}點</span>
+                                            {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                                            <span class="badge bg-danger ms-1">特價 {{ item.reward_discount_points }}點</span>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="badge bg-dark text-white-50 border border-secondary">未上架</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                data-id="{{ item.id }}" 
+                                                data-name="{{ item.name }}" 
+                                                data-category="{{ item.category }}"
+                                                data-modifiers="{{ item.modifiers or 'none' }}" 
+                                                data-price="{{ item.price }}"
+                                                data-description="{{ item.description or '' }}" 
+                                                data-image="{{ item.image_path or '' }}"
+                                                data-recommended="{{ 1 if item.is_recommended else 0 }}" 
+                                                data-new="{{ 1 if item.is_new else 0 }}"
+                                                data-is-reward="{{ 1 if item.is_reward else 0 }}"
+                                                data-reward-points="{{ item.reward_points or 0 }}"
+                                                data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                                onclick="openEditModal(this)">
+                                            <i class="bi bi-pencil-square"></i> 編輯
+                                        </button>
+                                        <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
+                                            <i class="bi bi-trash"></i> 刪除
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
 
-            <!-- 3. 會員管理 (含點數) -->
-            <div class="tab-pane fade" id="users-panel" role="tabpanel">
-                <div class="card shadow-sm">
-                    <div class="card-header bg-dark text-white fw-bold"><i class="bi bi-people"></i> 會員名冊與紅利點數</div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle mb-0">
-                                <thead class="table-light">
-                                    <tr><th>ID</th><th>照片</th><th>姓名</th><th>電話號碼</th><th>累積紅利點數</th><th>操作</th></tr>
-                                </thead>
-                                <tbody>
-                                    {% for user in users %}
-                                    <tr>
-                                        <td>{{ user.id }}</td>
-                                        <td><img src="{{ url_for('static', filename='member/' + user.photo_path) }}" width="45" height="45" class="rounded-circle object-fit-cover"></td>
-                                        <td class="fw-bold">{{ user.name }}</td>
-                                        <td>{{ user.phone }}</td>
-                                        <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill"></i> {{ user.points or 0 }} 點</span></td>
-                                        <td><a href="/admin/delete_user/{{ user.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定刪除該會員？')"><i class="bi bi-trash"></i> 刪除會員</a></td>
-                                    </tr>
-                                    {% else %}<tr><td colspan="6" class="text-center text-muted py-4">尚無註冊會員</td></tr>{% endfor %}
-                                </tbody>
-                            </table>
+            <!-- 🎁 3. 回饋商城管理 (餐點兌換 + 優惠券管理) -->
+            <div class="tab-pane fade" id="rewards-pane" role="tabpanel">
+                
+                <!-- 區塊 A: 點數兌換優惠券管理 -->
+                <div class="card card-custom p-4 mb-4 border-warning">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1 text-warning"><i class="bi bi-ticket-perforated-fill me-2"></i>點數兌換優惠券管理</h5>
+                            <small class="text-white-50">設定滿額折抵現金額度或折扣折數（例如滿 $200 折 $50 或 滿 $100 享 9 折）</small>
                         </div>
+                        <button class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#createCouponModal">
+                            <i class="bi bi-plus-lg me-1"></i> 新增回饋優惠券
+                        </button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom align-middle">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>優惠券名稱</th>
+                                    <th>優惠代碼</th>
+                                    <th>折抵方式</th>
+                                    <th>使用門檻</th>
+                                    <th>兌換所需點數</th>
+                                    <th>限時特惠點數</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for cp in reward_coupons %}
+                                <tr>
+                                    <td><span class="fw-bold text-white fs-6"><i class="bi bi-cash-coin text-warning me-1"></i>{{ cp.title }}</span></td>
+                                    <td><code class="bg-dark px-2 py-1 rounded text-warning fw-bold">{{ cp.code }}</code></td>
+                                    <td>
+                                        {% if cp.discount_type == 'fixed' %}
+                                            <span class="badge bg-success fs-6">現折 ${{ cp.discount_value|int }} 元</span>
+                                        {% else %}
+                                            <span class="badge bg-info fs-6 text-dark">{{ (cp.discount_value * 10)|round(1) }} 折優惠</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-white-50">滿 ${{ cp.min_spend|int }} 可用</td>
+                                    <td><span class="badge bg-warning text-dark fs-6">{{ cp.reward_points }} 點</span></td>
+                                    <td>
+                                        {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
+                                            <span class="badge bg-danger fs-6">限時 {{ cp.reward_discount_points }} 點</span>
+                                        {% else %}
+                                            <span class="text-white-50 small">無特價</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="/admin/delete_coupon/{{ cp.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
+                                            <i class="bi bi-trash"></i> 刪除
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 區塊 B: 點數兌換餐點管理 -->
+                <div class="card card-custom p-4 mb-4">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1 text-white"><i class="bi bi-gift-fill text-warning me-2"></i>點數兌換餐點管理</h5>
+                            <small class="text-white-50">自現有菜單挑選開放兌換之品項與點數</small>
+                        </div>
+                        <button class="btn btn-outline-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#addRewardModal">
+                            <i class="bi bi-plus-lg me-1"></i> 上架餐點至商城
+                        </button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom align-middle">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>商品圖片</th>
+                                    <th>餐點名稱</th>
+                                    <th>原市價</th>
+                                    <th>一般兌換點數</th>
+                                    <th>限時優惠點數</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in reward_items %}
+                                <tr>
+                                    <td style="width: 70px;">
+                                        <img src="{{ url_for('static', filename='menu/' + item.image_path) if item.image_path else 'https://dummyimage.com/60x60/334155/fff&text=Reward' }}" class="rounded-3 object-fit-cover" width="55" height="55">
+                                    </td>
+                                    <td>
+                                        <div class="fw-bold text-white fs-6">{{ item.name }}</div>
+                                        <span class="badge bg-secondary">{{ item.category }}</span>
+                                    </td>
+                                    <td class="text-white-50">${{ item.price }} 元</td>
+                                    <td>
+                                        <span class="badge bg-warning text-dark fs-6 fw-bold">
+                                            <i class="bi bi-star-fill text-danger me-1"></i>{{ item.reward_points }} 點
+                                        </span>
+                                    </td>
+                                    <td>
+                                        {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                                            <span class="badge bg-danger fs-6 fw-bold shadow-sm">
+                                                <i class="bi bi-tag-fill me-1"></i>限時 {{ item.reward_discount_points }} 點
+                                            </span>
+                                        {% else %}
+                                            <span class="text-white-50 small">無特價優惠</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                data-id="{{ item.id }}" 
+                                                data-name="{{ item.name }}" 
+                                                data-category="{{ item.category }}"
+                                                data-modifiers="{{ item.modifiers or 'none' }}" 
+                                                data-price="{{ item.price }}"
+                                                data-description="{{ item.description or '' }}" 
+                                                data-image="{{ item.image_path or '' }}"
+                                                data-recommended="{{ 1 if item.is_recommended else 0 }}" 
+                                                data-new="{{ 1 if item.is_new else 0 }}"
+                                                data-is-reward="{{ 1 if item.is_reward else 0 }}"
+                                                data-reward-points="{{ item.reward_points or 0 }}"
+                                                data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                                onclick="openEditModal(this)">
+                                            <i class="bi bi-gear-fill"></i> 修改點數
+                                        </button>
+                                        <a href="/admin/remove_reward/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要將【{{ item.name }}】從回饋商城下架嗎？')">
+                                            <i class="bi bi-x-circle"></i> 下架
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+<!-- 4. 會員名冊與紅利 -->
+            <div class="tab-pane fade" id="users-pane" role="tabpanel">
+                <div class="card card-custom p-4">
+                    <h5 class="fw-bold mb-4 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券</h5>
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom align-middle">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>頭像</th>
+                                    <th>會員姓名</th>
+                                    <th>手機號碼</th>
+                                    <th>目前紅利點數</th>
+                                    <th>持有專屬優惠券狀態</th>
+                                    <th>人臉特徵</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for u in users %}
+                                <tr>
+                                    <td style="width: 60px;">
+                                        <img src="{{ url_for('static', filename='member/' + u.photo_path) if u.photo_path else 'https://dummyimage.com/50x50/334155/fff&text=VIP' }}" class="rounded-circle object-fit-cover border border-secondary" width="45" height="45">
+                                    </td>
+                                    <td class="fw-bold text-white">{{ u.name }}</td>
+                                    <td>{{ u.phone }}</td>
+                                    <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill text-danger me-1"></i>{{ u.points }} 點</span></td>
+                                    <td>
+                                        {% if u.user_coupons %}
+                                            <div class="d-flex flex-wrap gap-1">
+                                            {% for uc in u.user_coupons %}
+                                                {% if not uc.is_used %}
+                                                    <span class="badge bg-success-subtle text-success border border-success" title="代碼: {{ uc.code }}">
+                                                        <i class="bi bi-ticket-perforated me-1"></i>{{ uc.coupon.title }} (未使用)
+                                                    </span>
+                                                {% else %}
+                                                    <span class="badge bg-dark text-white-50 border border-secondary" title="代碼: {{ uc.code }}">
+                                                        <del>{{ uc.coupon.title }}</del> (已核銷)
+                                                    </span>
+                                                {% endif %}
+                                            {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            <span class="text-white-50 small">尚未兌換任何票券</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if u.feature is not none %}
+                                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>已建檔</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">未建檔</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                data-id="{{ u.id }}"
+                                                data-name="{{ u.name }}"
+                                                data-phone="{{ u.phone }}"
+                                                data-points="{{ u.points }}"
+                                                onclick="openEditUserModal(this)">
+                                            <i class="bi bi-pencil-square"></i> 編輯
+                                        </button>
+                                        <a href="/admin/delete_user/{{ u.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？')">
+                                            <i class="bi bi-trash"></i> 刪除
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 編輯商品 Modal -->
-    <div class="modal fade" id="editItemModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content">
-                <form id="editItemForm" method="POST" enctype="multipart/form-data">
-                    <div class="modal-header bg-dark text-white">
-                        <h5 class="modal-title"><i class="bi bi-pencil-square"></i> 編輯產品資訊</h5>
-                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                    </div>
+    <!-- 🎟️ 新增優惠券 Modal -->
+    <div class="modal fade" id="createCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-ticket-perforated-fill me-2"></i>新增回饋優惠券</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/admin/add_coupon" method="POST">
                     <div class="modal-body p-4">
-                        <div class="row g-3">
-                            <div class="col-md-6"><label class="form-label fw-bold">餐點名稱</label><input type="text" class="form-control" name="name" id="edit-name" required></div>
-                            <div class="col-md-3"><label class="form-label fw-bold">分類</label>
-                                <select class="form-select" name="category" id="edit-category">
-                                    <option value="主餐">主餐</option><option value="飲料">飲料</option><option value="點心">點心</option>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">優惠券名稱</label>
+                            <input type="text" class="form-control" name="title" placeholder="例如：全單現折 $50 優惠券" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">促銷折扣代碼 (英文大寫/數字)</label>
+                            <input type="text" class="form-control" name="code" placeholder="例如：NEW50 或 VIP90" required>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">折抵模式</label>
+                                <select class="form-select" name="discount_type" id="coupon-disc-type" onchange="toggleDiscInput(this.value)">
+                                    <option value="fixed">折抵固定金額 (元)</option>
+                                    <option value="percent">打折百分比 (折)</option>
                                 </select>
                             </div>
-                            <div class="col-md-3"><label class="form-label fw-bold">客製化類型</label>
-                                <select class="form-select" name="modifiers" id="edit-modifiers">
-                                    <option value="none">無客製化</option><option value="ice_sugar">飲料類</option><option value="spicy">辣度選擇</option><option value="addons">主餐加料</option>
-                                </select>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" id="disc-val-label">折抵金額 (NT$)</label>
+                                <input type="number" step="0.01" class="form-control" name="discount_value" id="coupon-disc-val" placeholder="50" required>
                             </div>
-                            <div class="col-md-4"><label class="form-label fw-bold">單價 ($)</label><input type="number" class="form-control" name="price" id="edit-price" required></div>
-                            <div class="col-md-4 d-flex align-items-center mt-4">
-                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" id="edit-recommended"><label class="form-check-label fw-bold" for="edit-recommended">🔥 熱門推薦</label></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">最低消費門檻 (NT$)</label>
+                            <input type="number" class="form-control" name="min_spend" placeholder="例如：滿 200 元可用" value="0">
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">兌換所需點數</label>
+                                <input type="number" class="form-control" name="reward_points" placeholder="例如：45" required>
                             </div>
-                            <div class="col-md-4 d-flex align-items-center mt-4">
-                                <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" id="edit-new"><label class="form-check-label fw-bold" for="edit-new">🆕 新品上市</label></div>
-                            </div>
-                            <div class="col-12"><label class="form-label fw-bold">餐點簡介描述</label><textarea class="form-control" name="description" id="edit-description" rows="2"></textarea></div>
-                            <div class="col-12 border-top pt-3 mt-3">
-                                <label class="form-label fw-bold d-block"><i class="bi bi-image"></i> 更換照片</label>
-                                <div class="d-flex align-items-center gap-3">
-                                    <img id="edit-image-preview" src="" class="img-preview-box">
-                                    <div class="flex-grow-1"><input type="file" class="form-control" name="image" id="edit-image-file" accept="image/*" onchange="initiateCrop(this, 'edit-image-preview')"></div>
-                                </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">限時特惠點數 (無填 0)</label>
+                                <input type="number" class="form-control" name="reward_discount_points" placeholder="0" value="0">
                             </div>
                         </div>
                     </div>
-                    <div class="modal-footer bg-light">
+                    <div class="modal-footer border-secondary justify-content-between">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-primary fw-bold px-4"><i class="bi bi-check-circle"></i> 儲存變更</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">建立並上架優惠券</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
 
-    <!-- 圖片裁切 Modal -->
-    <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true" style="z-index: 1060;">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content border-0 shadow-lg">
-                <div class="modal-header bg-dark text-white">
-                    <h5 class="modal-title"><i class="bi bi-crop"></i> 圖片裁切 (1:1 正方形)</h5>
+    <!-- 🎁 上架商品至商城 Modal -->
+    <div class="modal fade" id="addRewardModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-gift-fill me-2"></i>上架餐點至回饋商城</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body p-3">
-                    <div class="crop-container rounded-3"><img id="crop-image-target" src=""></div>
-                    <div class="d-flex justify-content-between align-items-center mt-3 text-muted small">
-                        <span>支援滑鼠滾輪縮放與旋轉調整。</span>
-                        <div>
-                            <button type="button" class="btn btn-sm btn-outline-secondary me-1" onclick="if(cropper) cropper.rotate(-90);"><i class="bi bi-arrow-counterclockwise"></i> 向左轉</button>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="if(cropper) cropper.rotate(90);"><i class="bi bi-arrow-clockwise"></i> 向右轉</button>
+                <form action="/admin/add_reward" method="POST">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">選擇菜單品項</label>
+                            <select class="form-select" name="item_id" required>
+                                <option value="" disabled selected>請選擇要上架的餐點...</option>
+                                {% for it in items %}
+                                <option value="{{ it.id }}">{{ it.name }} (原價 ${{ it.price }}) - {{ it.category }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">兌換所需點數</label>
+                            <input type="number" class="form-control" name="reward_points" placeholder="例如：50" min="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">限時優惠點數 (無特價請填 0)</label>
+                            <input type="number" class="form-control" name="reward_discount_points" placeholder="例如：30" min="0" value="0">
                         </div>
                     </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">確認上架商城</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 新增品項 Modal -->
+    <div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-plus-circle me-2"></i>新增品項</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-footer bg-light">
+                <form action="/admin/add" method="POST" enctype="multipart/form-data">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">餐點名稱</label>
+                            <input type="text" class="form-control" name="name" placeholder="例如：招牌牛肉漢堡" required>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">分類</label>
+                                <input type="text" class="form-control" name="category" placeholder="主餐 / 飲品" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">單價 (NT$)</label>
+                                <input type="number" class="form-control" name="price" placeholder="95" required>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">客製化群組</label>
+                            <select class="form-select" name="modifiers">
+                                <option value="none">無客製化</option>
+                                <option value="ice_sugar">飲料 (冰塊 / 甜度)</option>
+                                <option value="spicy">辣度選擇</option>
+                                <option value="addons">主餐加料 (加蛋 / 起司)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">商品描述</label>
+                            <input type="text" class="form-control" name="description" placeholder="簡短餐點介紹">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">餐點照片</label>
+                            <input type="file" class="form-control" name="image" accept="image/*" onchange="initiateCrop(this, 'add-preview-img')">
+                            <img id="add-preview-img" class="mt-2 rounded-3 object-fit-cover" style="max-height: 100px; display: none;">
+                        </div>
+                        <div class="d-flex gap-3 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="add-rec">
+                                <label class="form-check-label small" for="add-rec">🔥 熱門推薦</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="is_new" value="1" id="add-new">
+                                <label class="form-check-label small" for="add-new">✨ 新品上市</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存並上架</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 編輯品項 Modal -->
+    <div class="modal fade" id="editItemModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-pencil-square me-2"></i>編輯品項設定</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="editItemForm" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="from_tab" id="edit-from-tab" value="rewards">
+                    
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">餐點名稱</label>
+                            <input type="text" class="form-control" name="name" id="edit-name" required>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">分類</label>
+                                <input type="text" class="form-control" name="category" id="edit-category" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">單價 (NT$)</label>
+                                <input type="number" class="form-control" name="price" id="edit-price" required>
+                            </div>
+                        </div>
+
+                        <!-- 紅利商城設定區塊 -->
+                        <div class="card bg-dark border-warning mb-3">
+                            <div class="card-header border-warning text-warning fw-bold small">
+                                <i class="bi bi-gift-fill me-1"></i> 紅利商城設定
+                            </div>
+                            <div class="card-body p-3">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="edit-is-reward" name="is_reward" value="1">
+                                    <label class="form-check-label text-white fw-bold" for="edit-is-reward">開放紅利點數兌換此商品</label>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50 mb-1">兌換所需點數</label>
+                                        <input type="number" class="form-control form-control-sm" id="edit-reward-points" name="reward_points" min="0">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50 mb-1">限時優惠點數 (無填 0)</label>
+                                        <input type="number" class="form-control form-control-sm" id="edit-reward-discount" name="reward_discount_points" min="0">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">客製化群組</label>
+                            <select class="form-select" name="modifiers" id="edit-modifiers">
+                                <option value="none">無客製化</option>
+                                <option value="ice_sugar">飲料 (冰塊 / 甜度)</option>
+                                <option value="spicy">辣度選擇</option>
+                                <option value="addons">主餐加料 (加蛋 / 起司)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">商品描述</label>
+                            <input type="text" class="form-control" name="description" id="edit-description">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">餐點照片 (更換)</label>
+                            <input type="file" class="form-control" name="image" id="edit-image-file" accept="image/*" onchange="initiateCrop(this, 'edit-image-preview')">
+                            <img id="edit-image-preview" class="mt-2 rounded-3 object-fit-cover" width="80" height="80">
+                        </div>
+                        <div class="d-flex gap-3 mb-3">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="edit-recommended">
+                                <label class="form-check-label small" for="edit-recommended">🔥 熱門推薦</label>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="is_new" value="1" id="edit-new">
+                                <label class="form-check-label small" for="edit-new">✨ 新品上市</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 Excel 匯入 Modal -->
+    <div class="modal fade" id="importExcelModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-info"><i class="bi bi-file-earmark-excel me-2"></i>批次匯入菜單</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/admin/import_menu" method="POST" enctype="multipart/form-data">
+                    <div class="modal-body p-4">
+                        <p class="small text-white-50">請上傳包含 <code>name, category, price, modifiers, description</code> 等欄位的 <code>.xlsx</code> 或 <code>.csv</code> 檔案。</p>
+                        <input type="file" class="form-control" name="file" accept=".xlsx, .xls, .csv" required>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-info fw-bold text-dark px-4">確認上傳匯入</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 🌟 圖片裁切 Modal -->
+    <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold"><i class="bi bi-crop me-2 text-warning"></i>裁切 1:1 圖片</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-3 text-center">
+                    <div style="max-height: 450px; overflow: hidden;">
+                        <img id="crop-image-target" style="max-width: 100%;">
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary justify-content-between">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="button" class="btn btn-success fw-bold px-4" onclick="confirmCrop()"><i class="bi bi-check-lg"></i> 完成裁切</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" onclick="confirmCrop()">完成裁切</button>
                 </div>
+            </div>
+        </div>
+    </div>
+<!-- 🌟 編輯會員 Modal -->
+    <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-person-gear me-2"></i>編輯會員資料</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="editUserForm" method="POST">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">會員姓名</label>
+                            <input type="text" class="form-control" name="name" id="edit-user-name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">手機號碼</label>
+                            <input type="text" class="form-control" name="phone" id="edit-user-phone" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">紅利點數 (點)</label>
+                            <input type="number" class="form-control" name="points" id="edit-user-points" min="0" required>
+                            <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存會員變更</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
     <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const urlParams = new URLSearchParams(window.location.search);
+            const targetTab = urlParams.get('tab') || localStorage.getItem('adminActiveTab') || 'orders';
 
-    document.addEventListener("DOMContentLoaded", function () {
-        const urlParams = new URLSearchParams(window.location.search);
-        const targetTab = urlParams.get('tab') || localStorage.getItem('adminActiveTab');
-        if (targetTab === 'menu') {
-            const btn = document.getElementById('menu-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        } else if (targetTab === 'users') {
-            const btn = document.getElementById('users-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        }
+            if (targetTab === 'menu') {
+                const btn = document.getElementById('menu-tab');
+                if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+            } else if (targetTab === 'rewards') {
+                const btn = document.getElementById('rewards-tab');
+                if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+            } else if (targetTab === 'users') {
+                const btn = document.getElementById('users-tab');
+                if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+            } else {
+                const btn = document.getElementById('orders-tab');
+                if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
+            }
 
-        document.querySelectorAll('#adminTab button[data-bs-toggle="tab"]').forEach(tabBtn => {
-            tabBtn.addEventListener('shown.bs.tab', function (e) {
-                if (e.target.id === 'menu-tab') localStorage.setItem('adminActiveTab', 'menu');
-                else if (e.target.id === 'users-tab') localStorage.setItem('adminActiveTab', 'users');
-                else if (e.target.id === 'orders-tab') localStorage.setItem('adminActiveTab', 'orders');
+            if (urlParams.has('tab')) {
+                localStorage.setItem('adminActiveTab', targetTab);
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+
+            document.querySelectorAll('#adminTab button[data-bs-toggle="tab"]').forEach(tabBtn => {
+                tabBtn.addEventListener('shown.bs.tab', function (e) {
+                    if (e.target.id === 'menu-tab') localStorage.setItem('adminActiveTab', 'menu');
+                    else if (e.target.id === 'rewards-tab') localStorage.setItem('adminActiveTab', 'rewards');
+                    else if (e.target.id === 'users-tab') localStorage.setItem('adminActiveTab', 'users');
+                    else if (e.target.id === 'orders-tab') localStorage.setItem('adminActiveTab', 'orders');
+                });
             });
         });
-    });
 
-    function changeOrderStatus(orderId, newStatus) {
-        localStorage.setItem('adminActiveTab', 'orders');
-        fetch(`/admin/update_order_status/${orderId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus })
-        }).then(r => r.json()).then(d => { 
-            if (d.message) window.location.href = '/admin'; // 轉址回純後台首頁，清除 ?tab=menu 殘留
-            else alert(d.error); 
-        });
-    }
-
-    function openEditModal(btn) {
-        const d = btn.dataset;
-        document.getElementById('editItemForm').action = '/admin/edit/' + d.id;
-        document.getElementById('edit-name').value = d.name;
-        document.getElementById('edit-category').value = d.category;
-        document.getElementById('edit-modifiers').value = d.modifiers;
-        document.getElementById('edit-price').value = d.price;
-        document.getElementById('edit-description').value = d.description || '';
-        document.getElementById('edit-recommended').checked = d.recommended === '1';
-        document.getElementById('edit-new').checked = d.new === '1';
-        document.getElementById('edit-image-file').value = '';
-        document.getElementById('edit-image-preview').src = d.image ? '/static/menu/' + d.image : 'https://dummyimage.com/100x100/e9ecef/6c757d.png&text=No+Image';
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('editItemModal')).show();
-    }
-
-    let cropper = null, currentFileInput = null, currentPreviewImgId = null;
-    function initiateCrop(inputElement, previewImgId) {
-        if (inputElement.files && inputElement.files[0]) {
-            currentFileInput = inputElement;
-            currentPreviewImgId = previewImgId;
-            const reader = new FileReader();
-            reader.onload = function (e) {
-                document.getElementById('crop-image-target').src = e.target.result;
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('cropModal')).show();
-            };
-            reader.readAsDataURL(inputElement.files[0]);
-        }
-    }
-
-    const cropModalEl = document.getElementById('cropModal');
-    cropModalEl.addEventListener('shown.bs.modal', function () {
-        if (cropper) cropper.destroy();
-        cropper = new Cropper(document.getElementById('crop-image-target'), {
-            aspectRatio: 1, viewMode: 1, autoCropArea: 0.9, responsive: true, background: false
-        });
-    });
-
-    function confirmCrop() {
-        if (!cropper || !currentFileInput) return;
-        const canvas = cropper.getCroppedCanvas({ width: 600, height: 600 });
-        canvas.toBlob(function (blob) {
-            const croppedFile = new File([blob], "cropped_" + Date.now() + ".jpg", { type: "image/jpeg" });
-            const dt = new DataTransfer();
-            dt.items.add(croppedFile);
-            currentFileInput.files = dt.files;
-            if (currentPreviewImgId) {
-                const prev = document.getElementById(currentPreviewImgId);
-                if (prev) prev.src = canvas.toDataURL('image/jpeg');
+        function toggleDiscInput(type) {
+            const label = document.getElementById('disc-val-label');
+            const input = document.getElementById('coupon-disc-val');
+            if (type === 'percent') {
+                label.innerText = '折扣折數 (例如 0.9 代表9折)';
+                input.placeholder = '0.9';
+                input.max = '0.99';
+            } else {
+                label.innerText = '折抵金額 (NT$)';
+                input.placeholder = '50';
+                input.removeAttribute('max');
             }
-            bootstrap.Modal.getInstance(cropModalEl).hide();
-        }, 'image/jpeg', 0.9);
-    }
+        }
 
-    cropModalEl.addEventListener('hidden.bs.modal', function () {
-        if (cropper) { cropper.destroy(); cropper = null; }
-    });
+        function changeOrderStatus(orderId, newStatus) {
+            localStorage.setItem('adminActiveTab', 'orders');
+            fetch(`/admin/update_order_status/${orderId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus })
+            }).then(r => r.json()).then(d => { 
+                if (d.message) window.location.href = '/admin';
+                else alert(d.error); 
+            });
+        }
 
+        function openEditModal(btn) {
+            const d = btn.dataset;
+            document.getElementById('editItemForm').action = '/admin/edit/' + d.id;
+            document.getElementById('edit-name').value = d.name;
+            document.getElementById('edit-category').value = d.category;
+            document.getElementById('edit-modifiers').value = d.modifiers;
+            document.getElementById('edit-price').value = d.price;
+            document.getElementById('edit-description').value = d.description || '';
+            document.getElementById('edit-recommended').checked = d.recommended === '1';
+            document.getElementById('edit-new').checked = d.new === '1';
+            
+            document.getElementById('edit-is-reward').checked = d.isReward === '1';
+            document.getElementById('edit-reward-points').value = d.rewardPoints || 0;
+            document.getElementById('edit-reward-discount').value = d.rewardDiscount || 0;
+
+            const activeTab = localStorage.getItem('adminActiveTab') || 'menu';
+            const fromTabInput = document.getElementById('edit-from-tab');
+            if (fromTabInput) fromTabInput.value = activeTab;
+
+            document.getElementById('edit-image-file').value = '';
+            document.getElementById('edit-image-preview').src = d.image ? '/static/menu/' + d.image : 'https://dummyimage.com/100x100/e9ecef/6c757d.png&text=No+Image';
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('editItemModal')).show();
+        }
+
+        let cropper = null, currentFileInput = null, currentPreviewImgId = null;
+        function initiateCrop(inputElement, previewImgId) {
+            if (inputElement.files && inputElement.files[0]) {
+                currentFileInput = inputElement;
+                currentPreviewImgId = previewImgId;
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    document.getElementById('crop-image-target').src = e.target.result;
+                    bootstrap.Modal.getOrCreateInstance(document.getElementById('cropModal')).show();
+                };
+                reader.readAsDataURL(inputElement.files[0]);
+            }
+        }
+
+
+        function openEditUserModal(btn) {
+            const d = btn.dataset;
+            document.getElementById('editUserForm').action = '/admin/edit_user/' + d.id;
+            document.getElementById('edit-user-name').value = d.name;
+            document.getElementById('edit-user-phone').value = d.phone;
+            document.getElementById('edit-user-points').value = d.points || 0;
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('editUserModal')).show();
+        }
+
+        const cropModalEl = document.getElementById('cropModal');
+        cropModalEl.addEventListener('shown.bs.modal', function () {
+            if (cropper) cropper.destroy();
+            cropper = new Cropper(document.getElementById('crop-image-target'), {
+                aspectRatio: 1, viewMode: 1, autoCropArea: 0.9, responsive: true, background: false
+            });
+        });
+
+        function confirmCrop() {
+            if (!cropper || !currentFileInput) return;
+            const canvas = cropper.getCroppedCanvas({ width: 600, height: 600 });
+            canvas.toBlob(function (blob) {
+                const croppedFile = new File([blob], "cropped_" + Date.now() + ".jpg", { type: "image/jpeg" });
+                const dt = new DataTransfer();
+                dt.items.add(croppedFile);
+                currentFileInput.files = dt.files;
+                if (currentPreviewImgId) {
+                    const prev = document.getElementById(currentPreviewImgId);
+                    if (prev) {
+                        prev.src = canvas.toDataURL('image/jpeg');
+                        prev.style.display = 'block';
+                    }
+                }
+                bootstrap.Modal.getInstance(cropModalEl).hide();
+            }, 'image/jpeg', 0.9);
+        }
+
+        cropModalEl.addEventListener('hidden.bs.modal', function () {
+            if (cropper) { cropper.destroy(); cropper = null; }
+        });
     </script>
 {% endif %}
+
 </body>
 </html>

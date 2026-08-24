@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>M-Points 回饋商店 - 自助點餐系統</title>
+    <title>M-Points 回饋商城 - 自助點餐系統</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <style>
@@ -19,7 +19,6 @@
             backdrop-filter: blur(8px);
             border-bottom: 1px solid rgba(255, 255, 255, 0.08);
         }
-        /* 麥當勞黑金會員卡樣式 */
         .vip-card {
             background: linear-gradient(135deg, #2b1f07 0%, #151109 50%, #3a2b0c 100%);
             border: 1px solid rgba(245, 183, 56, 0.4);
@@ -44,7 +43,6 @@
             color: #f5b738;
             text-shadow: 0 2px 10px rgba(245, 183, 56, 0.3);
         }
-        /* 兌換商品卡片樣式 */
         .reward-card {
             background: #182030;
             border: 1px solid rgba(255, 255, 255, 0.08);
@@ -61,11 +59,12 @@
         }
         .reward-img-container {
             width: 100%;
-            height: 150px;
+            height: 155px;
             position: relative;
             overflow: hidden;
             border-top-left-radius: 16px;
             border-top-right-radius: 16px;
+            background: #0f172a;
         }
         .reward-img {
             width: 100%;
@@ -101,27 +100,16 @@
             color: #6b7280;
             border: 1px solid rgba(255,255,255,0.05);
         }
-        .nav-pills .nav-link {
-            color: #94a3b8;
-            border-radius: 999px;
-            padding: 0.5rem 1.2rem;
-            font-weight: bold;
-        }
-        .nav-pills .nav-link.active {
-            background-color: #f5b738;
-            color: #111;
-        }
     </style>
 </head>
 <body>
 
-    <!-- 頂部導覽列 -->
     <header class="header sticky-top py-3 mb-4">
         <div class="container d-flex justify-content-between align-items-center">
             <div class="d-flex align-items-center gap-2">
                 <i class="bi bi-gift-fill text-warning fs-3"></i>
                 <div>
-                    <h5 class="mb-0 fw-bold text-white">M-Points 紅利回饋商店</h5>
+                    <h5 class="mb-0 fw-bold text-white">M-Points 紅利回饋商城</h5>
                     <small class="text-white-50">積點兌換超值美食與專屬神券</small>
                 </div>
             </div>
@@ -134,7 +122,7 @@
     </header>
 
     <div class="container">
-        <!-- 🌟 麥當勞黑金會員卡片 -->
+        <!-- 🌟 VIP 會員卡 -->
         <div class="vip-card p-4 mb-4">
             <div class="row align-items-center">
                 <div class="col-md-7">
@@ -156,123 +144,95 @@
             </div>
         </div>
 
-        <!-- 分類頁籤 -->
-        <ul class="nav nav-pills mb-4 justify-content-center gap-2" id="rewardTabs" role="tablist">
-            <li class="nav-item"><button class="nav-link active" onclick="filterTier('all', this)">全部商品</button></li>
-            <li class="nav-item"><button class="nav-link" onclick="filterTier('15', this)">🥤 15點 (特調飲品)</button></li>
-            <li class="nav-item"><button class="nav-link" onclick="filterTier('25', this)">🍟 25-35點 (點心副餐)</button></li>
-            <li class="nav-item"><button class="nav-link" onclick="filterTier('60', this)">🍔 60點 (招牌主餐)</button></li>
-            <li class="nav-item"><button class="nav-link" onclick="filterTier('voucher', this)">🎟️ 現金折價券</button></li>
-        </ul>
-
-        <!-- 兌換商品卡片列表 -->
+        <!-- 兌換商品清單 (餐點 + 動態優惠券) -->
         <div class="row g-3" id="rewardsContainer">
             
-            <!-- 1. 15點 飲品 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="15" data-points="15">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="四季春青茶">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 15 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">四季春青茶 (中杯)</h6>
-                        <small class="text-white-50 mb-3">市價 $35 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('四季春青茶 (中杯)', 15)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 2. 15點 飲品 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="15" data-points="15">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1517256064527-09c73fc73e38?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="特調冰紅茶">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 15 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">經典錫蘭紅茶 (中杯)</h6>
-                        <small class="text-white-50 mb-3">市價 $35 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('經典錫蘭紅茶 (中杯)', 15)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 3. 25點 點心 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="25" data-points="25">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1576107232684-1279f3908594?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="香酥金黃脆薯">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 25 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">香酥金黃脆薯 (小)</h6>
-                        <small class="text-white-50 mb-3">市價 $45 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('香酥金黃脆薯 (小)', 25)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 4. 35點 點心 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="25" data-points="35">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1562967914-608f82629710?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="黃金炸雞塊">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 35 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">黃金炸雞塊 (4塊)</h6>
-                        <small class="text-white-50 mb-3">市價 $59 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('黃金炸雞塊 (4塊)', 35)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 5. 60點 主餐 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="60" data-points="60">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="經典招牌牛肉堡">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 60 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">經典招牌牛肉堡</h6>
-                        <small class="text-white-50 mb-3">市價 $95 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('經典招牌牛肉堡', 60)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 6. 60點 主餐 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="60" data-points="60">
-                <div class="reward-card">
-                    <div class="reward-img-container">
-                        <img src="https://images.unsplash.com/photo-1625813506062-0aeb1d7a094b?auto=format&fit=crop&w=500&q=80" class="reward-img" alt="脆皮卡啦雞腿堡">
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 60 點</span>
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">脆皮卡啦雞腿堡</h6>
-                        <small class="text-white-50 mb-3">市價 $95 元</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeem('脆皮卡啦雞腿堡', 60)">立即兌換</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 7. 45點 現金券 -->
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-tier="voucher" data-points="45">
+            <!-- 1. 動態優惠券卡片列表 -->
+            {% for cp in reward_coupons %}
+            {% set actual_cp_points = cp.reward_discount_points if cp.reward_discount_points and cp.reward_discount_points > 0 else cp.reward_points %}
+            <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ actual_cp_points }}">
                 <div class="reward-card border-warning">
                     <div class="reward-img-container" style="background: linear-gradient(135deg, #b45309, #78350f); display:flex; align-items:center; justify-content:center;">
                         <i class="bi bi-cash-coin display-3 text-warning"></i>
-                        <span class="points-badge"><i class="bi bi-star-fill"></i> 45 點</span>
+                        {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
+                        <span class="points-badge bg-danger text-white border-danger shadow-sm">
+                            <i class="bi bi-tag-fill"></i> 限時 {{ cp.reward_discount_points }} 點
+                        </span>
+                        {% else %}
+                        <span class="points-badge">
+                            <i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點
+                        </span>
+                        {% endif %}
                     </div>
                     <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-warning mb-1">全單現折 $50 優惠券</h6>
-                        <small class="text-white-50 mb-3">消費滿 $200 可使用</small>
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeemCoupon(45)">兌換折價券</button>
+                        <h6 class="fw-bold text-warning mb-1">{{ cp.title }}</h6>
+                        <small class="text-white-50 mb-2">
+                            {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend|int }} 可用{% else %}無使用門檻{% endif %}
+                        </small>
+                        
+                        <div class="mb-3">
+                            {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
+                            <del class="text-white-50 small me-1">{{ cp.reward_points }}點</del>
+                            <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ cp.reward_discount_points }} 點</span>
+                            {% else %}
+                            <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
+                            {% endif %}
+                        </div>
+
+                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeemCoupon('{{ cp.id }}', '{{ cp.title }}', '{{ cp.code }}', {{ actual_cp_points }})">
+                            兌換優惠券
+                        </button>
                     </div>
                 </div>
             </div>
+            {% endfor %}
 
+            <!-- 2. 動態餐點兌換卡片列表 -->
+            {% for item in reward_items %}
+            {% set actual_points = item.reward_discount_points if item.reward_discount_points and item.reward_discount_points > 0 else item.reward_points %}
+            <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ actual_points }}">
+                <div class="reward-card {% if item.reward_discount_points and item.reward_discount_points > 0 %}border-danger{% endif %}">
+                    <div class="reward-img-container">
+                        <img src="{{ url_for('static', filename='menu/' + item.image_path) if item.image_path else 'https://dummyimage.com/500x500/333/fff&text=No+Image' }}" class="reward-img" alt="{{ item.name }}">
+                        
+                        {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                        <span class="points-badge bg-danger text-white border-danger shadow-sm">
+                            <i class="bi bi-tag-fill"></i> 限時 {{ item.reward_discount_points }} 點
+                        </span>
+                        {% else %}
+                        <span class="points-badge">
+                            <i class="bi bi-star-fill"></i> {{ item.reward_points }} 點
+                        </span>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="p-3 d-flex flex-column flex-grow-1">
+                        <h6 class="fw-bold text-white mb-1">{{ item.name }}</h6>
+                        <small class="text-white-50 mb-2">市價 ${{ item.price }} 元</small>
+                        
+                        <div class="mb-3">
+                            {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                            <del class="text-white-50 small me-1">{{ item.reward_points }}點</del>
+                            <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ item.reward_discount_points }} 點</span>
+                            {% else %}
+                            <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
+                            {% endif %}
+                        </div>
+                        
+                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeemItem('{{ item.id }}', '{{ item.name }}', {{ actual_points }})">
+                            立即兌換
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            {% if not reward_items and not reward_coupons %}
+            <div class="col-12 text-center py-5">
+                <i class="bi bi-gift text-secondary display-1 mb-3"></i>
+                <h5 class="text-white-50">店家目前尚未開放任何點數兌換品項與優惠券</h5>
+            </div>
+            {% endif %}
         </div>
     </div>
 
@@ -290,13 +250,13 @@
                     </div>
                     <h4 class="fw-bold mb-2" id="modalItemName">商品名稱</h4>
                     <p class="text-muted">將從您的帳戶扣除 <strong class="text-danger fs-5" id="modalItemPoints">0</strong> 點紅利點數。</p>
-                    <div class="alert alert-warning small mb-0">
+                    <div class="alert alert-warning small mb-0" id="modalAlertText">
                         兌換成功後，此品項（$0 元）將直接加入您的購物車中！
                     </div>
                 </div>
                 <div class="modal-footer bg-light border-0 justify-content-between">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="button" class="btn btn-warning fw-bold px-4" id="confirmRedeemBtn" onclick="executeRedeem()">確認兌換並放入購物車</button>
+                    <button type="button" class="btn btn-warning fw-bold px-4" id="confirmRedeemBtn" onclick="executeRedeem()">確認兌換</button>
                 </div>
             </div>
         </div>
@@ -307,7 +267,6 @@
         let currentPoints = Number('{{ user.points }}');
         let selectedReward = null;
 
-        // 更新按鈕啟用/禁用狀態
         function updateRedeemButtons() {
             document.querySelectorAll('.reward-item').forEach(item => {
                 const reqPoints = Number(item.dataset.points);
@@ -317,61 +276,28 @@
                     btn.innerText = '點數不足';
                 } else {
                     btn.disabled = false;
-                    btn.innerText = '立即兌換';
                 }
             });
         }
 
-        // 分類篩選
-        function filterTier(tier, btn) {
-            document.querySelectorAll('#rewardTabs .nav-link').forEach(l => l.classList.remove('active'));
-            btn.classList.add('active');
-
-            document.querySelectorAll('.reward-item').forEach(item => {
-                if (tier === 'all' || item.dataset.tier === tier) {
-                    item.style.display = 'block';
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-        }
-
-        // 彈出兌換視窗
-        function promptRedeem(name, points) {
-            selectedReward = { name, points };
+        // 彈出餐點兌換確認
+        function promptRedeemItem(id, name, points) {
+            selectedReward = { type: 'item', id, name, points };
             document.getElementById('modalItemName').innerText = name;
             document.getElementById('modalItemPoints').innerText = points;
+            document.getElementById('modalAlertText').innerText = '兌換成功後，此餐點（$0 元）將直接加入您的購物車中！';
             bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
         }
 
-        // 兌換折價券
-        function promptRedeemCoupon(points) {
-            if (currentPoints < points) {
-                alert("點數不足！");
-                return;
-            }
-            if (confirm(`確定使用 ${points} 點兌換「全單現折 $50 優惠代碼」嗎？`)) {
-                fetch('/api/redeem_reward', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ name: '現金折價券 $50', points: points })
-                })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        currentPoints = data.remaining_points;
-                        document.getElementById('currentPoints').innerText = currentPoints;
-                        alert("🎉 兌換成功！結帳促銷代碼為：NEW50 (已為您複製)");
-                        navigator.clipboard.writeText("NEW50");
-                        window.location.href = '/';
-                    } else {
-                        alert(data.message);
-                    }
-                });
-            }
+        // 彈出優惠券兌換確認
+        function promptRedeemCoupon(id, title, code, points) {
+            selectedReward = { type: 'coupon', id, name: title, code, points };
+            document.getElementById('modalItemName').innerText = title;
+            document.getElementById('modalItemPoints').innerText = points;
+            document.getElementById('modalAlertText').innerText = `兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！`;
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
         }
 
-        // 執行餐點兌換
         function executeRedeem() {
             if (!selectedReward) return;
 
@@ -379,28 +305,37 @@
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>兌換中...';
 
+            const payload = selectedReward.type === 'coupon' 
+                ? { coupon_id: selectedReward.id } 
+                : { item_id: selectedReward.id };
+
             fetch('/api/redeem_reward', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(selectedReward)
+                body: JSON.stringify(payload)
             })
             .then(r => r.json())
             .then(data => {
                 btn.disabled = false;
-                btn.innerHTML = '確認兌換並放入購物車';
+                btn.innerHTML = '確認兌換';
 
                 if (data.success) {
                     currentPoints = data.remaining_points;
                     document.getElementById('currentPoints').innerText = currentPoints;
                     bootstrap.Modal.getInstance(document.getElementById('redeemModal')).hide();
 
-                    // 將免費品項存入 localStorage 購物車，帶回首頁
-                    let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
-                    currentCart.push(data.redeemed_item);
-                    localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
+                    if (data.is_coupon) {
+                        alert(data.message);
+                        if (navigator.clipboard) navigator.clipboard.writeText(data.promo_code);
+                        window.location.href = '/';
+                    } else {
+                        let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
+                        currentCart.push(data.redeemed_item);
+                        localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
 
-                    alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
-                    window.location.href = '/';
+                        alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
+                        window.location.href = '/';
+                    }
                 } else {
                     alert(data.message);
                 }
@@ -412,7 +347,6 @@
             });
         }
 
-        // 初始化
         updateRedeemButtons();
     </script>
 </body>

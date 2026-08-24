@@ -60,11 +60,7 @@
         <div class="hero text-white text-center p-4 mb-4">
             <div>
                 <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
-                <p class="lead">消費每滿 $10 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
-                <div class="d-flex justify-content-center gap-2 flex-wrap">
-                    <span class="promo-badge"><i class="bi bi-ticket-perforated"></i> 折扣碼 VIP90 (享9折)</span>
-                    <span class="promo-badge"><i class="bi bi-ticket-perforated"></i> 折扣碼 SAVE30 (滿200折30)</span>
-                </div>
+                <p class="lead mb-0">消費每滿 $100 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
             </div>
         </div>
 
@@ -133,8 +129,10 @@
         <div class="d-flex gap-2 mb-3">
             <button class="btn btn-sm btn-light" onclick="sortMenu('recommended')">🔥 熱門優先</button>
             <button class="btn btn-sm btn-light" onclick="sortMenu('new')">🆕 新品優先</button>
-            <button class="btn btn-sm btn-light" onclick="sortMenu('price_asc')">價格↑</button>
-            <button class="btn btn-sm btn-light" onclick="sortMenu('price_desc')">價格↓</button>
+            <!-- 💡 單一價格切換按鈕 (點擊自動在 價格↑ 與 價格↓ 之間輪播切換) -->
+            <button class="btn btn-sm btn-light" id="priceSortBtn" onclick="togglePriceSort()">
+                <i class="bi bi-arrow-down-up"></i> 價格 ⇅
+            </button>
         </div>
 
         <div id="menuList" class="row gy-3">
@@ -177,67 +175,113 @@
     </div>
 </main>
 
-<!-- 購物車側邊欄 (Cart Sidebar) -->
-<div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel" style="width: 420px;">
-    <div class="offcanvas-header border-secondary border-bottom">
-        <h5 id="cartLabel"><i class="bi bi-cart3"></i> 你的購物車</h5>
+<!-- 購物車側邊欄 (Cart Sidebar - 緊湊高可視性版) -->
+<div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel" style="width: 440px;">
+    <div class="offcanvas-header border-secondary border-bottom py-2 px-3">
+        <h6 id="cartLabel" class="mb-0 fw-bold text-warning"><i class="bi bi-cart3 me-1"></i> 點餐清單購物車</h6>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
     </div>
-    <div class="offcanvas-body d-flex flex-column">
-        <div id="cart-items" class="flex-grow-1 overflow-auto mb-3">
-            <div class="text-center text-muted">購物車目前空空如也</div>
+    <div class="offcanvas-body d-flex flex-column p-3">
+        
+        <!-- 🛒 餐點品項列表 (給予固定保證高度與獨立捲軸) -->
+        <div id="cart-items" class="overflow-y-auto mb-2 pe-1" style="min-height: 140px; max-height: 28vh; border-bottom: 1px solid rgba(255,255,255,0.12);">
+            <div class="text-center text-muted py-4">購物車目前空空如也</div>
         </div>
 
-        <div class="border-top border-secondary pt-3">
-            <!-- 優惠折扣碼區塊 -->
-            <div class="mb-3">
-                <label class="form-label text-white-50 small"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼 (Promo Code)</label>
-                <div class="input-group input-group-sm">
-                    <input type="text" id="promoInput" class="form-control text-uppercase" placeholder="例如 VIP90">
-                    <button class="btn btn-warning" type="button" onclick="applyPromoCode()">套用</button>
-                </div>
-                <div id="promo-msg" class="small mt-1"></div>
-            </div>
-
-            <!-- 紅利點數折抵區塊 -->
-            <div class="card bg-secondary bg-opacity-25 border-warning p-2 mb-3">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div class="form-check form-switch mb-0">
-                        <input class="form-check-input" type="checkbox" id="usePointsToggle" onchange="togglePointsRedemption()">
-                        <label class="form-check-label small fw-bold" for="usePointsToggle">使用紅利點數折抵</label>
+        <div class="flex-grow-1 d-flex flex-column justify-content-between">
+            <div>
+                <!-- 🎟️ 優惠券與代碼 (左右並排省空間) -->
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <small class="text-white-50 fw-bold" style="font-size: 0.75rem;"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼</small>
+                        {% if user_coupons and user_coupons|length > 0 %}
+                        <span class="badge bg-warning text-dark py-0" style="font-size: 0.7rem;">{{ user_coupons|length }} 張可用</span>
+                        {% else %}
+                        <a href="/rewards" class="text-warning text-decoration-none" style="font-size: 0.7rem;">
+                            <i class="bi bi-gift"></i> 去商城兌換
+                        </a>
+                        {% endif %}
                     </div>
-                    <span class="badge bg-warning text-dark">現有 <span id="cart-user-points">{{ user_points }}</span> 點</span>
-                </div>
-                <div id="points-input-box" class="mt-2" style="display:none;">
-                    <div class="input-group input-group-sm">
-                        <span class="input-group-text">折抵點數</span>
-                        <input type="number" id="pointsToUse" class="form-control" min="0" value="0" oninput="calculateTotal()">
+                    <div class="row g-1">
+                        <div class="col-7">
+                            <select id="userCouponSelect" class="form-select form-select-sm bg-dark text-warning border-secondary" style="font-size: 0.78rem;" onchange="selectUserCoupon(this.value)">
+                                {% if user_coupons and user_coupons|length > 0 %}
+                                    <option value="" selected>-- 選擇我的優惠券 --</option>
+                                    {% for uc in user_coupons %}
+                                    <option value="{{ uc.code }}">
+                                        {{ uc.coupon.title }} (代碼: {{ uc.code }}){% if uc.coupon.min_spend > 0 %} - 滿${{ uc.coupon.min_spend|int }}可用{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                {% else %}
+                                    <option value="" disabled selected>-- 尚無可用優惠券 --</option>
+                                {% endif %}
+                            </select>
+                        </div>
+                        <div class="col-5">
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="promoInput" class="form-control bg-dark text-white border-secondary px-1" style="font-size: 0.78rem;" placeholder="手動代碼">
+                                <button class="btn btn-warning btn-sm fw-bold text-dark px-2" type="button" onclick="applyPromoCode()">套用</button>
+                            </div>
+                        </div>
                     </div>
-                    <small class="text-white-50">1 點折抵 $1 元，最高折抵全額。</small>
+                    <div id="promo-msg" class="small mt-0" style="font-size: 0.72rem;"></div>
+                </div>
+
+                <!-- 🌟 紅利點數折抵區塊 (精簡版) -->
+                <div class="card bg-secondary bg-opacity-25 border-warning p-2 mb-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="form-check form-switch mb-0">
+                            <input class="form-check-input" type="checkbox" id="usePointsToggle" onchange="togglePointsRedemption()">
+                            <label class="form-check-label text-white fw-bold" for="usePointsToggle" style="font-size: 0.78rem;">紅利折抵 (1點=$1)</label>
+                        </div>
+                        <span class="badge bg-warning text-dark" style="font-size: 0.75rem;">現有 <span id="cart-user-points">{{ user_points }}</span> 點</span>
+                    </div>
+                    <div id="points-input-box" class="mt-1" style="display:none;">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text py-0" style="font-size: 0.75rem;">使用點數</span>
+                            <input type="number" id="pointsToUse" class="form-control py-0" min="0" value="0" oninput="calculateTotal()" style="font-size: 0.8rem;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 💰 金額結算明細 -->
+                <div class="px-1 mb-2">
+                    <div class="d-flex justify-content-between small text-white-50" style="font-size: 0.78rem;"><span>小計</span><span>$<span id="cart-subtotal">0.00</span></span></div>
+                    <div class="d-flex justify-content-between small text-info" style="font-size: 0.78rem;"><span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0.00</span></span></div>
+                    <div class="d-flex justify-content-between small text-success" style="font-size: 0.78rem;"><span>紅利折抵</span><span>-$<span id="cart-points-discount">0.00</span></span></div>
+                    <div class="d-flex justify-content-between align-items-baseline border-top border-secondary pt-1 mt-1">
+                        <span class="fw-bold fs-6">應付金額</span>
+                        <span class="fw-bold text-warning fs-4">$<span id="cart-final">0.00</span></span>
+                    </div>
+                    <div class="d-flex justify-content-between text-warning small" style="font-size: 0.75rem;">
+                        <span>🌟 預估獲得紅利</span>
+                        <span>+<span id="cart-earned-points">0</span> 點</span>
+                    </div>
                 </div>
             </div>
 
-            <!-- 金額結算明細 -->
-            <div class="d-flex justify-content-between mb-1 small text-white-50"><span>小計 (Subtotal)</span><span>$<span id="cart-subtotal">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-1 small text-info"><span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-1 small text-success"><span>紅利點數折抵</span><span>-$<span id="cart-points-discount">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-2 fs-5 border-top border-secondary pt-2"><span class="fw-bold">應付金額</span><span class="fw-bold text-warning">$<span id="cart-final">0.00</span></span></div>
-            <div class="d-flex justify-content-between mb-3 text-warning small"><span>🌟 本次預估獲得積點</span><span>+<span id="cart-earned-points">0</span> 點</span></div>
+            <div>
+                <!-- 🍽️ 用餐方式 & 付款方式 (左右並排) -->
+                <div class="row g-1 mb-2">
+                    <div class="col-6">
+                        <select id="orderType" class="form-select form-select-sm bg-dark text-white border-secondary" style="font-size: 0.8rem;">
+                            <option value="內用">內用 (Dine-in)</option>
+                            <option value="外帶">外帶 (Take-out)</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <select id="paymentMethod" class="form-select form-select-sm bg-dark text-white border-secondary" style="font-size: 0.8rem;">
+                            <option value="Cash">現金 Cash</option>
+                            <option value="Credit Card">信用卡</option>
+                            <option value="Line Pay">Line Pay</option>
+                        </select>
+                    </div>
+                </div>
 
-            <div class="mb-2">
-                <select id="orderType" class="form-select form-select-sm">
-                    <option value="內用">內用 (Dine-in)</option>
-                    <option value="外帶">外帶 (Take-out)</option>
-                </select>
+                <button class="btn btn-warning w-100 fw-bold py-2 shadow-sm text-dark fs-6" onclick="openPreview()">
+                    <i class="bi bi-check2-circle me-1"></i> 下單前確認
+                </button>
             </div>
-            <div class="mb-3">
-                <select id="paymentMethod" class="form-select form-select-sm">
-                    <option value="Cash">現金 Cash</option>
-                    <option value="Credit Card">信用卡 Credit Card</option>
-                    <option value="Line Pay">Line Pay</option>
-                </select>
-            </div>
-            <button class="btn btn-warning w-100 fw-bold py-2" onclick="openPreview()">✅ 下單前確認</button>
         </div>
     </div>
 </div>
@@ -514,6 +558,33 @@
         saveCartToStorage(); // 儲存變更
         updateCartUI();
     }
+// 💡 選擇專屬優惠券時自動填入並立即驗證套用
+    function selectUserCoupon(code) {
+        const promoInput = document.getElementById('promoInput');
+        if (promoInput) {
+            promoInput.value = code;
+            applyPromoCode(); // 自動觸發驗證
+        }
+    }
+
+    // 完成訂單時重設下拉選單
+    function finishOrder() {
+        cart = [];
+        saveCartToStorage();
+        activePromoCode = '';
+        appliedPromoDiscount = 0;
+        document.getElementById('promoInput').value = '';
+        document.getElementById('promo-msg').innerHTML = '';
+        
+        // 💡 重設優惠券下拉選單
+        const couponSelect = document.getElementById('userCouponSelect');
+        if (couponSelect) couponSelect.value = '';
+
+        document.getElementById('usePointsToggle').checked = false;
+        document.getElementById('points-input-box').style.display = 'none';
+        updateCartUI();
+        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
+    }
 
     // --- 優惠券驗證邏輯 ---
     function applyPromoCode() {
@@ -587,7 +658,7 @@
         }
 
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = Math.floor(finalPrice / 10);
+        const earnedPoints = Math.floor(finalPrice / 100);
 
         document.getElementById('cart-subtotal').innerText = subtotal.toFixed(2);
         document.getElementById('cart-promo-discount').innerText = appliedPromoDiscount.toFixed(2);
@@ -603,7 +674,7 @@
         const pointsInput = document.getElementById('pointsToUse');
         const pointsUsed = (document.getElementById('usePointsToggle').checked) ? Number(pointsInput.value || 0) : 0;
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = Math.floor(finalPrice / 10);
+        const earnedPoints = Math.floor(finalPrice / 100);
 
         const preview = document.getElementById('preview-items');
         preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
@@ -742,7 +813,34 @@
         });
     }
 
+let currentPriceOrder = null; // 'asc' 或 'desc'
+
+    function togglePriceSort() {
+        const btn = document.getElementById('priceSortBtn');
+        if (currentPriceOrder !== 'asc') {
+            currentPriceOrder = 'asc';
+            sortMenu('price_asc');
+            btn.innerHTML = '<i class="bi bi-sort-numeric-down text-dark"></i> 價格 ↑ (由低到高)';
+            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
+        } else {
+            currentPriceOrder = 'desc';
+            sortMenu('price_desc');
+            btn.innerHTML = '<i class="bi bi-sort-numeric-up-alt text-dark"></i> 價格 ↓ (由高到低)';
+            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
+        }
+    }
+
     function sortMenu(mode) {
+        // 若點擊熱門或新品，重設價格按鈕狀態
+        if (mode === 'recommended' || mode === 'new') {
+            currentPriceOrder = null;
+            const btn = document.getElementById('priceSortBtn');
+            if (btn) {
+                btn.innerHTML = '<i class="bi bi-arrow-down-up"></i> 價格 ⇅';
+                btn.className = 'btn btn-sm btn-light';
+            }
+        }
+
         const container = document.getElementById('menuList');
         const rows = [...container.querySelectorAll('.menu-row')];
         rows.sort((a, b) => {
@@ -783,7 +881,7 @@
 <div class="container py-5">
     <div class="hero text-white text-center p-4 mb-4" style="background: linear-gradient(135deg, rgba(0,0,0,0.5), rgba(10,10,10,0.9)), url('https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80') center/cover; border-radius: 14px;">
         <h1 class="display-5">歡迎使用自助點餐系統</h1>
-        <p class="lead">加入會員即送 20 點開卡禮！消費滿 $10 積 1 點，享人臉快速登入。</p>
+        <p class="lead">加入會員可累積點數！消費滿 $100 積 1 點</p>
         <div class="d-flex justify-content-center gap-2 mt-3">
             <a class="btn btn-register btn-lg" href="/register">加入會員</a>
             <a class="btn btn-login btn-lg" href="/face_login">會員登入</a>

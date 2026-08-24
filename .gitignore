@@ -4,8 +4,8 @@ menu.db
 *.db
 
 # 忽略使用者上傳的靜態檔案 (保留目錄但不上傳內容)
-static/uploads/*
-
+static/member/*
+!static/member/.gitkeep
 # 排除特定格式的圖片 (選用)
 *.jpg
 *.jpeg
