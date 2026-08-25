@@ -821,7 +821,7 @@ function showMyOrders() {
                     <div class="card mb-3 border-secondary shadow-sm text-dark">
                         <div class="card-header bg-light d-flex justify-content-between align-items-center">
                             <div>
-                                <span class="fw-bold text-success fs-5">訂單 #${o.order_id}</span>
+                                <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
                                 <span class="badge ${o.status === 'Pending' ? 'bg-warning text-dark' : (o.status === 'Completed' ? 'bg-success' : 'bg-secondary')}">${o.status}</span>
                                 <span class="badge bg-primary ms-1">${o.order_type}</span>
                             </div>

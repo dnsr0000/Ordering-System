@@ -73,7 +73,12 @@ class Order(db.Model):
     discount_amount = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.now)
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
-
+    @property
+    def user(self):
+        if self.user_id:
+            return User.query.get(self.user_id)
+        return None
+    
 class OrderItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
@@ -491,7 +496,7 @@ def redeem_reward():
 
 @app.route('/my_orders')
 def my_orders():
-    """查詢當前登入使用者的歷史訂單記錄"""
+    """查詢當前登入使用者的歷史訂單記錄 (加入會員獨立專屬序號)"""
     user_id = session.get('user_id')
     user_name = session.get('user_name')
 
@@ -502,8 +507,12 @@ def my_orders():
     else:
         return jsonify([])
 
+    total_count = len(orders) 
     result = []
-    for o in orders:
+    
+    for idx, o in enumerate(orders):
+        user_order_no = total_count - idx
+
         items_data = []
         for i in o.items:
             items_data.append({
@@ -516,6 +525,7 @@ def my_orders():
         
         result.append({
             'order_id': o.id,
+            'user_order_no': user_order_no, 
             'table_number': o.table_number,
             'total_price': round(o.total_price),
             'discount_amount': round(o.discount_amount or 0),
@@ -999,6 +1009,8 @@ def delete_user(id):
         return redirect(url_for('admin_dashboard'))
 
     user = User.query.get_or_404(id)
+    
+    # 1. 刪除會員的大頭貼檔案
     if user.photo_path:
         filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
         if os.path.exists(filepath):
@@ -1007,8 +1019,15 @@ def delete_user(id):
             except Exception:
                 pass
 
+    #  2. 新增：查詢並刪除該會員名下的所有訂單
+    user_orders = Order.query.filter_by(user_id=id).all()
+    for order in user_orders:
+        db.session.delete(order)
+
+    # 3. 刪除會員本身
     db.session.delete(user)
     db.session.commit()
+    
     return redirect(url_for('admin_dashboard', tab='users'))
 
 
