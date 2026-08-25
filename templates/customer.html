@@ -73,23 +73,34 @@
             </div>
             <div class="row gy-2">
                 {% for item in hot_items %}
+                {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
                 <div class="col-sm-6 col-md-4">
                     <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
-                         style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.2s ease;"
-                         data-item-id="{{ item.id }}"
-                         data-item-name="{{ item.name }}"
-                         data-item-price="{{ item.price }}"
-                         data-item-modifiers="{{ item.modifiers or 'none' }}"
-                         onclick="handleAddToCart(this)"
-                         onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)'; this.style.background='#222b3d';"
-                         onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)'; this.style.background='#181f2c';">
+                        style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.2s ease;"
+                        data-item-id="{{ item.id }}"
+                        data-item-name="{{ item.name }}"
+                        data-item-price="{{ actual_price }}"
+                        data-item-modifiers="{{ item.modifiers or 'none' }}"
+                        onclick="handleAddToCart(this)"
+                        onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)';"
+                        onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)';">
                         <div>
                             <div class="fw-bold text-white fs-6">{{ item.name }}</div>
-                            <div class="text-warning fw-bold mt-1">${{ item.price }}</div>
+                            <div class="mt-1">
+                                {% if item.is_discount and item.discount_price > 0 %}
+                                    <del class="text-white-50 small me-1">${{ item.price }}</del>
+                                    <span class="text-danger fw-bold">${{ item.discount_price }}</span>
+                                {% else %}
+                                    <span class="text-warning fw-bold">${{ item.price }}</span>
+                                {% endif %}
+                            </div>
                         </div>
-                        <div class="d-flex align-items-center gap-2">
+                        <div class="d-flex align-items-center gap-1">
                             <span class="badge bg-danger">熱門</span>
-                            <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center" style="width: 28px; height: 28px;">
+                            {% if item.is_discount and item.discount_price > 0 %}
+                                <span class="badge bg-warning text-dark">特價</span>
+                            {% endif %}
+                            <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center ms-1" style="width: 28px; height: 28px;">
                                 <i class="bi bi-plus-lg text-dark fw-bold"></i>
                             </span>
                         </div>
@@ -129,48 +140,54 @@
         <div class="d-flex gap-2 mb-3">
             <button class="btn btn-sm btn-light" onclick="sortMenu('recommended')">🔥 熱門優先</button>
             <button class="btn btn-sm btn-light" onclick="sortMenu('new')">🆕 新品優先</button>
-            <!-- 💡 單一價格切換按鈕 (點擊自動在 價格↑ 與 價格↓ 之間輪播切換) -->
+            <button class="btn btn-sm btn-light" onclick="sortMenu('discount')">🏷️ 特價優先</button>
             <button class="btn btn-sm btn-light" id="priceSortBtn" onclick="togglePriceSort()">
                 <i class="bi bi-arrow-down-up"></i> 價格 ⇅
             </button>
         </div>
 
         <div id="menuList" class="row gy-3">
-            {% for item in items %}
-            <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ item.price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}">
-                <div class="menu-card p-3">
-                    <div class="d-flex align-items-start gap-3">
-                        {% if item.image_path %}
-                        <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}">
-                        {% else %}
-                        <div class="menu-img d-flex align-items-center justify-content-center bg-secondary text-white">無圖</div>
-                        {% endif %}
-                        <div class="flex-grow-1">
-                            <div class="d-flex justify-content-between align-items-start">
-                                <div>
-                                    <h5 class="mb-1 text-warning">{{ item.name }}</h5>
-                                    <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
-                                    {% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %}
-                                    {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
-                                </div>
-                                <h5 class="text-success">${{ item.price }}</h5>
+        {% for item in items %}
+        {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
+        {% set is_disc = 1 if (item.is_discount and item.discount_price > 0) else 0 %}
+        <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ actual_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ is_disc }}">
+            <div class="menu-card p-3">
+                <div class="d-flex align-items-start gap-3">
+                    {% if item.image_path %}
+                    <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}">
+                    {% else %}
+                    <div class="menu-img d-flex align-items-center justify-content-center bg-secondary text-white">無圖</div>
+                    {% endif %}
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h5 class="mb-1 text-warning">{{ item.name }}</h5>
+                                <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
+                                {% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %}
+                                {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
+                                {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark">特價</span>{% endif %}
                             </div>
-                            <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
-                            <button class="btn add-to-cart-btn btn-sm" type="button"
-                                data-item-id="{{ item.id }}"
-                                data-item-name="{{ item.name }}"
-                                data-item-price="{{ item.price }}"
-                                data-item-modifiers="{{ item.modifiers or 'none' }}"
-                                onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
+                            <div>
+                                {% if item.is_discount and item.discount_price > 0 %}
+                                    <del class="text-white-50 small me-1">${{ item.price }}</del>
+                                    <span class="text-danger fw-bold fs-5">${{ item.discount_price }}</span>
+                                {% else %}
+                                    <span class="text-success fw-bold fs-5">${{ item.price }}</span>
+                                {% endif %}
+                            </div>
                         </div>
+                        <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
+                        <button class="btn add-to-cart-btn btn-sm" type="button"
+                            data-item-id="{{ item.id }}"
+                            data-item-name="{{ item.name }}"
+                            data-item-price="{{ actual_price }}"
+                            data-item-modifiers="{{ item.modifiers or 'none' }}"
+                            onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
                     </div>
                 </div>
             </div>
-            {% else %}
-            <div class="col-12 text-center text-white-50">
-                目前尚無菜單，請店家新增菜品。
-            </div>
-            {% endfor %}
+        </div>
+        {% endfor %}
         </div>
     </div>
 </main>
@@ -824,8 +841,7 @@ function showMyOrders() {
     }
 
     function sortMenu(mode) {
-        // 若點擊熱門或新品，重設價格按鈕狀態
-        if (mode === 'recommended' || mode === 'new') {
+        if (mode === 'recommended' || mode === 'new' || mode === 'discount') {
             currentPriceOrder = null;
             const btn = document.getElementById('priceSortBtn');
             if (btn) {
@@ -839,6 +855,7 @@ function showMyOrders() {
         rows.sort((a, b) => {
             if (mode === 'recommended') return Number(b.dataset.recommended) - Number(a.dataset.recommended);
             if (mode === 'new') return Number(b.dataset.new) - Number(a.dataset.new);
+            if (mode === 'discount') return Number(b.dataset.discount) - Number(a.dataset.discount); // 1 排前面，0 排後面
             if (mode === 'price_asc') return Number(a.dataset.price) - Number(b.dataset.price);
             if (mode === 'price_desc') return Number(b.dataset.price) - Number(a.dataset.price);
             return 0;

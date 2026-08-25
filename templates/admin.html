@@ -173,7 +173,7 @@
                                 {% for item in order.items %}
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
-                                        <div class="text-white small fw-bold">{{ item.menu_item.name if item.menu_item else item.name }} x {{ item.quantity }}</div>
+                                        <div class="text-white small fw-bold">{{ item.item_name }} x {{ item.quantity }}</div>
                                         {% if item.customization %}
                                         <small class="text-danger d-block" style="font-size: 0.75rem;">{{ item.customization }}</small>
                                         {% endif %}
@@ -252,6 +252,7 @@
                                     <td>
                                         {% if item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
                                         {% if item.is_new %}<span class="badge bg-success">新品</span>{% endif %}
+                                        {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark">特價</span>{% endif %}
                                     </td>
                                     <td>
                                         {% if item.is_reward %}
@@ -270,6 +271,8 @@
                                                 data-category="{{ item.category }}"
                                                 data-modifiers="{{ item.modifiers or 'none' }}" 
                                                 data-price="{{ item.price }}"
+                                                data-is-discount="{{ 1 if item.is_discount else 0 }}"
+                                                data-discount-price="{{ item.discount_price or 0 }}"
                                                 data-description="{{ item.description or '' }}" 
                                                 data-image="{{ item.image_path or '' }}"
                                                 data-recommended="{{ 1 if item.is_recommended else 0 }}" 
@@ -596,7 +599,7 @@
                     <h5 class="modal-title fw-bold text-warning"><i class="bi bi-plus-circle me-2"></i>新增品項</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form action="/admin/add" method="POST" enctype="multipart/form-data">
+                <form id="addItemForm" action="/admin/add" method="POST" enctype="multipart/form-data">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點名稱</label>
@@ -605,12 +608,14 @@
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold">分類</label>
-                                <input type="text" class="form-control" name="category" placeholder="主餐 / 飲品" required>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold">單價 (NT$)</label>
-                                <input type="number" class="form-control" name="price" placeholder="95" required>
-                            </div>
+                                <input type="text" class="form-control" name="category" required></div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-bold">原單價 (NT$)</label>
+                                    <input type="number" class="form-control" name="price" required></div>
+                                </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
+                            <input type="number" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">客製化群組</label>
@@ -630,15 +635,10 @@
                             <input type="file" class="form-control" name="image" accept="image/*" onchange="initiateCrop(this, 'add-preview-img')">
                             <img id="add-preview-img" class="mt-2 rounded-3 object-fit-cover" style="max-height: 100px; display: none;">
                         </div>
-                        <div class="d-flex gap-3 mb-3">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="add-rec">
-                                <label class="form-check-label small" for="add-rec">🔥 熱門推薦</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="is_new" value="1" id="add-new">
-                                <label class="form-check-label small" for="add-new">✨ 新品上市</label>
-                            </div>
+                        <div class="d-flex flex-wrap gap-3 mb-3">
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="add-rec"><label class="form-check-label small" for="add-rec">🔥 熱門推薦</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="1" id="add-new"><label class="form-check-label small" for="add-new">✨ 新品上市</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_discount" value="1" id="add-discount"><label class="form-check-label small text-warning fw-bold" for="add-discount">🏷️ 限時特價</label></div>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -666,15 +666,11 @@
                             <label class="form-label small fw-bold">餐點名稱</label>
                             <input type="text" class="form-control" name="name" id="edit-name" required>
                         </div>
-                        <div class="row g-2 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-bold">分類</label>
-                                <input type="text" class="form-control" name="category" id="edit-category" required>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold">單價 (NT$)</label>
-                                <input type="number" class="form-control" name="price" id="edit-price" required>
-                            </div>
+                        <div class="row g-2 mb-3"><div class="col-6"><label class="form-label small fw-bold">分類</label><input type="text" class="form-control" name="category" id="edit-category" required></div><div class="col-6"><label class="form-label small fw-bold">原單價 (NT$)</label><input type="number" class="form-control" name="price" id="edit-price" required></div></div>
+                        <div class="mb-3">
+                                <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
+                                <input type="number" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
+                                <div class="invalid-feedback text-danger small">請設定大於 0 的有效特價金額！</div>
                         </div>
 
                         <!-- 紅利商城設定區塊 -->
@@ -718,15 +714,10 @@
                             <input type="file" class="form-control" name="image" id="edit-image-file" accept="image/*" onchange="initiateCrop(this, 'edit-image-preview')">
                             <img id="edit-image-preview" class="mt-2 rounded-3 object-fit-cover" width="80" height="80">
                         </div>
-                        <div class="d-flex gap-3 mb-3">
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="edit-recommended">
-                                <label class="form-check-label small" for="edit-recommended">🔥 熱門推薦</label>
-                            </div>
-                            <div class="form-check form-switch">
-                                <input class="form-check-input" type="checkbox" name="is_new" value="1" id="edit-new">
-                                <label class="form-check-label small" for="edit-new">✨ 新品上市</label>
-                            </div>
+                        <div class="d-flex flex-wrap gap-3 mb-3">
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="edit-recommended"><label class="form-check-label small" for="edit-recommended">🔥 熱門推薦</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="1" id="edit-new"><label class="form-check-label small" for="edit-new">✨ 新品上市</label></div>
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_discount" value="1" id="edit-discount"><label class="form-check-label small text-warning fw-bold" for="edit-discount">🏷️ 限時特價</label></div>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -897,6 +888,8 @@
             document.getElementById('edit-category').value = d.category;
             document.getElementById('edit-modifiers').value = d.modifiers;
             document.getElementById('edit-price').value = Math.round(Number(d.price || 0));
+            document.getElementById('edit-discount').checked = d.isDiscount === '1';
+            document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
             document.getElementById('edit-description').value = d.description || '';
             document.getElementById('edit-recommended').checked = d.recommended === '1';
             document.getElementById('edit-new').checked = d.new === '1';
@@ -1032,7 +1025,61 @@
                 alert('網路錯誤，請稍後再試');
             });
         }
+        
+        // --- 特價欄位防呆連動邏輯 ---
+        function bindDiscountValidation(formId, inputId, toggleId) {
+            const form = document.getElementById(formId);
+            const input = document.getElementById(inputId);
+            const toggle = document.getElementById(toggleId);
 
+            if (!form || !input || !toggle) return;
+
+            // 1. 填寫特價金額 (>0) 時，自動開啟特價開關
+            input.addEventListener('input', function () {
+                const val = Number(this.value);
+                if (val > 0) {
+                    toggle.checked = true;
+                    this.classList.remove('is-invalid');
+                } else if (this.value === '' || val <= 0) {
+                    toggle.checked = false;
+                }
+            });
+
+            // 2. 特價開關切換：關閉時自動清除特價金額與紅框
+            toggle.addEventListener('change', function () {
+                if (!this.checked) {
+                    input.value = 0;
+                    input.classList.remove('is-invalid');
+                } else {
+                    if (Number(input.value) <= 0) {
+                        input.value = '';
+                        input.focus();
+                    }
+                }
+            });
+
+            // 3. 表單送出檢查：開啟特價但沒填有效金額時阻止送出並顯示紅框
+            form.addEventListener('submit', function (e) {
+                if (toggle.checked) {
+                    const val = Number(input.value);
+                    if (!input.value || val <= 0) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        input.classList.add('is-invalid');
+                        input.focus();
+                        alert('⚠️ 已開啟特價標籤，請輸入大於 0 的特價金額！');
+                        return false;
+                    }
+                }
+                input.classList.remove('is-invalid');
+            });
+        }
+
+        // 初始化新增與編輯彈窗的特價防呆
+        document.addEventListener("DOMContentLoaded", function () {
+            bindDiscountValidation('addItemForm', 'add-discount-price', 'add-discount');
+            bindDiscountValidation('editItemForm', 'edit-discount-price', 'edit-discount');
+        });
         // 當管理票券彈窗被關閉時，若有變更過狀態則自動重新整理頁面同步背景
         document.getElementById('userCouponsModal').addEventListener('hidden.bs.modal', function () {
             if (shouldReloadOnClose) {

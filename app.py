@@ -49,6 +49,8 @@ class MenuItem(db.Model):
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50), default='主餐')
     price = db.Column(db.Integer, nullable=False)
+    is_discount = db.Column(db.Boolean, default=False)      # 是否特價
+    discount_price = db.Column(db.Integer, default=0)       # 特價金額
     modifiers = db.Column(db.String(50), default='none')
     description = db.Column(db.String(200), default='')
     image_path = db.Column(db.String(200), default='')
@@ -138,7 +140,14 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN reward_points INTEGER DEFAULT 0"))
     if 'reward_discount_points' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN reward_discount_points INTEGER DEFAULT 0"))
-
+    if 'is_discount' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_discount BOOLEAN DEFAULT 0"))
+    if 'discount_price' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN discount_price INTEGER DEFAULT 0"))
+        
+    if 'modifiers' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN modifiers VARCHAR(50) DEFAULT 'none'"))
+        
     # 3. 檢查 Order 資料表
     order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
     order_cols = [col[1] for col in order_info]
@@ -750,6 +759,8 @@ def add_item():
     image = request.files.get('image')
     is_rec = request.form.get('is_recommended') == '1'
     is_new = request.form.get('is_new') == '1'
+    is_discount = request.form.get('is_discount') == '1'
+    discount_price = round(float(request.form.get('discount_price') or 0))
 
     image_filename = ''
     if image and image.filename != '':
@@ -766,6 +777,8 @@ def add_item():
             description=desc,
             image_path=image_filename,
             is_recommended=is_rec,
+            is_discount=is_discount,
+            discount_price=discount_price,
             is_new=is_new
         )
         db.session.add(new_item)
@@ -788,6 +801,8 @@ def edit_item(id):
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
         item.price = round(float(price))
+        item.is_discount = True if request.form.get('is_discount') else False
+        item.discount_price = round(float(request.form.get('discount_price') or 0))
         item.description = request.form.get('description', '')
         item.is_recommended = True if request.form.get('is_recommended') else False
         item.is_new = True if request.form.get('is_new') else False
@@ -897,6 +912,8 @@ def import_menu_excel():
                 description=description,
                 image_path='',
                 is_recommended=is_recommended,
+                is_discount=False, 
+                discount_price=0,
                 is_new=is_new
             )
             db.session.add(new_item)
