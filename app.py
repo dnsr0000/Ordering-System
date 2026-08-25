@@ -147,7 +147,7 @@ with app.app_context():
         
     if 'modifiers' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN modifiers VARCHAR(50) DEFAULT 'none'"))
-        
+
     # 3. 檢查 Order 資料表
     order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
     order_cols = [col[1] for col in order_info]
@@ -683,10 +683,10 @@ def add_coupon():
     title = request.form.get('title')
     code = request.form.get('code', '').strip().upper()
     discount_type = request.form.get('discount_type', 'fixed')
-    discount_value = float(request.form.get('discount_value') or 0)
-    min_spend = float(request.form.get('min_spend') or 0)
-    reward_points = int(request.form.get('reward_points') or 0)
-    reward_discount_points = int(request.form.get('reward_discount_points') or 0)
+    discount_value = max(0.0, float(request.form.get('discount_value') or 0))
+    min_spend = max(0.0, float(request.form.get('min_spend') or 0))
+    reward_points = max(0, int(request.form.get('reward_points') or 0))
+    reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
     existing = Coupon.query.filter_by(code=code).first()
     if existing:
@@ -724,8 +724,8 @@ def add_reward():
         return redirect(url_for('admin_dashboard'))
 
     item_id = request.form.get('item_id')
-    reward_points = int(request.form.get('reward_points') or 0)
-    reward_discount_points = int(request.form.get('reward_discount_points') or 0)
+    reward_points = max(0, int(request.form.get('reward_points') or 0))
+    reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
     item = MenuItem.query.get_or_404(item_id)
     item.is_reward = True
@@ -760,7 +760,7 @@ def add_item():
     is_rec = request.form.get('is_recommended') == '1'
     is_new = request.form.get('is_new') == '1'
     is_discount = request.form.get('is_discount') == '1'
-    discount_price = round(float(request.form.get('discount_price') or 0))
+    discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
 
     image_filename = ''
     if image and image.filename != '':
@@ -773,7 +773,7 @@ def add_item():
             name=name,
             category=category,
             modifiers=modifiers,
-            price=round(float(price)),
+            price=max(0, round(float(price))),
             description=desc,
             image_path=image_filename,
             is_recommended=is_rec,
@@ -800,15 +800,15 @@ def edit_item(id):
         item.name = name
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
-        item.price = round(float(price))
+        item.price = max(0, round(float(price)))
         item.is_discount = True if request.form.get('is_discount') else False
-        item.discount_price = round(float(request.form.get('discount_price') or 0))
+        item.discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
         item.description = request.form.get('description', '')
         item.is_recommended = True if request.form.get('is_recommended') else False
         item.is_new = True if request.form.get('is_new') else False
         item.is_reward = True if request.form.get('is_reward') else False
-        item.reward_points = int(request.form.get('reward_points') or 0)
-        item.reward_discount_points = int(request.form.get('reward_discount_points') or 0)
+        item.reward_points = max(0, int(request.form.get('reward_points') or 0))
+        item.reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
         image = request.files.get('image')
         if image and image.filename != '':

@@ -527,12 +527,12 @@
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold" id="disc-val-label">折抵金額 (NT$)</label>
-                                <input type="number" step="0.01" class="form-control" name="discount_value" id="coupon-disc-val" placeholder="50" required>
+                                <input type="number" step="0.01" min="0" class="form-control" name="discount_value" id="coupon-disc-val" placeholder="50" required>
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">最低消費門檻 (NT$)</label>
-                            <input type="number" class="form-control" name="min_spend" placeholder="例如：滿 200 元可用" value="0">
+                            <input type="number" min="0" class="form-control" name="min_spend" placeholder="例如：滿 200 元可用" value="0">
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -541,7 +541,7 @@
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold">限時特惠點數 (無填 0)</label>
-                                <input type="number" class="form-control" name="reward_discount_points" placeholder="0" value="0">
+                                <input type="number" min="0" class="form-control" name="reward_discount_points" placeholder="0" value="0">
                             </div>
                         </div>
                     </div>
@@ -575,11 +575,11 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">兌換所需點數</label>
-                            <input type="number" class="form-control" name="reward_points" placeholder="例如：50" min="1" required>
+                            <input type="number" min="0"  class="form-control" name="reward_points" placeholder="例如：50" min="1" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">限時優惠點數 (無特價請填 0)</label>
-                            <input type="number" class="form-control" name="reward_discount_points" placeholder="例如：30" min="0" value="0">
+                            <input type="number"  min="0" class="form-control" name="reward_discount_points" placeholder="例如：30" min="0" value="0">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -611,11 +611,11 @@
                                 <input type="text" class="form-control" name="category" required></div>
                                 <div class="col-6">
                                     <label class="form-label small fw-bold">原單價 (NT$)</label>
-                                    <input type="number" class="form-control" name="price" required></div>
+                                    <input type="number" min="0" class="form-control" name="price" required></div>
                                 </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
-                            <input type="number" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
+                            <input type="number" min="0" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">客製化群組</label>
@@ -666,10 +666,10 @@
                             <label class="form-label small fw-bold">餐點名稱</label>
                             <input type="text" class="form-control" name="name" id="edit-name" required>
                         </div>
-                        <div class="row g-2 mb-3"><div class="col-6"><label class="form-label small fw-bold">分類</label><input type="text" class="form-control" name="category" id="edit-category" required></div><div class="col-6"><label class="form-label small fw-bold">原單價 (NT$)</label><input type="number" class="form-control" name="price" id="edit-price" required></div></div>
+                        <div class="row g-2 mb-3"><div class="col-6"><label class="form-label small fw-bold">分類</label><input type="text" class="form-control" name="category" id="edit-category" required></div><div class="col-6"><label class="form-label small fw-bold">原單價 (NT$)</label><input type="number" min="0" class="form-control" name="price" id="edit-price" required></div></div>
                         <div class="mb-3">
                                 <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
-                                <input type="number" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
+                                <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
                                 <div class="invalid-feedback text-danger small">請設定大於 0 的有效特價金額！</div>
                         </div>
 
@@ -686,11 +686,11 @@
                                 <div class="row g-2">
                                     <div class="col-6">
                                         <label class="form-label small text-white-50 mb-1">兌換所需點數</label>
-                                        <input type="number" class="form-control form-control-sm" id="edit-reward-points" name="reward_points" min="0">
+                                        <input type="number"min="0" class="form-control form-control-sm" id="edit-reward-points" name="reward_points" min="0">
                                     </div>
                                     <div class="col-6">
                                         <label class="form-label small text-white-50 mb-1">限時優惠點數 (無填 0)</label>
-                                        <input type="number" class="form-control form-control-sm" id="edit-reward-discount" name="reward_discount_points" min="0">
+                                        <input type="number" min="0"class="form-control form-control-sm" id="edit-reward-discount" name="reward_discount_points" min="0">
                                     </div>
                                 </div>
                             </div>
@@ -791,7 +791,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">紅利點數 (點)</label>
-                            <input type="number" class="form-control" name="points" id="edit-user-points" min="0" required>
+                            <input type="number" min="0" class="form-control" name="points" id="edit-user-points" min="0" required>
                             <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
                         </div>
                     </div>
@@ -858,6 +858,7 @@
         function toggleDiscInput(type) {
             const label = document.getElementById('disc-val-label');
             const input = document.getElementById('coupon-disc-val');
+            input.min = '0';
             if (type === 'percent') {
                 label.innerText = '折扣折數 (例如 0.9 代表9折)';
                 input.placeholder = '0.9';
