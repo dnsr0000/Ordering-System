@@ -23,6 +23,26 @@
         .form-control:focus, .form-select:focus { background: #2b2b2b; color: #fff; box-shadow: 0 0 0 0.2rem rgba(245,165,0,0.2); border-color: #f5a500; }
         .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255,255,255,0.16); }
         .promo-badge { background: linear-gradient(45deg, #f59e0b, #ef4444); color: #fff; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; }
+        .sort-btn {position: relative;transition: all 0.2s ease;}
+        .sort-btn.active {background-color: #f5a500 !important;color: #111 !important;font-weight: bold;border-color: #f5a500 !important;box-shadow: 0 0 10px rgba(245, 165, 0, 0.4);}
+        .sort-btn.active::after {
+            content: "\F26B";
+            font-family: "bootstrap-icons";
+            position: absolute;
+            top: -7px;
+            right: -7px;
+            background-color: #198754;
+            color: #ffffff;
+            font-size: 13px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #1a1a1a;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
     </style>
 </head>
 <body>
@@ -86,6 +106,9 @@
                         onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)';">
                         <div>
                             <div class="fw-bold text-white fs-6">{{ item.name }}</div>
+                            {% if item.description %}
+                            <small class="text-white-50 d-block" style="font-size: 0.75rem;">{{ item.description }}</small>
+                            {% endif %}
                             <div class="mt-1">
                                 {% if item.is_discount and item.discount_price > 0 %}
                                     <del class="text-white-50 small me-1">${{ item.price }}</del>
@@ -138,9 +161,9 @@
         </div>
 
         <div class="d-flex gap-2 mb-3">
-            <button class="btn btn-sm btn-light" onclick="sortMenu('recommended')">🔥 熱門優先</button>
-            <button class="btn btn-sm btn-light" onclick="sortMenu('new')">🆕 新品優先</button>
-            <button class="btn btn-sm btn-light" onclick="sortMenu('discount')">🏷️ 特價優先</button>
+            <button class="btn btn-sm btn-light sort-btn" id="btn-rec" onclick="sortMenu('recommended')">🔥 熱門優先</button>
+            <button class="btn btn-sm btn-light sort-btn" id="btn-new" onclick="sortMenu('new')">🆕 新品優先</button>
+            <button class="btn btn-sm btn-light sort-btn" id="btn-discount" onclick="sortMenu('discount')">🏷️ 特價優先</button>
             <button class="btn btn-sm btn-light" id="priceSortBtn" onclick="togglePriceSort()">
                 <i class="bi bi-arrow-down-up"></i> 價格 ⇅
             </button>
@@ -176,7 +199,7 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <p class="mb-2 text-muted">{{ item.description or '無描述' }}</p>
+                        <p class="mb-2 text-white-50 small">{{ item.description or '無描述' }}</p>
                         <button class="btn add-to-cart-btn btn-sm" type="button"
                             data-item-id="{{ item.id }}"
                             data-item-name="{{ item.name }}"
@@ -823,8 +846,6 @@ function showMyOrders() {
         });
     }
 
-    let currentPriceOrder = null; // 'asc' 或 'desc'
-
     function togglePriceSort() {
         const btn = document.getElementById('priceSortBtn');
         if (currentPriceOrder !== 'asc') {
@@ -840,26 +861,79 @@ function showMyOrders() {
         }
     }
 
+    // 狀態變數：功能標籤優先狀態 與 價格排序狀態
+    let currentFeatureSort = null; // 'recommended' | 'new' | 'discount' | null
+    let currentPriceOrder = null;  // 'asc' | 'desc' | null
+
+    // 1. 切換 熱門 / 新品 / 特價（支援 Toggle 開關與綠勾切換）
     function sortMenu(mode) {
-        if (mode === 'recommended' || mode === 'new' || mode === 'discount') {
-            currentPriceOrder = null;
-            const btn = document.getElementById('priceSortBtn');
-            if (btn) {
-                btn.innerHTML = '<i class="bi bi-arrow-down-up"></i> 價格 ⇅';
-                btn.className = 'btn btn-sm btn-light';
-            }
+        const btnMap = {
+            'recommended': document.getElementById('btn-rec'),
+            'new': document.getElementById('btn-new'),
+            'discount': document.getElementById('btn-discount')
+        };
+
+        if (currentFeatureSort === mode) {
+            currentFeatureSort = null;
+            if (btnMap[mode]) btnMap[mode].classList.remove('active');
+        } else {
+            currentFeatureSort = mode;
+            Object.keys(btnMap).forEach(key => {
+                if (btnMap[key]) {
+                    if (key === mode) btnMap[key].classList.add('active');
+                    else btnMap[key].classList.remove('active');
+                }
+            });
         }
 
+        applyCombinedSort();
+    }
+
+    // 2. 切換 價格排序（循環：由低到高 -> 由高到低 -> 取消）
+    function togglePriceSort() {
+        const btn = document.getElementById('priceSortBtn');
+
+        if (currentPriceOrder === null) {
+            currentPriceOrder = 'asc';
+            btn.innerHTML = '<i class="bi bi-sort-numeric-down text-dark"></i> 價格 ↑ (低到高)';
+            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
+        } else if (currentPriceOrder === 'asc') {
+            currentPriceOrder = 'desc';
+            btn.innerHTML = '<i class="bi bi-sort-numeric-up-alt text-dark"></i> 價格 ↓ (高到低)';
+            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
+        } else {
+            currentPriceOrder = null;
+            btn.innerHTML = '<i class="bi bi-arrow-down-up"></i> 價格 ⇅';
+            btn.className = 'btn btn-sm btn-light';
+        }
+
+        applyCombinedSort();
+    }
+    // 3. 核心複合排序（標籤優先度 + 價格高低搭配）
+    function applyCombinedSort() {
         const container = document.getElementById('menuList');
         const rows = [...container.querySelectorAll('.menu-row')];
+
         rows.sort((a, b) => {
-            if (mode === 'recommended') return Number(b.dataset.recommended) - Number(a.dataset.recommended);
-            if (mode === 'new') return Number(b.dataset.new) - Number(a.dataset.new);
-            if (mode === 'discount') return Number(b.dataset.discount) - Number(a.dataset.discount); // 1 排前面，0 排後面
-            if (mode === 'price_asc') return Number(a.dataset.price) - Number(b.dataset.price);
-            if (mode === 'price_desc') return Number(b.dataset.price) - Number(a.dataset.price);
+            // 第一順位：若有選擇標籤，符合者（1）排在未符合者（0）前方
+            if (currentFeatureSort) {
+                const valA = Number(a.dataset[currentFeatureSort] || 0);
+                const valB = Number(b.dataset[currentFeatureSort] || 0);
+                if (valA !== valB) {
+                    return valB - valA;
+                }
+            }
+
+            // 第二順位：在同等標籤權重下，依價格排序
+            if (currentPriceOrder === 'asc') {
+                return Number(a.dataset.price) - Number(b.dataset.price);
+            } else if (currentPriceOrder === 'desc') {
+                return Number(b.dataset.price) - Number(a.dataset.price);
+            }
+
             return 0;
         });
+
         rows.forEach(r => container.appendChild(r));
     }
 
@@ -876,14 +950,25 @@ function showMyOrders() {
         });
     }
 
+    // 4. 重設所有篩選、排序與綠勾狀態
     function resetFilters() {
         document.getElementById('searchInput').value = '';
         document.getElementById('maxPrice').value = '';
         document.getElementById('categoryFilter').value = 'all';
-        filterMenu();
-    }
 
-    // 頁面載入時立即從 localStorage 刷新購物車 UI
+        currentFeatureSort = null;
+        document.querySelectorAll('.sort-btn').forEach(btn => btn.classList.remove('active'));
+
+        currentPriceOrder = null;
+        const priceBtn = document.getElementById('priceSortBtn');
+        if (priceBtn) {
+            priceBtn.innerHTML = '<i class="bi bi-arrow-down-up"></i> 價格 ⇅';
+            priceBtn.className = 'btn btn-sm btn-light';
+        }
+
+        filterMenu();
+        applyCombinedSort();
+    }
     updateCartUI();
 </script>
 {% else %}

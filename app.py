@@ -887,10 +887,10 @@ def import_menu_excel():
 
             category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
             
-            try:
-                price = round(float(row.get('price', 0)))
-            except (ValueError, TypeError):
-                price = 0
+        try:
+            price = max(0, round(float(row.get('price', 0))))
+        except (ValueError, TypeError):
+            price = 0
 
             modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
             if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
