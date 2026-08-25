@@ -156,6 +156,72 @@
 
         <div class="tab-content" id="adminTabContent">
             
+            <!-- 0. 營運儀表板 -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3 col-sm-6">
+                    <div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small">今日訂單數</div>
+                        <div class="display-6 fw-bold text-warning">{{ analytics.today_orders }}</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small">今日營收</div>
+                        <div class="display-6 fw-bold text-success">${{ analytics.today_revenue }}</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small">待製作</div>
+                        <div class="display-6 fw-bold text-info">{{ analytics.pending_count }}</div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-sm-6">
+                    <div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small">預估出餐</div>
+                        <div class="display-6 fw-bold text-danger">{{ analytics.eta_minutes }} 分鐘</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-4">
+                <div class="col-lg-7">
+                    <div class="card card-custom p-4 h-100">
+                        <h6 class="fw-bold text-white mb-3"><i class="bi bi-bar-chart-fill text-warning me-2"></i>熱門餐點排行</h6>
+                        <div class="list-group list-group-flush">
+                            {% for item in analytics.top_items %}
+                            <div class="list-group-item bg-transparent border-secondary text-white d-flex justify-content-between align-items-center px-0 py-2">
+                                <div>
+                                    <div class="fw-bold">{{ loop.index }}. {{ item.name }}</div>
+                                    <small class="text-white-50">已售 {{ item.quantity }} 份</small>
+                                </div>
+                                <span class="badge bg-warning text-dark">${{ item.revenue }}</span>
+                            </div>
+                            {% else %}
+                            <div class="text-white-50">目前尚無銷售資料。</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-5">
+                    <div class="card card-custom p-4 h-100">
+                        <h6 class="fw-bold text-white mb-3"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運簡報</h6>
+                        <div class="mb-3">
+                            <div class="text-white-50 small">平均每單</div>
+                            <div class="fw-bold fs-4 text-warning">${{ analytics.avg_order_value|round(0)|int }}</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="text-white-50 small">已完成今日訂單</div>
+                            <div class="fw-bold fs-4 text-success">{{ analytics.completed_today }}</div>
+                        </div>
+                        <div>
+                            <div class="text-white-50 small">建議後續動作</div>
+                            <div class="text-white">{% if analytics.pending_count > 0 %}優先處理待製作餐點，避免客人等待過久。{% else %}目前沒有待製作訂單，餐廳班表正常。{% endif %}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 1. 實時訂單看板 -->
             <div class="tab-pane fade show active" id="orders-pane" role="tabpanel">
                 <div class="row g-3">
