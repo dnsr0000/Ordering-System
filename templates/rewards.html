@@ -179,7 +179,12 @@
                             {% endif %}
                         </div>
 
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeemCoupon('{{ cp.id }}', '{{ cp.title }}', '{{ cp.code }}', {{ actual_cp_points }})">
+                        <button class="btn btn-redeem w-100 mt-auto py-2" 
+                                data-id="{{ cp.id }}" 
+                                data-title="{{ cp.title }}" 
+                                data-code="{{ cp.code }}" 
+                                data-points="{{ actual_cp_points }}" 
+                                onclick="promptRedeemCouponFromData(this)">
                             兌換優惠券
                         </button>
                     </div>
@@ -218,9 +223,12 @@
                             <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
                             {% endif %}
                         </div>
-                        
-                        <button class="btn btn-redeem w-100 mt-auto py-2" onclick="promptRedeemItem('{{ item.id }}', '{{ item.name }}', {{ actual_points }})">
-                            立即兌換
+                        <button class="btn btn-redeem w-100 mt-auto py-2" 
+                            data-id="{{ item.id }}" 
+                            data-name="{{ item.name }}" 
+                            data-points="{{ actual_points }}" 
+                            onclick="promptRedeemItemFromData(this)">
+                        立即兌換
                         </button>
                     </div>
                 </div>
@@ -279,7 +287,19 @@
                 }
             });
         }
-
+        function promptRedeemItemFromData(btn) {
+            const id = btn.dataset.id;
+            const name = btn.dataset.name;
+            const points = Number(btn.dataset.points);
+            promptRedeemItem(id, name, points); 
+        }
+        function promptRedeemCouponFromData(btn) {
+            const id = btn.dataset.id;
+            const title = btn.dataset.title;
+            const code = btn.dataset.code;
+            const points = Number(btn.dataset.points);
+            promptRedeemCoupon(id, title, code, points); 
+        }
         // 彈出餐點兌換確認
         function promptRedeemItem(id, name, points) {
             selectedReward = { type: 'item', id, name, points };

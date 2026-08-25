@@ -806,9 +806,20 @@ def edit_item(id):
         item.description = request.form.get('description', '')
         item.is_recommended = True if request.form.get('is_recommended') else False
         item.is_new = True if request.form.get('is_new') else False
-        item.is_reward = True if request.form.get('is_reward') else False
-        item.reward_points = max(0, int(request.form.get('reward_points') or 0))
-        item.reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+        is_reward = True if request.form.get('is_reward') else False
+        reward_points = max(0, int(request.form.get('reward_points') or 0))
+        reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+
+        #  後端防呆驗證
+        if is_reward:
+            if reward_points <= 0:
+                return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
+            if reward_discount_points > 0 and reward_discount_points >= reward_points:
+                return "<script>alert('❌ 「限時優惠點數」必須小於「兌換所需點數」！'); window.history.back();</script>", 400
+
+        item.is_reward = is_reward
+        item.reward_points = reward_points
+        item.reward_discount_points = reward_discount_points
 
         image = request.files.get('image')
         if image and image.filename != '':

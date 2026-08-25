@@ -114,7 +114,7 @@
         }
     </style>
 </head>
-<body>
+<body data-login-mode="{{ 'true' if login_mode else 'false' }}">
 
 <div class="register-container">
     <div class="row g-0">
@@ -273,7 +273,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    const isLoginMode = {{ 'true' if login_mode else 'false' }};
+    const isLoginMode = document.body.dataset.loginMode === 'true';
 
     // ==========================================
     // 1. 會員登入模式邏輯 (人臉辨識 / 手機號碼)

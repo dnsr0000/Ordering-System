@@ -107,17 +107,25 @@
     <!-- 🔓 2. 管理員後台主畫面 -->
     <nav class="navbar navbar-admin py-3 mb-4">
         <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
+            <!-- 左側標題 -->
             <div class="d-flex align-items-center gap-2">
                 <i class="bi bi-speedometer2 text-warning fs-3"></i>
                 <h4 class="mb-0 fw-bold text-white">自助點餐後台管理系統</h4>
             </div>
-            <div class="d-flex align-items-center gap-2">
-                <a href="/" class="btn btn-outline-light btn-sm fw-bold">
-                    <i class="bi bi-shop me-1"></i> 前往點餐前台
-                </a>
-                <a href="/admin/logout" class="btn btn-outline-danger btn-sm fw-bold">
-                    <i class="bi bi-box-arrow-right me-1"></i> 登出後台
-                </a>
+            
+            <!-- 🕒 右側加入即時時鐘與操作按鈕 -->
+            <div class="d-flex align-items-center gap-3">
+                <div class="text-white-50 small d-none d-md-block bg-dark px-3 py-1.5 rounded border border-secondary" style="font-family: monospace;">
+                    <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">2026/00/00 00:00:00</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <a href="/" class="btn btn-outline-light btn-sm fw-bold">
+                        <i class="bi bi-shop me-1"></i> 前往點餐前台
+                    </a>
+                    <a href="/admin/logout" class="btn btn-outline-danger btn-sm fw-bold">
+                        <i class="bi bi-box-arrow-right me-1"></i> 登出後台
+                    </a>
+                </div>
             </div>
         </div>
     </nav>
@@ -465,9 +473,12 @@
                                         {% for uc in u.user_coupons %}
                                             {% set _ = coupons_list.append({'id': uc.id, 'title': uc.coupon.title, 'code': uc.code, 'is_used': uc.is_used}) %}
                                         {% endfor %}
-                                        <button class="btn btn-outline-warning btn-sm fw-bold" type="button" onclick='openUserCouponsModal("{{ u.name }}", {{ coupons_list | tojson | safe }})'>
-                                            <i class="bi bi-ticket-perforated"></i> 管理票券 ({{ u.user_coupons|length }})
-                                        </button>
+                                    <button class="btn btn-outline-warning btn-sm fw-bold" type="button" 
+                                            data-user-name="{{ u.name }}"
+                                            data-coupons='{{ coupons_list | tojson | safe }}'
+                                            onclick="openUserCouponsModalFromData(this)">
+                                        <i class="bi bi-ticket-perforated"></i> 管理票券 ({{ u.user_coupons|length }})
+                                    </button>
                                     </td>
                                     <td>
                                         {% if u.feature is not none %}
@@ -611,7 +622,7 @@
                                 <input type="text" class="form-control" name="category" required></div>
                                 <div class="col-6">
                                     <label class="form-label small fw-bold">原單價 (NT$)</label>
-                                    <input type="number" min="0" class="form-control" name="price" required></div>
+                                    <input type="number" min="0" class="form-control" name="price" id="add-price" required></div>
                                 </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
@@ -854,7 +865,31 @@
                 });
             });
         });
+    // --- 即時時鐘更新邏輯 ---
+    function updateAdminClock() {
+        const clockEl = document.getElementById('live-clock');
+        if (!clockEl) return;
 
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+
+        clockEl.innerText = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+    }
+    // 網頁載入後立即執行一次，並每秒自動更新
+    document.addEventListener("DOMContentLoaded", function () {
+        updateAdminClock();
+        setInterval(updateAdminClock, 1000);
+    });
+        function openUserCouponsModalFromData(btn) {
+            const userName = btn.dataset.userName;
+            const coupons = JSON.parse(btn.dataset.coupons || '[]');
+            openUserCouponsModal(userName, coupons);
+        }
         function toggleDiscInput(type) {
             const label = document.getElementById('disc-val-label');
             const input = document.getElementById('coupon-disc-val');
@@ -1027,70 +1062,130 @@
             });
         }
         
-        // --- 特價欄位防呆連動邏輯 ---
-        function bindDiscountValidation(formId, inputId, toggleId) {
-            const form = document.getElementById(formId);
-            const input = document.getElementById(inputId);
-            const toggle = document.getElementById(toggleId);
+    // --- 特價欄位防呆連動邏輯（原單價與特價大小檢查） ---
+    function bindDiscountValidation(formId, priceId, inputId, toggleId) {
+        const form = document.getElementById(formId);
+        const priceInput = document.getElementById(priceId);
+        const input = document.getElementById(inputId);
+        const toggle = document.getElementById(toggleId);
 
-            if (!form || !input || !toggle) return;
+        if (!form || !priceInput || !input || !toggle) return;
 
-            // 1. 填寫特價金額 (>0) 時，自動開啟特價開關
-            input.addEventListener('input', function () {
-                const val = Number(this.value);
-                if (val > 0) {
-                    toggle.checked = true;
-                    this.classList.remove('is-invalid');
-                } else if (this.value === '' || val <= 0) {
-                    toggle.checked = false;
-                }
-            });
-
-            // 2. 特價開關切換：關閉時自動清除特價金額與紅框
-            toggle.addEventListener('change', function () {
-                if (!this.checked) {
-                    input.value = 0;
-                    input.classList.remove('is-invalid');
-                } else {
-                    if (Number(input.value) <= 0) {
-                        input.value = '';
-                        input.focus();
-                    }
-                }
-            });
-
-            // 3. 表單送出檢查：開啟特價但沒填有效金額時阻止送出並顯示紅框
-            form.addEventListener('submit', function (e) {
-                if (toggle.checked) {
-                    const val = Number(input.value);
-                    if (!input.value || val <= 0) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        input.classList.add('is-invalid');
-                        input.focus();
-                        alert('⚠️ 已開啟特價標籤，請輸入大於 0 的特價金額！');
-                        return false;
-                    }
-                }
-                input.classList.remove('is-invalid');
-            });
-        }
-
-        // 初始化新增與編輯彈窗的特價防呆
-        document.addEventListener("DOMContentLoaded", function () {
-            bindDiscountValidation('addItemForm', 'add-discount-price', 'add-discount');
-            bindDiscountValidation('editItemForm', 'edit-discount-price', 'edit-discount');
-        });
-        // 當管理票券彈窗被關閉時，若有變更過狀態則自動重新整理頁面同步背景
-        document.getElementById('userCouponsModal').addEventListener('hidden.bs.modal', function () {
-            if (shouldReloadOnClose) {
-                localStorage.setItem('adminActiveTab', 'users');
-                window.location.href = '/admin?tab=users';
+        // 1. 填寫特價金額 (>0) 時，自動開啟特價開關
+        input.addEventListener('input', function () {
+            const val = Number(this.value);
+            if (val > 0) {
+                toggle.checked = true;
+                this.classList.remove('is-invalid');
+            } else if (this.value === '' || val <= 0) {
+                toggle.checked = false;
             }
         });
-        cropModalEl.addEventListener('hidden.bs.modal', function () {
-            if (cropper) { cropper.destroy(); cropper = null; }
+
+        // 2. 特價開關切換：關閉時自動清除特價金額
+        toggle.addEventListener('change', function () {
+            if (!this.checked) {
+                input.value = 0;
+                input.classList.remove('is-invalid');
+            } else {
+                if (Number(input.value) <= 0) {
+                    input.value = '';
+                    input.focus();
+                }
+            }
         });
+
+        // 3. 表單送出檢查：確保特價大於 0 且小於原單價
+        form.addEventListener('submit', function (e) {
+            const priceVal = Number(priceInput.value || 0);
+
+            // 防呆 A：原單價不能小於 0
+            if (priceVal < 0) {
+                e.preventDefault();
+                e.stopPropagation();
+                priceInput.classList.add('is-invalid');
+                priceInput.focus();
+                alert('⚠️ 原單價不可為負數！');
+                return false;
+            }
+
+            if (toggle.checked) {
+                const val = Number(input.value);
+                // 防呆 B：開啟特價但沒填有效金額
+                if (!input.value || val <= 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    input.classList.add('is-invalid');
+                    input.focus();
+                    alert('⚠️ 已開啟特價標籤，請輸入大於 0 的特價金額！');
+                    return false;
+                }
+                // 防呆 C：特價不可大於或等於原單價
+                if (val >= priceVal) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    input.classList.add('is-invalid');
+                    input.focus();
+                    alert('特價金額必須小於原單價！');
+                    return false;
+                }
+            }
+            input.classList.remove('is-invalid');
+            priceInput.classList.remove('is-invalid');
+        });
+    }
+
+    // 初始化新增與編輯彈窗的特價防呆（帶入原單價欄位 id）
+    document.addEventListener("DOMContentLoaded", function () {
+        bindDiscountValidation('addItemForm', 'add-price', 'add-discount-price', 'add-discount');
+        bindDiscountValidation('editItemForm', 'edit-price', 'edit-discount-price', 'edit-discount');
+    });
+    
+    // --- 紅利商城設定防呆邏輯 ---
+    function bindRewardValidation() {
+        const form = document.getElementById('editItemForm');
+        const toggle = document.getElementById('edit-is-reward');
+        const pointsInput = document.getElementById('edit-reward-points');
+        const discountInput = document.getElementById('edit-reward-discount');
+
+        if (!form || !toggle || !pointsInput || !discountInput) return;
+
+        form.addEventListener('submit', function (e) {
+            // 如果有勾選開放紅利兌換
+            if (toggle.checked) {
+                const points = Number(pointsInput.value || 0);
+                const discountPoints = Number(discountInput.value || 0);
+
+                // 1. 檢查所需點數是否大於 0
+                if (points <= 0) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    pointsInput.classList.add('is-invalid');
+                    pointsInput.focus();
+                    alert('⚠️ 啟用紅利兌換時，「兌換所需點數」必須大於 0！');
+                    return false;
+                }
+
+                // 2. 檢查限時優惠點數是否小於原兌換點數 (若有填寫大於 0 的話)
+                if (discountPoints > 0 && discountPoints >= points) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    discountInput.classList.add('is-invalid');
+                    discountInput.focus();
+                    alert('⚠️ 「限時優惠點數」必須小於「兌換所需點數」！');
+                    return false;
+                }
+            }
+            pointsInput.classList.remove('is-invalid');
+            discountInput.classList.remove('is-invalid');
+        });
+    }
+
+    // 在網頁載入完成後初始化防呆繫結
+    document.addEventListener("DOMContentLoaded", function () {
+        // ... 其他原本的初始化
+        bindRewardValidation();
+    });
     </script>
 {% endif %}
 
