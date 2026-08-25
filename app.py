@@ -666,6 +666,41 @@ def logout():
 # ==============================================================================
 # 7. 店家後台管理路由 (Admin Management Routes)
 # ==============================================================================
+def build_order_analytics(orders):
+    today = datetime.now().date()
+    today_orders = [o for o in orders if o.created_at and o.created_at.date() == today]
+    pending_orders = [o for o in orders if o.status == 'Pending']
+
+    total_revenue = sum((o.total_price or 0) for o in today_orders)
+    avg_order_value = total_revenue / len(today_orders) if today_orders else 0
+
+    item_stats = {}
+    for order in orders:
+        for item in order.items:
+            key = item.item_name
+            if key not in item_stats:
+                item_stats[key] = {'quantity': 0, 'revenue': 0}
+            item_stats[key]['quantity'] += item.quantity
+            item_stats[key]['revenue'] += (item.price or 0) * (item.quantity or 1)
+
+    top_items = [
+        {'name': name, 'quantity': stats['quantity'], 'revenue': stats['revenue']}
+        for name, stats in sorted(item_stats.items(), key=lambda kv: kv[1]['quantity'], reverse=True)[:5]
+    ]
+
+    eta_minutes = max(5, len(pending_orders) * 6 + 4)
+    queue_status = {
+        'today_orders': len(today_orders),
+        'today_revenue': total_revenue,
+        'pending_count': len(pending_orders),
+        'avg_order_value': avg_order_value,
+        'top_items': top_items,
+        'eta_minutes': eta_minutes,
+        'completed_today': sum(1 for o in today_orders if o.status == 'Completed')
+    }
+    return queue_status
+
+
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
     if request.method == 'POST' and 'username' in request.form:
@@ -685,6 +720,7 @@ def admin_dashboard():
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.all()
     users = User.query.all()
+    analytics = build_order_analytics(orders)
     return render_template(
         'admin.html', 
         is_admin=True, 
@@ -692,7 +728,8 @@ def admin_dashboard():
         items=items, 
         reward_items=reward_items, 
         reward_coupons=reward_coupons,
-        users=users
+        users=users,
+        analytics=analytics
     )
 
 @app.route('/admin/logout')
