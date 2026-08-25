@@ -238,6 +238,7 @@ def customer_index():
     categories = sorted(list(set(item.category for item in items if item.category)))
     user_points = 0
     user_coupons = []
+    is_guest = session.get('is_guest', False)
     
     if session.get('user_id'):
         user = User.query.get(session['user_id'])
@@ -245,14 +246,18 @@ def customer_index():
             user_points = user.points
             session['user_points'] = user.points
             user_coupons = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
+            session['is_guest'] = False
+            is_guest = False
             
     return render_template(
         'customer.html',
         items=items,
         categories=categories,
         user_points=user_points,
-        user_coupons=user_coupons
+        user_coupons=user_coupons,
+        is_guest=is_guest
     )
+
 @app.route('/api/verify_promo', methods=['POST'])
 def verify_promo():
     """驗證促銷優惠代碼（嚴格檢查會員專屬持有與核銷狀態）"""
@@ -641,7 +646,18 @@ def phone_login():
         })
     else:
         return jsonify({'success': False, 'message': '查無此手機號碼，請確認號碼或先加入會員！'})
-    
+
+# 訪客快速點餐路由
+@app.route('/guest_login')
+def guest_login():
+    """清除舊登入狀態並建立訪客 Session"""
+    session.clear()
+    session['user_id'] = None
+    session['user_name'] = '訪客'
+    session['is_guest'] = True
+    session['user_points'] = 0
+    return redirect(url_for('customer_index'))
+
 @app.route('/logout')
 def logout():
     session.clear()
@@ -908,11 +924,13 @@ def import_menu_excel():
 
             category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
             
-        try:
-            price = max(0, round(float(row.get('price', 0))))
-        except (ValueError, TypeError):
-            price = 0
+            # 💡 修正：將 try...except 正確包覆價格轉換
+            try:
+                price = max(0, round(float(row.get('price', 0))))
+            except (ValueError, TypeError):
+                price = 0
 
+            # 💡 修正：以下欄位移到 try...except 之外，確保每一筆都能正常執行
             modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
             if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
                 modifiers = 'none'

@@ -56,10 +56,14 @@
             <div>
                 <div class="h5 mb-0 text-white">Restaurantly 自助點餐</div>
                 <small class="text-white-50">
-                    歡迎回來，<strong>{{ session['user_name'] }}</strong>！ 
-                    <a href="/rewards" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" style="cursor: pointer; transition: transform 0.15s ease;" title="點擊進入紅利回饋商店">
-                        <i class="bi bi-star-fill text-danger"></i> 紅利點數: <strong id="nav-user-points">{{ user_points }}</strong> 點 <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
-                    </a>
+                    {% if is_guest %}
+                        歡迎光臨，<strong>訪客</strong>！
+                    {% else %}
+                        歡迎回來，<strong>{{ session['user_name'] }}</strong>！ 
+                        <a href="/rewards" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" style="cursor: pointer; transition: transform 0.15s ease;" title="點擊進入紅利回饋商店">
+                            <i class="bi bi-star-fill text-danger"></i> 紅利點數: <strong id="nav-user-points">{{ user_points }}</strong> 點 <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
+                        </a>
+                    {% endif %}
                 </small>
             </div>
         </div>
@@ -79,12 +83,17 @@
     <div class="container">
         <div class="hero text-white text-center p-4 mb-4">
             <div>
-                <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
-                <p class="lead mb-0">消費每滿 $100 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
+                {% if is_guest %}
+                    <h1 class="display-6">快速自助點餐</h1>
+                    <p class="lead mb-0">請自由挑選喜愛的餐點，加入購物車後即可快速結帳！</p>
+                {% else %}
+                    <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
+                    <p class="lead mb-0">消費每滿 $100 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
+                {% endif %}
             </div>
         </div>
 
-{% set hot_items = items|selectattr('is_recommended')|list %}
+        {% set hot_items = items|selectattr('is_recommended')|list %}
         {% if hot_items %}
         <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -215,7 +224,7 @@
     </div>
 </main>
 
-<!-- 購物車側邊欄 (Cart Sidebar - 緊湊高可視性版) -->
+<!-- 購物車側邊欄 (Cart Sidebar) -->
 <div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel" style="width: 440px;">
     <div class="offcanvas-header border-secondary border-bottom py-2 px-3">
         <h6 id="cartLabel" class="mb-0 fw-bold text-warning"><i class="bi bi-cart3 me-1"></i> 點餐清單購物車</h6>
@@ -223,26 +232,30 @@
     </div>
     <div class="offcanvas-body d-flex flex-column p-3">
         
-        <!-- 🛒 餐點品項列表 (給予固定保證高度與獨立捲軸) -->
+        <!-- 🛒 餐點品項列表 -->
         <div id="cart-items" class="overflow-y-auto mb-2 pe-1" style="min-height: 140px; max-height: 28vh; border-bottom: 1px solid rgba(255,255,255,0.12);">
             <div class="text-center text-muted py-4">購物車目前空空如也</div>
         </div>
 
         <div class="flex-grow-1 d-flex flex-column justify-content-between">
             <div>
-                <!-- 🎟️ 優惠券與代碼 (左右並排省空間) -->
+                <!-- 🎟️ 優惠券與代碼 -->
                 <div class="mb-2">
                     <div class="d-flex justify-content-between align-items-center mb-1">
                         <small class="text-white-50 fw-bold" style="font-size: 0.75rem;"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼</small>
-                        {% if user_coupons and user_coupons|length > 0 %}
-                        <span class="badge bg-warning text-dark py-0" style="font-size: 0.7rem;">{{ user_coupons|length }} 張可用</span>
-                        {% else %}
-                        <a href="/rewards" class="text-warning text-decoration-none" style="font-size: 0.7rem;">
-                            <i class="bi bi-gift"></i> 去商城兌換
-                        </a>
+                        {% if not is_guest %}
+                            {% if user_coupons and user_coupons|length > 0 %}
+                                <span class="badge bg-warning text-dark py-0" style="font-size: 0.7rem;">{{ user_coupons|length }} 張可用</span>
+                            {% else %}
+                                <a href="/rewards" class="text-warning text-decoration-none" style="font-size: 0.7rem;">
+                                    <i class="bi bi-gift"></i> 去商城兌換
+                                </a>
+                            {% endif %}
                         {% endif %}
                     </div>
+                    
                     <div class="row g-1">
+                        {% if not is_guest %}
                         <div class="col-7">
                             <select id="userCouponSelect" class="form-select form-select-sm bg-dark text-warning border-secondary" style="font-size: 0.78rem;" onchange="selectUserCoupon(this.value)">
                                 {% if user_coupons and user_coupons|length > 0 %}
@@ -258,8 +271,11 @@
                             </select>
                         </div>
                         <div class="col-5">
+                        {% else %}
+                        <div class="col-12">
+                        {% endif %}
                             <div class="input-group input-group-sm">
-                                <input type="text" id="promoInput" class="form-control bg-dark text-white border-secondary px-1" style="font-size: 0.78rem;" placeholder="手動代碼">
+                                <input type="text" id="promoInput" class="form-control bg-dark text-white border-secondary px-1" style="font-size: 0.78rem;" placeholder="輸入促銷折扣碼">
                                 <button class="btn btn-warning btn-sm fw-bold text-dark px-2" type="button" onclick="applyPromoCode()">套用</button>
                             </div>
                         </div>
@@ -267,7 +283,8 @@
                     <div id="promo-msg" class="small mt-0" style="font-size: 0.72rem;"></div>
                 </div>
 
-                <!-- 🌟 紅利點數折抵區塊 (精簡版) -->
+                <!-- 🌟 紅利點數折抵區塊 (僅會員顯示) -->
+                {% if not is_guest %}
                 <div class="card bg-secondary bg-opacity-25 border-warning p-2 mb-2">
                     <div class="d-flex justify-content-between align-items-center">
                         <div class="form-check form-switch mb-0">
@@ -283,25 +300,30 @@
                         </div>
                     </div>
                 </div>
+                {% endif %}
 
                 <!-- 💰 金額結算明細 -->
                 <div class="px-1 mb-2">
                     <div class="d-flex justify-content-between small text-white-50" style="font-size: 0.78rem;"><span>小計</span><span>$<span id="cart-subtotal">0.00</span></span></div>
                     <div class="d-flex justify-content-between small text-info" style="font-size: 0.78rem;"><span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0.00</span></span></div>
+                    {% if not is_guest %}
                     <div class="d-flex justify-content-between small text-success" style="font-size: 0.78rem;"><span>紅利折抵</span><span>-$<span id="cart-points-discount">0.00</span></span></div>
+                    {% endif %}
                     <div class="d-flex justify-content-between align-items-baseline border-top border-secondary pt-1 mt-1">
                         <span class="fw-bold fs-6">應付金額</span>
                         <span class="fw-bold text-warning fs-4">$<span id="cart-final">0.00</span></span>
                     </div>
+                    {% if not is_guest %}
                     <div class="d-flex justify-content-between text-warning small" style="font-size: 0.75rem;">
                         <span>🌟 預估獲得紅利</span>
                         <span>+<span id="cart-earned-points">0</span> 點</span>
                     </div>
+                    {% endif %}
                 </div>
             </div>
 
             <div>
-                <!-- 🍽️ 用餐方式 & 付款方式 (左右並排) -->
+                <!-- 🍽️ 用餐方式 & 付款方式 -->
                 <div class="row g-1 mb-2">
                     <div class="col-6">
                         <select id="orderType" class="form-select form-select-sm bg-dark text-white border-secondary" style="font-size: 0.8rem;">
@@ -353,11 +375,15 @@
       <div class="modal-body">
         <div id="preview-items"></div>
         <div class="mt-3 p-3 bg-secondary bg-opacity-25 rounded text-end">
-          <div>商品小計: $<span id="preview-subtotal">0.00</span></div>
-          <div class="text-info">促銷折扣: -$<span id="preview-promo">0.00</span></div>
-          <div class="text-success">點數折抵: -$<span id="preview-points">0.00</span></div>
-          <div class="fw-bold fs-4 text-warning">應付總額: $<span id="preview-final">0.00</span></div>
-          <div class="text-warning small">結帳預估新增點數: +<span id="preview-earned">0</span> 點</div>
+            <div>商品小計: $<span id="preview-subtotal">0.00</span></div>
+            <div class="text-info">促銷折扣: -$<span id="preview-promo">0.00</span></div>
+            {% if not is_guest %}
+            <div class="text-success">點數折抵: -$<span id="preview-points">0.00</span></div>
+            {% endif %}
+            <div class="fw-bold fs-4 text-warning">應付總額: $<span id="preview-final">0.00</span></div>
+            {% if not is_guest %}
+            <div class="text-warning small">結帳預估新增點數: +<span id="preview-earned">0</span> 點</div>
+            {% endif %}
         </div>
       </div>
       <div class="modal-footer">
@@ -411,6 +437,7 @@
                 <h5 class="mb-0">實付金額：</h5>
                 <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
             </div>
+            {% if not is_guest %}
             <div class="d-flex justify-content-between small text-warning mt-2 pt-2 border-top">
                 <span>🌟 本次獲得紅利點數：</span>
                 <strong id="receipt-earned-points">+0 點</strong>
@@ -419,6 +446,7 @@
                 <span>目前點數餘額：</span>
                 <strong id="receipt-current-points">0 點</strong>
             </div>
+            {% endif %}
         </div>
       </div>
       <div class="modal-footer">
@@ -443,14 +471,13 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // 1. 初始化購物車：優先讀取 localStorage（包含剛在紅利商店兌換的餐點）
     let cart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
     let currentSelectedItem = null;
     let currentUserPoints = Number('{{ user_points or 0 }}');
     let appliedPromoDiscount = 0;
     let activePromoCode = '';
+    const isGuest = {{ 'true' if is_guest else 'false' }};
 
-    // 儲存購物車變更至 localStorage
     function saveCartToStorage() {
         localStorage.setItem('kiosk_cart', JSON.stringify(cart));
     }
@@ -554,7 +581,7 @@
         if (item) item.quantity += 1;
         else cart.push({id, name, price: Number(price || 0), quantity: 1, customization});
         
-        saveCartToStorage(); // 儲存變更
+        saveCartToStorage();
         updateCartUI();
         
         const toastEl = document.createElement('div');
@@ -570,7 +597,7 @@
         count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
 
         if (!cart.length) {
-            container.innerHTML = '<div class="text-center text-muted">購物車目前空空如也</div>';
+            container.innerHTML = '<div class="text-center text-muted py-4">購物車目前空空如也</div>';
             calculateTotal();
             return;
         }
@@ -595,19 +622,18 @@
     function changeQty(index, delta) {
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
-        saveCartToStorage(); // 儲存變更
+        saveCartToStorage();
         updateCartUI();
     }
-// 💡 選擇專屬優惠券時自動填入並立即驗證套用
+
     function selectUserCoupon(code) {
         const promoInput = document.getElementById('promoInput');
         if (promoInput) {
             promoInput.value = code;
-            applyPromoCode(); // 自動觸發驗證
+            applyPromoCode();
         }
     }
 
-    // 完成訂單時重設下拉選單
     function finishOrder() {
         cart = [];
         saveCartToStorage();
@@ -616,17 +642,19 @@
         document.getElementById('promoInput').value = '';
         document.getElementById('promo-msg').innerHTML = '';
         
-        // 💡 重設優惠券下拉選單
         const couponSelect = document.getElementById('userCouponSelect');
         if (couponSelect) couponSelect.value = '';
 
-        document.getElementById('usePointsToggle').checked = false;
-        document.getElementById('points-input-box').style.display = 'none';
+        const pointsToggle = document.getElementById('usePointsToggle');
+        if (pointsToggle) pointsToggle.checked = false;
+        
+        const pointsBox = document.getElementById('points-input-box');
+        if (pointsBox) pointsBox.style.display = 'none';
+
         updateCartUI();
         bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
     }
 
-    // --- 優惠券驗證邏輯 ---
     function applyPromoCode() {
         const code = document.getElementById('promoInput').value.trim();
         const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
@@ -662,32 +690,30 @@
         });
     }
 
-    // --- 點數切換 ---
     function togglePointsRedemption() {
         const toggle = document.getElementById('usePointsToggle');
         const box = document.getElementById('points-input-box');
         const input = document.getElementById('pointsToUse');
         
-        if (toggle.checked) {
-            box.style.display = 'block';
+        if (toggle && toggle.checked) {
+            if (box) box.style.display = 'block';
             const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
             const remaining = Math.max(0, subtotal - appliedPromoDiscount);
-            input.value = Math.min(currentUserPoints, remaining);
+            if (input) input.value = Math.min(currentUserPoints, remaining);
         } else {
-            box.style.display = 'none';
-            input.value = 0;
+            if (box) box.style.display = 'none';
+            if (input) input.value = 0;
         }
         calculateTotal();
     }
 
-    // --- 即時動態計算金額 ---
     function calculateTotal() {
         const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
         const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
 
         let pointsUsed = 0;
         const toggle = document.getElementById('usePointsToggle');
-        if (toggle && toggle.checked) {
+        if (!isGuest && toggle && toggle.checked) {
             const input = document.getElementById('pointsToUse');
             let val = Number(input.value || 0);
             if (val > currentUserPoints) val = currentUserPoints;
@@ -698,13 +724,18 @@
         }
 
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = Math.floor(finalPrice / 100);
+        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / 100);
 
         document.getElementById('cart-subtotal').innerText = Math.round(subtotal);
         document.getElementById('cart-promo-discount').innerText = Math.round(appliedPromoDiscount);
-        document.getElementById('cart-points-discount').innerText = Math.round(pointsUsed);
+        
+        const ptsDiscEl = document.getElementById('cart-points-discount');
+        if (ptsDiscEl) ptsDiscEl.innerText = Math.round(pointsUsed);
+        
         document.getElementById('cart-final').innerText = Math.round(finalPrice);
-        document.getElementById('cart-earned-points').innerText = earnedPoints;
+        
+        const earnedEl = document.getElementById('cart-earned-points');
+        if (earnedEl) earnedEl.innerText = earnedPoints;
     }
 
     function openPreview() {
@@ -712,9 +743,10 @@
         const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
         const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
         const pointsInput = document.getElementById('pointsToUse');
-        const pointsUsed = (document.getElementById('usePointsToggle').checked) ? Number(pointsInput.value || 0) : 0;
+        const pointsToggle = document.getElementById('usePointsToggle');
+        const pointsUsed = (!isGuest && pointsToggle && pointsToggle.checked) ? Number(pointsInput.value || 0) : 0;
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = Math.floor(finalPrice / 100);
+        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / 100);
 
         const preview = document.getElementById('preview-items');
         preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
@@ -728,9 +760,14 @@
 
         document.getElementById('preview-subtotal').innerText = Math.round(subtotal);
         document.getElementById('preview-promo').innerText = Math.round(appliedPromoDiscount);
-        document.getElementById('preview-points').innerText = Math.round(pointsUsed);
+        
+        const prevPts = document.getElementById('preview-points');
+        if (prevPts) prevPts.innerText = Math.round(pointsUsed);
+
         document.getElementById('preview-final').innerText = Math.round(finalPrice);
-        document.getElementById('preview-earned').innerText = earnedPoints;
+        
+        const prevEarn = document.getElementById('preview-earned');
+        if (prevEarn) prevEarn.innerText = earnedPoints;
 
         bootstrap.Modal.getOrCreateInstance(document.getElementById('confirmModal')).show();
     }
@@ -739,7 +776,9 @@
         if (!cart.length) return;
         const orderType = document.getElementById('orderType').value;
         const paymentMethod = document.getElementById('paymentMethod').value;
-        const pointsUsed = (document.getElementById('usePointsToggle').checked) ? Number(document.getElementById('pointsToUse').value || 0) : 0;
+        const pointsToggle = document.getElementById('usePointsToggle');
+        const pointsInput = document.getElementById('pointsToUse');
+        const pointsUsed = (!isGuest && pointsToggle && pointsToggle.checked) ? Number(pointsInput.value || 0) : 0;
 
         fetch('/submit_order', {
             method: 'POST',
@@ -762,8 +801,11 @@
             if (cs) cs.hide();
 
             currentUserPoints = data.current_user_points;
-            document.getElementById('nav-user-points').innerText = currentUserPoints;
-            document.getElementById('cart-user-points').innerText = currentUserPoints;
+            const navPts = document.getElementById('nav-user-points');
+            if (navPts) navPts.innerText = currentUserPoints;
+            
+            const cartPts = document.getElementById('cart-user-points');
+            if (cartPts) cartPts.innerText = currentUserPoints;
 
             document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
             document.getElementById('receipt-user').textContent = data.user_name;
@@ -772,8 +814,12 @@
             document.getElementById('receipt-subtotal').textContent = Math.round(data.subtotal);
             document.getElementById('receipt-discount').textContent = Math.round(data.discount_amount);
             document.getElementById('receipt-total').textContent = Math.round(data.total_price);
-            document.getElementById('receipt-earned-points').textContent = `+${data.points_earned} 點`;
-            document.getElementById('receipt-current-points').textContent = `${data.current_user_points} 點`;
+            
+            const earnRec = document.getElementById('receipt-earned-points');
+            if (earnRec) earnRec.textContent = `+${data.points_earned} 點`;
+            
+            const currRec = document.getElementById('receipt-current-points');
+            if (currRec) currRec.textContent = `${data.current_user_points} 點`;
 
             const itemsBody = document.getElementById('receipt-items-body');
             itemsBody.innerHTML = data.items.map(item => `
@@ -796,20 +842,7 @@
         });
     }
 
-    function finishOrder() {
-        cart = [];
-        saveCartToStorage(); // 清空本機購物車
-        activePromoCode = '';
-        appliedPromoDiscount = 0;
-        document.getElementById('promoInput').value = '';
-        document.getElementById('promo-msg').innerHTML = '';
-        document.getElementById('usePointsToggle').checked = false;
-        document.getElementById('points-input-box').style.display = 'none';
-        updateCartUI();
-        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
-    }
-
-function showMyOrders() {
+    function showMyOrders() {
         fetch('/my_orders').then(res => res.json()).then(orders => {
             const historyBody = document.getElementById('history-modal-body');
             if (!orders || orders.length === 0) {
@@ -846,26 +879,9 @@ function showMyOrders() {
         });
     }
 
-    function togglePriceSort() {
-        const btn = document.getElementById('priceSortBtn');
-        if (currentPriceOrder !== 'asc') {
-            currentPriceOrder = 'asc';
-            sortMenu('price_asc');
-            btn.innerHTML = '<i class="bi bi-sort-numeric-down text-dark"></i> 價格 ↑ (由低到高)';
-            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
-        } else {
-            currentPriceOrder = 'desc';
-            sortMenu('price_desc');
-            btn.innerHTML = '<i class="bi bi-sort-numeric-up-alt text-dark"></i> 價格 ↓ (由高到低)';
-            btn.className = 'btn btn-sm btn-warning fw-bold text-dark';
-        }
-    }
+    let currentFeatureSort = null;
+    let currentPriceOrder = null;
 
-    // 狀態變數：功能標籤優先狀態 與 價格排序狀態
-    let currentFeatureSort = null; // 'recommended' | 'new' | 'discount' | null
-    let currentPriceOrder = null;  // 'asc' | 'desc' | null
-
-    // 1. 切換 熱門 / 新品 / 特價（支援 Toggle 開關與綠勾切換）
     function sortMenu(mode) {
         const btnMap = {
             'recommended': document.getElementById('btn-rec'),
@@ -889,7 +905,6 @@ function showMyOrders() {
         applyCombinedSort();
     }
 
-    // 2. 切換 價格排序（循環：由低到高 -> 由高到低 -> 取消）
     function togglePriceSort() {
         const btn = document.getElementById('priceSortBtn');
 
@@ -909,13 +924,12 @@ function showMyOrders() {
 
         applyCombinedSort();
     }
-    // 3. 核心複合排序（標籤優先度 + 價格高低搭配）
+
     function applyCombinedSort() {
         const container = document.getElementById('menuList');
         const rows = [...container.querySelectorAll('.menu-row')];
 
         rows.sort((a, b) => {
-            // 第一順位：若有選擇標籤，符合者（1）排在未符合者（0）前方
             if (currentFeatureSort) {
                 const valA = Number(a.dataset[currentFeatureSort] || 0);
                 const valB = Number(b.dataset[currentFeatureSort] || 0);
@@ -924,7 +938,6 @@ function showMyOrders() {
                 }
             }
 
-            // 第二順位：在同等標籤權重下，依價格排序
             if (currentPriceOrder === 'asc') {
                 return Number(a.dataset.price) - Number(b.dataset.price);
             } else if (currentPriceOrder === 'desc') {
@@ -950,7 +963,6 @@ function showMyOrders() {
         });
     }
 
-    // 4. 重設所有篩選、排序與綠勾狀態
     function resetFilters() {
         document.getElementById('searchInput').value = '';
         document.getElementById('maxPrice').value = '';
@@ -969,6 +981,7 @@ function showMyOrders() {
         filterMenu();
         applyCombinedSort();
     }
+
     updateCartUI();
 </script>
 {% else %}
@@ -980,6 +993,9 @@ function showMyOrders() {
         <div class="d-flex justify-content-center gap-2 mt-3">
             <a class="btn btn-register btn-lg" href="/register">加入會員</a>
             <a class="btn btn-login btn-lg" href="/face_login">會員登入</a>
+            <a class="btn btn-outline-warning btn-lg" href="/guest_login">
+                <i class="bi bi-person-fill"></i> 訪客直接點餐
+            </a>
         </div>
     </div>
     <div class="text-center text-muted">點擊後台管理可進入店家管理</div>

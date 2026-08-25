@@ -748,7 +748,7 @@
                     <h5 class="modal-title fw-bold text-info"><i class="bi bi-file-earmark-excel me-2"></i>批次匯入菜單</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <form action="/admin/import_menu" method="POST" enctype="multipart/form-data">
+                <form action="/admin/import_excel" method="POST" enctype="multipart/form-data">
                     <div class="modal-body p-4">
                         <p class="small text-white-50">請上傳包含 <code>name, category, price, modifiers, description</code> 等欄位的 <code>.xlsx</code> 或 <code>.csv</code> 檔案。</p>
                         <input type="file" class="form-control" name="file" accept=".xlsx, .xls, .csv" required>
