@@ -689,7 +689,7 @@ def build_order_analytics(orders):
     ]
 
     eta_minutes = max(5, len(pending_orders) * 6 + 4)
-    queue_status = {
+    return {
         'today_orders': len(today_orders),
         'today_revenue': total_revenue,
         'pending_count': len(pending_orders),
@@ -698,7 +698,6 @@ def build_order_analytics(orders):
         'eta_minutes': eta_minutes,
         'completed_today': sum(1 for o in today_orders if o.status == 'Completed')
     }
-    return queue_status
 
 
 @app.route('/admin', methods=['GET', 'POST'])
