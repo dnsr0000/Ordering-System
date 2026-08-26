@@ -138,6 +138,11 @@
                 </button>
             </li>
             <li class="nav-item me-2" role="presentation">
+                <button class="nav-link" id="analytics-tab" data-bs-toggle="tab" data-bs-target="#analytics-pane" type="button" role="tab">
+                    <i class="bi bi-graph-up-arrow me-1"></i> 營運分析
+                </button>
+            </li>
+            <li class="nav-item me-2" role="presentation">
                 <button class="nav-link" id="menu-tab" data-bs-toggle="tab" data-bs-target="#menu-pane" type="button" role="tab">
                     <i class="bi bi-grid-fill me-1"></i> 菜單品項管理
                 </button>
@@ -155,8 +160,69 @@
         </ul>
 
         <div class="tab-content" id="adminTabContent">
-            <!-- 1. 營運分析欄位 -->
+            <!-- 1. 實時訂單看板 -->
             <div class="tab-pane fade show active" id="orders-pane" role="tabpanel">
+                <div class="row g-3">
+                    {% for order in orders %}
+                    <div class="col-12 col-md-6 col-lg-4">
+                        <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="fw-bold text-warning mb-0">#{{ order.id }}</h5>
+                                <div class="d-flex gap-1">
+                                    <span class="badge bg-primary">{{ order.order_type }}</span>
+                                    <span class="badge bg-secondary">{{ order.payment_method }}</span>
+                                </div>
+                            </div>
+
+                            <div class="text-white-50 small mb-2 d-flex justify-content-between">
+                                <span><i class="bi bi-person me-1"></i>{{ order.user.name if order.user else '非會員' }}</span>
+                                <span><i class="bi bi-clock me-1"></i>{{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
+                            </div>
+
+                            <hr class="border-secondary my-2">
+
+                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
+                                {% for item in order.items %}
+                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                    <div>
+                                        <div class="text-white small fw-bold">{{ item.item_name }} x {{ item.quantity }}</div>
+                                        {% if item.customization %}
+                                        <small class="text-danger d-block" style="font-size: 0.75rem;">{{ item.customization }}</small>
+                                        {% endif %}
+                                    </div>
+                                    <div class="text-white-50 small">${{ (item.price * item.quantity)|round|int }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
+                                <div>
+                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ (order.discount_amount or 0)|round|int }}</small>
+                                    <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
+                                </div>
+                                <div style="min-width: 130px;">
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value)">
+                                        <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
+                                        <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
+                                        <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+
+                    {% if not orders %}
+                    <div class="col-12 text-center py-5">
+                        <i class="bi bi-inbox text-secondary display-3"></i>
+                        <p class="text-white-50 mt-2">目前沒有任何訂單紀錄</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 2. 營運分析 -->
+            <div class="tab-pane fade" id="analytics-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-bold text-white mb-0"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運分析</h5>
@@ -241,66 +307,9 @@
                     </div>
                 </div>
 
-                <div class="row g-3">
-                    {% for order in orders %}
-                    <div class="col-12 col-md-6 col-lg-4">
-                        <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">#{{ order.id }}</h5>
-                                <div class="d-flex gap-1">
-                                    <span class="badge bg-primary">{{ order.order_type }}</span>
-                                    <span class="badge bg-secondary">{{ order.payment_method }}</span>
-                                </div>
-                            </div>
-
-                            <div class="text-white-50 small mb-2 d-flex justify-content-between">
-                                <span><i class="bi bi-person me-1"></i>{{ order.user.name if order.user else '非會員' }}</span>
-                                <span><i class="bi bi-clock me-1"></i>{{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
-                            </div>
-
-                            <hr class="border-secondary my-2">
-
-                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
-                                {% for item in order.items %}
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <div>
-                                        <div class="text-white small fw-bold">{{ item.item_name }} x {{ item.quantity }}</div>
-                                        {% if item.customization %}
-                                        <small class="text-danger d-block" style="font-size: 0.75rem;">{{ item.customization }}</small>
-                                        {% endif %}
-                                    </div>
-                                    <div class="text-white-50 small">${{ (item.price * item.quantity)|round|int }}</div>
-                                </div>
-                                {% endfor %}
-                            </div>
-
-                            <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
-                                <div>
-                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ (order.discount_amount or 0)|round|int }}</small>
-                                    <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
-                                </div>
-                                <div style="min-width: 130px;">
-                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value)">
-                                        <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
-                                        <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
-                                        <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {% endfor %}
-
-                    {% if not orders %}
-                    <div class="col-12 text-center py-5">
-                        <i class="bi bi-inbox text-secondary display-3"></i>
-                        <p class="text-white-50 mt-2">目前沒有任何訂單紀錄</p>
-                    </div>
-                    {% endif %}
-                </div>
             </div>
 
-            <!-- 2. 菜單品項管理 -->
+            <!-- 3. 菜單品項管理 -->
             <div class="tab-pane fade" id="menu-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
