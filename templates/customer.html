@@ -855,12 +855,15 @@
             } else {
                 historyBody.innerHTML = orders.map(o => {
                     const promoDiscount = Math.max(0, (o.discount_amount || 0) - (o.points_used || 0));
+                    // 💡 調整這裡的中文狀態判斷與對應樣式
+                    const badgeClass = o.status === '製作中' ? 'bg-warning text-dark' : (o.status === '已出餐' ? 'bg-success' : 'bg-danger');
+                    
                     return `
                     <div class="card mb-3 border-secondary shadow-sm text-dark">
                         <div class="card-header bg-light d-flex justify-content-between align-items-center">
                             <div>
                                 <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
-                                <span class="badge ${o.status === 'Pending' ? 'bg-warning text-dark' : (o.status === 'Completed' ? 'bg-success' : 'bg-secondary')}">${o.status}</span>
+                                <span class="badge ${badgeClass}">${o.status}</span>
                                 <span class="badge bg-primary ms-1">${o.order_type}</span>
                             </div>
                             <small class="text-muted">${o.created_at}</small>

@@ -554,6 +554,11 @@ def my_orders():
 
     total_count = len(orders) 
     result = []
+    status_map = {
+        'Pending': '製作中',
+        'Completed': '已出餐',
+        'Cancelled': '已取消'
+    }
     
     for idx, o in enumerate(orders):
         user_order_no = total_count - idx
@@ -578,7 +583,7 @@ def my_orders():
             'points_earned': o.points_earned or 0,
             'payment_method': o.payment_method,
             'order_type': o.order_type,
-            'status': o.status,
+            'status': status_map.get(o.status, o.status),
             'created_at': o.created_at.strftime('%Y-%m-%d %H:%M') if o.created_at else '',
             'items': items_data
         })
