@@ -773,16 +773,23 @@ def admin_dashboard():
         return render_template('admin.html', is_admin=False)
     
     limit = max(1, request.args.get('limit', 3, type=int))
-    orders = Order.query.order_by(Order.id.desc()).all()
+    all_orders = Order.query.order_by(Order.id.desc()).all()
     items = MenuItem.query.all()
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.all()
     users = User.query.all()
-    analytics = build_order_analytics(orders, limit=limit)
+    
+    # 1. 營運分析保持使用全部歷史訂單進行統計
+    analytics = build_order_analytics(all_orders, limit=limit)
+    
+    # 2. 💡 實時訂單看板：過濾只留下「今天」建立的訂單（實現每日重製）
+    today = datetime.now().date()
+    today_orders = [o for o in all_orders if o.created_at and o.created_at.date() == today]
+
     return render_template(
         'admin.html', 
         is_admin=True, 
-        orders=orders, 
+        orders=today_orders, 
         items=items, 
         reward_items=reward_items, 
         reward_coupons=reward_coupons,
