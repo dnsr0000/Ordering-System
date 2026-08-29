@@ -93,7 +93,12 @@
             </div>
         </div>
 
-        {% set hot_items = items|selectattr('is_recommended')|list %}
+        {% set hot_items = [] %}
+        {% for item in items %}
+            {% if item.is_recommended or item.is_manual_popular %}
+                {% set _ = hot_items.append(item) %}
+            {% endif %}
+        {% endfor %}
         {% if hot_items %}
         <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
@@ -195,7 +200,7 @@
                             <div>
                                 <h5 class="mb-1 text-warning">{{ item.name }}</h5>
                                 <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
-                                {% if item.is_recommended %}<span class="badge bg-danger">熱門</span>{% endif %}
+                                {% if item.is_recommended or item.is_manual_popular %}<span class="badge bg-danger">熱門</span>{% endif %}
                                 {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
                                 {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark">特價</span>{% endif %}
                             </div>

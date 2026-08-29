@@ -1,6 +1,7 @@
 import time
 import os
 import cv2
+import json
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -51,10 +52,11 @@ class MenuItem(db.Model):
     price = db.Column(db.Integer, nullable=False)
     is_discount = db.Column(db.Boolean, default=False)      # 是否特價
     discount_price = db.Column(db.Integer, default=0)       # 特價金額
+    is_recommended = db.Column(db.Boolean, default=False)   # 系統自動前 3 名熱門
+    is_manual_popular = db.Column(db.Boolean, default=False)# 後台手動勾選熱門
     modifiers = db.Column(db.String(50), default='none')
     description = db.Column(db.String(200), default='')
     image_path = db.Column(db.String(200), default='')
-    is_recommended = db.Column(db.Boolean, default=False)
     is_new = db.Column(db.Boolean, default=False)
     is_reward = db.Column(db.Boolean, default=False)          # 是否開放紅利兌換
     reward_points = db.Column(db.Integer, default=0)          # 兌換所需點數
@@ -149,7 +151,6 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_discount BOOLEAN DEFAULT 0"))
     if 'discount_price' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN discount_price INTEGER DEFAULT 0"))
-        
     if 'modifiers' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN modifiers VARCHAR(50) DEFAULT 'none'"))
 
@@ -170,21 +171,19 @@ with app.app_context():
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN order_type VARCHAR(50) DEFAULT "內用"'))
     if 'status' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN status VARCHAR(50) DEFAULT "Pending"'))
-
+    if 'is_manual_popular' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_manual_popular BOOLEAN DEFAULT 0"))
     # 4. 檢查 OrderItem 資料表
     order_item_info = db.session.execute(db.text("PRAGMA table_info(order_item)")).fetchall()
     order_item_cols = [col[1] for col in order_item_info]
     if 'customization' not in order_item_cols:
         db.session.execute(db.text("ALTER TABLE order_item ADD COLUMN customization VARCHAR(200) DEFAULT ''"))
 
-    # 5. 初始化預設優惠券模板
-    if Coupon.query.count() == 0:
-        default_coupons = [
-            Coupon(code='NEW50', title='全單現折 $50 優惠券', discount_type='fixed', discount_value=50, min_spend=200, reward_points=45, reward_discount_points=0, is_reward=True),
-            Coupon(code='VIP90', title='全館消費 9 折券', discount_type='percent', discount_value=0.9, min_spend=100, reward_points=60, reward_discount_points=40, is_reward=True),
-            Coupon(code='SAVE30', title='滿額折 $30 抵用券', discount_type='fixed', discount_value=30, min_spend=150, reward_points=25, reward_discount_points=0, is_reward=True)
-        ]
-        db.session.bulk_save_objects(default_coupons)
+# 檢查 MenuItem 是否有 is_manual_popular 欄位，沒有就建立
+    menu_info = db.session.execute(db.text("PRAGMA table_info(menu_item)")).fetchall()
+    menu_cols = [col[1] for col in menu_info]
+    if 'is_manual_popular' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_manual_popular BOOLEAN DEFAULT 0"))
         db.session.commit()
     db.session.commit()
 
@@ -229,11 +228,51 @@ def compare_faces(feat1, feat2):
     score = recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)
     return score
 
+def update_popular_items():
+    """
+    結合「銷量前 3 名」與「後台手動勾選」的品項，統一設為熱門 (is_recommended)
+    """
+    try:
+        # 1. 先將【所有】餐點的 is_recommended 重設為 False
+        db.session.query(MenuItem).update({MenuItem.is_recommended: False})
+        db.session.flush()
+
+        # 2. 統計有效訂單中銷量最高的前 3 名
+        sales_stats = db.session.query(
+            OrderItem.item_name,
+            db.func.sum(OrderItem.quantity).label('total_qty')
+        ).join(Order, OrderItem.order_id == Order.id
+        ).filter(Order.status != 'Cancelled'
+        ).group_by(OrderItem.item_name
+        ).order_by(db.desc('total_qty')
+        ).all()
+
+        top_3_names = [name for name, qty in sales_stats[:3] if qty and qty > 0]
+
+        # 3. 將銷量前 3 名的餐點設為 True
+        if top_3_names:
+            MenuItem.query.filter(MenuItem.name.in_(top_3_names)).update(
+                {MenuItem.is_recommended: True}, 
+                synchronize_session=False
+            )
+
+        # 4. 關鍵：將「手動勾選 (is_manual_popular)」的品項也一併設為 True（實現自動+手動合併）
+        MenuItem.query.filter_by(is_manual_popular=True).update(
+            {MenuItem.is_recommended: True},
+            synchronize_session=False
+        )
+
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"自動更新熱門失敗: {e}")
+
 # ==============================================================================
 # 5. 前台點餐與行銷優惠路由 (Customer & Marketing Routes)
 # ==============================================================================
 @app.route('/')
 def customer_index():
+    update_popular_items()
     items = MenuItem.query.all()
     categories = sorted(list(set(item.category for item in items if item.category)))
     user_points = 0
@@ -392,6 +431,7 @@ def submit_order():
         db.session.add(order_item)
 
     db.session.commit()
+    update_popular_items()
 
     receipt_items = []
     for item in items:
@@ -666,7 +706,7 @@ def logout():
 # ==============================================================================
 # 7. 店家後台管理路由 (Admin Management Routes)
 # ==============================================================================
-def build_order_analytics(orders):
+def build_order_analytics(orders, limit=1):
     today = datetime.now().date()
     today_orders = [o for o in orders if o.created_at and o.created_at.date() == today]
     pending_orders = [o for o in orders if o.status == 'Pending']
@@ -674,22 +714,35 @@ def build_order_analytics(orders):
     total_revenue = sum((o.total_price or 0) for o in today_orders)
     avg_order_value = total_revenue / len(today_orders) if today_orders else 0
 
+    valid_item_names = {item.name for item in MenuItem.query.all()}
+
     item_stats = {}
     for order in orders:
+        if order.status == 'Cancelled':  
+            continue
         for item in order.items:
-            key = item.item_name
-            if key not in item_stats:
-                item_stats[key] = {'quantity': 0, 'revenue': 0}
-            item_stats[key]['quantity'] += item.quantity
-            item_stats[key]['revenue'] += (item.price or 0) * (item.quantity or 1)
+            if item.item_name in valid_item_names:
+                key = item.item_name
+                if key not in item_stats:
+                    item_stats[key] = {'quantity': 0, 'revenue': 0}
+                item_stats[key]['quantity'] += item.quantity
+                item_stats[key]['revenue'] += (item.price or 0) * (item.quantity or 1)
 
+    # 使用動態帶入的 limit 進行切片
     top_items = [
         {'name': name, 'quantity': stats['quantity'], 'revenue': stats['revenue']}
-        for name, stats in sorted(item_stats.items(), key=lambda kv: kv[1]['quantity'], reverse=True)[:5]
+        for name, stats in sorted(item_stats.items(), key=lambda kv: kv[1]['quantity'], reverse=True)[:limit]
     ]
 
-    eta_minutes = max(5, len(pending_orders) * 6 + 4)
-    queue_status = {
+    # 計算預估時間
+    total_items_qty = 0
+    for order in pending_orders:
+        for item in order.items:
+            total_items_qty += (item.quantity or 1)
+    
+    # 假設每個品項平均花 2 分鐘製作，基礎準備時間 4 分鐘，最低 5 分鐘
+    eta_minutes = max(5, total_items_qty * 2 + 4)
+    return {
         'today_orders': len(today_orders),
         'today_revenue': total_revenue,
         'pending_count': len(pending_orders),
@@ -698,7 +751,6 @@ def build_order_analytics(orders):
         'eta_minutes': eta_minutes,
         'completed_today': sum(1 for o in today_orders if o.status == 'Completed')
     }
-    return queue_status
 
 
 @app.route('/admin', methods=['GET', 'POST'])
@@ -714,13 +766,14 @@ def admin_dashboard():
 
     if not session.get('admin_logged_in'):
         return render_template('admin.html', is_admin=False)
-
+    
+    limit = max(1, request.args.get('limit', 3, type=int))
     orders = Order.query.order_by(Order.id.desc()).all()
     items = MenuItem.query.all()
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.all()
     users = User.query.all()
-    analytics = build_order_analytics(orders)
+    analytics = build_order_analytics(orders, limit=limit)
     return render_template(
         'admin.html', 
         is_admin=True, 
@@ -729,7 +782,8 @@ def admin_dashboard():
         reward_items=reward_items, 
         reward_coupons=reward_coupons,
         users=users,
-        analytics=analytics
+        analytics=analytics,
+        current_limit=limit
     )
 
 @app.route('/admin/logout')
@@ -840,6 +894,7 @@ def add_item():
             description=desc,
             image_path=image_filename,
             is_recommended=is_rec,
+            is_manual_popular=is_rec,
             is_discount=is_discount,
             discount_price=discount_price,
             is_new=is_new
@@ -867,13 +922,17 @@ def edit_item(id):
         item.is_discount = True if request.form.get('is_discount') else False
         item.discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
         item.description = request.form.get('description', '')
-        item.is_recommended = True if request.form.get('is_recommended') else False
+        
+# 取得熱門勾選狀態（手動勾選只存入 is_manual_popular，不碰 is_recommended）
+        is_pop = request.form.get('is_recommended') or request.form.get('is_manual_popular')
+        item.is_manual_popular = True if is_pop in ['1', 'true', 'on', True] else False
+        
         item.is_new = True if request.form.get('is_new') else False
+
         is_reward = True if request.form.get('is_reward') else False
         reward_points = max(0, int(request.form.get('reward_points') or 0))
         reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
-        #  後端防呆驗證
         if is_reward:
             if reward_points <= 0:
                 return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
@@ -987,7 +1046,8 @@ def import_menu_excel():
                 modifiers=modifiers,
                 description=description,
                 image_path='',
-                is_recommended=is_recommended,
+                is_recommended=False,
+                is_manual_popular=False, 
                 is_discount=False, 
                 discount_price=0,
                 is_new=is_new
