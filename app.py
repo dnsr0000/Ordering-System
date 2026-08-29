@@ -734,7 +734,6 @@ def build_order_analytics(orders, limit=1):
         for name, stats in sorted(item_stats.items(), key=lambda kv: kv[1]['quantity'], reverse=True)[:limit]
     ]
 
-<<<<<<< HEAD
     # 計算預估時間
     total_items_qty = 0
     for order in pending_orders:
@@ -743,9 +742,6 @@ def build_order_analytics(orders, limit=1):
     
     # 假設每個品項平均花 2 分鐘製作，基礎準備時間 4 分鐘，最低 5 分鐘
     eta_minutes = max(5, total_items_qty * 2 + 4)
-=======
-    eta_minutes = max(5, len(pending_orders) * 6 + 4)
->>>>>>> 6cbeaa4c685f028ba8efb0e26ca7777f985aa7f9
     return {
         'today_orders': len(today_orders),
         'today_revenue': total_revenue,
