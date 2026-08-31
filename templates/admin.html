@@ -64,7 +64,7 @@
 <body>
 
 {% if not is_admin %}
-    <!-- 🔒 1. 管理員未登入畫面 -->
+    <!--  1. 管理員未登入畫面 -->
     <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh; padding: 20px;">
         <div class="card login-card p-4 text-center">
             <div class="my-3">
@@ -104,13 +104,22 @@
     </div>
 
 {% else %}
-    <!-- 🔓 2. 管理員後台主畫面 -->
+    <!--  2. 管理員後台主畫面 -->
     <nav class="navbar navbar-admin py-3 mb-4">
         <div class="container-fluid px-4 d-flex justify-content-between align-items-center">
             <!-- 左側標題 -->
             <div class="d-flex align-items-center gap-2">
                 <i class="bi bi-speedometer2 text-warning fs-3"></i>
                 <h4 class="mb-0 fw-bold text-white">自助點餐後台管理系統</h4>
+                <button class="btn btn-outline-success btn-sm fw-bold ms-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#exportExcelModal">
+                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出資料
+                </button>
+                <form action="/admin/import_smart" method="POST" enctype="multipart/form-data" class="d-inline m-0" id="smartImportForm">
+                    <input type="file" name="file" id="smartImportFile" accept=".xlsx, .xls" class="d-none" onchange="document.getElementById('smartImportForm').submit();">
+                    <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" onclick="document.getElementById('smartImportFile').click();">
+                        <i class="bi bi-cloud-upload me-1"></i> 匯入資料
+                    </button>
+                </form>
             </div>
             
             <!-- 🕒 右側加入即時時鐘與操作按鈕 -->
@@ -264,7 +273,6 @@
                         </div>
                     </div>
 
-                    <!-- 👉 加上這一層 row，讓左右欄位恢復並排 -->
                     <div class="row g-3 mt-1">
                         <!-- 左側：熱門餐點排行 -->
                         <div class="col-lg-7">
@@ -405,7 +413,7 @@
                 </div>
             </div>
 
-            <!-- 🎁 3. 回饋商城管理 (餐點兌換 + 優惠券管理) -->
+            <!--  3. 回饋商城管理 (餐點兌換 + 優惠券管理) -->
             <div class="tab-pane fade" id="rewards-pane" role="tabpanel">
                 
                 <!-- 區塊 A: 點數兌換優惠券管理 -->
@@ -612,7 +620,7 @@
         </div>
     </div>
 
-    <!-- 🎟️ 新增優惠券 Modal -->
+    <!--  新增優惠券 Modal -->
     <div class="modal fade" id="createCouponModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -667,7 +675,7 @@
         </div>
     </div>
 
-    <!-- 🎁 上架商品至商城 Modal -->
+    <!--  上架商品至商城 Modal -->
     <div class="modal fade" id="addRewardModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -704,7 +712,7 @@
         </div>
     </div>
 
-    <!-- 🌟 新增品項 Modal -->
+    <!-- 新增品項 Modal -->
     <div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -763,7 +771,7 @@
         </div>
     </div>
 
-    <!-- 🌟 編輯品項 Modal -->
+    <!--  編輯品項 Modal -->
     <div class="modal fade" id="editItemModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -842,7 +850,7 @@
         </div>
     </div>
 
-    <!-- 🌟 Excel 匯入 Modal -->
+    <!--  Excel 匯入 Modal -->
     <div class="modal fade" id="importExcelModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -864,7 +872,7 @@
         </div>
     </div>
 
-    <!-- 🌟 圖片裁切 Modal -->
+    <!--  圖片裁切 Modal -->
     <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -884,7 +892,7 @@
             </div>
         </div>
     </div>
-<!-- 🌟 編輯會員 Modal -->
+    <!--  編輯會員 Modal -->
     <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -931,6 +939,120 @@
             </div>
         </div>
     </div>
+
+    <!-- 新增：匯出資料 (Export Data) Modal -->
+    <div class="modal fade" id="exportExcelModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-file-earmark-spreadsheet me-2"></i>匯出資料庫至 Excel</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/admin/export_excel" method="POST">
+                    <div class="modal-body p-4">
+                        <p class="small text-white-50">請勾選欲匯出的資料表 (每個選中的 Table 將產生獨立的 Excel 工作表)：</p>
+                        
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" name="tables" value="User" id="exp-user" checked>
+                            <label class="form-check-label fw-bold" for="exp-user">會員資料 (User)</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" name="tables" value="MenuItem" id="exp-menu" checked>
+                            <label class="form-check-label fw-bold" for="exp-menu">菜單品項 (MenuItem)</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" name="tables" value="Coupon" id="exp-coupon">
+                            <label class="form-check-label fw-bold" for="exp-coupon">優惠券模板 (Coupon)</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" name="tables" value="UserCoupon" id="exp-usercoupon">
+                            <label class="form-check-label fw-bold" for="exp-usercoupon">會員持有優惠券 (UserCoupon)</label>
+                        </div>
+
+                        <hr class="border-secondary my-3">
+                        <p class="small text-warning mb-2"><i class="bi bi-info-circle"></i> 以下選項需指定日期範圍：</p>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Order" id="exp-order" checked>
+                            <label class="form-check-label fw-bold" for="exp-order">訂單總覽 (Order)</label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="OrderItem" id="exp-orderitem" checked>
+                            <label class="form-check-label fw-bold" for="exp-orderitem">訂單明細 (OrderItem)</label>
+                        </div>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Analytics" id="exp-analytics" checked>
+                            <label class="form-check-label fw-bold text-info" for="exp-analytics">營運資訊與熱銷排行 (Analytics)</label>
+                        </div>
+
+                        <!-- 日期選擇區塊 (預設隱藏，由 JS 控制顯示) -->
+                        <div class="row g-2 p-3 rounded bg-dark border border-secondary" id="export-date-range">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold text-warning">開始日期 (Start Date)</label>
+                                <input type="date" class="form-control form-control-sm" name="start_date" id="exp-start-date">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold text-warning">結束日期 (End Date)</label>
+                                <input type="date" class="form-control form-control-sm" name="end_date" id="exp-end-date">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-success fw-bold px-4 text-dark"><i class="bi bi-download me-1"></i> 確認匯出</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增的 JavaScript：動態控制日期欄位 -->
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const dateTriggers = document.querySelectorAll('.exp-date-trigger');
+            const dateRangeDiv = document.getElementById('export-date-range');
+            const startDateInput = document.getElementById('exp-start-date');
+            const endDateInput = document.getElementById('exp-end-date');
+
+            // 💡 自動計算並預設「昨天」與「今天」的日期
+            const today = new Date();
+            const yesterday = new Date();
+            yesterday.setDate(today.getDate() - 1);
+
+            const formatDate = (d) => {
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            };
+
+            if (startDateInput && !startDateInput.value) {
+                startDateInput.value = formatDate(yesterday);
+            }
+            if (endDateInput && !endDateInput.value) {
+                endDateInput.value = formatDate(today);
+            }
+
+            function toggleDateRequirement() {
+                // 檢查是否勾選了任何需要日期的選項 (Order, OrderItem, Analytics)
+                const requiresDate = Array.from(dateTriggers).some(cb => cb.checked);
+                
+                if (requiresDate) {
+                    dateRangeDiv.style.display = 'flex';
+                    startDateInput.required = true;
+                    endDateInput.required = true;
+                } else {
+                    dateRangeDiv.style.display = 'none';
+                    startDateInput.required = false;
+                    endDateInput.required = false;
+                }
+            }
+
+            // 綁定事件監聽器並在初始化時執行一次
+            dateTriggers.forEach(cb => cb.addEventListener('change', toggleDateRequirement));
+            toggleDateRequirement();
+        });
+    </script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
