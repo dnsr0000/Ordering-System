@@ -35,7 +35,7 @@ Project Root/
 2. Python 版本：Python 3.8+
 3. 安裝必備套件 (Dependencies):
    打開終端機 (Terminal) 執行以下指令：
-   pip install flask flask-sqlalchemy opencv-python numpy pandas pandas openpyxl werkzeug
+   pip install flask flask-sqlalchemy opencv-python numpy pandas openpyxl werkzeug google-generativeai python-dotenv
 
 4. 啟動伺服器：
    在專案根目錄下執行：
