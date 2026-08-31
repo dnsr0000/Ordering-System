@@ -851,6 +851,41 @@ def delete_coupon(id):
     db.session.commit()
     return redirect(url_for('admin_dashboard', tab='rewards'))
 
+@app.route('/admin/edit_coupon/<int:id>', methods=['POST'])
+def edit_coupon(id):
+    """編輯優惠券模板設定"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+
+    coupon = Coupon.query.get_or_404(id)
+    title = request.form.get('title')
+    code = request.form.get('code', '').strip().upper()
+    discount_type = request.form.get('discount_type', 'fixed')
+    discount_value = max(0.0, float(request.form.get('discount_value') or 0))
+    min_spend = max(0.0, float(request.form.get('min_spend') or 0))
+    reward_points = max(0, int(request.form.get('reward_points') or 0))
+    reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+
+    # 檢查代碼是否與其他優惠券重複 (排除自己)
+    existing = Coupon.query.filter(Coupon.code == code, Coupon.id != id).first()
+    if existing:
+        return "<script>alert('❌ 該優惠代碼已被其他優惠券使用！'); window.history.back();</script>", 400
+
+    # 💡 若代碼有更動，同步更新會員已持有的票券代碼
+    if coupon.code != code:
+        UserCoupon.query.filter_by(coupon_id=coupon.id).update({UserCoupon.code: code})
+
+    coupon.title = title
+    coupon.code = code
+    coupon.discount_type = discount_type
+    coupon.discount_value = discount_value
+    coupon.min_spend = min_spend
+    coupon.reward_points = reward_points
+    coupon.reward_discount_points = reward_discount_points
+
+    db.session.commit()
+    return redirect(url_for('admin_dashboard', tab='rewards'))
+
 @app.route('/admin/add_reward', methods=['POST'])
 def add_reward():
     """上架現有餐點至回饋商城"""
