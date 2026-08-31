@@ -1041,16 +1041,19 @@ def import_smart():
                             db.session.add(new_item)
                         imported_counts['MenuItem'] += 1
 
-            # ---------------------------------------------------------
+# ---------------------------------------------------------
             # 3. 辨識是否為「優惠券 (Coupon)」
             # ---------------------------------------------------------
             elif 'Coupon' in sheet or '優惠券' in sheet or '代碼(Code)' in df.columns or 'code' in cols_lower or '代碼' in df.columns:
                 col_map = {
-                    '代碼(Code)': 'code', '代碼': 'code',
-                    '標題(Title)': 'title', '標題': 'title',
-                    '折抵類型': 'discount_type',
-                    '折抵值': 'discount_value',
-                    '門檻': 'min_spend'
+                    '代碼(Code)': 'code', '代碼': 'code', 'code': 'code', '優惠代碼': 'code',
+                    '標題(Title)': 'title', '標題': 'title', 'title': 'title', '優惠券名稱': 'title', '名稱': 'title',
+                    '折抵類型(Discount Type)': 'discount_type', '折抵類型': 'discount_type', '折抵方式': 'discount_type', 'discount_type': 'discount_type',
+                    '折抵值(Discount Value)': 'discount_value', '折抵值': 'discount_value', '折抵金額': 'discount_value', 'discount_value': 'discount_value',
+                    '門檻(Min Spend)': 'min_spend', '門檻': 'min_spend', '最低消費門檻': 'min_spend', '使用門檻': 'min_spend', 'min_spend': 'min_spend',
+                    '兌換所需點數(Reward Points)': 'reward_points', '兌換所需點數': 'reward_points', '兌換點數': 'reward_points', '點數': 'reward_points', 'reward_points': 'reward_points',
+                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '限時特惠點數': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points',
+                    '上架回饋商城(Is Reward)': 'is_reward', '是否上架': 'is_reward', '上架商城': 'is_reward', 'is_reward': 'is_reward'
                 }
                 df_coupon = df.rename(columns=col_map)
                 
@@ -1064,20 +1067,39 @@ def import_smart():
                         if dtype not in ['fixed', 'percent']: dtype = 'fixed'
                         
                         try: dvalue = max(0.0, float(row.get('discount_value', 0)))
-                        except: dvalue = 0
+                        except: dvalue = 0.0
                         try: min_sp = max(0.0, float(row.get('min_spend', 0)))
-                        except: min_sp = 0
+                        except: min_sp = 0.0
+                        try: reward_points = max(0, int(row.get('reward_points', 0)))
+                        except: reward_points = 0
+                        try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
+                        except: reward_discount_points = 0
                         
+                        # 判斷是否上架回饋商城：若欄位有明確指定則依欄位；無欄位時若點數大於 0 則自動設為 True
+                        if 'is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward')):
+                            is_reward = parse_bool(row.get('is_reward'))
+                        else:
+                            is_reward = True if reward_points > 0 else True
+
                         existing = Coupon.query.filter_by(code=code).first()
                         if existing:
                             existing.title = title
                             existing.discount_type = dtype
                             existing.discount_value = dvalue
                             existing.min_spend = min_sp
+                            existing.reward_points = reward_points
+                            existing.reward_discount_points = reward_discount_points
+                            existing.is_reward = is_reward
                         else:
                             new_coupon = Coupon(
-                                code=code, title=title, discount_type=dtype, discount_value=dvalue,
-                                min_spend=min_sp, reward_points=0, reward_discount_points=0, is_reward=False
+                                code=code,
+                                title=title,
+                                discount_type=dtype,
+                                discount_value=dvalue,
+                                min_spend=min_sp,
+                                reward_points=reward_points,
+                                reward_discount_points=reward_discount_points,
+                                is_reward=is_reward
                             )
                             db.session.add(new_coupon)
                         imported_counts['Coupon'] += 1
@@ -1155,10 +1177,20 @@ def export_excel():
             
         if 'Coupon' in selected_tables:
             coupons = Coupon.query.all()
-            data = [{'ID': c.id, '代碼(Code)': c.code, '標題(Title)': c.title, '折抵類型': c.discount_type, '折抵值': c.discount_value, '門檻': c.min_spend} for c in coupons]
+            data = [{
+                'ID': c.id,
+                '代碼(Code)': c.code,
+                '標題(Title)': c.title,
+                '折抵類型(Discount Type)': c.discount_type,
+                '折抵值(Discount Value)': c.discount_value,
+                '門檻(Min Spend)': c.min_spend,
+                '兌換所需點數(Reward Points)': c.reward_points,
+                '限時特惠點數(Reward Discount Points)': c.reward_discount_points,
+                '上架回饋商城(Is Reward)': '是' if c.is_reward else '否'
+            } for c in coupons]
             df = pd.DataFrame(data if data else [{'資料': '目前無資料'}])
             df.to_excel(writer, sheet_name='優惠券(Coupon)', index=False)
-            
+
         if 'UserCoupon' in selected_tables:
             user_coupons = UserCoupon.query.all()
             data = [{'ID': uc.id, '關聯會員ID': uc.user_id, '優惠代碼(Code)': uc.code, '是否已使用(Is Used)': uc.is_used, '領取時間': uc.created_at.strftime('%Y-%m-%d %H:%M') if uc.created_at else ''} for uc in user_coupons]
