@@ -317,8 +317,10 @@
                                         <div class="fw-bold fs-4 text-success">{{ analytics.completed_today }}</div>
                                     </div>
                                     <div>
-                                        <div class="text-white-50 small">建議後續動作</div>
-                                        <div class="text-white">{% if analytics.pending_count > 0 %}優先處理待製作餐點，避免客人等待過久。{% else %}目前沒有待製作訂單，餐廳班表正常。{% endif %}</div>
+                                        <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
+                                        <div class="text-white p-2 rounded bg-secondary bg-opacity-25 border border-secondary" style="font-size: 0.9rem; line-height: 1.5;">
+                                            {{ analytics.ai_advice }}
+                                        </div>
                                     </div>
                                 </div>
                             </div>

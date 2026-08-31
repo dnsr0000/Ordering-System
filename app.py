@@ -4,6 +4,7 @@ import cv2
 import json
 import io
 import unicodedata
+import google.generativeai as genai
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -11,10 +12,20 @@ from PIL import Image, ImageOps
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify, send_file 
 from flask_sqlalchemy import SQLAlchemy
 from openpyxl.styles import Font
+from dotenv import load_dotenv
 
 # ==============================================================================
 # 1. 應用程式基礎設定 (App Configuration)
 # ==============================================================================
+# 💡 自動載入專案根目錄的 .env 檔案
+load_dotenv()
+
+# 從環境變數安全讀取金鑰
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
 app = Flask(__name__)
 app.secret_key = "ordering_system_secret_key"
 app.permanent_session_lifetime = timedelta(days=7)
@@ -714,12 +725,59 @@ def logout():
     return redirect(url_for('customer_index'))
 
 # ==============================================================================
+# 💡 新增：AI 智慧營運建議生成函式 (具備 Fallback 備援機制)
+# ==============================================================================
+def generate_ai_business_advice(analytics_data):
+    """將即時營運指標傳送給 Gemini 模型生成動態店長建議"""
+    try:
+        if not GEMINI_API_KEY:
+            raise ValueError("未設定 GEMINI_API_KEY")
+
+        # 使用 gemini-1.5-flash 模型生成
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
+        prompt = f"""
+你是一位專業的餐飲營運顧問。請根據以下今日餐廳的即時營運數據，用繁體中文給出 1~2 句精準、具體的營運行動建議（繁體中文，字數 60 字以內，語氣專業積極）：
+- 今日訂單數：{analytics_data.get('today_orders', 0)} 筆
+- 今日營收：NT$ {analytics_data.get('today_revenue', 0)}
+- 平均客單價：NT$ {int(analytics_data.get('avg_order_value', 0))}
+- 當前待製作訂單：{analytics_data.get('pending_count', 0)} 筆
+- 當前預估出餐時間：{analytics_data.get('eta_minutes', 0)} 分鐘
+- 今日熱銷餐點：{top_items_str}
+
+直接輸出建議內容，不要加多餘問候語。
+"""
+        response = model.generate_content(prompt)
+        if response and response.text:
+            return response.text.strip()
+    except Exception as e:
+        print(f"AI 生成建議失敗或未配置 Key，使用動態規則生成: {e}")
+
+    # --- 💡 Fallback 動態規則推論 (若 API 未設定或連線失敗時自動無縫接軌) ---
+    pending = analytics_data.get('pending_count', 0)
+    eta = analytics_data.get('eta_minutes', 0)
+    aov = analytics_data.get('avg_order_value', 0)
+    top_items = analytics_data.get('top_items', [])
+
+    if pending >= 5 or eta > 20:
+        return f"⚠️ 廚房負載偏高（{pending} 筆待製作，預估等待 {eta} 分鐘），建議啟動備料支援並暫緩外帶出餐推播。"
+    elif aov < 150 and aov > 0:
+        hot_item = top_items[0]['name'] if top_items else '熱門餐點'
+        return f"💡 平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
+    elif pending == 0 and analytics_data.get('today_orders', 0) > 0:
+        return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
+    else:
+        return "🌟 今日營業剛起步，請確認廚房出單機與各項食材庫存是否充足。"
+    
+# ==============================================================================
 # 7. 店家後台管理路由 (Admin Management Routes)
 # ==============================================================================
 def build_order_analytics(orders, limit=1):
     today = datetime.now().date()
     today_orders = [o for o in orders if o.created_at and o.created_at.date() == today]
-    pending_orders = [o for o in orders if o.status == 'Pending']
+    today = datetime.now().date()
+    pending_orders = [o for o in orders if o.status == 'Pending' and o.created_at and o.created_at.date() == today]
 
     total_revenue = sum((o.total_price or 0) for o in today_orders)
     avg_order_value = total_revenue / len(today_orders) if today_orders else 0
@@ -753,7 +811,9 @@ def build_order_analytics(orders, limit=1):
             total_items_qty += (item.quantity or 1)
     
     eta_minutes = max(5, total_items_qty * 2 + 4)
-    return {
+    
+    # 💡 1. 建立營運分析結果字典
+    analytics_result = {
         'today_orders': len(today_orders),
         'today_revenue': total_revenue,
         'pending_count': len(pending_orders),
@@ -762,6 +822,11 @@ def build_order_analytics(orders, limit=1):
         'eta_minutes': eta_minutes,
         'completed_today': sum(1 for o in today_orders if o.status == 'Completed')
     }
+
+    # 💡 2. 帶入 AI 建議生成函式，並將結果存入 ai_advice 欄位
+    analytics_result['ai_advice'] = generate_ai_business_advice(analytics_result)
+    
+    return analytics_result
 
 @app.route('/admin', methods=['GET', 'POST'])
 def admin_dashboard():
