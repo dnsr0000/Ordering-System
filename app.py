@@ -5,7 +5,10 @@ import json
 import io
 import re
 import unicodedata
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+except ModuleNotFoundError:
+    genai = None
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
@@ -25,7 +28,7 @@ load_dotenv()
 # 從環境變數安全讀取金鑰
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if GEMINI_API_KEY:
+if GEMINI_API_KEY and genai is not None:
     genai.configure(api_key=GEMINI_API_KEY)
 
 app = Flask(__name__)
@@ -85,6 +88,8 @@ class Order(db.Model):
     total_price = db.Column(db.Integer, nullable=False)
     payment_method = db.Column(db.String(50), default='Cash')
     order_type = db.Column(db.String(50), default='內用')
+    need_cutlery = db.Column(db.Boolean, default=True)
+    note = db.Column(db.String(200), default='')
     status = db.Column(db.String(50), default='Pending')
     points_used = db.Column(db.Integer, default=0)
     points_earned = db.Column(db.Integer, default=0)
@@ -186,6 +191,10 @@ with app.app_context():
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN payment_method VARCHAR(50) DEFAULT "Cash"'))
     if 'order_type' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN order_type VARCHAR(50) DEFAULT "內用"'))
+    if 'need_cutlery' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN need_cutlery BOOLEAN DEFAULT 1'))
+    if 'note' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN note VARCHAR(200) DEFAULT ""'))
     if 'status' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN status VARCHAR(50) DEFAULT "Pending"'))
     if 'is_manual_popular' not in menu_cols:
@@ -370,6 +379,8 @@ def submit_order():
     items = data.get('items', [])
     payment_method = data.get('payment_method', 'Cash')
     order_type = data.get('order_type', '內用')
+    need_cutlery = bool(data.get('need_cutlery', True)) if order_type == '外帶' else False
+    note = str(data.get('note', '')).strip()[:200]
     promo_code = str(data.get('promo_code', '')).strip().upper()
     use_points = int(data.get('use_points', 0))
 
@@ -433,6 +444,8 @@ def submit_order():
         total_price=int(final_price),
         payment_method=payment_method,
         order_type=order_type,
+        need_cutlery=need_cutlery,
+        note=note,
         status='Pending',
         points_used=points_used,
         points_earned=points_earned,
@@ -485,6 +498,8 @@ def submit_order():
         'total_price': final_price,
         'payment_method': payment_method,
         'order_type': order_type,
+        'need_cutlery': need_cutlery,
+        'note': note,
         'items': receipt_items,
         'current_user_points': user.points if user else 0,
         'available_coupons': latest_user_coupons
@@ -1836,6 +1851,8 @@ def api_admin_live_orders():
             'user_name': o.user.name if o.user else '非會員',
             'order_type': o.order_type,
             'payment_method': o.payment_method,
+            'need_cutlery': bool(o.need_cutlery) if getattr(o, 'need_cutlery', None) is not None else True,
+            'note': o.note or '',
             'created_at': o.created_at.strftime('%m-%d %H:%M') if o.created_at else '',
             'status': o.status,
             'discount_amount': o.discount_amount or 0,

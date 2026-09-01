@@ -331,7 +331,7 @@
                 <!-- 🍽️ 用餐方式 & 付款方式 -->
                 <div class="row g-1 mb-2">
                     <div class="col-6">
-                        <select id="orderType" class="form-select form-select-sm bg-dark text-white border-secondary" style="font-size: 0.8rem;">
+                        <select id="orderType" class="form-select form-select-sm bg-dark text-white border-secondary" style="font-size: 0.8rem;" onchange="updateTakeoutExtraUI()">
                             <option value="內用">內用 (Dine-in)</option>
                             <option value="外帶">外帶 (Take-out)</option>
                         </select>
@@ -342,6 +342,17 @@
                             <option value="Credit Card">信用卡</option>
                             <option value="Line Pay">Line Pay</option>
                         </select>
+                    </div>
+                </div>
+
+                <div id="takeoutExtraBox" class="mb-2" style="display:none;">
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="needCutlery" checked>
+                        <label class="form-check-label text-white small fw-bold" for="needCutlery">需要餐具</label>
+                    </div>
+                    <div>
+                        <label for="takeoutNote" class="form-label text-white-50 small mb-1">備註</label>
+                        <textarea id="takeoutNote" class="form-control form-control-sm bg-dark text-white border-secondary" rows="2" placeholder="例如：不要太辣、請幫我裝袋、外送時間請盡快"></textarea>
                     </div>
                 </div>
 
@@ -743,6 +754,14 @@
         if (earnedEl) earnedEl.innerText = earnedPoints;
     }
 
+    function updateTakeoutExtraUI() {
+        const orderType = document.getElementById('orderType').value;
+        const takeoutExtraBox = document.getElementById('takeoutExtraBox');
+        if (takeoutExtraBox) {
+            takeoutExtraBox.style.display = orderType === '外帶' ? 'block' : 'none';
+        }
+    }
+
     function openPreview() {
         if (!cart.length) { alert('購物車為空'); return; }
         const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
@@ -752,6 +771,9 @@
         const pointsUsed = (!isGuest && pointsToggle && pointsToggle.checked) ? Number(pointsInput.value || 0) : 0;
         const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
         const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / 100);
+        const orderType = document.getElementById('orderType').value;
+        const needCutlery = orderType === '外帶' ? document.getElementById('needCutlery').checked : false;
+        const note = orderType === '外帶' ? (document.getElementById('takeoutNote').value || '').trim() : '';
 
         const preview = document.getElementById('preview-items');
         preview.innerHTML = '<ul class="list-group">' + cart.map(item => `
@@ -762,6 +784,15 @@
                 </div>
                 <span class="fw-bold">$${Math.round(item.price * item.quantity)}</span>
             </li>`).join('') + '</ul>';
+
+        const extraInfo = document.createElement('div');
+        extraInfo.className = 'mt-3 p-3 rounded bg-secondary bg-opacity-10 border border-secondary';
+        extraInfo.innerHTML = `
+            <div class="small text-white-50">外帶設定</div>
+            <div class="fw-bold text-white">${orderType === '外帶' ? (needCutlery ? '需要餐具' : '不需要餐具') : '內用'}</div>
+            ${note ? `<div class="small text-warning mt-2">備註：${note}</div>` : ''}
+        `;
+        preview.appendChild(extraInfo);
 
         document.getElementById('preview-subtotal').innerText = Math.round(subtotal);
         document.getElementById('preview-promo').innerText = Math.round(appliedPromoDiscount);
@@ -783,6 +814,8 @@
         const paymentMethod = document.getElementById('paymentMethod').value;
         const pointsToggle = document.getElementById('usePointsToggle');
         const pointsInput = document.getElementById('pointsToUse');
+        const needCutlery = orderType === '外帶' ? document.getElementById('needCutlery').checked : false;
+        const note = orderType === '外帶' ? (document.getElementById('takeoutNote').value || '').trim() : '';
         const pointsUsed = (!isGuest && pointsToggle && pointsToggle.checked) ? Number(pointsInput.value || 0) : 0;
 
         fetch('/submit_order', {
@@ -792,6 +825,8 @@
                 items: cart,
                 payment_method: paymentMethod,
                 order_type: orderType,
+                need_cutlery: needCutlery,
+                note: note,
                 promo_code: activePromoCode,
                 use_points: pointsUsed
             })
@@ -818,6 +853,12 @@
             document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
             document.getElementById('receipt-user').textContent = data.user_name;
             document.getElementById('receipt-type').textContent = data.order_type;
+            if (data.order_type === '外帶') {
+                document.getElementById('receipt-type').textContent += ` • ${data.need_cutlery ? '要餐具' : '不用餐具'}`;
+                if (data.note) {
+                    document.getElementById('receipt-type').title = data.note;
+                }
+            }
             document.getElementById('receipt-payment').textContent = data.payment_method;
             document.getElementById('receipt-subtotal').textContent = Math.round(data.subtotal);
             document.getElementById('receipt-discount').textContent = Math.round(data.discount_amount);
