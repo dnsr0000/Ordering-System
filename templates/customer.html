@@ -481,7 +481,7 @@
     let currentUserPoints = Number('{{ user_points or 0 }}');
     let appliedPromoDiscount = 0;
     let activePromoCode = '';
-    const isGuest = {{ 'true' if is_guest else 'false' }};
+    const isGuest = '{{ "true" if is_guest else "false" }}' === 'true';
 
     function saveCartToStorage() {
         localStorage.setItem('kiosk_cart', JSON.stringify(cart));
