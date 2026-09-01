@@ -297,10 +297,54 @@
             .catch(err => alert('連線失敗'));
         }
 
-        fetchKitchenOrders();
-        setInterval(fetchKitchenOrders, 3000);
+    // ==============================================================================
+    // 新增：廚房看板 SSE 即時推播監聽器
+    // ==============================================================================
+        let kitchenEventSource = null;
+        let kitchenLastPendingCount = null;
 
-        // 💡 一鍵全部完成出餐邏輯
+        function initKitchenSSE() {
+            if (!window.EventSource) {
+                console.warn("瀏覽器不支援 SSE，改用輪詢模式。");
+                setInterval(fetchKitchenOrders, 3000);
+                return;
+            }
+
+            kitchenEventSource = new EventSource('/api/orders_stream');
+
+            kitchenEventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    // 待製作筆數變更時即時呼叫 fetchKitchenOrders 更新畫面與觸發叮咚聲
+                    if (kitchenLastPendingCount === null || kitchenLastPendingCount !== data.pending_count) {
+                        kitchenLastPendingCount = data.pending_count;
+                        fetchKitchenOrders();
+                    }
+                } catch (e) {
+                    console.error("解析 SSE 資料錯誤:", e);
+                }
+            };
+
+            kitchenEventSource.onerror = function(err) {
+                console.warn("廚房 SSE 連線異常，已啟動自動輪詢備援...", err);
+                if (!window.kitchenPollingFallback) {
+                    window.kitchenPollingFallback = setInterval(fetchKitchenOrders, 3000);
+                }
+            };
+
+            kitchenEventSource.onopen = function() {
+                if (window.kitchenPollingFallback) {
+                    clearInterval(window.kitchenPollingFallback);
+                    window.kitchenPollingFallback = null;
+                }
+            };
+        }
+
+        // 網頁載入後初次抓取一次並建立 SSE 連線
+        fetchKitchenOrders();
+        initKitchenSSE();
+
+        //  一鍵全部完成出餐邏輯
         function completeAllOrders() {
             getAudioContext();
             const count = knownOrderIds.size;

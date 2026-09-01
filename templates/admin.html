@@ -213,7 +213,7 @@
                                     <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
                                 </div>
                                 <div style="min-width: 130px;">
-                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value)">
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value, this)">
                                         <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
                                         <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
                                         <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
@@ -241,12 +241,13 @@
                         <span class="badge bg-warning text-dark">即時統計</span>
                     </div>
 
+                    <!-- 4 欄即時統計指標 -->
                     <div class="row g-3">
                         <div class="col-md-3 col-sm-6">
                             <div class="card bg-dark border-secondary h-100">
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">今日訂單數</div>
-                                    <div class="display-6 fw-bold text-warning">{{ analytics.today_orders }}</div>
+                                    <div class="display-6 fw-bold text-warning" id="stat-today-orders">{{ analytics.today_orders }}</div>
                                 </div>
                             </div>
                         </div>
@@ -254,7 +255,7 @@
                             <div class="card bg-dark border-secondary h-100">
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">今日營收</div>
-                                    <div class="display-6 fw-bold text-success">${{ analytics.today_revenue }}</div>
+                                    <div class="display-6 fw-bold text-success" id="stat-today-revenue">${{ analytics.today_revenue }}</div>
                                 </div>
                             </div>
                         </div>
@@ -262,7 +263,7 @@
                             <div class="card bg-dark border-secondary h-100">
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">待製作</div>
-                                    <div class="display-6 fw-bold text-info">{{ analytics.pending_count }}</div>
+                                    <div class="display-6 fw-bold text-info" id="stat-pending-count">{{ analytics.pending_count }}</div>
                                 </div>
                             </div>
                         </div>
@@ -270,12 +271,13 @@
                             <div class="card bg-dark border-secondary h-100">
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">預估出餐</div>
-                                    <div class="display-6 fw-bold text-danger">{{ analytics.eta_minutes }} 分鐘</div>
+                                    <div class="display-6 fw-bold text-danger" id="stat-eta-minutes">{{ analytics.eta_minutes }} 分鐘</div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
+                    <!-- 排行榜與營運簡報 -->
                     <div class="row g-3 mt-1">
                         <!-- 左側：熱門餐點排行 -->
                         <div class="col-lg-7">
@@ -323,7 +325,7 @@
 
                                     <div class="mb-3">
                                         <div class="text-white-50 small">已完成今日訂單</div>
-                                        <div class="fw-bold fs-4 text-success">{{ analytics.completed_today }}</div>
+                                        <div class="fw-bold fs-4 text-success" id="stat-completed-today">{{ analytics.completed_today }}</div>
                                     </div>
                                     <div>
                                         <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
@@ -1216,15 +1218,41 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         }
 
-        function changeOrderStatus(orderId, newStatus) {
+        // 後台切換訂單狀態時更新
+        function changeOrderStatus(orderId, newStatus, selectEl) {
             localStorage.setItem('adminActiveTab', 'orders');
+            // 1. 💡 當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
+            if (selectEl) {
+                selectEl.blur();
+                
+                // 2. 💡 立即原地切換卡片外框邊框顏色
+                const card = selectEl.closest('.card-custom');
+                if (card) {
+                    card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
+                    if (newStatus === 'Pending') card.classList.add('border-warning');
+                    else if (newStatus === 'Completed') card.classList.add('border-success');
+                    else if (newStatus === 'Cancelled') card.classList.add('border-danger');
+                    else card.classList.add('border-info');
+                }
+            }
+
+            // 3. 送出後端更新請求並觸發全面同步
             fetch(`/admin/update_order_status/${orderId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus })
-            }).then(r => r.json()).then(d => { 
-                if (d.message) window.location.href = '/admin';
-                else alert(d.error); 
+            })
+            .then(r => r.json())
+            .then(d => { 
+                if (d.message) {
+                    syncAdminLiveOrders();
+                } else {
+                    alert(d.error);
+                }
+            })
+            .catch(err => {
+                console.error("狀態更新失敗:", err);
+                alert("網路異常，狀態更新失敗！");
             });
         }
 
@@ -1319,10 +1347,19 @@ document.addEventListener("DOMContentLoaded", function () {
             }, 'image/jpeg', 0.9);
         }
 
-        let shouldReloadOnClose = false;
+let shouldReloadOnClose = false;
+        let activeCouponUserName = '';
+
+        function openUserCouponsModalFromData(btn) {
+            const userName = btn.dataset.userName;
+            activeCouponUserName = userName;
+            const coupons = JSON.parse(btn.dataset.coupons || '[]');
+            openUserCouponsModal(userName, coupons);
+        }
 
         function openUserCouponsModal(userName, coupons) {
-            shouldReloadOnClose = false; // 每次打開重設旗標
+            shouldReloadOnClose = false;
+            activeCouponUserName = userName;
             document.getElementById('userCouponsModalTitle').innerText = `${userName} 的專屬票券管理`;
             renderUserCouponsBody(userName, coupons);
             bootstrap.Modal.getOrCreateInstance(document.getElementById('userCouponsModal')).show();
@@ -1352,7 +1389,9 @@ document.addEventListener("DOMContentLoaded", function () {
                                             <small class="text-warning">代碼: ${c.code}</small>
                                         </td>
                                         <td>
-                                            ${c.is_used ? '<span class="badge bg-dark text-white-50 border border-secondary">已核銷 (Used)</span>' : '<span class="badge bg-success-subtle text-success border border-success">未使用 (Available)</span>'}
+                                            ${c.is_used 
+                                                ? '<span class="badge bg-dark text-white-50 border border-secondary">已核銷 (Used)</span>' 
+                                                : '<span class="badge bg-success-subtle text-success border border-success">未使用 (Available)</span>'}
                                         </td>
                                         <td class="text-end">
                                             <button type="button" class="btn btn-sm ${c.is_used ? 'btn-outline-success' : 'btn-outline-secondary'}" onclick="toggleCouponStatus(${c.id}, '${userName}')">
@@ -1376,8 +1415,15 @@ document.addEventListener("DOMContentLoaded", function () {
             .then(res => res.json())
             .then(data => {
                 if (data.success) {
-                    shouldReloadOnClose = true; // 標記關閉時需同步背景
+                    shouldReloadOnClose = true;
+                    // 1. 即時重繪彈窗內容
                     renderUserCouponsBody(userName, data.coupons);
+                    
+                    // 2. 💡 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
+                    const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
+                    btns.forEach(b => {
+                        b.dataset.coupons = JSON.stringify(data.coupons);
+                    });
                 } else {
                     alert(data.message || '操作失敗');
                 }
@@ -1387,6 +1433,19 @@ document.addEventListener("DOMContentLoaded", function () {
                 alert('網路錯誤，請稍後再試');
             });
         }
+
+        // 💡 監聽彈窗關閉：有修改過票券狀態時，關閉彈窗自動重新載入頁面同步資料
+        document.addEventListener("DOMContentLoaded", function () {
+            const userCouponsModalEl = document.getElementById('userCouponsModal');
+            if (userCouponsModalEl) {
+                userCouponsModalEl.addEventListener('hidden.bs.modal', function () {
+                    if (shouldReloadOnClose) {
+                        localStorage.setItem('adminActiveTab', 'users');
+                        window.location.reload();
+                    }
+                });
+            }
+        });
         
     // --- 特價欄位防呆連動邏輯（原單價與特價大小檢查） ---
     function bindDiscountValidation(formId, priceId, inputId, toggleId) {
@@ -1567,17 +1626,42 @@ document.addEventListener("DOMContentLoaded", function () {
         bindRewardValidation();
     });
 
-    // 💡 店家後台：即時同步今日訂單狀態（免手動重新整理）
+    //  店家後台：即時同步今日訂單狀態與營運分析指標
     function syncAdminLiveOrders() {
-        // 若使用者正在操作下拉選單或不在 orders 分頁，則略過重繪以防干擾操作
-        if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
-        const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
-        if (activeTab !== 'orders') return;
-
         fetch('/api/admin_live_orders')
-            .then(res => res.json())
+            .then(res => {
+                if (res.status === 401) {
+                    if (adminEventSource) adminEventSource.close();
+                    if (window.adminPollingFallback) clearInterval(window.adminPollingFallback);
+                    alert('⚠️ 管理者登入已過期，請重新登入！');
+                    window.location.href = '/admin';
+                    return null;
+                }
+                return res.json();
+            })
             .then(data => {
-                if (!data.success) return;
+                if (!data || !data.success) return;
+
+                // 1. 💡 即時同步「營運分析」卡片指標
+                if (data.analytics) {
+                    const elPending = document.getElementById('stat-pending-count');
+                    const elOrders = document.getElementById('stat-today-orders');
+                    const elRevenue = document.getElementById('stat-today-revenue');
+                    const elEta = document.getElementById('stat-eta-minutes');
+                    const elCompleted = document.getElementById('stat-completed-today');
+
+                    if (elPending) elPending.innerText = data.analytics.pending_count;
+                    if (elOrders) elOrders.innerText = data.analytics.today_orders;
+                    if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
+                    if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
+                    if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
+                }
+
+                // 2. 若使用者正在操作下拉選單或不在 orders 分頁，略過訂單列表重繪
+                if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
+                const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
+                if (activeTab !== 'orders') return;
+
                 const grid = document.getElementById('admin-orders-grid');
                 if (!grid) return;
 
@@ -1632,7 +1716,7 @@ document.addEventListener("DOMContentLoaded", function () {
                                     <span class="text-white fw-bold fs-5">$${Math.round(order.total_price)}</span>
                                 </div>
                                 <div style="min-width: 130px;">
-                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value)">
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
                                         <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
                                         <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
                                         <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
@@ -1647,8 +1731,53 @@ document.addEventListener("DOMContentLoaded", function () {
             .catch(err => console.error("後台即時同步失敗:", err));
     }
 
-    // 每 3 秒同步一次後台訂單看板
-    setInterval(syncAdminLiveOrders, 3000);
+    // ==============================================================================
+    // 店家後台 SSE 即時推播監聽器 (搭配 Fallback 備援機制)
+    // ==============================================================================
+    let adminEventSource = null;
+    let lastPendingCount = null;
+
+    function initAdminSSE() {
+        if (!window.EventSource) {
+            setInterval(syncAdminLiveOrders, 3000);
+            return;
+        }
+
+        adminEventSource = new EventSource('/api/orders_stream');
+
+        adminEventSource.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                // 只要狀態或筆數有變化即時刷新後台看板與分析指標
+                if (lastPendingCount !== data.pending_count) {
+                    lastPendingCount = data.pending_count;
+                    syncAdminLiveOrders();
+                }
+            } catch (e) {
+                console.error("解析 SSE 資料錯誤:", e);
+            }
+        };
+
+        adminEventSource.onerror = function(err) {
+            if (!window.adminPollingFallback) {
+                window.adminPollingFallback = setInterval(syncAdminLiveOrders, 3000);
+            }
+        };
+
+        adminEventSource.onopen = function() {
+            if (window.adminPollingFallback) {
+                clearInterval(window.adminPollingFallback);
+                window.adminPollingFallback = null;
+            }
+        };
+    }
+
+    // 頁面載入完成後啟動監聽與初次同步
+    document.addEventListener("DOMContentLoaded", function () {
+        syncAdminLiveOrders();
+        initAdminSSE();
+    });
+
     </script>
 {% endif %}
 

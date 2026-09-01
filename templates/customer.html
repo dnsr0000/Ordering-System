@@ -250,7 +250,7 @@
                         <small class="text-white-50 fw-bold" style="font-size: 0.75rem;"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼</small>
                         {% if not is_guest %}
                             {% if user_coupons and user_coupons|length > 0 %}
-                                <span class="badge bg-warning text-dark py-0" style="font-size: 0.7rem;">{{ user_coupons|length }} 張可用</span>
+                                <span id="user-coupon-count-badge" class="badge bg-warning text-dark py-0" style="font-size: 0.7rem;">{{ user_coupons|length }} 張可用</span>
                             {% else %}
                                 <a href="/rewards" class="text-warning text-decoration-none" style="font-size: 0.7rem;">
                                     <i class="bi bi-gift"></i> 去商城兌換
@@ -812,6 +812,9 @@
             const cartPts = document.getElementById('cart-user-points');
             if (cartPts) cartPts.innerText = currentUserPoints;
 
+            if (data.available_coupons !== undefined) {
+            updateAvailableCouponsUI(data.available_coupons);
+            }
             document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
             document.getElementById('receipt-user').textContent = data.user_name;
             document.getElementById('receipt-type').textContent = data.order_type;
@@ -989,7 +992,132 @@
         filterMenu();
         applyCombinedSort();
     }
+    let myOrdersTimer = null;
 
+    function fetchMyOrdersData() {
+        fetch('/my_orders')
+            .then(res => res.json())
+            .then(orders => {
+                const historyBody = document.getElementById('history-modal-body');
+                if (!historyBody) return;
+
+                if (!orders || orders.length === 0) {
+                    historyBody.innerHTML = '<div class="text-center text-muted py-4">目前尚無任何訂單紀錄！</div>';
+                    return;
+                }
+
+                historyBody.innerHTML = orders.map(o => {
+                    const promoDiscount = Math.max(0, (o.discount_amount || 0) - (o.points_used || 0));
+                    const badgeClass = o.status === '製作中' ? 'bg-warning text-dark' : (o.status === '已出餐' ? 'bg-success' : 'bg-danger');
+                    
+                    return `
+                    <div class="card mb-3 border-secondary shadow-sm text-dark">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
+                                <span class="badge ${badgeClass}">${o.status}</span>
+                                <span class="badge bg-primary ms-1">${o.order_type}</span>
+                            </div>
+                            <small class="text-muted">${o.created_at}</small>
+                        </div>
+                        <div class="card-body p-3">
+                            <table class="table table-sm mb-2 align-middle">
+                                <thead><tr class="text-muted"><th>品項</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
+                                <tbody>${o.items.map(item => `<tr><td><div>${item.name}</div>${item.customization ? `<small class="text-danger fw-bold">${item.customization}</small>` : ''}</td><td>x ${item.quantity}</td><td>$${Math.round(item.price)}</td><td>$${Math.round(item.subtotal)}</td></tr>`).join('')}</tbody>
+                            </table>
+                            <div class="d-flex justify-content-between align-items-center pt-2 border-top">
+                                <small class="text-muted">
+                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_used)} | 獲得紅利: +${o.points_earned} 點
+                                </small>
+                                <div class="fw-bold text-danger fs-6">實付：$${Math.round(o.total_price)}</div>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
+            })
+            .catch(err => console.error("獲取訂單歷史失敗:", err));
+    }
+
+    function showMyOrders() {
+        fetchMyOrdersData();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('historyModal')).show();
+    }
+
+    // 動態更新前台優惠券下拉選單與可用張數徽章
+    function updateAvailableCouponsUI(coupons) {
+        const select = document.getElementById('userCouponSelect');
+        const badge = document.getElementById('user-coupon-count-badge');
+        
+        if (!select) return;
+
+        if (!coupons || coupons.length === 0) {
+            select.innerHTML = '<option value="" disabled selected>-- 尚無可用優惠券 --</option>';
+            if (badge) {
+                badge.className = 'text-warning text-decoration-none';
+                badge.innerHTML = '<a href="/rewards" class="text-warning text-decoration-none" style="font-size: 0.7rem;"><i class="bi bi-gift"></i> 去商城兌換</a>';
+            }
+        } else {
+            let html = '<option value="" selected>-- 選擇我的優惠券 --</option>';
+            coupons.forEach(c => {
+                const minText = c.min_spend > 0 ? ` - 滿$${Math.round(c.min_spend)}可用` : '';
+                html += `<option value="${c.code}">${c.title} (代碼: ${c.code})${minText}</option>`;
+            });
+            select.innerHTML = html;
+            if (badge) {
+                badge.className = 'badge bg-warning text-dark py-0';
+                badge.innerText = `${coupons.length} 張可用`;
+            }
+        }
+    }
+    // 向後端請求最新可用優惠券與點數
+    function syncLatestUserCoupons() {
+        if (isGuest) return;
+        
+        fetch('/api/user_available_coupons')
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) return;
+                
+                // 1. 同步最新點數
+                currentUserPoints = data.points;
+                const navPts = document.getElementById('nav-user-points');
+                if (navPts) navPts.innerText = data.points;
+                const cartPts = document.getElementById('cart-user-points');
+                if (cartPts) cartPts.innerText = data.points;
+
+                // 2. 同步最新可用優惠券清單
+                updateAvailableCouponsUI(data.coupons);
+            })
+            .catch(err => console.error("同步優惠券失敗:", err));
+    }
+
+    // 💡 監聽購物車側邊欄開啟事件 (Offcanvas Shown)
+    document.addEventListener("DOMContentLoaded", function () {
+        const cartSidebarEl = document.getElementById('cart-sidebar');
+        if (cartSidebarEl) {
+            cartSidebarEl.addEventListener('show.bs.offcanvas', function () {
+                syncLatestUserCoupons();
+            });
+        }
+    });
+
+    //  監聽彈窗開關事件啟動/關閉自動輪詢
+    document.addEventListener("DOMContentLoaded", function () {
+        const historyModalEl = document.getElementById('historyModal');
+        if (historyModalEl) {
+            historyModalEl.addEventListener('shown.bs.modal', function () {
+                if (!myOrdersTimer) {
+                    myOrdersTimer = setInterval(fetchMyOrdersData, 3000);
+                }
+            });
+            historyModalEl.addEventListener('hidden.bs.modal', function () {
+                if (myOrdersTimer) {
+                    clearInterval(myOrdersTimer);
+                    myOrdersTimer = null;
+                }
+            });
+        }
+    });
     updateCartUI();
 </script>
 {% else %}

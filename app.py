@@ -14,6 +14,7 @@ from flask import Flask, render_template, request, redirect, url_for, session, j
 from flask_sqlalchemy import SQLAlchemy
 from openpyxl.styles import Font
 from dotenv import load_dotenv
+from flask import Response
 
 # ==============================================================================
 # 1. 應用程式基礎設定 (App Configuration)
@@ -463,6 +464,17 @@ def submit_order():
             'customization': item.get('customization', '')
         })
 
+    latest_user_coupons = []
+    if user:
+        db.session.expire_all()
+        avail_cps = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
+        for uc in avail_cps:
+            latest_user_coupons.append({
+                'code': uc.code,
+                'title': uc.coupon.title,
+                'min_spend': uc.coupon.min_spend
+            })
+
     return jsonify({
         'order_id': new_order.id,
         'user_name': user_name,
@@ -474,7 +486,8 @@ def submit_order():
         'payment_method': payment_method,
         'order_type': order_type,
         'items': receipt_items,
-        'current_user_points': user.points if user else 0
+        'current_user_points': user.points if user else 0,
+        'available_coupons': latest_user_coupons
     })
 
 # --- 🎁 動態紅利回饋商城頁面 ---
@@ -1657,22 +1670,52 @@ def toggle_user_coupon(uc_id):
         return jsonify({'success': False, 'message': '未授權'}), 401
     
     uc = UserCoupon.query.get_or_404(uc_id)
-    uc.is_used = not uc.is_used  
+    # 💡 明確進行布林狀態反轉
+    uc.is_used = not bool(uc.is_used)
     uc.used_at = datetime.now() if uc.is_used else None
     db.session.commit()
+    db.session.expire_all()  # 💡 清除快取
     
-    # 取得該會員最新的所有票券清單回傳給前端
-    user = User.query.get(uc.user_id)
+    # 💡 直接從資料庫重新撈取該會員所有票券的最新狀態
+    all_user_coupons = UserCoupon.query.filter_by(user_id=uc.user_id).order_by(UserCoupon.id.asc()).all()
     coupons_list = [{
         'id': c.id,
-        'title': c.coupon.title,
+        'title': c.coupon.title if c.coupon else '優惠券',
         'code': c.code,
-        'is_used': c.is_used
-    } for c in user.user_coupons]
+        'is_used': bool(c.is_used)
+    } for c in all_user_coupons]
     
+    user = User.query.get(uc.user_id)
     return jsonify({
         'success': True,
-        'user_name': user.name,
+        'user_name': user.name if user else '',
+        'coupons': coupons_list
+    })
+
+# ==============================================================================
+# 即時查詢當前登入會員最新可用優惠券清單
+# ==============================================================================
+@app.route('/api/user_available_coupons')
+def api_user_available_coupons():
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'coupons': [], 'points': 0})
+
+    db.session.expire_all()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'success': False, 'coupons': [], 'points': 0})
+
+    avail_cps = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
+    coupons_list = [{
+        'code': uc.code,
+        'title': uc.coupon.title if uc.coupon else '優惠券',
+        'min_spend': uc.coupon.min_spend if uc.coupon else 0
+    } for uc in avail_cps]
+
+    return jsonify({
+        'success': True,
+        'points': user.points,
         'coupons': coupons_list
     })
 
@@ -1767,10 +1810,13 @@ def kitchen_update_status(id):
 
 @app.route('/api/admin_live_orders')
 def api_admin_live_orders():
-    """供店家後台即時同步今日訂單看板"""
+    """供店家後台即時同步今日訂單看板與營運指標"""
     if not session.get('admin_logged_in'):
         return jsonify({'error': '未授權'}), 401
     
+    # 💡 清除快取，強制取得最新資料庫狀態
+    db.session.expire_all()
+
     today = datetime.now().date()
     today_orders = Order.query.filter(
         db.func.date(Order.created_at) == today
@@ -1797,7 +1843,26 @@ def api_admin_live_orders():
             'items': items_data
         })
 
-    return jsonify({'success': True, 'orders': orders_data})
+    valid_today = [o for o in today_orders if o.status != 'Cancelled']
+    pending_orders = [o for o in today_orders if o.status == 'Pending']
+    completed_orders = [o for o in today_orders if o.status == 'Completed']
+    paid_orders = [o for o in valid_today if (o.total_price or 0) > 0]
+    
+    today_revenue = sum(o.total_price or 0 for o in paid_orders)
+    pending_items_qty = sum(sum(i.quantity or 1 for i in o.items) for o in pending_orders)
+    eta_minutes = max(5, pending_items_qty * 2 + 4) if pending_orders else 0
+
+    return jsonify({
+        'success': True, 
+        'orders': orders_data,
+        'analytics': {
+            'today_orders': len(valid_today),
+            'today_revenue': today_revenue,
+            'pending_count': len(pending_orders),
+            'completed_today': len(completed_orders),
+            'eta_minutes': eta_minutes
+        }
+    })
 
 @app.route('/api/kitchen_complete_all', methods=['POST'])
 def kitchen_complete_all():
@@ -1819,6 +1884,32 @@ def kitchen_complete_all():
 
     db.session.commit()
     return jsonify({'success': True, 'message': f'✅ 已成功將 {count} 筆訂單批次完成出餐！', 'count': count})
+
+# ==============================================================================
+# SSE (Server-Sent Events) 即時推播串流路由
+# ==============================================================================
+@app.route('/api/orders_stream')
+def orders_stream():
+    """透過 SSE 即時向前端推播待製作訂單數與狀態更新事件"""
+    def event_stream():
+        while True:
+            time.sleep(2)  # 每 2 秒檢查一次
+            with app.app_context():
+                # 💡 重設 session 防止讀取快取
+                db.session.remove()
+                today = datetime.now().date()
+                pending_count = Order.query.filter(
+                    Order.status == 'Pending',
+                    db.func.date(Order.created_at) == today
+                ).count()
+                
+                payload = json.dumps({
+                    'timestamp': time.time(),
+                    'pending_count': pending_count
+                })
+                yield f"data: {payload}\n\n"
+
+    return Response(event_stream(), mimetype='text/event-stream')
 
 # ==============================================================================
 # 9. 程式進入點 (Main Entry)
