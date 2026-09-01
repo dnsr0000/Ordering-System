@@ -3,6 +3,7 @@ import os
 import cv2
 import json
 import io
+import re
 import unicodedata
 import google.generativeai as genai
 import numpy as np
@@ -87,6 +88,7 @@ class Order(db.Model):
     points_used = db.Column(db.Integer, default=0)
     points_earned = db.Column(db.Integer, default=0)
     discount_amount = db.Column(db.Integer, default=0)
+    completed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
     @property
@@ -187,6 +189,8 @@ with app.app_context():
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN status VARCHAR(50) DEFAULT "Pending"'))
     if 'is_manual_popular' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_manual_popular BOOLEAN DEFAULT 0"))
+    if 'completed_at' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN completed_at DATETIME'))
     # 4. 檢查 OrderItem 資料表
     order_item_info = db.session.execute(db.text("PRAGMA table_info(order_item)")).fetchall()
     order_item_cols = [col[1] for col in order_item_info]
@@ -528,7 +532,7 @@ def redeem_reward():
             'remaining_points': user.points
         })
 
-    # 2. 兌換餐點
+    # 2. 兌換餐點 (支援客製化選項與加料差額)
     item = MenuItem.query.get(data.get('item_id'))
     if not item or not item.is_reward:
         return jsonify({'success': False, 'message': '無效的兌換商品！'}), 400
@@ -541,6 +545,10 @@ def redeem_reward():
     session['user_points'] = user.points
     db.session.commit()
     
+    # 💡 讀取前端傳入之客製化內容與加料加價
+    customization = str(data.get('customization', '')).strip()
+    extra_price = int(data.get('extra_price', 0))
+    
     return jsonify({
         'success': True,
         'is_coupon': False,
@@ -549,8 +557,8 @@ def redeem_reward():
         'redeemed_item': {
             'id': f'reward_{item.id}_{int(time.time())}',
             'name': f'🎁 [點數兌換] {item.name}',
-            'price': 0,
-            'customization': '紅利免費兌換',
+            'price': extra_price,
+            'customization': customization if customization else '紅利免費兌換',
             'quantity': 1
         }
     })
@@ -775,12 +783,31 @@ def generate_ai_business_advice(analytics_data):
 # ==============================================================================
 def build_order_analytics(orders, limit=1):
     today = datetime.now().date()
-    today_orders = [o for o in orders if o.created_at and o.created_at.date() == today]
-    today = datetime.now().date()
-    pending_orders = [o for o in orders if o.status == 'Pending' and o.created_at and o.created_at.date() == today]
+    today_orders = [o for o in orders if o.created_at and o.created_at.date() == today and o.status != 'Cancelled']
+    pending_orders = [o for o in today_orders if o.status == 'Pending']
+    completed_today_orders = [o for o in today_orders if o.status == 'Completed']
 
-    total_revenue = sum((o.total_price or 0) for o in today_orders)
-    avg_order_value = total_revenue / len(today_orders) if today_orders else 0
+    # 💡 1. 平均每單價格：過濾掉實付金額為 0 元的純點數兌換單
+    paid_today_orders = [o for o in today_orders if (o.total_price or 0) > 0]
+    total_revenue = sum((o.total_price or 0) for o in paid_today_orders)
+    avg_order_value = total_revenue / len(paid_today_orders) if paid_today_orders else 0
+
+    # 💡 2. 平均每單時間 (分鐘)：優先以實際出餐時間計算，若無則依餐點數量推估
+    actual_durations = []
+    for o in completed_today_orders:
+        if getattr(o, 'completed_at', None) and o.created_at:
+            diff_min = (o.completed_at - o.created_at).total_seconds() / 60.0
+            if 0 < diff_min <= 180:  # 排除跨日或異常紀錄
+                actual_durations.append(diff_min)
+
+    if actual_durations:
+        avg_order_time = round(sum(actual_durations) / len(actual_durations), 1)
+    elif today_orders:
+        total_items = sum(sum((i.quantity or 1) for i in o.items) for o in today_orders)
+        avg_items_per_order = total_items / len(today_orders) if today_orders else 1
+        avg_order_time = round(max(3.0, avg_items_per_order * 2.0 + 3.0), 1)
+    else:
+        avg_order_time = 0.0
 
     valid_item_names = {item.name for item in MenuItem.query.all()}
 
@@ -789,7 +816,6 @@ def build_order_analytics(orders, limit=1):
         if order.status == 'Cancelled':  
             continue
         for item in order.items:
-            # 💡 排除點數兌換品項
             if '[點數兌換]' in item.item_name or item.item_name.startswith('🎁') or item.customization == '紅利免費兌換':
                 continue
 
@@ -812,20 +838,18 @@ def build_order_analytics(orders, limit=1):
     
     eta_minutes = max(5, total_items_qty * 2 + 4)
     
-    # 💡 1. 建立營運分析結果字典
     analytics_result = {
         'today_orders': len(today_orders),
         'today_revenue': total_revenue,
         'pending_count': len(pending_orders),
         'avg_order_value': avg_order_value,
+        'avg_order_time': avg_order_time,
         'top_items': top_items,
         'eta_minutes': eta_minutes,
-        'completed_today': sum(1 for o in today_orders if o.status == 'Completed')
+        'completed_today': len(completed_today_orders)
     }
 
-    # 💡 2. 帶入 AI 建議生成函式，並將結果存入 ai_advice 欄位
     analytics_result['ai_advice'] = generate_ai_business_advice(analytics_result)
-    
     return analytics_result
 
 @app.route('/admin', methods=['GET', 'POST'])
@@ -1603,12 +1627,14 @@ def update_order_status(id):
     order = Order.query.get_or_404(id)
     data = request.get_json()
     new_status = data.get('status')
-    
+
     if new_status in ['Pending', 'Completed', 'Cancelled']:
         order.status = new_status
+        if new_status == 'Completed':
+            order.completed_at = datetime.now()
         db.session.commit()
         return jsonify({'message': '狀態更新成功', 'status': new_status})
-        
+
     return jsonify({'error': '無效的狀態'}), 400
 
 # --- 編輯會員資料 (姓名、手機、紅利點數) ---
@@ -1680,7 +1706,122 @@ def delete_user(id):
 
 
 # ==============================================================================
-# 8. 程式進入點 (Main Entry)
+# 8. KDS 廚房出單看板系統 (Kitchen Display System)
+# ==============================================================================
+@app.route('/kitchen')
+def kitchen_display():
+    """廚房專屬出單看板頁面"""
+    return render_template('kitchen.html')
+
+@app.route('/api/kitchen_orders')
+def api_kitchen_orders():
+    """取得今日目前待製作（Pending）的即時訂單清單 (FIFO 先進先出並同類合併)"""
+    today = datetime.now().date()
+    pending_orders = Order.query.filter(
+        Order.status == 'Pending',
+        db.func.date(Order.created_at) == today
+    ).order_by(Order.created_at.asc()).all()
+
+    orders_data = []
+    for o in pending_orders:
+        aggregated_items = {}
+        for i in o.items:
+            clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', i.item_name).strip()
+            custom_note = '' if i.customization == '紅利免費兌換' else (i.customization or '')
+
+            key = (clean_name, custom_note)
+            if key not in aggregated_items:
+                aggregated_items[key] = {
+                    'name': clean_name,
+                    'quantity': 0,
+                    'customization': custom_note
+                }
+            # 3. 數量自動累加
+            aggregated_items[key]['quantity'] += (i.quantity or 1)
+
+        orders_data.append({
+            'id': o.id,
+            'table_number': o.table_number,
+            'order_type': o.order_type,
+            'created_at': o.created_at.strftime('%H:%M:%S') if o.created_at else '',
+            'timestamp': o.created_at.timestamp() if o.created_at else time.time(),
+            'items': list(aggregated_items.values())
+        })
+
+    return jsonify({'success': True, 'orders': orders_data})
+
+@app.route('/api/kitchen_update_status/<int:id>', methods=['POST'])
+def kitchen_update_status(id):
+    """廚房一鍵出餐或取消訂單"""
+    order = Order.query.get_or_404(id)
+    data = request.get_json() or {}
+    new_status = data.get('status', 'Completed')
+
+    if new_status in ['Pending', 'Completed', 'Cancelled']:
+        order.status = new_status
+        if new_status == 'Completed':
+            order.completed_at = datetime.now()
+        db.session.commit()
+        return jsonify({'success': True, 'message': f'訂單 #{order.id} 狀態已更新為 {new_status}'})
+    return jsonify({'success': False, 'message': '無效的狀態'}), 400
+
+@app.route('/api/admin_live_orders')
+def api_admin_live_orders():
+    """供店家後台即時同步今日訂單看板"""
+    if not session.get('admin_logged_in'):
+        return jsonify({'error': '未授權'}), 401
+    
+    today = datetime.now().date()
+    today_orders = Order.query.filter(
+        db.func.date(Order.created_at) == today
+    ).order_by(Order.id.desc()).all()
+
+    orders_data = []
+    for o in today_orders:
+        items_data = [{
+            'item_name': i.item_name,
+            'quantity': i.quantity,
+            'price': i.price,
+            'customization': i.customization or ''
+        } for i in o.items]
+
+        orders_data.append({
+            'id': o.id,
+            'user_name': o.user.name if o.user else '非會員',
+            'order_type': o.order_type,
+            'payment_method': o.payment_method,
+            'created_at': o.created_at.strftime('%m-%d %H:%M') if o.created_at else '',
+            'status': o.status,
+            'discount_amount': o.discount_amount or 0,
+            'total_price': o.total_price,
+            'items': items_data
+        })
+
+    return jsonify({'success': True, 'orders': orders_data})
+
+@app.route('/api/kitchen_complete_all', methods=['POST'])
+def kitchen_complete_all():
+    """廚房看板：一鍵將今日所有待製作 (Pending) 訂單全部標記為已出餐 (Completed)"""
+    today = datetime.now().date()
+    pending_orders = Order.query.filter(
+        Order.status == 'Pending',
+        db.func.date(Order.created_at) == today
+    ).all()
+
+    if not pending_orders:
+        return jsonify({'success': False, 'message': '目前沒有待製作的訂單！'})
+
+    count = len(pending_orders)
+    now = datetime.now()  # 💡 記錄當下出餐時間
+    for o in pending_orders:
+        o.status = 'Completed'
+        o.completed_at = now  # 💡 補上這行
+
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'✅ 已成功將 {count} 筆訂單批次完成出餐！', 'count': count})
+
+# ==============================================================================
+# 9. 程式進入點 (Main Entry)
 # ==============================================================================
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)

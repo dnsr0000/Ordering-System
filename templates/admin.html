@@ -120,6 +120,9 @@
                         <i class="bi bi-cloud-upload me-1"></i> 匯入資料
                     </button>
                 </form>
+                <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold">
+                <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
+                </a>
             </div>
             
             <!-- 🕒 右側加入即時時鐘與操作按鈕 -->
@@ -171,7 +174,7 @@
         <div class="tab-content" id="adminTabContent">
             <!-- 1. 實時訂單看板 -->
             <div class="tab-pane fade show active" id="orders-pane" role="tabpanel">
-                <div class="row g-3">
+                <div class="row g-3" id="admin-orders-grid">
                     {% for order in orders %}
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
@@ -309,9 +312,15 @@
                                 <div class="card-body p-3">
                                     <h6 class="fw-bold text-white mb-3"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運簡報</h6>
                                     <div class="mb-3">
-                                        <div class="text-white-50 small">平均每單</div>
+                                        <div class="text-white-50 small">平均每單 (排除純點數訂單)</div>
                                         <div class="fw-bold fs-4 text-warning">${{ analytics.avg_order_value|round(0)|int }}</div>
                                     </div>
+
+                                    <div class="mb-3">
+                                        <div class="text-white-50 small">平均每單時間</div>
+                                        <div class="fw-bold fs-4 text-info">{{ analytics.avg_order_time }} <span class="fs-6 text-white-50">分鐘</span></div>
+                                    </div>
+
                                     <div class="mb-3">
                                         <div class="text-white-50 small">已完成今日訂單</div>
                                         <div class="fw-bold fs-4 text-success">{{ analytics.completed_today }}</div>
@@ -1557,6 +1566,89 @@ document.addEventListener("DOMContentLoaded", function () {
         // ... 其他原本的初始化
         bindRewardValidation();
     });
+
+    // 💡 店家後台：即時同步今日訂單狀態（免手動重新整理）
+    function syncAdminLiveOrders() {
+        // 若使用者正在操作下拉選單或不在 orders 分頁，則略過重繪以防干擾操作
+        if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
+        const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
+        if (activeTab !== 'orders') return;
+
+        fetch('/api/admin_live_orders')
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) return;
+                const grid = document.getElementById('admin-orders-grid');
+                if (!grid) return;
+
+                if (data.orders.length === 0) {
+                    grid.innerHTML = `
+                        <div class="col-12 text-center py-5">
+                            <i class="bi bi-inbox text-secondary display-3"></i>
+                            <p class="text-white-50 mt-2">目前沒有任何訂單紀錄</p>
+                        </div>`;
+                    return;
+                }
+
+                grid.innerHTML = data.orders.map(order => {
+                    let borderClass = 'border-info';
+                    if (order.status === 'Pending') borderClass = 'border-warning';
+                    else if (order.status === 'Completed') borderClass = 'border-success';
+                    else if (order.status === 'Cancelled') borderClass = 'border-danger';
+
+                    return `
+                    <div class="col-12 col-md-6 col-lg-4">
+                        <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${borderClass}">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h5 class="fw-bold text-warning mb-0">#${order.id}</h5>
+                                <div class="d-flex gap-1">
+                                    <span class="badge bg-primary">${order.order_type}</span>
+                                    <span class="badge bg-secondary">${order.payment_method}</span>
+                                </div>
+                            </div>
+
+                            <div class="text-white-50 small mb-2 d-flex justify-content-between">
+                                <span><i class="bi bi-person me-1"></i>${order.user_name}</span>
+                                <span><i class="bi bi-clock me-1"></i>${order.created_at}</span>
+                            </div>
+
+                            <hr class="border-secondary my-2">
+
+                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
+                                ${order.items.map(item => `
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div>
+                                            <div class="text-white small fw-bold">${item.item_name} x ${item.quantity}</div>
+                                            ${item.customization ? `<small class="text-danger d-block" style="font-size: 0.75rem;">${item.customization}</small>` : ''}
+                                        </div>
+                                        <div class="text-white-50 small">$${Math.round(item.price * item.quantity)}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+
+                            <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
+                                <div>
+                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: $${Math.round(order.discount_amount)}</small>
+                                    <span class="text-white fw-bold fs-5">$${Math.round(order.total_price)}</span>
+                                </div>
+                                <div style="min-width: 130px;">
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value)">
+                                        <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
+                                        <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
+                                        <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+            })
+            .catch(err => console.error("後台即時同步失敗:", err));
+    }
+
+    // 每 3 秒同步一次後台訂單看板
+    setInterval(syncAdminLiveOrders, 3000);
     </script>
 {% endif %}
 
