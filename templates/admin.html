@@ -186,6 +186,17 @@
                                 </div>
                             </div>
 
+                            {% if order.order_type == '外帶' %}
+                            <div class="mb-2">
+                                <span class="badge {% if order.need_cutlery %}bg-success{% else %}bg-secondary{% endif %}">
+                                    {{ '要餐具' if order.need_cutlery else '不用餐具' }}
+                                </span>
+                                {% if order.note %}
+                                <div class="small text-warning mt-1">備註：{{ order.note }}</div>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+
                             <div class="text-white-50 small mb-2 d-flex justify-content-between">
                                 <span><i class="bi bi-person me-1"></i>{{ order.user.name if order.user else '非會員' }}</span>
                                 <span><i class="bi bi-clock me-1"></i>{{ order.created_at.strftime('%m-%d %H:%M') if order.created_at else '' }}</span>
