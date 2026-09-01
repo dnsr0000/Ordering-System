@@ -376,6 +376,7 @@
                                     <th>單價</th>
                                     <th>標籤狀態</th>
                                     <th>商城狀態</th>
+                                    <th>數量 (剩餘 / 總量)</th> 
                                     <th class="text-end">操作</th>
                                 </tr>
                             </thead>
@@ -391,10 +392,12 @@
                                     </td>
                                     <td><span class="badge bg-secondary">{{ item.category }}</span></td>
                                     <td class="fw-bold text-warning">${{ item.price }}</td>
-                                    <td>
+                                    <!-- 標籤狀態欄位 -->
+                                    <td id="item-tags-{{ item.id }}">
+                                        {% if item.is_sold_out or item.stock <= 0 %}<span class="badge bg-secondary me-1 sold-out-badge">已售完</span>{% endif %}
                                         {% if item.is_manual_popular or item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
-                                        {% if item.is_new %}<span class="badge bg-success">新品</span>{% endif %}
-                                        {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark">特價</span>{% endif %}
+                                        {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
+                                        {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
                                     </td>
                                     <td>
                                         {% if item.is_reward %}
@@ -406,25 +409,39 @@
                                             <span class="badge bg-dark text-white-50 border border-secondary">未上架</span>
                                         {% endif %}
                                     </td>
+                                    <td>
+                                        <div class="d-inline-flex align-items-center bg-dark border border-secondary rounded px-2 py-1 shadow-sm">
+                                            <span id="item-stock-badge-{{ item.id }}" class="badge {% if item.stock <= 0 or item.is_sold_out %}bg-danger{% elif item.stock <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %} fw-bold px-2 py-1" title="剩餘數量">
+                                                {{ item.stock }}
+                                            </span>
+                                            <span class="text-white-50 mx-1 small">/</span>
+                                            <span class="badge bg-secondary text-white fw-bold px-2 py-1" title="總量">
+                                                {{ item.total_stock }}
+                                            </span>
+                                        </div>
+                                    </td>
                                     <td class="text-end">
-                                        <button class="btn btn-outline-primary btn-sm me-1" type="button"
-                                                data-id="{{ item.id }}" 
-                                                data-name="{{ item.name }}" 
-                                                data-category="{{ item.category }}"
-                                                data-modifiers="{{ item.modifiers or 'none' }}" 
-                                                data-price="{{ item.price }}"
-                                                data-is-discount="{{ 1 if item.is_discount else 0 }}"
-                                                data-discount-price="{{ item.discount_price or 0 }}"
-                                                data-description="{{ item.description or '' }}" 
-                                                data-image="{{ item.image_path or '' }}"
-                                                data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
-                                                data-new="{{ 1 if item.is_new else 0 }}"
-                                                data-is-reward="{{ 1 if item.is_reward else 0 }}"
-                                                data-reward-points="{{ item.reward_points or 0 }}"
-                                                data-reward-discount="{{ item.reward_discount_points or 0 }}"
-                                                onclick="openEditModal(this)">
-                                            <i class="bi bi-pencil-square"></i> 編輯
-                                        </button>
+                                    <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                            data-id="{{ item.id }}" 
+                                            data-name="{{ item.name }}" 
+                                            data-category="{{ item.category }}"
+                                            data-modifiers="{{ item.modifiers or 'none' }}" 
+                                            data-price="{{ item.price }}"
+                                            data-stock="{{ item.stock or 0 }}"
+                                            data-total-stock="{{ item.total_stock or 0 }}"
+                                            data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
+                                            data-is-discount="{{ 1 if item.is_discount else 0 }}"
+                                            data-discount-price="{{ item.discount_price or 0 }}"
+                                            data-description="{{ item.description or '' }}" 
+                                            data-image="{{ item.image_path or '' }}"
+                                            data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
+                                            data-new="{{ 1 if item.is_new else 0 }}"
+                                            data-is-reward="{{ 1 if item.is_reward else 0 }}"
+                                            data-reward-points="{{ item.reward_points or 0 }}"
+                                            data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                            onclick="openEditModal(this)">
+                                        <i class="bi bi-pencil-square"></i> 編輯
+                                    </button>
                                         <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
                                             <i class="bi bi-trash"></i> 刪除
                                         </a>
@@ -571,6 +588,9 @@
                                                 data-category="{{ item.category }}"
                                                 data-modifiers="{{ item.modifiers or 'none' }}" 
                                                 data-price="{{ item.price }}"
+                                                data-stock="{{ item.stock or 0 }}"
+                                                data-total-stock="{{ item.total_stock or 0 }}"
+                                                data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
                                                 data-description="{{ item.description or '' }}" 
                                                 data-image="{{ item.image_path or '' }}"
                                                 data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
@@ -775,6 +795,16 @@
                                     <label class="form-label small fw-bold">原單價 (NT$)</label>
                                     <input type="number" min="0" class="form-control" name="price" id="add-price" required></div>
                                 </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">剩餘數量 (庫存)</label>
+                                <input type="number" min="0" class="form-control" name="stock" id="add-stock" value="50" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">總量 (初始庫存)</label>
+                                <input type="number" min="0" class="form-control" name="total_stock" value="50" required>
+                            </div>
+                        </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
                             <input type="number" min="0" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
@@ -798,6 +828,7 @@
                             <img id="add-preview-img" class="mt-2 rounded-3 object-fit-cover" style="max-height: 100px; display: none;">
                         </div>
                         <div class="d-flex flex-wrap gap-3 mb-3">
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_sold_out" value="1" id="add-sold-out"><label class="form-check-label small text-danger fw-bold" for="add-sold-out">🚫 標記為售完</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="add-rec"><label class="form-check-label small" for="add-rec">🔥 熱門推薦</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="1" id="add-new"><label class="form-check-label small" for="add-new">✨ 新品上市</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_discount" value="1" id="add-discount"><label class="form-check-label small text-warning fw-bold" for="add-discount">🏷️ 限時特價</label></div>
@@ -833,6 +864,17 @@
                                 <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
                                 <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
                                 <div class="invalid-feedback text-danger small">請設定大於 0 的有效特價金額！</div>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">剩餘數量 (庫存)</label>
+                                <input type="number" min="0" class="form-control" name="stock" id="edit-stock" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">總量 (初始庫存)</label>
+                                <input type="number" min="0" class="form-control" name="total_stock" id="edit-total-stock" required>
+                            </div>
                         </div>
 
                         <!-- 紅利商城設定區塊 -->
@@ -877,6 +919,7 @@
                             <img id="edit-image-preview" class="mt-2 rounded-3 object-fit-cover" width="80" height="80">
                         </div>
                         <div class="d-flex flex-wrap gap-3 mb-3">
+                            <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_sold_out" value="1" id="edit-sold-out"><label class="form-check-label small text-danger fw-bold" for="edit-sold-out">🚫 標記為售完</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="edit-recommended"><label class="form-check-label small" for="edit-recommended">🔥 熱門推薦</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="1" id="edit-new"><label class="form-check-label small" for="edit-new">✨ 新品上市</label></div>
                             <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_discount" value="1" id="edit-discount"><label class="form-check-label small text-warning fw-bold" for="edit-discount">🏷️ 限時特價</label></div>
@@ -1289,6 +1332,9 @@ document.addEventListener("DOMContentLoaded", function () {
             document.getElementById('edit-category').value = d.category;
             document.getElementById('edit-modifiers').value = d.modifiers;
             document.getElementById('edit-price').value = Math.round(Number(d.price || 0));
+            document.getElementById('edit-stock').value = d.stock || 0;
+            document.getElementById('edit-total-stock').value = d.totalStock || 0;
+            document.getElementById('edit-sold-out').checked = d.isSoldOut === '1';
             document.getElementById('edit-discount').checked = d.isDiscount === '1';
             document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
             document.getElementById('edit-description').value = d.description || '';
@@ -1653,7 +1699,45 @@ let shouldReloadOnClose = false;
             .then(data => {
                 if (!data || !data.success) return;
 
-                // 1. 💡 即時同步「營運分析」卡片指標
+                // 1. 💡 即時同步「菜單品項」剩餘數量標籤、標籤狀態與編輯按鈕
+                if (data.menu_items) {
+                    data.menu_items.forEach(it => {
+                        // A. 更新雙格數量標籤中的剩餘數量及徽章顏色
+                        const badge = document.getElementById(`item-stock-badge-${it.id}`);
+                        if (badge) {
+                            badge.innerText = it.stock;
+                            badge.className = 'badge fw-bold px-2 py-1 ' + 
+                                ((it.stock <= 0 || it.is_sold_out) ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-success'));
+                        }
+
+                        // B. 💡 即時刷新「標籤狀態」中的「已售完」徽章
+                        const tagCell = document.getElementById(`item-tags-${it.id}`);
+                        if (tagCell) {
+                            const existingSoldOutBadge = tagCell.querySelector('.sold-out-badge');
+                            const isSoldOutNow = it.is_sold_out || (it.stock <= 0);
+
+                            if (isSoldOutNow && !existingSoldOutBadge) {
+                                // 庫存為 0 或售完時：在最前方插入「已售完」徽章
+                                const newBadge = document.createElement('span');
+                                newBadge.className = 'badge bg-secondary me-1 sold-out-badge';
+                                newBadge.innerText = '已售完';
+                                tagCell.insertBefore(newBadge, tagCell.firstChild);
+                            } else if (!isSoldOutNow && existingSoldOutBadge) {
+                                // 補貨有庫存時：移除「已售完」徽章
+                                existingSoldOutBadge.remove();
+                            }
+                        }
+
+                        // C. 同步更新編輯按鈕上的 dataset，確保點開編輯彈窗時帶入最新資料
+                        const editBtn = document.querySelector(`button[data-id="${it.id}"]`);
+                        if (editBtn) {
+                            editBtn.dataset.stock = it.stock;
+                            editBtn.dataset.isSoldOut = (it.is_sold_out || it.stock <= 0) ? "1" : "0";
+                        }
+                    });
+                }
+
+                // 2. 即時同步「營運分析」卡片指標
                 if (data.analytics) {
                     const elPending = document.getElementById('stat-pending-count');
                     const elOrders = document.getElementById('stat-today-orders');
@@ -1668,7 +1752,7 @@ let shouldReloadOnClose = false;
                     if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
                 }
 
-                // 2. 若使用者正在操作下拉選單或不在 orders 分頁，略過訂單列表重繪
+                // 3. 略過訂單列表重繪判斷
                 if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
                 const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
                 if (activeTab !== 'orders') return;
@@ -1741,7 +1825,35 @@ let shouldReloadOnClose = false;
             })
             .catch(err => console.error("後台即時同步失敗:", err));
     }
+    // 庫存數量與售完開關雙向連動邏輯
+    function bindStockSoldOutSync(stockInputId, soldOutCheckId) {
+        const stockInput = document.getElementById(stockInputId);
+        const soldOutCheck = document.getElementById(soldOutCheckId);
+        if (!stockInput || !soldOutCheck) return;
 
+        // 1. 數量變更連動開關
+        stockInput.addEventListener('input', function () {
+            const val = Number(this.value);
+            if (val > 0) {
+                soldOutCheck.checked = false;
+            } else if (val === 0) {
+                soldOutCheck.checked = true;
+            }
+        });
+
+        // 2. 開關切換連動數量
+        soldOutCheck.addEventListener('change', function () {
+            if (this.checked) {
+                stockInput.value = 0;
+            }
+        });
+    }
+
+    // 頁面載入時綁定新增與編輯 Modal
+    document.addEventListener("DOMContentLoaded", function () {
+        bindStockSoldOutSync('add-stock', 'add-sold-out');
+        bindStockSoldOutSync('edit-stock', 'edit-sold-out');
+    });
     // ==============================================================================
     // 店家後台 SSE 即時推播監聽器 (搭配 Fallback 備援機制)
     // ==============================================================================

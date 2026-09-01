@@ -106,44 +106,56 @@
                 <small class="text-white-50"><i class="bi bi-hand-index-thumb"></i> 點擊卡片直接加入購物車</small>
             </div>
             <div class="row gy-2">
-                {% for item in hot_items %}
-                {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
-                <div class="col-sm-6 col-md-4">
-                    <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
-                        style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.2s ease;"
-                        data-item-id="{{ item.id }}"
-                        data-item-name="{{ item.name }}"
-                        data-item-price="{{ actual_price }}"
-                        data-item-modifiers="{{ item.modifiers or 'none' }}"
-                        onclick="handleAddToCart(this)"
-                        onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)';"
-                        onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)';">
-                        <div>
-                            <div class="fw-bold text-white fs-6">{{ item.name }}</div>
-                            {% if item.description %}
-                            <small class="text-white-50 d-block" style="font-size: 0.75rem;">{{ item.description }}</small>
-                            {% endif %}
-                            <div class="mt-1">
-                                {% if item.is_discount and item.discount_price > 0 %}
-                                    <del class="text-white-50 small me-1">${{ item.price }}</del>
-                                    <span class="text-danger fw-bold">${{ item.discount_price }}</span>
-                                {% else %}
-                                    <span class="text-warning fw-bold">${{ item.price }}</span>
-                                {% endif %}
-                            </div>
-                        </div>
-                        <div class="d-flex align-items-center gap-1">
-                            <span class="badge bg-danger">熱門</span>
-                            {% if item.is_discount and item.discount_price > 0 %}
-                                <span class="badge bg-warning text-dark">特價</span>
-                            {% endif %}
-                            <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center ms-1" style="width: 28px; height: 28px;">
-                                <i class="bi bi-plus-lg text-dark fw-bold"></i>
-                            </span>
-                        </div>
+        {% for item in hot_items %}
+        {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
+        {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
+        <div class="col-sm-6 col-md-4">
+            <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
+                style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); {% if is_item_sold_out %}opacity: 0.55; cursor: not-allowed; filter: grayscale(80%);{% else %}cursor: pointer;{% endif %} transition: all 0.2s ease;"
+                data-item-id="{{ item.id }}"
+                data-item-name="{{ item.name }}"
+                data-item-price="{{ actual_price }}"
+                data-item-modifiers="{{ item.modifiers or 'none' }}"
+                {% if not is_item_sold_out %}
+                onclick="handleAddToCart(this)"
+                onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)';"
+                onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'; this.style.transform='translateY(0)';"
+                {% endif %}>
+                <div>
+                    <div class="fw-bold text-white fs-6">
+                        {{ item.name }}
+                        {% if is_item_sold_out %}
+                        <span class="badge bg-secondary ms-1">已售完</span>
+                        {% endif %}
+                    </div>
+                    {% if item.description %}
+                    <small class="text-white-50 d-block" style="font-size: 0.75rem;">{{ item.description }}</small>
+                    {% endif %}
+                    <div class="mt-1">
+                        {% if item.is_discount and item.discount_price > 0 %}
+                            <del class="text-white-50 small me-1">${{ item.price }}</del>
+                            <span class="text-danger fw-bold">${{ item.discount_price }}</span>
+                        {% else %}
+                            <span class="text-warning fw-bold">${{ item.price }}</span>
+                        {% endif %}
                     </div>
                 </div>
-                {% endfor %}
+                <div class="d-flex align-items-center gap-1">
+                    {% if is_item_sold_out %}
+                        <span class="badge bg-secondary">缺貨中</span>
+                    {% else %}
+                        <span class="badge bg-danger">熱門</span>
+                        {% if item.is_discount and item.discount_price > 0 %}
+                            <span class="badge bg-warning text-dark">特價</span>
+                        {% endif %}
+                        <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center ms-1" style="width: 28px; height: 28px;">
+                            <i class="bi bi-plus-lg text-dark fw-bold"></i>
+                        </span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
             </div>
         </div>
         {% endif %}
@@ -185,20 +197,24 @@
 
         <div id="menuList" class="row gy-3">
         {% for item in items %}
+        {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
         {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
         {% set is_disc = 1 if (item.is_discount and item.discount_price > 0) else 0 %}
         <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ actual_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ is_disc }}">
-            <div class="menu-card p-3">
+            <div class="menu-card p-3" style="{% if is_item_sold_out %}opacity: 0.65; border-color: rgba(255,255,255,0.04);{% endif %}">
                 <div class="d-flex align-items-start gap-3">
                     {% if item.image_path %}
-                    <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}">
+                    <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}" style="{% if is_item_sold_out %}filter: grayscale(80%);{% endif %}">
                     {% else %}
                     <div class="menu-img d-flex align-items-center justify-content-center bg-secondary text-white">無圖</div>
                     {% endif %}
                     <div class="flex-grow-1">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
-                                <h5 class="mb-1 text-warning">{{ item.name }}</h5>
+                                <h5 class="mb-1 text-warning">
+                                    {{ item.name }}
+                                    {% if is_item_sold_out %}<span class="badge bg-secondary ms-1">已售完</span>{% endif %}
+                                </h5>
                                 <small class="badge bg-secondary">{{ item.category or '未分類' }}</small>
                                 {% if item.is_recommended or item.is_manual_popular %}<span class="badge bg-danger">熱門</span>{% endif %}
                                 {% if item.is_new %}<span class="badge bg-info">新品</span>{% endif %}
@@ -214,12 +230,20 @@
                             </div>
                         </div>
                         <p class="mb-2 text-white-50 small">{{ item.description or '無描述' }}</p>
+                        
+                        <!-- 💡 判斷是否售完以切換按鈕 -->
+                        {% if is_item_sold_out %}
+                        <button class="btn btn-secondary btn-sm" type="button" disabled>
+                            <i class="bi bi-slash-circle"></i> 已售完
+                        </button>
+                        {% else %}
                         <button class="btn add-to-cart-btn btn-sm" type="button"
                             data-item-id="{{ item.id }}"
                             data-item-name="{{ item.name }}"
                             data-item-price="{{ actual_price }}"
                             data-item-modifiers="{{ item.modifiers or 'none' }}"
                             onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -618,21 +642,41 @@
             return;
         }
 
-        container.innerHTML = cart.map((item, idx) => `
-            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2">
+        container.innerHTML = cart.map((item, idx) => {
+            const isSoldOut = !!item.is_sold_out;
+            return `
+            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${isSoldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
                 <div>
-                    <div class="fw-bold text-warning">${item.name}</div>
-                    ${item.customization ? `<small class="text-info d-block">${item.customization}</small>` : ''}
-                    <small class="text-white-50">$${Math.round(item.price)} x ${item.quantity}</small>
+                    <div class="fw-bold ${isSoldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
+                        ${item.name} ${isSoldOut ? '<span class="badge bg-danger ms-1">已售完</span>' : ''}
+                    </div>
+                    ${item.customization ? `<small class="text-info d-block ${isSoldOut ? 'text-decoration-line-through text-white-50' : ''}">${item.customization}</small>` : ''}
+                    <small class="text-white-50 ${isSoldOut ? 'text-decoration-line-through' : ''}">$${Math.round(item.price)} x ${item.quantity}</small>
                 </div>
-                <div class="btn-group btn-group-sm">
-                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
-                    <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
+                <div class="d-flex align-items-center">
+                    ${isSoldOut ? `
+                        <button class="btn btn-sm btn-outline-danger fw-bold" onclick="removeCartItem(${idx})">
+                            <i class="bi bi-trash"></i> 移除
+                        </button>
+                    ` : `
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
+                            <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
+                        </div>
+                    `}
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
 
         calculateTotal();
+    }
+
+    // 新增：一鍵移除單一商品函式
+    function removeCartItem(index) {
+        cart.splice(index, 1);
+        saveCartToStorage();
+        updateCartUI();
     }
 
     function changeQty(index, delta) {
@@ -668,7 +712,12 @@
         if (pointsBox) pointsBox.style.display = 'none';
 
         updateCartUI();
-        bootstrap.Modal.getInstance(document.getElementById('receiptModal')).hide();
+        const receiptModalEl = document.getElementById('receiptModal');
+        const modalInstance = bootstrap.Modal.getInstance(receiptModalEl);
+        if (modalInstance) {
+            modalInstance.hide();
+        }
+        window.location.reload();
     }
 
     function applyPromoCode() {
@@ -764,6 +813,11 @@
 
     function openPreview() {
         if (!cart.length) { alert('購物車為空'); return; }
+        const soldOutItem = cart.find(i => i.is_sold_out);
+        if (soldOutItem) {
+            alert(`⚠️ 購物車中有已售完餐點【${soldOutItem.name}】，請先點擊「移除」後再結帳！`);
+            return;
+        }
         const subtotal = cart.reduce((a, i) => a + i.price * i.quantity, 0);
         const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
         const pointsInput = document.getElementById('pointsToUse');
@@ -831,11 +885,41 @@
                 use_points: pointsUsed
             })
         })
-        .then(r => {
-            if (!r.ok) throw new Error('伺服器錯誤');
-            return r.json();
+        .then(async r => {
+            const data = await r.json();
+            if (!r.ok) {
+                // 1. 捕捉完全售完餐點
+                if (data.sold_out && data.sold_out_items) {
+                    cart.forEach(item => {
+                        if (data.sold_out_items.includes(item.name)) {
+                            item.is_sold_out = true;
+                        }
+                    });
+                    saveCartToStorage();
+                    const cfModal = bootstrap.Modal.getInstance(document.getElementById('confirmModal'));
+                    if (cfModal) cfModal.hide();
+                    alert(`⚠️ 抱歉！以下餐點剛好售罄：\n【${data.sold_out_items.join('、')}】\n已為您更新菜單並在購物車中劃掉標記，請移除後再結帳！`);
+                    window.location.reload();
+                    return null;
+                }
+
+                // 💡 2. 捕捉數量超過庫存（例如剩 2 份卻點了 5 份）
+                if (data.insufficient_stock) {
+                    const cfModal = bootstrap.Modal.getInstance(document.getElementById('confirmModal'));
+                    if (cfModal) cfModal.hide();
+                    alert(`⚠️ 點餐數量超過目前剩餘庫存：\n\n${data.message}\n\n請至購物車調整購買數量後再重新結帳！`);
+                    const cs = bootstrap.Offcanvas.getOrCreateInstance(document.getElementById('cart-sidebar'));
+                    if (cs) cs.show();
+                    return null;
+                }
+
+                throw new Error(data.error || '結帳失敗');
+            }
+            return data;
         })
         .then(data => {
+            if (!data) return;
+
             bootstrap.Modal.getInstance(document.getElementById('confirmModal')).hide();
             const cs = bootstrap.Offcanvas.getInstance(document.getElementById('cart-sidebar'));
             if (cs) cs.hide();
@@ -848,7 +932,7 @@
             if (cartPts) cartPts.innerText = currentUserPoints;
 
             if (data.available_coupons !== undefined) {
-            updateAvailableCouponsUI(data.available_coupons);
+                updateAvailableCouponsUI(data.available_coupons);
             }
             document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
             document.getElementById('receipt-user').textContent = data.user_name;
@@ -886,8 +970,10 @@
             bootstrap.Modal.getOrCreateInstance(document.getElementById('receiptModal')).show();
         })
         .catch(e => {
-            console.error(e);
-            alert('結帳失敗，請稍後再試！');
+            if (e) {
+                console.error(e);
+                alert(e.message || '結帳失敗，請稍後再試！');
+            }
         });
     }
 

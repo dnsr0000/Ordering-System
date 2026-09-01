@@ -212,7 +212,10 @@
                     </div>
                     
                     <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">{{ item.name }}</h6>
+                        <h6 class="fw-bold text-white mb-1">
+                            {{ item.name }}
+                            {% if item.is_sold_out %}<span class="badge bg-secondary ms-1">已售完</span>{% endif %}
+                        </h6>
                         <small class="text-white-50 mb-2">市價 ${{ item.price }} 元</small>
                         
                         <div class="mb-3">
@@ -223,6 +226,13 @@
                             <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
                             {% endif %}
                         </div>
+
+                        <!-- 💡 售完防呆判斷 -->
+                        {% if item.is_sold_out %}
+                        <button class="btn btn-secondary w-100 mt-auto py-2" disabled>
+                            已售完 (缺貨中)
+                        </button>
+                        {% else %}
                         <button class="btn btn-redeem w-100 mt-auto py-2" 
                             data-id="{{ item.id }}" 
                             data-name="{{ item.name }}" 
@@ -231,6 +241,7 @@
                             onclick="promptRedeemItemFromData(this)">
                             立即兌換
                         </button>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -286,12 +297,15 @@
         function updateRedeemButtons() {
             document.querySelectorAll('.reward-item').forEach(item => {
                 const reqPoints = Number(item.dataset.points);
-                const btn = item.querySelector('button');
+                const btn = item.querySelector('button.btn-redeem'); 
+                if (!btn) return; 
+
                 if (currentPoints < reqPoints) {
                     btn.disabled = true;
                     btn.innerText = '點數不足';
                 } else {
                     btn.disabled = false;
+                    btn.innerText = item.dataset.code ? '兌換優惠券' : '立即兌換';
                 }
             });
         }

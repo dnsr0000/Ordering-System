@@ -69,6 +69,9 @@ class MenuItem(db.Model):
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50), default='主餐')
     price = db.Column(db.Integer, nullable=False)
+    stock = db.Column(db.Integer, default=50)               # 剩餘數量
+    total_stock = db.Column(db.Integer, default=50)         # 總量
+    is_sold_out = db.Column(db.Boolean, default=False)
     is_discount = db.Column(db.Boolean, default=False)      # 是否特價
     discount_price = db.Column(db.Integer, default=0)       # 特價金額
     is_recommended = db.Column(db.Boolean, default=False)   # 系統自動前 3 名熱門
@@ -175,6 +178,12 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN discount_price INTEGER DEFAULT 0"))
     if 'modifiers' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN modifiers VARCHAR(50) DEFAULT 'none'"))
+    if 'is_sold_out' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_sold_out BOOLEAN DEFAULT 0"))
+    if 'stock' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN stock INTEGER DEFAULT 50"))
+    if 'total_stock' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN total_stock INTEGER DEFAULT 50"))
 
     # 3. 檢查 Order 資料表
     order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
@@ -387,6 +396,56 @@ def submit_order():
     if not items:
         return jsonify({'error': '購物車為空'}), 400
 
+    # 💡 1. 加總購物車中各餐點的需求總量（合併同品名但不同客製化的數量）
+    item_demands = {}
+    for item_data in items:
+        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item_data['name']).strip()
+        item_demands[clean_name] = item_demands.get(clean_name, 0) + int(item_data.get('quantity', 1))
+
+    # 💡 2. 嚴格比對資料庫剩餘庫存
+    sold_out_items = []
+    insufficient_items = []
+
+    for clean_name, demanded_qty in item_demands.items():
+        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        if menu_item:
+            curr_stock = menu_item.stock if menu_item.stock is not None else 0
+            
+            # 完全無庫存或標記為售完
+            if menu_item.is_sold_out or curr_stock <= 0:
+                sold_out_items.append(clean_name)
+            # 點購數量超過現有剩餘數量
+            elif demanded_qty > curr_stock:
+                insufficient_items.append({
+                    'name': clean_name,
+                    'available': curr_stock,
+                    'demanded': demanded_qty
+                })
+
+    # 若有已售完商品：回傳售完提示
+    if sold_out_items:
+        unique_sold_out = list(set(sold_out_items))
+        return jsonify({
+            'success': False,
+            'sold_out': True,
+            'sold_out_items': unique_sold_out,
+            'message': f'部分餐點已售罄：{"、".join(unique_sold_out)}'
+        }), 400
+
+    # 若有點購數量大於庫存商品：阻擋下單並回傳剩餘量
+    if insufficient_items:
+        msg_list = [f"【{i['name']}】僅剩 {i['available']} 份（您點了 {i['demanded']} 份）" for i in insufficient_items]
+        return jsonify({
+            'success': False,
+            'insufficient_stock': True,
+            'insufficient_items': insufficient_items,
+            'message': "；\n".join(msg_list)
+        }), 400
+    
+    for item_data in items:
+        menu_item = MenuItem.query.filter_by(name=item_data['name']).first()
+        if menu_item and menu_item.is_sold_out:
+            return jsonify({'error': f'餐點【{menu_item.name}】已售罄，請從購物車移除！'}), 400
     # 1. 計算商品原始小計
     subtotal = sum(item['price'] * item['quantity'] for item in items)
     
@@ -455,6 +514,15 @@ def submit_order():
     db.session.flush()
 
     for item in items:
+        # 1. 💡 新增：過濾餐點名稱並抓取對應 MenuItem 扣除庫存
+        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item['name']).strip()
+        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        if menu_item:
+            menu_item.stock = max(0, (menu_item.stock or 0) - int(item.get('quantity', 1)))
+            if menu_item.stock == 0:
+                menu_item.is_sold_out = True  # 庫存扣至 0 時自動標記售完
+
+        # 2. 原本的建立 OrderItem 程式碼保持不變
         order_item = OrderItem(
             order_id=new_order.id,
             item_name=item['name'],
@@ -564,6 +632,9 @@ def redeem_reward():
     item = MenuItem.query.get(data.get('item_id'))
     if not item or not item.is_reward:
         return jsonify({'success': False, 'message': '無效的兌換商品！'}), 400
+
+    if item.is_sold_out:
+        return jsonify({'success': False, 'message': f'餐點【{item.name}】已售罄，暫無法兌換！'}), 400
     
     req_points = item.reward_discount_points if item.reward_discount_points > 0 else item.reward_points
     if user.points < req_points:
@@ -1041,8 +1112,11 @@ def add_item():
     category = request.form.get('category', '主餐')
     modifiers = request.form.get('modifiers', 'none')
     price = request.form.get('price')
+    stock = max(0, int(request.form.get('stock') or 0))
+    total_stock = max(stock, int(request.form.get('total_stock') or stock))
     desc = request.form.get('description', '')
     image = request.files.get('image')
+    is_sold_out = request.form.get('is_sold_out') == '1'
     is_rec = request.form.get('is_recommended') == '1'
     is_new = request.form.get('is_new') == '1'
     is_discount = request.form.get('is_discount') == '1'
@@ -1060,8 +1134,11 @@ def add_item():
             category=category,
             modifiers=modifiers,
             price=max(0, round(float(price))),
+            stock=stock,
+            total_stock=total_stock,
             description=desc,
             image_path=image_filename,
+            is_sold_out=is_sold_out,
             is_recommended=is_rec,
             is_manual_popular=is_rec,
             is_discount=is_discount,
@@ -1467,11 +1544,15 @@ def edit_item(id):
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
         item.price = max(0, round(float(price)))
+        item.stock = max(0, int(request.form.get('stock') or 0))
+        item.total_stock = max(item.stock, int(request.form.get('total_stock') or item.stock))
         item.is_discount = True if request.form.get('is_discount') else False
         item.discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
         item.description = request.form.get('description', '')
-        
-# 取得熱門勾選狀態（手動勾選只存入 is_manual_popular，不碰 is_recommended）
+        is_sold_out = True if request.form.get('is_sold_out') else (item.stock == 0)
+        item.is_sold_out = is_sold_out
+
+        # 取得熱門勾選狀態（手動勾選只存入 is_manual_popular，不碰 is_recommended）
         is_pop = request.form.get('is_recommended') or request.form.get('is_manual_popular')
         item.is_manual_popular = True if is_pop in ['1', 'true', 'on', True] else False
         
@@ -1825,7 +1906,7 @@ def kitchen_update_status(id):
 
 @app.route('/api/admin_live_orders')
 def api_admin_live_orders():
-    """供店家後台即時同步今日訂單看板與營運指標"""
+    """供店家後台即時同步今日訂單看板、營運指標與最新菜單庫存"""
     if not session.get('admin_logged_in'):
         return jsonify({'error': '未授權'}), 401
     
@@ -1860,6 +1941,14 @@ def api_admin_live_orders():
             'items': items_data
         })
 
+    all_items = MenuItem.query.all()
+    menu_items_data = [{
+        'id': item.id,
+        'stock': item.stock if item.stock is not None else 0,
+        'total_stock': item.total_stock if item.total_stock is not None else 50,
+        'is_sold_out': bool(item.is_sold_out) or ((item.stock or 0) <= 0)
+    } for item in all_items]
+
     valid_today = [o for o in today_orders if o.status != 'Cancelled']
     pending_orders = [o for o in today_orders if o.status == 'Pending']
     completed_orders = [o for o in today_orders if o.status == 'Completed']
@@ -1872,6 +1961,7 @@ def api_admin_live_orders():
     return jsonify({
         'success': True, 
         'orders': orders_data,
+        'menu_items': menu_items_data,
         'analytics': {
             'today_orders': len(valid_today),
             'today_revenue': today_revenue,
