@@ -83,6 +83,8 @@ class MenuItem(db.Model):
     is_reward = db.Column(db.Boolean, default=False)          # 是否開放紅利兌換
     reward_points = db.Column(db.Integer, default=0)          # 兌換所需點數
     reward_discount_points = db.Column(db.Integer, default=0) # 限時優惠點數 (0代表無優惠)
+    can_be_add_on = db.Column(db.Boolean, default=False)      # 是否可作為加購品
+    add_on_price = db.Column(db.Integer, default=0)           # 加購專屬優惠價
 
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -184,6 +186,10 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN stock INTEGER DEFAULT 50"))
     if 'total_stock' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN total_stock INTEGER DEFAULT 50"))
+    if 'can_be_add_on' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN can_be_add_on BOOLEAN DEFAULT 0"))
+    if 'add_on_price' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN add_on_price INTEGER DEFAULT 0"))
 
     # 3. 檢查 Order 資料表
     order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
@@ -1121,6 +1127,8 @@ def add_item():
     is_new = request.form.get('is_new') == '1'
     is_discount = request.form.get('is_discount') == '1'
     discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
+    can_be_add_on = True if request.form.get('can_be_add_on') else False
+    add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
 
     image_filename = ''
     if image and image.filename != '':
@@ -1129,6 +1137,15 @@ def add_item():
         save_and_fix_image(image, filepath)
 
     if name and price:
+        final_price = max(0, round(float(price)))
+        add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
+        can_be_add_on = True if request.form.get('can_be_add_on') else False
+
+        if can_be_add_on:
+            if add_on_price <= 0:
+                return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
+            if add_on_price >= final_price:
+                return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${final_price})！'); window.history.back();</script>", 400
         new_item = MenuItem(
             name=name,
             category=category,
@@ -1143,7 +1160,9 @@ def add_item():
             is_manual_popular=is_rec,
             is_discount=is_discount,
             discount_price=discount_price,
-            is_new=is_new
+            is_new=is_new,
+            can_be_add_on=can_be_add_on,
+            add_on_price=add_on_price
         )
         db.session.add(new_item)
         db.session.commit()
@@ -1540,10 +1559,36 @@ def edit_item(id):
     price = request.form.get('price')
     
     if name and price:
+        item_price = max(0, round(float(price)))
+        
+        # 1. 擷取加購品資料與防呆檢查
+        can_be_add_on = True if request.form.get('can_be_add_on') else False
+        add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
+        if can_be_add_on:
+            if add_on_price <= 0:
+                return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
+            if add_on_price >= item_price:
+                return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${item_price})！'); window.history.back();</script>", 400
+
+        # 2. 先定義紅利兌換變數（解決 UnboundLocalError）
+        is_reward = True if request.form.get('is_reward') else False
+        reward_points = max(0, int(request.form.get('reward_points') or 0))
+        reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+
+        # 3. 執行紅利兌換防呆檢查
+        if is_reward:
+            if reward_points <= 0:
+                return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
+            if reward_points > item_price:
+                return f"<script>alert('❌ 兌換所需點數 ({reward_points} 點) 不得高於原單價 (${item_price})！'); window.history.back();</script>", 400
+            if reward_discount_points > 0 and reward_discount_points >= reward_points:
+                return "<script>alert('❌ 「限時優惠點數」必須小於「兌換所需點數」！'); window.history.back();</script>", 400
+
+        # 4. 正式更新資料庫屬性
         item.name = name
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
-        item.price = max(0, round(float(price)))
+        item.price = item_price
         item.stock = max(0, int(request.form.get('stock') or 0))
         item.total_stock = max(item.stock, int(request.form.get('total_stock') or item.stock))
         item.is_discount = True if request.form.get('is_discount') else False
@@ -1552,26 +1597,18 @@ def edit_item(id):
         is_sold_out = True if request.form.get('is_sold_out') else (item.stock == 0)
         item.is_sold_out = is_sold_out
 
-        # 取得熱門勾選狀態（手動勾選只存入 is_manual_popular，不碰 is_recommended）
         is_pop = request.form.get('is_recommended') or request.form.get('is_manual_popular')
         item.is_manual_popular = True if is_pop in ['1', 'true', 'on', True] else False
-        
         item.is_new = True if request.form.get('is_new') else False
 
-        is_reward = True if request.form.get('is_reward') else False
-        reward_points = max(0, int(request.form.get('reward_points') or 0))
-        reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
-
-        if is_reward:
-            if reward_points <= 0:
-                return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
-            if reward_discount_points > 0 and reward_discount_points >= reward_points:
-                return "<script>alert('❌ 「限時優惠點數」必須小於「兌換所需點數」！'); window.history.back();</script>", 400
+        item.can_be_add_on = can_be_add_on
+        item.add_on_price = add_on_price
 
         item.is_reward = is_reward
         item.reward_points = reward_points
         item.reward_discount_points = reward_discount_points
 
+        # 5. 照片處理
         image = request.files.get('image')
         if image and image.filename != '':
             image_filename = f"menu_{int(time.time())}.jpg"

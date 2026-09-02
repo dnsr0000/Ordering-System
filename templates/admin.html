@@ -398,6 +398,7 @@
                                         {% if item.is_manual_popular or item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
                                         {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
                                         {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
+                                        {% if item.can_be_add_on %}<span class="badge bg-info text-dark me-1">可加購 (${{ item.add_on_price }})</span>{% endif %}
                                     </td>
                                     <td>
                                         {% if item.is_reward %}
@@ -439,6 +440,8 @@
                                             data-is-reward="{{ 1 if item.is_reward else 0 }}"
                                             data-reward-points="{{ item.reward_points or 0 }}"
                                             data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                            data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
+                                            data-addon-price="{{ item.add_on_price or 0 }}"
                                             onclick="openEditModal(this)">
                                         <i class="bi bi-pencil-square"></i> 編輯
                                     </button>
@@ -809,6 +812,18 @@
                             <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
                             <input type="number" min="0" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
                         </div>
+                        <div class="row g-2 mb-3 bg-secondary bg-opacity-25 p-2 rounded border border-secondary">
+                            <div class="col-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="can_be_add_on" value="1" id="add-can-addon">
+                                    <label class="form-check-label small fw-bold text-info" for="add-can-addon">開放作為加購品</label>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">加購專屬價 (NT$)</label>
+                                <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="add-addon-price" placeholder="例如：30" value="0">
+                            </div>
+                        </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">客製化群組</label>
                             <select class="form-select" name="modifiers">
@@ -861,11 +876,24 @@
                         </div>
                         <div class="row g-2 mb-3"><div class="col-6"><label class="form-label small fw-bold">分類</label><input type="text" class="form-control" name="category" id="edit-category" required></div><div class="col-6"><label class="form-label small fw-bold">原單價 (NT$)</label><input type="number" min="0" class="form-control" name="price" id="edit-price" required></div></div>
                         <div class="mb-3">
-                                <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
-                                <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
-                                <div class="invalid-feedback text-danger small">請設定大於 0 的有效特價金額！</div>
+                            <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
+                            <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
+                            <div class="invalid-feedback text-danger small">請設定大於 0 的有效特價金額！</div>
                         </div>
 
+                        <!-- 加購設定區塊：補上外層 row 容器 -->
+                        <div class="row g-2 mb-3 bg-secondary bg-opacity-25 p-2 rounded border border-secondary">
+                            <div class="col-6 d-flex align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="can_be_add_on" value="1" id="edit-can-addon">
+                                    <label class="form-check-label small fw-bold text-info" for="edit-can-addon">🍹 開放作為加購品</label>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold">加購專屬價 (NT$)</label>
+                                <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="edit-addon-price" value="0">
+                            </div>
+                        </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold">剩餘數量 (庫存)</label>
@@ -1337,6 +1365,8 @@ document.addEventListener("DOMContentLoaded", function () {
             document.getElementById('edit-sold-out').checked = d.isSoldOut === '1';
             document.getElementById('edit-discount').checked = d.isDiscount === '1';
             document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
+            document.getElementById('edit-can-addon').checked = d.canAddon === '1';
+            document.getElementById('edit-addon-price').value = Math.round(Number(d.addonPrice || 0));
             document.getElementById('edit-description').value = d.description || '';
             document.getElementById('edit-recommended').checked = d.recommended === '1';
             document.getElementById('edit-new').checked = d.new === '1';
@@ -1504,88 +1534,90 @@ let shouldReloadOnClose = false;
             }
         });
         
-    // --- 特價欄位防呆連動邏輯（原單價與特價大小檢查） ---
-    function bindDiscountValidation(formId, priceId, inputId, toggleId) {
+    // --- 原單價、特價與加購價防呆連動邏輯 ---
+    function bindDiscountValidation(formId, priceId, inputId, toggleId, addonPriceId, addonToggleId) {
         const form = document.getElementById(formId);
         const priceInput = document.getElementById(priceId);
         const input = document.getElementById(inputId);
         const toggle = document.getElementById(toggleId);
+        const addonInput = document.getElementById(addonPriceId);
+        const addonToggle = document.getElementById(addonToggleId);
 
-        if (!form || !priceInput || !input || !toggle) return;
+        if (!form || !priceInput) return;
 
-        // 1. 填寫特價金額 (>0) 時，自動開啟特價開關
-        input.addEventListener('input', function () {
-            const val = Number(this.value);
-            if (val > 0) {
-                toggle.checked = true;
-                this.classList.remove('is-invalid');
-            } else if (this.value === '' || val <= 0) {
-                toggle.checked = false;
-            }
-        });
+        // 特價自動連動
+        if (input && toggle) {
+            input.addEventListener('input', function () {
+                const val = Number(this.value);
+                if (val > 0) toggle.checked = true;
+                else if (this.value === '' || val <= 0) toggle.checked = false;
+            });
+            toggle.addEventListener('change', function () {
+                if (!this.checked) input.value = 0;
+                else if (Number(input.value) <= 0) { input.value = ''; input.focus(); }
+            });
+        }
 
-        // 2. 特價開關切換：關閉時自動清除特價金額
-        toggle.addEventListener('change', function () {
-            if (!this.checked) {
-                input.value = 0;
-                input.classList.remove('is-invalid');
-            } else {
-                if (Number(input.value) <= 0) {
-                    input.value = '';
-                    input.focus();
-                }
-            }
-        });
-
-        // 3. 表單送出檢查：確保特價大於 0 且小於原單價
-        form.addEventListener('submit', function (e) {
+        // 表單送出嚴格攔截
+        form.onsubmit = function (e) {
             const priceVal = Number(priceInput.value || 0);
 
-            // 防呆 A：原單價不能小於 0
-            if (priceVal < 0) {
-                e.preventDefault();
-                e.stopPropagation();
-                priceInput.classList.add('is-invalid');
+            // 1. 原單價檢查
+            if (priceVal <= 0) {
+                alert('⚠️ 原單價必須大於 0！');
                 priceInput.focus();
-                alert('⚠️ 原單價不可為負數！');
                 return false;
             }
 
-            if (toggle.checked) {
-                const val = Number(input.value);
-                // 防呆 B：開啟特價但沒填有效金額
-                if (!input.value || val <= 0) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    input.classList.add('is-invalid');
-                    input.focus();
+            // 2. 特價檢查
+            if (toggle && toggle.checked && input) {
+                const val = Number(input.value || 0);
+                if (val <= 0) {
                     alert('⚠️ 已開啟特價標籤，請輸入大於 0 的特價金額！');
+                    input.focus();
                     return false;
                 }
-                // 防呆 C：特價不可大於或等於原單價
                 if (val >= priceVal) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    input.classList.add('is-invalid');
+                    alert('⚠️ 特價金額必須小於原單價！');
                     input.focus();
-                    alert('特價金額必須小於原單價！');
                     return false;
                 }
             }
-            input.classList.remove('is-invalid');
-            priceInput.classList.remove('is-invalid');
-        });
+
+            // 3. 加購價檢查 (重點防呆)
+            if (addonToggle && addonToggle.checked && addonInput) {
+                const addonVal = Number(addonInput.value || 0);
+                if (addonVal <= 0) {
+                    alert('⚠️ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！');
+                    addonInput.focus();
+                    return false;
+                }
+                if (addonVal >= priceVal) {
+                    alert(`⚠️ 加購專屬價 ($${addonVal}) 不得高於或等於原單價 ($${priceVal})！`);
+                    addonInput.focus();
+                    return false;
+                }
+            }
+
+            return true;
+        };
     }
 
     // 初始化新增與編輯彈窗的特價防呆（帶入原單價欄位 id）
     document.addEventListener("DOMContentLoaded", function () {
-        bindDiscountValidation('addItemForm', 'add-price', 'add-discount-price', 'add-discount');
-        bindDiscountValidation('editItemForm', 'edit-price', 'edit-discount-price', 'edit-discount');
+        bindDiscountValidation('addItemForm', 'add-price', 'add-discount-price', 'add-discount', 'add-addon-price', 'add-can-addon');
+        bindDiscountValidation('editItemForm', 'edit-price', 'edit-discount-price', 'edit-discount', 'edit-addon-price', 'edit-can-addon');
+
+        bindAddonSync('add-addon-price', 'add-can-addon');
+        bindAddonSync('edit-addon-price', 'edit-can-addon');
+
+        bindRewardValidation();
     });
     
     // --- 紅利商城設定防呆邏輯 ---
     function bindRewardValidation() {
         const form = document.getElementById('editItemForm');
+        const priceInput = document.getElementById('edit-price'); // 取得原單價
         const toggle = document.getElementById('edit-is-reward');
         const pointsInput = document.getElementById('edit-reward-points');
         const discountInput = document.getElementById('edit-reward-discount');
@@ -1595,6 +1627,7 @@ let shouldReloadOnClose = false;
         form.addEventListener('submit', function (e) {
             // 如果有勾選開放紅利兌換
             if (toggle.checked) {
+                const priceVal = Number(priceInput ? priceInput.value : 0);
                 const points = Number(pointsInput.value || 0);
                 const discountPoints = Number(discountInput.value || 0);
 
@@ -1608,7 +1641,17 @@ let shouldReloadOnClose = false;
                     return false;
                 }
 
-                // 2. 檢查限時優惠點數是否小於原兌換點數 (若有填寫大於 0 的話)
+                // 2. 檢查兌換點數是否高於原單價 (直接嵌入此處)
+                if (priceVal > 0 && points > priceVal) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    pointsInput.classList.add('is-invalid');
+                    pointsInput.focus();
+                    alert(`⚠️ 兌換所需點數 (${points} 點) 不得高於原單價 ($${priceVal})！`);
+                    return false;
+                }
+
+                // 3. 檢查限時優惠點數是否小於原兌換點數 (若有填寫大於 0 的話)
                 if (discountPoints > 0 && discountPoints >= points) {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1622,6 +1665,7 @@ let shouldReloadOnClose = false;
             discountInput.classList.remove('is-invalid');
         });
     }
+
     function changeRankingLimit(limit) {
         // 切換前強制記住目前停留在 analytics 分頁，避免重新整理跳掉
         localStorage.setItem('adminActiveTab', 'analytics');
@@ -1629,8 +1673,7 @@ let shouldReloadOnClose = false;
         window.location.href = `/admin?limit=${limit}`;
     }
 
-    // 💡 切換編輯優惠券折抵模式的單位提示
-// 💡 優化：自動切換模式防呆
+    //  切換編輯優惠券折抵模式的單位提示
     function toggleEditCouponDiscInput(type) {
         const label = document.getElementById('edit-coupon-disc-val-label');
         const input = document.getElementById('edit-coupon-disc-val');
@@ -1659,7 +1702,7 @@ let shouldReloadOnClose = false;
         }
     });
 
-    // 💡 點擊「編輯」按鈕帶入優惠券原始資料並開啟 Modal
+    // 點擊「編輯」按鈕帶入優惠券原始資料並開啟 Modal
     function openEditCouponModal(btn) {
         const d = btn.dataset;
         document.getElementById('editCouponForm').action = '/admin/edit_coupon/' + d.id;
@@ -1677,12 +1720,6 @@ let shouldReloadOnClose = false;
 
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editCouponModal')).show();
     }
-    // 在網頁載入完成後初始化防呆繫結
-    document.addEventListener("DOMContentLoaded", function () {
-        // ... 其他原本的初始化
-        bindRewardValidation();
-    });
-
     //  店家後台：即時同步今日訂單狀態與營運分析指標
     function syncAdminLiveOrders() {
         fetch('/api/admin_live_orders')
@@ -1849,10 +1886,38 @@ let shouldReloadOnClose = false;
         });
     }
 
+    // --- 加購金額與開關雙向連動防呆邏輯 ---
+    function bindAddonSync(inputId, toggleId) {
+        const input = document.getElementById(inputId);
+        const toggle = document.getElementById(toggleId);
+        if (!input || !toggle) return;
+
+        input.addEventListener('input', function () {
+            const val = Number(this.value);
+            if (val > 0) {
+                toggle.checked = true;
+            } else if (this.value === '' || val <= 0) {
+                toggle.checked = false;
+            }
+        });
+
+        toggle.addEventListener('change', function () {
+            if (!this.checked) {
+                input.value = 0;
+            } else {
+                if (Number(input.value) <= 0) {
+                    input.value = '';
+                    input.focus();
+                }
+            }
+        });
+    }
     // 頁面載入時綁定新增與編輯 Modal
     document.addEventListener("DOMContentLoaded", function () {
         bindStockSoldOutSync('add-stock', 'add-sold-out');
         bindStockSoldOutSync('edit-stock', 'edit-sold-out');
+        bindAddonSync('add-addon-price', 'add-can-addon');
+        bindAddonSync('edit-addon-price', 'edit-can-addon');
     });
     // ==============================================================================
     // 店家後台 SSE 即時推播監聽器 (搭配 Fallback 備援機制)
