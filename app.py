@@ -1933,6 +1933,8 @@ def api_kitchen_orders():
             'id': o.id,
             'table_number': o.table_number,
             'order_type': o.order_type,
+            'need_cutlery': bool(o.need_cutlery) if getattr(o, 'need_cutlery', None) is not None else True,
+            'note': o.note or '',
             'created_at': o.created_at.strftime('%H:%M:%S') if o.created_at else '',
             'timestamp': o.created_at.timestamp() if o.created_at else time.time(),
             'items': list(aggregated_items.values())
