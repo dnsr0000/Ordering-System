@@ -398,7 +398,12 @@
                                         {% if item.is_manual_popular or item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
                                         {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
                                         {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
-                                        {% if item.can_be_add_on %}<span class="badge bg-info text-dark me-1">可加購 (${{ item.add_on_price }})</span>{% endif %}
+                                        {% if item.can_be_add_on %}
+                                        <span class="badge bg-info text-dark me-1" title="加購條件：{{ item.addon_trigger_type }} - {{ item.addon_trigger_target }}">
+                                            可加購 (${{ item.add_on_price }})
+                                            {% if item.addon_trigger_type == 'category' %}[限分類:{{ item.addon_trigger_target }}]{% elif item.addon_trigger_type == 'item' %}[限餐點:{{ item.addon_trigger_target }}]{% endif %}
+                                        </span>
+                                        {% endif %}
                                     </td>
                                     <td>
                                         {% if item.is_reward %}
@@ -442,6 +447,8 @@
                                             data-reward-discount="{{ item.reward_discount_points or 0 }}"
                                             data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
                                             data-addon-price="{{ item.add_on_price or 0 }}"
+                                            data-addon-trigger-type="{{ item.addon_trigger_type or 'any' }}"
+                                            data-addon-trigger-target="{{ item.addon_trigger_target or '' }}"
                                             onclick="openEditModal(this)">
                                         <i class="bi bi-pencil-square"></i> 編輯
                                     </button>
@@ -823,6 +830,17 @@
                                 <label class="form-label small fw-bold">加購專屬價 (NT$)</label>
                                 <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="add-addon-price" placeholder="例如：30" value="0">
                             </div>
+                            <div class="col-12 mt-2 pt-2 border-top border-secondary" id="add-addon-rules" style="display: none;">
+                                <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
+                                <div class="d-flex gap-2">
+                                    <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="add-addon-type" onchange="toggleAddonTarget('add')">
+                                        <option value="any">購買任一主餐皆可</option>
+                                        <option value="category">需購買特定分類</option>
+                                        <option value="item">需購買特定餐點</option>
+                                    </select>
+                                    <select class="form-select form-select-sm w-50" name="addon_trigger_target" id="add-addon-target" style="display: none;"></select>
+                                </div>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">客製化群組</label>
@@ -886,12 +904,24 @@
                             <div class="col-6 d-flex align-items-center">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" name="can_be_add_on" value="1" id="edit-can-addon">
-                                    <label class="form-check-label small fw-bold text-info" for="edit-can-addon">🍹 開放作為加購品</label>
+                                    <label class="form-check-label small fw-bold text-info" for="edit-can-addon">開放作為加購品</label>
                                 </div>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold">加購專屬價 (NT$)</label>
                                 <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="edit-addon-price" value="0">
+                            </div>
+
+                            <div class="col-12 mt-2 pt-2 border-top border-secondary" id="edit-addon-rules" style="display: none;">
+                                <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
+                                <div class="d-flex gap-2">
+                                    <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="edit-addon-type" onchange="toggleAddonTarget('edit')">
+                                        <option value="any">購買任一主餐皆可</option>
+                                        <option value="category">需購買特定分類</option>
+                                        <option value="item">需購買特定餐點</option>
+                                    </select>
+                                    <select class="form-select form-select-sm w-50" name="addon_trigger_target" id="edit-addon-target" style="display: none;"></select>
+                                </div>
                             </div>
                         </div>
                         <div class="row g-2 mb-3">
@@ -1171,95 +1201,13 @@
             </div>
         </div>
     </div>
-
-    <!-- 新增的 JavaScript：動態控制日期欄位 -->
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            const dateTriggers = document.querySelectorAll('.exp-date-trigger');
-            const dateRangeDiv = document.getElementById('export-date-range');
-            const startDateInput = document.getElementById('exp-start-date');
-            const endDateInput = document.getElementById('exp-end-date');
-
-            // 💡 自動計算並預設「昨天」與「今天」的日期
-            const today = new Date();
-            const yesterday = new Date();
-            yesterday.setDate(today.getDate() - 1);
-
-            const formatDate = (d) => {
-                const year = d.getFullYear();
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            };
-
-            if (startDateInput && !startDateInput.value) {
-                startDateInput.value = formatDate(yesterday);
-            }
-            if (endDateInput && !endDateInput.value) {
-                endDateInput.value = formatDate(today);
-            }
-
-            function toggleDateRequirement() {
-                // 檢查是否勾選了任何需要日期的選項 (Order, OrderItem, Analytics)
-                const requiresDate = Array.from(dateTriggers).some(cb => cb.checked);
-                
-                if (requiresDate) {
-                    dateRangeDiv.style.display = 'flex';
-                    startDateInput.required = true;
-                    endDateInput.required = true;
-                } else {
-                    dateRangeDiv.style.display = 'none';
-                    startDateInput.required = false;
-                    endDateInput.required = false;
-                }
-            }
-
-            // 綁定事件監聽器並在初始化時執行一次
-            dateTriggers.forEach(cb => cb.addEventListener('change', toggleDateRequirement));
-            toggleDateRequirement();
-        });
-    </script>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
-    <script>
-document.addEventListener("DOMContentLoaded", function () {
-        const urlParams = new URLSearchParams(window.location.search);
-        const targetTab = urlParams.get('tab') || localStorage.getItem('adminActiveTab') || 'orders';
 
-        // 👉 1. 初始化時檢查並顯示正確的分頁（補上 analytics）
-        if (targetTab === 'menu') {
-            const btn = document.getElementById('menu-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        } else if (targetTab === 'analytics') {
-            const btn = document.getElementById('analytics-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        } else if (targetTab === 'rewards') {
-            const btn = document.getElementById('rewards-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        } else if (targetTab === 'users') {
-            const btn = document.getElementById('users-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        } else {
-            const btn = document.getElementById('orders-tab');
-            if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        }
+<script>
 
-        if (urlParams.has('tab')) {
-            localStorage.setItem('adminActiveTab', targetTab);
-            window.history.replaceState({}, document.title, window.location.pathname);
-        }
-
-        document.querySelectorAll('#adminTab button[data-bs-toggle="tab"]').forEach(tabBtn => {
-            tabBtn.addEventListener('shown.bs.tab', function (e) {
-                if (e.target.id === 'menu-tab') localStorage.setItem('adminActiveTab', 'menu');
-                else if (e.target.id === 'analytics-tab') localStorage.setItem('adminActiveTab', 'analytics');
-                else if (e.target.id === 'rewards-tab') localStorage.setItem('adminActiveTab', 'rewards');
-                else if (e.target.id === 'users-tab') localStorage.setItem('adminActiveTab', 'users');
-                else if (e.target.id === 'orders-tab') localStorage.setItem('adminActiveTab', 'orders');
-            });
-        });
-    });
+const menuCategories = [...new Set([{% for it in items if it.category %}'{{ it.category }}',{% endfor %}])];
+const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
     // --- 即時時鐘更新邏輯 ---
     function updateAdminClock() {
         const clockEl = document.getElementById('live-clock');
@@ -1275,264 +1223,257 @@ document.addEventListener("DOMContentLoaded", function () {
 
         clockEl.innerText = `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
     }
-    // 網頁載入後立即執行一次，並每秒自動更新
-    document.addEventListener("DOMContentLoaded", function () {
-        updateAdminClock();
-        setInterval(updateAdminClock, 1000);
-    });
-        function openUserCouponsModalFromData(btn) {
-            const userName = btn.dataset.userName;
-            const coupons = JSON.parse(btn.dataset.coupons || '[]');
-            openUserCouponsModal(userName, coupons);
+
+    function openUserCouponsModalFromData(btn) {
+        const userName = btn.dataset.userName;
+        const coupons = JSON.parse(btn.dataset.coupons || '[]');
+        openUserCouponsModal(userName, coupons);
+    }
+    function toggleDiscInput(type) {
+        const label = document.getElementById('disc-val-label');
+        const input = document.getElementById('coupon-disc-val');
+        input.min = '0';
+        if (type === 'percent') {
+            label.innerText = '折扣折數 (例如 0.9 代表9折)';
+            input.placeholder = '0.9';
+            input.max = '0.99';
+        } else {
+            label.innerText = '折抵金額 (NT$)';
+            input.placeholder = '50';
+            input.removeAttribute('max');
         }
-        function toggleDiscInput(type) {
-            const label = document.getElementById('disc-val-label');
-            const input = document.getElementById('coupon-disc-val');
-            input.min = '0';
-            if (type === 'percent') {
-                label.innerText = '折扣折數 (例如 0.9 代表9折)';
-                input.placeholder = '0.9';
-                input.max = '0.99';
-            } else {
-                label.innerText = '折抵金額 (NT$)';
-                input.placeholder = '50';
-                input.removeAttribute('max');
-            }
-        }
+    }
 
-        // 後台切換訂單狀態時更新
-        function changeOrderStatus(orderId, newStatus, selectEl) {
-            localStorage.setItem('adminActiveTab', 'orders');
-            // 1. 💡 當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
-            if (selectEl) {
-                selectEl.blur();
-                
-                // 2. 💡 立即原地切換卡片外框邊框顏色
-                const card = selectEl.closest('.card-custom');
-                if (card) {
-                    card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
-                    if (newStatus === 'Pending') card.classList.add('border-warning');
-                    else if (newStatus === 'Completed') card.classList.add('border-success');
-                    else if (newStatus === 'Cancelled') card.classList.add('border-danger');
-                    else card.classList.add('border-info');
-                }
-            }
-
-            // 3. 送出後端更新請求並觸發全面同步
-            fetch(`/admin/update_order_status/${orderId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus })
-            })
-            .then(r => r.json())
-            .then(d => { 
-                if (d.message) {
-                    syncAdminLiveOrders();
-                } else {
-                    alert(d.error);
-                }
-            })
-            .catch(err => {
-                console.error("狀態更新失敗:", err);
-                alert("網路異常，狀態更新失敗！");
-            });
-        }
-
-        function submitRankingLimit() {
-        const input = document.getElementById('rankingLimitInput');
-        let limit = Number(input.value);
-        
-        // 防呆：如果輸入空白或小於 1 則預設為 3
-        if (!limit || limit < 1) {
-            limit = 3;
-        }
-
-        // 強制記住目前停留在 analytics 分頁，避免重新整理跳掉
-        localStorage.setItem('adminActiveTab', 'analytics');
-        // 帶入自訂的 limit 參數重新整理頁面
-        window.location.href = `/admin?limit=${limit}`;
-        }
-
-        function openEditModal(btn) {
-            const d = btn.dataset;
-            document.getElementById('editItemForm').action = '/admin/edit/' + d.id;
-            document.getElementById('edit-name').value = d.name;
-            document.getElementById('edit-category').value = d.category;
-            document.getElementById('edit-modifiers').value = d.modifiers;
-            document.getElementById('edit-price').value = Math.round(Number(d.price || 0));
-            document.getElementById('edit-stock').value = d.stock || 0;
-            document.getElementById('edit-total-stock').value = d.totalStock || 0;
-            document.getElementById('edit-sold-out').checked = d.isSoldOut === '1';
-            document.getElementById('edit-discount').checked = d.isDiscount === '1';
-            document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
-            document.getElementById('edit-can-addon').checked = d.canAddon === '1';
-            document.getElementById('edit-addon-price').value = Math.round(Number(d.addonPrice || 0));
-            document.getElementById('edit-description').value = d.description || '';
-            document.getElementById('edit-recommended').checked = d.recommended === '1';
-            document.getElementById('edit-new').checked = d.new === '1';
-            document.getElementById('edit-is-reward').checked = d.isReward === '1';
-            document.getElementById('edit-reward-points').value = d.rewardPoints || 0;
-            document.getElementById('edit-reward-discount').value = d.rewardDiscount || 0;
-
-            const activeTab = localStorage.getItem('adminActiveTab') || 'menu';
-            const fromTabInput = document.getElementById('edit-from-tab');
-            if (fromTabInput) fromTabInput.value = activeTab;
-
-            document.getElementById('edit-image-file').value = '';
-            document.getElementById('edit-image-preview').src = d.image ? '/static/menu/' + d.image : 'https://dummyimage.com/100x100/e9ecef/6c757d.png&text=No+Image';
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('editItemModal')).show();
-        }
-
-        let cropper = null, currentFileInput = null, currentPreviewImgId = null;
-        function initiateCrop(inputElement, previewImgId) {
-            if (inputElement.files && inputElement.files[0]) {
-                currentFileInput = inputElement;
-                currentPreviewImgId = previewImgId;
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    document.getElementById('crop-image-target').src = e.target.result;
-                    bootstrap.Modal.getOrCreateInstance(document.getElementById('cropModal')).show();
-                };
-                reader.readAsDataURL(inputElement.files[0]);
-            }
-        }
-
-
-        function openEditUserModal(btn) {
-            const d = btn.dataset;
-            document.getElementById('editUserForm').action = '/admin/edit_user/' + d.id;
-            document.getElementById('edit-user-name').value = d.name;
-            document.getElementById('edit-user-phone').value = d.phone;
-            document.getElementById('edit-user-points').value = d.points || 0;
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('editUserModal')).show();
-        }
-
-        const cropModalEl = document.getElementById('cropModal');
-        cropModalEl.addEventListener('shown.bs.modal', function () {
-            if (cropper) cropper.destroy();
-            cropper = new Cropper(document.getElementById('crop-image-target'), {
-                aspectRatio: 1, viewMode: 1, autoCropArea: 0.9, responsive: true, background: false
-            });
-        });
-
-        function confirmCrop() {
-            if (!cropper || !currentFileInput) return;
-            const canvas = cropper.getCroppedCanvas({ width: 600, height: 600 });
-            canvas.toBlob(function (blob) {
-                const croppedFile = new File([blob], "cropped_" + Date.now() + ".jpg", { type: "image/jpeg" });
-                const dt = new DataTransfer();
-                dt.items.add(croppedFile);
-                currentFileInput.files = dt.files;
-                if (currentPreviewImgId) {
-                    const prev = document.getElementById(currentPreviewImgId);
-                    if (prev) {
-                        prev.src = canvas.toDataURL('image/jpeg');
-                        prev.style.display = 'block';
-                    }
-                }
-                bootstrap.Modal.getInstance(cropModalEl).hide();
-            }, 'image/jpeg', 0.9);
-        }
-
-let shouldReloadOnClose = false;
-        let activeCouponUserName = '';
-
-        function openUserCouponsModalFromData(btn) {
-            const userName = btn.dataset.userName;
-            activeCouponUserName = userName;
-            const coupons = JSON.parse(btn.dataset.coupons || '[]');
-            openUserCouponsModal(userName, coupons);
-        }
-
-        function openUserCouponsModal(userName, coupons) {
-            shouldReloadOnClose = false;
-            activeCouponUserName = userName;
-            document.getElementById('userCouponsModalTitle').innerText = `${userName} 的專屬票券管理`;
-            renderUserCouponsBody(userName, coupons);
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('userCouponsModal')).show();
-        }
-
-        function renderUserCouponsBody(userName, coupons) {
-            const body = document.getElementById('userCouponsModalBody');
+    // 後台切換訂單狀態時更新
+    function changeOrderStatus(orderId, newStatus, selectEl) {
+        localStorage.setItem('adminActiveTab', 'orders');
+        // 1. 💡 當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
+        if (selectEl) {
+            selectEl.blur();
             
-            if (!coupons || coupons.length === 0) {
-                body.innerHTML = '<div class="text-center text-white-50 py-3">此會員目前尚無任何專屬優惠券。</div>';
+            // 2. 💡 立即原地切換卡片外框邊框顏色
+            const card = selectEl.closest('.card-custom');
+            if (card) {
+                card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
+                if (newStatus === 'Pending') card.classList.add('border-warning');
+                else if (newStatus === 'Completed') card.classList.add('border-success');
+                else if (newStatus === 'Cancelled') card.classList.add('border-danger');
+                else card.classList.add('border-info');
+            }
+        }
+
+        // 3. 送出後端更新請求並觸發全面同步
+        fetch(`/admin/update_order_status/${orderId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        })
+        .then(r => r.json())
+        .then(d => { 
+            if (d.message) {
+                syncAdminLiveOrders();
             } else {
-                body.innerHTML = `
-                    <div class="table-responsive">
-                        <table class="table table-dark-custom align-middle mb-0">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>票券名稱 / 代碼</th>
-                                    <th>目前狀態</th>
-                                    <th class="text-end">切換使用權限</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${coupons.map(c => `
-                                    <tr>
-                                        <td>
-                                            <div class="fw-bold text-white">${c.title}</div>
-                                            <small class="text-warning">代碼: ${c.code}</small>
-                                        </td>
-                                        <td>
-                                            ${c.is_used 
-                                                ? '<span class="badge bg-dark text-white-50 border border-secondary">已核銷 (Used)</span>' 
-                                                : '<span class="badge bg-success-subtle text-success border border-success">未使用 (Available)</span>'}
-                                        </td>
-                                        <td class="text-end">
-                                            <button type="button" class="btn btn-sm ${c.is_used ? 'btn-outline-success' : 'btn-outline-secondary'}" onclick="toggleCouponStatus(${c.id}, '${userName}')">
-                                                ${c.is_used ? '設為可用' : '設為已核銷'}
-                                            </button>
-                                        </td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
+                alert(d.error);
             }
-        }
-
-        function toggleCouponStatus(couponId, userName) {
-            fetch(`/admin/toggle_user_coupon/${couponId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    shouldReloadOnClose = true;
-                    // 1. 即時重繪彈窗內容
-                    renderUserCouponsBody(userName, data.coupons);
-                    
-                    // 2. 💡 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
-                    const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
-                    btns.forEach(b => {
-                        b.dataset.coupons = JSON.stringify(data.coupons);
-                    });
-                } else {
-                    alert(data.message || '操作失敗');
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                alert('網路錯誤，請稍後再試');
-            });
-        }
-
-        // 💡 監聽彈窗關閉：有修改過票券狀態時，關閉彈窗自動重新載入頁面同步資料
-        document.addEventListener("DOMContentLoaded", function () {
-            const userCouponsModalEl = document.getElementById('userCouponsModal');
-            if (userCouponsModalEl) {
-                userCouponsModalEl.addEventListener('hidden.bs.modal', function () {
-                    if (shouldReloadOnClose) {
-                        localStorage.setItem('adminActiveTab', 'users');
-                        window.location.reload();
-                    }
-                });
-            }
+        })
+        .catch(err => {
+            console.error("狀態更新失敗:", err);
+            alert("網路異常，狀態更新失敗！");
         });
+    }
+
+    function submitRankingLimit() {
+    const input = document.getElementById('rankingLimitInput');
+    let limit = Number(input.value);
+    
+    // 防呆：如果輸入空白或小於 1 則預設為 3
+    if (!limit || limit < 1) {
+        limit = 3;
+    }
+
+    // 強制記住目前停留在 analytics 分頁，避免重新整理跳掉
+    localStorage.setItem('adminActiveTab', 'analytics');
+    // 帶入自訂的 limit 參數重新整理頁面
+    window.location.href = `/admin?limit=${limit}`;
+    }
+
+    function openEditModal(btn) {
+        const d = btn.dataset;
+        document.getElementById('editItemForm').action = '/admin/edit/' + d.id;
+        document.getElementById('edit-name').value = d.name;
+        document.getElementById('edit-category').value = d.category;
+        document.getElementById('edit-modifiers').value = d.modifiers;
+        document.getElementById('edit-price').value = Math.round(Number(d.price || 0));
+        document.getElementById('edit-stock').value = d.stock || 0;
+        document.getElementById('edit-total-stock').value = d.totalStock || 0;
+        document.getElementById('edit-sold-out').checked = d.isSoldOut === '1';
+        document.getElementById('edit-discount').checked = d.isDiscount === '1';
+        document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
+        document.getElementById('edit-can-addon').checked = d.canAddon === '1';
+        document.getElementById('edit-addon-price').value = Math.round(Number(d.addonPrice || 0));
+        document.getElementById('edit-description').value = d.description || '';
+        document.getElementById('edit-recommended').checked = d.recommended === '1';
+        document.getElementById('edit-new').checked = d.new === '1';
+        document.getElementById('edit-is-reward').checked = d.isReward === '1';
+        document.getElementById('edit-reward-points').value = d.rewardPoints || 0;
+        document.getElementById('edit-reward-discount').value = d.rewardDiscount || 0;
+
+        const activeTab = localStorage.getItem('adminActiveTab') || 'menu';
+        const fromTabInput = document.getElementById('edit-from-tab');
+        if (fromTabInput) fromTabInput.value = activeTab;
+
+        document.getElementById('edit-image-file').value = '';
+        document.getElementById('edit-image-preview').src = d.image ? '/static/menu/' + d.image : 'https://dummyimage.com/100x100/e9ecef/6c757d.png&text=No+Image';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editItemModal')).show();
+
+        // 帶入加購條件類型與目標下拉選單的值
+        const triggerType = d.addonTriggerType || 'any';
+        const triggerTarget = d.addonTriggerTarget || '';
+        const editTypeEl = document.getElementById('edit-addon-type');
+        if (editTypeEl) editTypeEl.value = triggerType;
+        toggleAddonTarget('edit', triggerTarget);
+
+        const rulesBox = document.getElementById('edit-addon-rules');
+        if (rulesBox) rulesBox.style.display = (d.canAddon === '1') ? 'block' : 'none';
+    }
+
+    let cropper = null, currentFileInput = null, currentPreviewImgId = null;
+    function initiateCrop(inputElement, previewImgId) {
+        if (inputElement.files && inputElement.files[0]) {
+            currentFileInput = inputElement;
+            currentPreviewImgId = previewImgId;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                document.getElementById('crop-image-target').src = e.target.result;
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('cropModal')).show();
+            };
+            reader.readAsDataURL(inputElement.files[0]);
+        }
+    }
+
+
+    function openEditUserModal(btn) {
+        const d = btn.dataset;
+        document.getElementById('editUserForm').action = '/admin/edit_user/' + d.id;
+        document.getElementById('edit-user-name').value = d.name;
+        document.getElementById('edit-user-phone').value = d.phone;
+        document.getElementById('edit-user-points').value = d.points || 0;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editUserModal')).show();
+    }
+
+    const cropModalEl = document.getElementById('cropModal');
+    cropModalEl.addEventListener('shown.bs.modal', function () {
+        if (cropper) cropper.destroy();
+        cropper = new Cropper(document.getElementById('crop-image-target'), {
+            aspectRatio: 1, viewMode: 1, autoCropArea: 0.9, responsive: true, background: false
+        });
+    });
+
+    function confirmCrop() {
+        if (!cropper || !currentFileInput) return;
+        const canvas = cropper.getCroppedCanvas({ width: 600, height: 600 });
+        canvas.toBlob(function (blob) {
+            const croppedFile = new File([blob], "cropped_" + Date.now() + ".jpg", { type: "image/jpeg" });
+            const dt = new DataTransfer();
+            dt.items.add(croppedFile);
+            currentFileInput.files = dt.files;
+            if (currentPreviewImgId) {
+                const prev = document.getElementById(currentPreviewImgId);
+                if (prev) {
+                    prev.src = canvas.toDataURL('image/jpeg');
+                    prev.style.display = 'block';
+                }
+            }
+            bootstrap.Modal.getInstance(cropModalEl).hide();
+        }, 'image/jpeg', 0.9);
+    }
+
+    let shouldReloadOnClose = false;
+    let activeCouponUserName = '';
+
+    function openUserCouponsModalFromData(btn) {
+        const userName = btn.dataset.userName;
+        activeCouponUserName = userName;
+        const coupons = JSON.parse(btn.dataset.coupons || '[]');
+        openUserCouponsModal(userName, coupons);
+    }
+
+    function openUserCouponsModal(userName, coupons) {
+        shouldReloadOnClose = false;
+        activeCouponUserName = userName;
+        document.getElementById('userCouponsModalTitle').innerText = `${userName} 的專屬票券管理`;
+        renderUserCouponsBody(userName, coupons);
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('userCouponsModal')).show();
+    }
+
+    function renderUserCouponsBody(userName, coupons) {
+        const body = document.getElementById('userCouponsModalBody');
+        
+        if (!coupons || coupons.length === 0) {
+            body.innerHTML = '<div class="text-center text-white-50 py-3">此會員目前尚無任何專屬優惠券。</div>';
+        } else {
+            body.innerHTML = `
+                <div class="table-responsive">
+                    <table class="table table-dark-custom align-middle mb-0">
+                        <thead>
+                            <tr class="text-white-50 small">
+                                <th>票券名稱 / 代碼</th>
+                                <th>目前狀態</th>
+                                <th class="text-end">切換使用權限</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${coupons.map(c => `
+                                <tr>
+                                    <td>
+                                        <div class="fw-bold text-white">${c.title}</div>
+                                        <small class="text-warning">代碼: ${c.code}</small>
+                                    </td>
+                                    <td>
+                                        ${c.is_used 
+                                            ? '<span class="badge bg-dark text-white-50 border border-secondary">已核銷 (Used)</span>' 
+                                            : '<span class="badge bg-success-subtle text-success border border-success">未使用 (Available)</span>'}
+                                    </td>
+                                    <td class="text-end">
+                                        <button type="button" class="btn btn-sm ${c.is_used ? 'btn-outline-success' : 'btn-outline-secondary'}" onclick="toggleCouponStatus(${c.id}, '${userName}')">
+                                            ${c.is_used ? '設為可用' : '設為已核銷'}
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+    }
+
+    function toggleCouponStatus(couponId, userName) {
+        fetch(`/admin/toggle_user_coupon/${couponId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                shouldReloadOnClose = true;
+                // 1. 即時重繪彈窗內容
+                renderUserCouponsBody(userName, data.coupons);
+                
+                // 2. 💡 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
+                const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
+                btns.forEach(b => {
+                    b.dataset.coupons = JSON.stringify(data.coupons);
+                });
+            } else {
+                alert(data.message || '操作失敗');
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('網路錯誤，請稍後再試');
+        });
+    }
         
     // --- 原單價、特價與加購價防呆連動邏輯 ---
     function bindDiscountValidation(formId, priceId, inputId, toggleId, addonPriceId, addonToggleId) {
@@ -1603,17 +1544,6 @@ let shouldReloadOnClose = false;
         };
     }
 
-    // 初始化新增與編輯彈窗的特價防呆（帶入原單價欄位 id）
-    document.addEventListener("DOMContentLoaded", function () {
-        bindDiscountValidation('addItemForm', 'add-price', 'add-discount-price', 'add-discount', 'add-addon-price', 'add-can-addon');
-        bindDiscountValidation('editItemForm', 'edit-price', 'edit-discount-price', 'edit-discount', 'edit-addon-price', 'edit-can-addon');
-
-        bindAddonSync('add-addon-price', 'add-can-addon');
-        bindAddonSync('edit-addon-price', 'edit-can-addon');
-
-        bindRewardValidation();
-    });
-    
     // --- 紅利商城設定防呆邏輯 ---
     function bindRewardValidation() {
         const form = document.getElementById('editItemForm');
@@ -1870,10 +1800,11 @@ let shouldReloadOnClose = false;
 
         // 1. 數量變更連動開關
         stockInput.addEventListener('input', function () {
+            if (this.value === '') return; // 避免刪除中的空白誤判
             const val = Number(this.value);
             if (val > 0) {
                 soldOutCheck.checked = false;
-            } else if (val === 0) {
+            } else if (val <= 0) {
                 soldOutCheck.checked = true;
             }
         });
@@ -1885,40 +1816,79 @@ let shouldReloadOnClose = false;
             }
         });
     }
+    // 動態切換加購條件下拉選單（依類型填充分類或餐點）
+    function toggleAddonTarget(prefix, selectedValue = '') {
+        const typeSel = document.getElementById(`${prefix}-addon-type`);
+        const targetSel = document.getElementById(`${prefix}-addon-target`);
+        if (!typeSel || !targetSel) return;
 
+        // 1. 抓取當前餐點自身的分類與名稱
+        let selfCategory = '';
+        let selfName = '';
+        if (prefix === 'edit') {
+            selfCategory = document.getElementById('edit-category')?.value?.trim() || '';
+            selfName = document.getElementById('edit-name')?.value?.trim() || '';
+        } else {
+            selfCategory = document.querySelector('#addItemForm [name="category"]')?.value?.trim() || '';
+            selfName = document.querySelector('#addItemForm [name="name"]')?.value?.trim() || '';
+        }
+
+        if (typeSel.value === 'any') {
+            targetSel.style.display = 'none';
+            targetSel.removeAttribute('required');
+            targetSel.innerHTML = '';
+        } else if (typeSel.value === 'category') {
+            targetSel.style.display = 'block';
+            targetSel.setAttribute('required', 'required');
+
+            // 2. 過濾排除當前餐點所屬的分類
+            const filteredCategories = menuCategories.filter(c => c && c !== selfCategory);
+
+            targetSel.innerHTML = '<option value="" disabled selected>-- 請選擇指定分類 --</option>' +
+                (filteredCategories.length > 0
+                    ? filteredCategories.map(c => `<option value="${c}">${c}</option>`).join('')
+                    : '<option value="" disabled>無其他分類可選</option>');
+
+            if (selectedValue && filteredCategories.includes(selectedValue)) {
+                targetSel.value = selectedValue;
+            }
+        } else if (typeSel.value === 'item') {
+            targetSel.style.display = 'block';
+            targetSel.setAttribute('required', 'required');
+
+            // 3. 過濾排除當前餐點自己
+            const filteredItems = menuItemsList.filter(name => name && name !== selfName);
+
+            targetSel.innerHTML = '<option value="" disabled selected>-- 請選擇指定餐點 --</option>' +
+                (filteredItems.length > 0
+                    ? filteredItems.map(name => `<option value="${name}">${name}</option>`).join('')
+                    : '<option value="" disabled>無其他餐點可選</option>');
+
+            if (selectedValue && filteredItems.includes(selectedValue)) {
+                targetSel.value = selectedValue;
+            }
+        }
+    }
     // --- 加購金額與開關雙向連動防呆邏輯 ---
-    function bindAddonSync(inputId, toggleId) {
+    function bindAddonSync(inputId, toggleId, rulesId) {
         const input = document.getElementById(inputId);
         const toggle = document.getElementById(toggleId);
+        const rules = document.getElementById(rulesId);
         if (!input || !toggle) return;
 
         input.addEventListener('input', function () {
             const val = Number(this.value);
-            if (val > 0) {
-                toggle.checked = true;
-            } else if (this.value === '' || val <= 0) {
-                toggle.checked = false;
-            }
+            if (val > 0) toggle.checked = true;
+            else if (this.value === '' || val <= 0) toggle.checked = false;
+            if (rules) rules.style.display = toggle.checked ? 'block' : 'none';
         });
 
         toggle.addEventListener('change', function () {
-            if (!this.checked) {
-                input.value = 0;
-            } else {
-                if (Number(input.value) <= 0) {
-                    input.value = '';
-                    input.focus();
-                }
-            }
+            if (!this.checked) input.value = 0;
+            else if (Number(input.value) <= 0) { input.value = ''; input.focus(); }
+            if (rules) rules.style.display = toggle.checked ? 'block' : 'none';
         });
     }
-    // 頁面載入時綁定新增與編輯 Modal
-    document.addEventListener("DOMContentLoaded", function () {
-        bindStockSoldOutSync('add-stock', 'add-sold-out');
-        bindStockSoldOutSync('edit-stock', 'edit-sold-out');
-        bindAddonSync('add-addon-price', 'add-can-addon');
-        bindAddonSync('edit-addon-price', 'edit-can-addon');
-    });
     // ==============================================================================
     // 店家後台 SSE 即時推播監聽器 (搭配 Fallback 備援機制)
     // ==============================================================================
@@ -1959,13 +1929,134 @@ let shouldReloadOnClose = false;
             }
         };
     }
+// ==============================================================================
+// 系統初始化與事件綁定
+// ==============================================================================
+document.addEventListener("DOMContentLoaded", function () {
+    
+    // ---------------------------------------------------------
+    // 1. 初始化頁籤狀態 (Tab 記憶功能)
+    // ---------------------------------------------------------
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetTab = urlParams.get('tab') || localStorage.getItem('adminActiveTab') || 'orders';
 
-    // 頁面載入完成後啟動監聽與初次同步
-    document.addEventListener("DOMContentLoaded", function () {
-        syncAdminLiveOrders();
-        initAdminSSE();
+    const tabMap = {
+        'menu': 'menu-tab',
+        'analytics': 'analytics-tab',
+        'rewards': 'rewards-tab',
+        'users': 'users-tab',
+        'orders': 'orders-tab'
+    };
+
+    const btnId = tabMap[targetTab] || 'orders-tab';
+    const btnEl = document.getElementById(btnId);
+    if (btnEl) bootstrap.Tab.getOrCreateInstance(btnEl).show();
+
+    if (urlParams.has('tab')) {
+        localStorage.setItem('adminActiveTab', targetTab);
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    document.querySelectorAll('#adminTab button[data-bs-toggle="tab"]').forEach(tabBtn => {
+        tabBtn.addEventListener('shown.bs.tab', function (e) {
+            const currentId = e.target.id;
+            for (const [key, value] of Object.entries(tabMap)) {
+                if (value === currentId) {
+                    localStorage.setItem('adminActiveTab', key);
+                    break;
+                }
+            }
+        });
     });
 
+    // ---------------------------------------------------------
+    // 2. 啟動即時時鐘
+    // ---------------------------------------------------------
+    if (typeof updateAdminClock === 'function') {
+        updateAdminClock();
+        setInterval(updateAdminClock, 1000);
+    }
+
+    // ---------------------------------------------------------
+    // 3. Excel 匯出日期邏輯控制
+    // ---------------------------------------------------------
+    const dateTriggers = document.querySelectorAll('.exp-date-trigger');
+    const dateRangeDiv = document.getElementById('export-date-range');
+    const startDateInput = document.getElementById('exp-start-date');
+    const endDateInput = document.getElementById('exp-end-date');
+
+    if (startDateInput && endDateInput) {
+        const today = new Date();
+        const yesterday = new Date();
+        yesterday.setDate(today.getDate() - 1);
+
+        const formatDate = (d) => {
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        if (!startDateInput.value) startDateInput.value = formatDate(yesterday);
+        if (!endDateInput.value) endDateInput.value = formatDate(today);
+
+        function toggleDateRequirement() {
+            const requiresDate = Array.from(dateTriggers).some(cb => cb.checked);
+            if (requiresDate) {
+                dateRangeDiv.style.display = 'flex';
+                startDateInput.required = true;
+                endDateInput.required = true;
+            } else {
+                dateRangeDiv.style.display = 'none';
+                startDateInput.required = false;
+                endDateInput.required = false;
+            }
+        }
+
+        dateTriggers.forEach(cb => cb.addEventListener('change', toggleDateRequirement));
+        toggleDateRequirement();
+    }
+
+    // ---------------------------------------------------------
+    // 4. 監聽會員專屬票券 Modal 關閉事件 (重整資料)
+    // ---------------------------------------------------------
+    const userCouponsModalEl = document.getElementById('userCouponsModal');
+    if (userCouponsModalEl) {
+        userCouponsModalEl.addEventListener('hidden.bs.modal', function () {
+            if (typeof shouldReloadOnClose !== 'undefined' && shouldReloadOnClose) {
+                localStorage.setItem('adminActiveTab', 'users');
+                window.location.reload();
+            }
+        });
+    }
+
+    // ---------------------------------------------------------
+    // 5. 表單防呆與連動綁定 (加購、特價、紅利)
+    // ---------------------------------------------------------
+    if (typeof bindStockSoldOutSync === 'function') {
+        bindStockSoldOutSync('add-stock', 'add-sold-out');
+        bindStockSoldOutSync('edit-stock', 'edit-sold-out');
+    }
+    if (typeof bindDiscountValidation === 'function') {
+        bindDiscountValidation('addItemForm', 'add-price', 'add-discount-price', 'add-discount', 'add-addon-price', 'add-can-addon');
+        bindDiscountValidation('editItemForm', 'edit-price', 'edit-discount-price', 'edit-discount', 'edit-addon-price', 'edit-can-addon');
+    }
+    if (typeof bindAddonSync === 'function') {
+        // 加入了條件規則(rules)的參數
+        bindAddonSync('add-addon-price', 'add-can-addon', 'add-addon-rules');
+        bindAddonSync('edit-addon-price', 'edit-can-addon', 'edit-addon-rules');
+    }
+    if (typeof bindRewardValidation === 'function') {
+        bindRewardValidation();
+    }
+
+    // ---------------------------------------------------------
+    // 6. 啟動訂單即時推播與同步 (SSE)
+    // ---------------------------------------------------------
+    if (typeof syncAdminLiveOrders === 'function') syncAdminLiveOrders();
+    if (typeof initAdminSSE === 'function') initAdminSSE();
+
+});
     </script>
 {% endif %}
 

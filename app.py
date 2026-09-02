@@ -85,6 +85,8 @@ class MenuItem(db.Model):
     reward_discount_points = db.Column(db.Integer, default=0) # 限時優惠點數 (0代表無優惠)
     can_be_add_on = db.Column(db.Boolean, default=False)      # 是否可作為加購品
     add_on_price = db.Column(db.Integer, default=0)           # 加購專屬優惠價
+    addon_trigger_type = db.Column(db.String(20), default='any')  # 'any', 'category', 'item'
+    addon_trigger_target = db.Column(db.String(100), default='')  # 目標分類名稱或餐點名稱
 
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -190,6 +192,10 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN can_be_add_on BOOLEAN DEFAULT 0"))
     if 'add_on_price' not in menu_cols:
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN add_on_price INTEGER DEFAULT 0"))
+    if 'addon_trigger_type' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN addon_trigger_type VARCHAR(20) DEFAULT 'any'"))
+    if 'addon_trigger_target' not in menu_cols:
+        db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN addon_trigger_target VARCHAR(100) DEFAULT ''"))
 
     # 3. 檢查 Order 資料表
     order_info = db.session.execute(db.text('PRAGMA table_info("order")')).fetchall()
@@ -1016,6 +1022,7 @@ def add_coupon():
     reward_points = max(0, int(request.form.get('reward_points') or 0))
     reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
+
     existing = Coupon.query.filter_by(code=code).first()
     if existing:
         return "<script>alert('❌ 該優惠代碼已存在，請使用不同代碼！'); window.history.back();</script>", 400
@@ -1129,6 +1136,9 @@ def add_item():
     discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
     can_be_add_on = True if request.form.get('can_be_add_on') else False
     add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
+    addon_trigger_type = request.form.get('addon_trigger_type', 'any')
+    addon_trigger_target = request.form.get('addon_trigger_target', '').strip()
+    
 
     image_filename = ''
     if image and image.filename != '':
@@ -1162,7 +1172,9 @@ def add_item():
             discount_price=discount_price,
             is_new=is_new,
             can_be_add_on=can_be_add_on,
-            add_on_price=add_on_price
+            add_on_price=add_on_price,
+            addon_trigger_type=addon_trigger_type,
+            addon_trigger_target=addon_trigger_target
         )
         db.session.add(new_item)
         db.session.commit()
@@ -1603,6 +1615,8 @@ def edit_item(id):
 
         item.can_be_add_on = can_be_add_on
         item.add_on_price = add_on_price
+        item.addon_trigger_type = request.form.get('addon_trigger_type', 'any')
+        item.addon_trigger_target = request.form.get('addon_trigger_target', '').strip()
 
         item.is_reward = is_reward
         item.reward_points = reward_points

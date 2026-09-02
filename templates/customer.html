@@ -242,6 +242,7 @@
                             data-item-name="{{ item.name }}"
                             data-item-price="{{ actual_price }}"
                             data-item-modifiers="{{ item.modifiers or 'none' }}"
+                            data-item-category="{{ item.category or '未分類' }}"
                             onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
                         {% endif %}
                     </div>
@@ -525,9 +526,12 @@
         { 
             id: {{ item.id }}, 
             name: '{{ item.name }}', 
+            category: '{{ item.category or "未分類" }}',
             price: {{ item.add_on_price }}, 
             original_price: {{ item.price if not item.is_discount else item.discount_price }}, 
-            modifiers: '{{ item.modifiers or "none" }}' 
+            modifiers: '{{ item.modifiers or "none" }}',
+            trigger_type: '{{ item.addon_trigger_type or "any" }}',
+            trigger_target: '{{ item.addon_trigger_target or "" }}'
         },
         {% endfor %}
     ];
@@ -541,6 +545,7 @@
         const name = button.dataset.itemName;
         const price = Number(button.dataset.itemPrice || 0);
         const modifiers = String(button.dataset.itemModifiers || '').toLowerCase();
+        const category = button.dataset.itemCategory || '未分類';
         currentAddonFlag = false;
 
         if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
@@ -605,10 +610,10 @@
         modifierModal.show();
     }
     // 1. 修改 addToCart 函式簽章
-    function addToCart(id, name, price, customization = '', is_add_on = false) {
+    function addToCart(id, name, price, customization = '', is_add_on = false, category = '未分類') {
         const item = cart.find(i => i.id === id && i.customization === customization && i.is_add_on === is_add_on);
         if (item) item.quantity += 1;
-        else cart.push({id, name, price: Number(price || 0), quantity: 1, customization, is_add_on});
+        else cart.push({id, name, price: Number(price || 0), quantity: 1, customization, is_add_on, category});
         
         saveCartToStorage();
         updateCartUI();
@@ -620,15 +625,15 @@
         setTimeout(() => toastEl.remove(), 1300);
     }
     // 2. 獨立的加購觸發函式
-    function triggerAddon(id, name, price, modifiers) {
+    function triggerAddon(id, name, price, modifiers, category) {
         if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
-            addToCart(id, name, price, '', true);
+            addToCart(id, name, price, '', true, category);
             return;
         }
         currentAddonFlag = true;
         
         // 復用客製化 Modal 的邏輯
-        currentSelectedItem = { id, name, price, modifiers };
+        currentSelectedItem = { id, name, price, modifiers, category };
         document.getElementById('modifierModalTitle').textContent = `加購客製化 - ${name}`;
         
         // 呼叫原有的客製化渲染 (HTML 結構可直接共用原程式碼)
@@ -663,94 +668,149 @@
                 extraPrice += Number(cb.getAttribute('data-extra') || 0);
             });
         }
-
+        
         const customization = customTextArr.join('、');
         const finalPrice = Number(currentSelectedItem.price || 0) + extraPrice;
-        
-        // 傳遞 currentAddonFlag 給 addToCart
-        addToCart(currentSelectedItem.id, currentSelectedItem.name, finalPrice, customization, currentAddonFlag);
-        
+
+        addToCart(currentSelectedItem.id, currentSelectedItem.name, finalPrice, customization, currentAddonFlag, currentSelectedItem.category);
+        currentAddonFlag = false;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).hide();
+  
         currentAddonFlag = false; // 執行完畢後重置 Flag
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).hide();
     }
 
-    function updateCartUI() {
-        // 1. 加購數量防呆：加購品總數不可超過主餐(常規餐點)總數
-        const regQty = cart.filter(i => !i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
-        let addQty = cart.filter(i => i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
-        
-        if (addQty > regQty && regQty >= 0) {
+function updateCartUI() {
+        const regItems = cart.filter(i => !i.is_add_on);
+        const regQty = regItems.reduce((sum, i) => sum + i.quantity, 0);
+
+        // 1. 條件嚴格審核：檢查現存加購品是否仍符合觸發門檻
+        let hasRemoved = false;
+        cart = cart.filter(item => {
+            if (!item.is_add_on) return true;
+            
+            // 比對資料庫中該加購品的規則
+            const addonDef = typeof availableAddons !== 'undefined' 
+                ? availableAddons.find(a => String(a.id) === String(item.id)) 
+                : null;
+
+            let valid = false;
+            if (addonDef) {
+                if (addonDef.trigger_type === 'any') {
+                    valid = regQty > 0;
+                } else if (addonDef.trigger_type === 'category') {
+                    valid = cart.some(c => !c.is_add_on && c.category === addonDef.trigger_target);
+                } else if (addonDef.trigger_type === 'item') {
+                    valid = cart.some(c => !c.is_add_on && c.name === addonDef.trigger_target);
+                }
+            }
+            if (!valid) hasRemoved = true;
+            return valid;
+        });
+
+        // 2. 總數防呆：加購品總數量不得超過一般餐點總數量
+        let finalRegQty = cart.filter(i => !i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
+        let finalAddQty = cart.filter(i => i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
+
+        if (finalAddQty > finalRegQty && finalRegQty >= 0) {
             for (let i = cart.length - 1; i >= 0; i--) {
                 if (cart[i].is_add_on) {
-                    while (cart[i].quantity > 0 && addQty > regQty) {
+                    while (cart[i].quantity > 0 && finalAddQty > finalRegQty) {
                         cart[i].quantity--;
-                        addQty--;
+                        finalAddQty--;
                     }
                     if (cart[i].quantity === 0) cart.splice(i, 1);
                 }
-                if (addQty <= regQty) break;
+                if (finalAddQty <= finalRegQty) break;
             }
-            saveCartToStorage();
-            alert('⚠️ 主餐數量不足，已自動為您移除超出名額的加購品！');
+            hasRemoved = true;
         }
 
+        // 若有不符合條件的品項被移出，儲存狀態並提示
+        if (hasRemoved) {
+            saveCartToStorage();
+            setTimeout(() => alert('⚠️ 購物車餐點異動導致部分加購品不符條件或超出名額，已自動為您調整！'), 100);
+        }
+
+        // 3. 更新購物車圖示數量與列表渲染
         const container = document.getElementById('cart-items');
         const count = document.getElementById('cart-count');
-        count.innerText = cart.reduce((acc, i) => acc + i.quantity, 0);
+        const totalItemsCount = cart.reduce((acc, i) => acc + i.quantity, 0);
+        if (count) count.innerText = totalItemsCount;
+
+        const addonContainer = document.getElementById('addon-recommend-container');
 
         if (!cart.length) {
-            container.innerHTML = '<div class="text-center text-muted py-4">購物車目前空空如也</div>';
-            document.getElementById('addon-recommend-container').innerHTML = ''; // 清空推薦
+            if (container) container.innerHTML = '<div class="text-center text-muted py-4">購物車目前空空如也</div>';
+            if (addonContainer) addonContainer.innerHTML = '';
             calculateTotal();
             return;
         }
 
-        container.innerHTML = cart.map((item, idx) => {
-            const isSoldOut = !!item.is_sold_out;
-            // 標示加購品專屬樣式
-            const addonBadge = item.is_add_on ? '<span class="badge bg-info text-dark ms-1">加購</span>' : '';
-            return `
-            <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${isSoldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
-                <div>
-                    <div class="fw-bold ${isSoldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
-                        ${item.name} ${addonBadge} ${isSoldOut ? '<span class="badge bg-danger ms-1">已售完</span>' : ''}
+        if (container) {
+            container.innerHTML = cart.map((item, idx) => {
+                const isSoldOut = !!item.is_sold_out;
+                const addonBadge = item.is_add_on ? '<span class="badge bg-info text-dark ms-1">加購</span>' : '';
+                return `
+                <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${isSoldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
+                    <div>
+                        <div class="fw-bold ${isSoldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
+                            ${item.name} ${addonBadge} ${isSoldOut ? '<span class="badge bg-danger ms-1">已售完</span>' : ''}
+                        </div>
+                        ${item.customization ? `<small class="text-info d-block ${isSoldOut ? 'text-decoration-line-through text-white-50' : ''}">${item.customization}</small>` : ''}
+                        <small class="text-white-50 ${isSoldOut ? 'text-decoration-line-through' : ''}">$${Math.round(item.price)} x ${item.quantity}</small>
                     </div>
-                    ${item.customization ? `<small class="text-info d-block ${isSoldOut ? 'text-decoration-line-through text-white-50' : ''}">${item.customization}</small>` : ''}
-                    <small class="text-white-50 ${isSoldOut ? 'text-decoration-line-through' : ''}">$${Math.round(item.price)} x ${item.quantity}</small>
-                </div>
-                <div class="d-flex align-items-center">
-                    ${isSoldOut ? `
-                        <button class="btn btn-sm btn-outline-danger fw-bold" onclick="removeCartItem(${idx})"><i class="bi bi-trash"></i></button>
-                    ` : `
-                        <div class="btn-group btn-group-sm">
-                            <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
-                            <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
-                        </div>
-                    `}
-                </div>
-            </div>`;
-        }).join('');
-
-        // 2. 渲染推薦加購區塊 (條件：有主餐 且 加購名額未滿)
-        const addonContainer = document.getElementById('addon-recommend-container');
-        if (regQty > 0 && addQty < regQty && availableAddons.length > 0) {
-            addonContainer.innerHTML = `
-            <div class="mb-2 p-2 bg-secondary bg-opacity-10 rounded border border-secondary">
-                <div class="text-warning small fw-bold mb-2"><i class="bi bi-stars"></i> 點餐專屬優惠 (可再加購 ${regQty - addQty} 份)</div>
-                <div class="d-flex gap-2 overflow-auto pb-1" style="white-space: nowrap;">
-                    ${availableAddons.map(a => `
-                        <div class="card bg-dark border-secondary p-2 d-inline-block shadow-sm flex-shrink-0" style="width: 130px; white-space: normal;">
-                            <div class="small fw-bold text-white text-truncate" title="${a.name}">${a.name}</div>
-                            <div class="mt-1 d-flex justify-content-between align-items-center">
-                                <div><del class="text-white-50" style="font-size:0.7rem;">$${a.original_price}</del> <span class="text-danger fw-bold small">$${a.price}</span></div>
+                    <div class="d-flex align-items-center">
+                        ${isSoldOut ? `
+                            <button class="btn btn-sm btn-outline-danger fw-bold" onclick="removeCartItem(${idx})">
+                                <i class="bi bi-trash"></i> 移除
+                            </button>
+                        ` : `
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
+                                <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
                             </div>
-                            <button class="btn btn-sm btn-outline-info w-100 py-0 mt-1" onclick="triggerAddon(${a.id}, '${a.name}', ${a.price}, '${a.modifiers}')">加購</button>
-                        </div>
-                    `).join('')}
-                </div>
-            </div>`;
-        } else {
-            addonContainer.innerHTML = '';
+                        `}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        // 4. 動態比對並顯示推薦加購品清單
+        if (typeof availableAddons !== 'undefined' && addonContainer) {
+            // 過濾出目前購物車內容滿足解鎖條件的加購品
+            const eligibleAddons = availableAddons.filter(a => {
+                if (a.trigger_type === 'any') return finalRegQty > 0;
+                if (a.trigger_type === 'category') return cart.some(c => !c.is_add_on && c.category === a.trigger_target);
+                if (a.trigger_type === 'item') return cart.some(c => !c.is_add_on && c.name === a.trigger_target);
+                return false;
+            });
+
+            // 條件成立且仍有名額時渲染推薦看板
+            if (finalRegQty > 0 && finalAddQty < finalRegQty && eligibleAddons.length > 0) {
+                addonContainer.innerHTML = `
+                <div class="mb-2 p-2 bg-secondary bg-opacity-10 rounded border border-secondary">
+                    <div class="text-warning small fw-bold mb-2">
+                        <i class="bi bi-stars"></i> 專屬加購優惠 (尚可加購 ${finalRegQty - finalAddQty} 份)
+                    </div>
+                    <div class="d-flex gap-2 overflow-auto pb-1" style="white-space: nowrap;">
+                        ${eligibleAddons.map(a => `
+                            <div class="card bg-dark border-secondary p-2 d-inline-block shadow-sm flex-shrink-0" style="width: 130px; white-space: normal;">
+                                <div class="small fw-bold text-white text-truncate" title="${a.name}">${a.name}</div>
+                                <div class="mt-1 d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <del class="text-white-50" style="font-size:0.7rem;">$${a.original_price}</del> 
+                                        <span class="text-danger fw-bold small">$${a.price}</span>
+                                    </div>
+                                </div>
+                                <button class="btn btn-sm btn-outline-info w-100 py-0 mt-1" onclick="triggerAddon(${a.id}, '${a.name}', ${a.price}, '${a.modifiers}', '${a.category}')">加購</button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>`;
+            } else {
+                addonContainer.innerHTML = '';
+            }
         }
 
         calculateTotal();
