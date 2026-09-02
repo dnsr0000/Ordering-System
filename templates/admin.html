@@ -1753,6 +1753,14 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                 </div>
                             </div>
 
+                            ${order.order_type === '外帶' ? `
+                            <div class="mb-2">
+                                <span class="badge ${order.need_cutlery ? 'bg-success' : 'bg-secondary'}">
+                                    ${order.need_cutlery ? '要餐具' : '不用餐具'}
+                                </span>
+                                ${order.note ? `<div class="small text-warning mt-1">備註：${order.note}</div>` : ''}
+                            </div>` : ''}
+
                             <div class="text-white-50 small mb-2 d-flex justify-content-between">
                                 <span><i class="bi bi-person me-1"></i>${order.user_name}</span>
                                 <span><i class="bi bi-clock me-1"></i>${order.created_at}</span>

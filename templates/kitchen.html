@@ -251,6 +251,14 @@
                             </div>
                         </div>
 
+                        ${o.order_type === '外帶' ? `
+                        <div class="mb-2">
+                            <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'} small">
+                                ${o.need_cutlery ? '要餐具' : '不用餐具'}
+                            </span>
+                            ${o.note ? `<div class="small text-warning mt-1">備註：${o.note}</div>` : ''}
+                        </div>` : ''}
+
                         <div class="flex-grow-1 my-2 overflow-y-auto" style="max-height: 260px;">
                             ${o.items.map(item => `
                                 <div class="item-row py-2">
