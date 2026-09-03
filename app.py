@@ -88,6 +88,29 @@ class MenuItem(db.Model):
     addon_trigger_type = db.Column(db.String(20), default='any')  # 'any', 'category', 'item'
     addon_trigger_target = db.Column(db.String(100), default='')  # 目標分類名稱或餐點名稱
 
+class ComboOption(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    main_item_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    additional_price = db.Column(db.Integer, nullable=False)
+    description = db.Column(db.String(200), default='')
+    
+    # 新增綁定的配餐關聯 (至多三個)
+    item1_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=True)
+    item2_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=True)
+    item3_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=True)
+
+    # 配餐是否開放客製化開關 (預設開放 True)
+    item1_customizable = db.Column(db.Boolean, default=True)
+    item2_customizable = db.Column(db.Boolean, default=True)
+    item3_customizable = db.Column(db.Boolean, default=True)
+
+    # 關聯設定
+    main_item = db.relationship('MenuItem', foreign_keys=[main_item_id], backref=db.backref('combo_options', lazy=True, cascade="all, delete-orphan"))
+    item1 = db.relationship('MenuItem', foreign_keys=[item1_id])
+    item2 = db.relationship('MenuItem', foreign_keys=[item2_id])
+    item3 = db.relationship('MenuItem', foreign_keys=[item3_id])
+
 class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)
@@ -228,7 +251,21 @@ with app.app_context():
     if 'customization' not in order_item_cols:
         db.session.execute(db.text("ALTER TABLE order_item ADD COLUMN customization VARCHAR(200) DEFAULT ''"))
 
-# 檢查 MenuItem 是否有 is_manual_popular 欄位，沒有就建立
+    # 5.檢查 ComboOption 是否需要補齊配餐欄位
+    combo_info = db.session.execute(db.text("PRAGMA table_info(combo_option)")).fetchall()
+    if combo_info:
+        combo_cols = [col[1] for col in combo_info]
+        if 'item1_id' not in combo_cols:
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item1_id INTEGER REFERENCES menu_item(id)"))
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item2_id INTEGER REFERENCES menu_item(id)"))
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item3_id INTEGER REFERENCES menu_item(id)"))
+        if 'item1_customizable' not in combo_cols:
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item1_customizable BOOLEAN DEFAULT 1"))
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item2_customizable BOOLEAN DEFAULT 1"))
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item3_customizable BOOLEAN DEFAULT 1"))
+        db.session.commit()
+
+    # 檢查 MenuItem 是否有 is_manual_popular 欄位，沒有就建立
     menu_info = db.session.execute(db.text("PRAGMA table_info(menu_item)")).fetchall()
     menu_cols = [col[1] for col in menu_info]
     if 'is_manual_popular' not in menu_cols:
@@ -1643,6 +1680,93 @@ def edit_item(id):
         
     from_tab = request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')
     return redirect(url_for('admin_dashboard', tab=from_tab))
+
+@app.route('/admin/add_combo', methods=['POST'])
+def add_combo():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+    
+    main_item_id = request.form.get('main_item_id')
+    name = request.form.get('name')
+    additional_price = max(0, int(request.form.get('additional_price') or 0))
+    description = request.form.get('description', '')
+    
+    # 取得配餐 ID，若為空字串則轉為 None
+    item1_id = request.form.get('item1_id') or None
+    item2_id = request.form.get('item2_id') or None
+    item3_id = request.form.get('item3_id') or None
+
+    # 排除空值後檢查是否有重複的品項 ID
+    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s]
+    if len(chosen_sides) != len(set(chosen_sides)):
+        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.history.back();</script>", 400
+    
+    # 讀取配餐客製化開關
+    item1_customizable = True if request.form.get('item1_customizable') == '1' else False
+    item2_customizable = True if request.form.get('item2_customizable') == '1' else False
+    item3_customizable = True if request.form.get('item3_customizable') == '1' else False
+    
+    new_combo = ComboOption(
+        main_item_id=main_item_id,
+        name=name,
+        additional_price=additional_price,
+        description=description,
+        item1_id=item1_id,
+        item2_id=item2_id,
+        item3_id=item3_id,
+        item1_customizable=item1_customizable,
+        item2_customizable=item2_customizable,
+        item3_customizable=item3_customizable
+    )
+    db.session.add(new_combo)
+    db.session.commit()
+    return f"<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+
+@app.route('/admin/delete_combo/<int:id>')
+def delete_combo(id):
+    """刪除套餐組合"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+        
+    combo = ComboOption.query.get_or_404(id)
+    db.session.delete(combo)
+    db.session.commit()
+    return redirect(url_for('admin_dashboard', tab='menu'))
+
+@app.route('/admin/edit_combo/<int:id>', methods=['POST'])
+def edit_combo(id):
+    """編輯現有套餐組合設定"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+        
+    combo = ComboOption.query.get_or_404(id)
+    main_item_id = request.form.get('main_item_id')
+    name = request.form.get('name')
+    additional_price = max(0, int(request.form.get('additional_price') or 0))
+    description = request.form.get('description', '')
+
+    item1_id = request.form.get('item1_id') or None
+    item2_id = request.form.get('item2_id') or None
+    item3_id = request.form.get('item3_id') or None
+
+
+    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s]
+    if len(chosen_sides) != len(set(chosen_sides)):
+        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.history.back();</script>", 400
+
+    combo.main_item_id = main_item_id
+    combo.name = name
+    combo.additional_price = additional_price
+    combo.description = description
+    combo.item1_id = item1_id
+    combo.item2_id = item2_id
+    combo.item3_id = item3_id
+    combo.item1_customizable = True if request.form.get('item1_customizable') == '1' else False
+    combo.item2_customizable = True if request.form.get('item2_customizable') == '1' else False
+    combo.item3_customizable = True if request.form.get('item3_customizable') == '1' else False
+
+    db.session.commit()
+    return redirect(url_for('admin_dashboard', tab='menu'))
 
 @app.route('/admin/delete/<int:id>')
 def delete_item(id):

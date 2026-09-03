@@ -100,13 +100,39 @@
             {% endif %}
         {% endfor %}
         {% if hot_items %}
+
         <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h5 class="mb-0 fw-bold text-white"><span class="text-danger">🔥</span> 熱門推薦</h5>
                 <small class="text-white-50"><i class="bi bi-hand-index-thumb"></i> 點擊卡片直接加入購物車</small>
             </div>
-            <div class="row gy-2">
+        <div class="row gy-2">
         {% for item in hot_items %}
+        <!--  解析熱門餐點綁定的套餐與自動串接配餐名稱 -->
+        {% set combos = [] %}
+        {% for c in item.combo_options %}
+            {% set desc_parts = [] %}
+            {% if c.item1 %} {% set _ = desc_parts.append(c.item1.name) %} {% endif %}
+            {% if c.item2 %} {% set _ = desc_parts.append(c.item2.name) %} {% endif %}
+            {% if c.item3 %} {% set _ = desc_parts.append(c.item3.name) %} {% endif %}
+            {% set auto_desc = desc_parts | join(' + ') %}
+            {% set final_desc = c.description if c.description else auto_desc %}
+
+            <!--收集開放客製化的配餐清單與其 Modifiers 類型 -->
+            {% set sides_info = [] %}
+            {% if c.item1 and c.item1_customizable and c.item1.modifiers and c.item1.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item1.name, 'modifiers': c.item1.modifiers, 'key': 'side1'}) %}
+            {% endif %}
+            {% if c.item2 and c.item2_customizable and c.item2.modifiers and c.item2.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item2.name, 'modifiers': c.item2.modifiers, 'key': 'side2'}) %}
+            {% endif %}
+            {% if c.item3 and c.item3_customizable and c.item3.modifiers and c.item3.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item3.name, 'modifiers': c.item3.modifiers, 'key': 'side3'}) %}
+            {% endif %}
+
+            {% set _ = combos.append({'id': c.id, 'name': c.name, 'price': c.additional_price, 'desc': final_desc, 'sides': sides_info}) %}
+        {% endfor %}
+
         {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
         {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
         <div class="col-sm-6 col-md-4">
@@ -116,6 +142,8 @@
                 data-item-name="{{ item.name }}"
                 data-item-price="{{ actual_price }}"
                 data-item-modifiers="{{ item.modifiers or 'none' }}"
+                data-item-category="{{ item.category or '未分類' }}"
+                data-item-combos='{{ combos | tojson | safe }}'
                 {% if not is_item_sold_out %}
                 onclick="handleAddToCart(this)"
                 onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-2px)';"
@@ -200,6 +228,32 @@
         {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
         {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
         {% set is_disc = 1 if (item.is_discount and item.discount_price > 0) else 0 %}
+        
+        <!-- 1. 統一在此打包套餐資訊與配餐客製化清單 (sides) -->
+        {% set combos = [] %}
+        {% for c in item.combo_options %}
+            {% set desc_parts = [] %}
+            {% if c.item1 %} {% set _ = desc_parts.append(c.item1.name) %} {% endif %}
+            {% if c.item2 %} {% set _ = desc_parts.append(c.item2.name) %} {% endif %}
+            {% if c.item3 %} {% set _ = desc_parts.append(c.item3.name) %} {% endif %}
+            {% set auto_desc = desc_parts | join(' + ') %}
+            {% set final_desc = c.description if c.description else auto_desc %}
+
+            <!-- 收集開放客製化的配餐與 Modifiers -->
+            {% set sides_info = [] %}
+            {% if c.item1 and c.item1_customizable and c.item1.modifiers and c.item1.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item1.name, 'modifiers': c.item1.modifiers, 'key': 'side1'}) %}
+            {% endif %}
+            {% if c.item2 and c.item2_customizable and c.item2.modifiers and c.item2.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item2.name, 'modifiers': c.item2.modifiers, 'key': 'side2'}) %}
+            {% endif %}
+            {% if c.item3 and c.item3_customizable and c.item3.modifiers and c.item3.modifiers != 'none' %}
+                {% set _ = sides_info.append({'name': c.item3.name, 'modifiers': c.item3.modifiers, 'key': 'side3'}) %}
+            {% endif %}
+
+            <!-- 將 sides 一併塞入 combos -->
+            {% set _ = combos.append({'id': c.id, 'name': c.name, 'price': c.additional_price, 'desc': final_desc, 'sides': sides_info}) %}
+        {% endfor %}
         <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ actual_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ is_disc }}">
             <div class="menu-card p-3" style="{% if is_item_sold_out %}opacity: 0.65; border-color: rgba(255,255,255,0.04);{% endif %}">
                 <div class="d-flex align-items-start gap-3">
@@ -231,7 +285,7 @@
                         </div>
                         <p class="mb-2 text-white-50 small">{{ item.description or '無描述' }}</p>
                         
-                        <!-- 💡 判斷是否售完以切換按鈕 -->
+                        <!-- 💡 2. 判斷是否售完以切換按鈕，直接帶入上方打包好的 combos -->
                         {% if is_item_sold_out %}
                         <button class="btn btn-secondary btn-sm" type="button" disabled>
                             <i class="bi bi-slash-circle"></i> 已售完
@@ -243,6 +297,7 @@
                             data-item-price="{{ actual_price }}"
                             data-item-modifiers="{{ item.modifiers or 'none' }}"
                             data-item-category="{{ item.category or '未分類' }}"
+                            data-item-combos='{{ combos | tojson | safe }}'
                             onclick="handleAddToCart(this)"><i class="bi bi-cart-plus"></i> 加入購物車</button>
                         {% endif %}
                     </div>
@@ -390,6 +445,27 @@
     </div>
 </div>
 
+<!-- 套餐組合選擇彈窗 (Combo Selection Modal) -->
+<div class="modal fade" id="comboModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content" style="background: #181f2c; border: 1px solid rgba(255,255,255,0.12); border-radius: 18px; box-shadow: 0 15px 35px rgba(0,0,0,0.6);">
+      <div class="modal-header border-secondary border-opacity-50 pb-2">
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge bg-warning text-dark px-2 py-1 fw-bold"><i class="bi bi-box-seam me-1"></i>組合設定</span>
+          <h5 class="modal-title fw-bold text-white mb-0" id="comboModalTitle">請選擇享用方式</h5>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-4">
+        <div class="text-white-50 small mb-3">
+          <i class="bi bi-hand-index-thumb text-warning"></i> 點選卡片即可直接進入下一步選項（客製化 Modifiers 或加入購物車）：
+        </div>
+        <div class="row g-3" id="combo-cards-container">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- 客製化彈窗 -->
 <div class="modal fade" id="modifierModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -519,22 +595,84 @@
     let currentUserPoints = Number('{{ user_points or 0 }}');
     let appliedPromoDiscount = 0;
     let activePromoCode = '';
+    let pendingComboItem = null; // 暫存當前點選的主餐資訊
+
     const isGuest = '{{ "true" if is_guest else "false" }}' === 'true';
-    // 取得資料庫中設定為「可加購」且「有庫存」的品項
+    // 加購清單：支援庫存為 None 的品項，並自動去除條件字串前後空白
     const availableAddons = [
-        {% for item in items if item.can_be_add_on and not item.is_sold_out and item.stock > 0 %}
+        {% for item in items if item.can_be_add_on and not item.is_sold_out and (item.stock is none or item.stock > 0) %}
         { 
             id: {{ item.id }}, 
             name: '{{ item.name }}', 
-            category: '{{ item.category or "未分類" }}',
+            category: '{{ (item.category or "未分類") | trim }}',
             price: {{ item.add_on_price }}, 
             original_price: {{ item.price if not item.is_discount else item.discount_price }}, 
             modifiers: '{{ item.modifiers or "none" }}',
             trigger_type: '{{ item.addon_trigger_type or "any" }}',
-            trigger_target: '{{ item.addon_trigger_target or "" }}'
+            trigger_target: '{{ (item.addon_trigger_target or "") | trim }}'
         },
         {% endfor %}
     ];
+
+    // 建立菜單全域分類對照字典（以 ID 與品名為 Key）
+    const itemCategoryMap = {
+        {% for it in items %}
+        '{{ it.id }}': '{{ (it.category or "未分類") | trim }}',
+        '{{ it.name }}': '{{ (it.category or "未分類") | trim }}',
+        {% endfor %}
+    };
+
+    // 判斷特定購物車品項是否符合該加購品的解鎖條件
+    function getCartItemCategory(item) {
+        if (item.category && item.category !== '未分類') return item.category.trim();
+        if (item.id && itemCategoryMap[String(item.id)]) return itemCategoryMap[String(item.id)];
+        if (item.name && itemCategoryMap[item.name]) return itemCategoryMap[item.name];
+        return '未分類';
+    }
+
+    // 判定購物車特定項目是否符合加購條件
+    function isItemQualifyingForAddon(cartItem, addonDef) {
+        if (!cartItem || cartItem.is_add_on) return false;
+        const cat = getCartItemCategory(cartItem);
+        const target = (addonDef.trigger_target || '').trim();
+
+        if (addonDef.trigger_type === 'category') {
+            return cat === target;
+        }
+        if (addonDef.trigger_type === 'item') {
+            return cartItem.name.trim() === target;
+        }
+        if (addonDef.trigger_type === 'any') {
+            const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
+            return cat === '主餐' || !nonMainCategories.includes(cat);
+        }
+        return false;
+    }
+    // 取得購物車中可提供加購資格的主餐總數 (排除飲料、點心、副餐、配餐)
+    function getTotalMainDishesCount() {
+        const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
+        return cart
+            .filter(i => !i.is_add_on)
+            .filter(i => {
+                const cat = getCartItemCategory(i);
+                return cat === '主餐' || cat === '主食' || !nonMainCategories.includes(cat);
+            })
+            .reduce((sum, i) => sum + i.quantity, 0);
+    }
+
+    // 取得購物車中所有加購品的合計總數
+    function getTotalAddonsCount() {
+        return cart
+            .filter(i => i.is_add_on)
+            .reduce((sum, i) => sum + i.quantity, 0);
+    }
+
+    // 判斷購物車品項是否屬於任一加購品認可的「有效資格餐點」
+    function isQualifyingItem(cartItem) {
+        if (!cartItem || cartItem.is_add_on) return false;
+        if (typeof availableAddons === 'undefined' || availableAddons.length === 0) return false;
+        return availableAddons.some(a => isItemQualifyingForAddon(cartItem, a));
+    }
 
     function saveCartToStorage() {
         localStorage.setItem('kiosk_cart', JSON.stringify(cart));
@@ -546,44 +684,131 @@
         const price = Number(button.dataset.itemPrice || 0);
         const modifiers = String(button.dataset.itemModifiers || '').toLowerCase();
         const category = button.dataset.itemCategory || '未分類';
+        
+        // 解析該餐點設定的套餐清單
+        const combosRaw = button.dataset.itemCombos;
+        let combos = [];
+        try {
+            combos = combosRaw ? JSON.parse(combosRaw) : [];
+        } catch(e) { combos = []; }
+
         currentAddonFlag = false;
+        pendingComboItem = { id, name, price, modifiers, category, combos };
 
-        if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
-            addToCart(id, name, price, '');
-            return;
+        // 若有套餐組合，先打開套餐選擇彈窗
+        if (combos && combos.length > 0) {
+            renderComboCards(pendingComboItem);
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('comboModal')).show();
+        } else {
+            // 沒有套餐直接進入原有客製化或下單流程
+            dispatchToModifiersOrCart(pendingComboItem.name, pendingComboItem.price, '');
         }
+    }
 
-        currentSelectedItem = { id, name, price, modifiers };
-        const modalTitle = document.getElementById('modifierModalTitle');
-        const modalBody = document.getElementById('modifierModalBody');
-        if (modalTitle) modalTitle.textContent = `客製化選擇 - ${name}`;
+    // 觸控卡片渲染函式
+    function renderComboCards(item) {
+        const titleEl = document.getElementById('comboModalTitle');
+        if (titleEl) titleEl.innerText = `【${item.name}】享用方式`;
 
-        let html = '';
-        if (modifiers === 'ice_sugar') {
-            html = `
-                <div class="mb-3">
-                    <label class="form-label">冰塊量</label>
-                    <select id="mod-ice" class="form-select">
-                        <option value="正常冰">正常冰</option>
-                        <option value="少冰">少冰</option>
-                        <option value="去冰">去冰</option>
-                        <option value="熱飲">熱飲</option>
-                    </select>
+        const container = document.getElementById('combo-cards-container');
+        if (!container) return;
+
+        // 卡片 A：單點主餐
+        let cardsHtml = `
+        <div class="col-md-6">
+            <div class="p-4 rounded-3 h-100 d-flex flex-column justify-content-between"
+                style="background: #101726; border: 2px solid rgba(255,255,255,0.08); cursor: pointer; transition: all 0.2s;"
+                onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-3px)';"
+                onmouseout="this.style.borderColor='rgba(255,255,255,0.08)'; this.style.transform='translateY(0)';"
+                onclick="selectComboPlan(false, '', 0, [])">
+                <div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="badge bg-secondary">單點主餐</span>
+                        <span class="text-success fw-bold fs-5">$${item.price}</span>
+                    </div>
+                    <h5 class="fw-bold text-white mb-1">${item.name} (單點)</h5>
+                    <p class="text-white-50 small mb-0">僅單點本品項，不搭配任何附餐或飲品。</p>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">甜度</label>
-                    <select id="mod-sugar" class="form-select">
-                        <option value="全糖">全糖</option>
-                        <option value="半糖">半糖</option>
-                        <option value="微糖">微糖</option>
-                        <option value="無糖">無糖</option>
-                    </select>
+                <div class="mt-3 pt-2 border-top border-secondary text-end">
+                    <span class="btn btn-outline-light btn-sm fw-bold px-3">選擇單點 <i class="bi bi-chevron-right"></i></span>
+                </div>
+            </div>
+        </div>`;
+
+        // 卡片 B：各個升級套餐
+        item.combos.forEach(c => {
+            const comboFinalPrice = item.price + c.price;
+            const sidesJson = encodeURIComponent(JSON.stringify(c.sides || []));
+            cardsHtml += `
+            <div class="col-md-6">
+                <div class="p-4 rounded-3 h-100 d-flex flex-column justify-content-between"
+                    style="background: #101726; border: 2px solid rgba(255,255,255,0.08); cursor: pointer; transition: all 0.2s;"
+                    onmouseover="this.style.borderColor='#f5a500'; this.style.transform='translateY(-3px)';"
+                    onmouseout="this.style.borderColor='rgba(255,255,255,0.08)'; this.style.transform='translateY(0)';"
+                    onclick="selectComboPlan(true, '${c.name}', ${c.price}, JSON.parse(decodeURIComponent('${sidesJson}')))">
+                    <div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="badge bg-warning text-dark fw-bold">升級超值套餐</span>
+                            <div>
+                                <span class="text-danger fw-bold fs-5">+$${c.price}</span>
+                                <small class="text-white-50 ms-1">(總價 $${comboFinalPrice})</small>
+                            </div>
+                        </div>
+                        <h5 class="fw-bold text-warning mb-1">${c.name}</h5>
+                        <p class="text-white-50 small mb-0">${c.desc ? c.desc : '含特選附餐與指定飲品組合'}</p>
+                    </div>
+                    <div class="mt-3 pt-2 border-top border-secondary text-end">
+                        <span class="btn btn-warning btn-sm fw-bold text-dark px-3">升級套餐 <i class="bi bi-chevron-right"></i></span>
+                    </div>
+                </div>
+            </div>`;
+        });
+
+        container.innerHTML = cardsHtml;
+    }
+
+    // 點擊選擇後的轉發導引
+    function selectComboPlan(isCombo, comboName, extraPrice, sides) {
+        const comboModal = bootstrap.Modal.getInstance(document.getElementById('comboModal'));
+        if (comboModal) comboModal.hide();
+
+        const comboPrefix = isCombo ? `[套餐: ${comboName}]` : '';
+        const finalPrice = pendingComboItem.price + extraPrice;
+
+        dispatchToModifiersOrCart(pendingComboItem.name, finalPrice, comboPrefix, sides || []);
+    }
+    // 輔助函式：動態生成各品項的 Modifiers 區塊
+    function generateModifierSectionHtml(prefix, title, modifiers) {
+        let html = `<div class="p-3 mb-3 rounded border border-secondary bg-dark shadow-sm">
+            <h6 class="fw-bold text-warning mb-2 border-bottom border-secondary pb-1">${title}</h6>`;
+        
+        if (modifiers === 'ice_sugar') {
+            html += `
+                <div class="row g-2">
+                    <div class="col-6">
+                        <label class="form-label small text-white-50">冰塊量</label>
+                        <select id="mod-ice-${prefix}" class="form-select form-select-sm">
+                            <option value="正常冰">正常冰</option>
+                            <option value="少冰">少冰</option>
+                            <option value="去冰">去冰</option>
+                            <option value="熱飲">熱飲</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small text-white-50">甜度</label>
+                        <select id="mod-sugar-${prefix}" class="form-select form-select-sm">
+                            <option value="全糖">全糖</option>
+                            <option value="半糖">半糖</option>
+                            <option value="微糖">微糖</option>
+                            <option value="無糖">無糖</option>
+                        </select>
+                    </div>
                 </div>`;
         } else if (modifiers === 'spicy') {
-            html = `
-                <div class="mb-3">
-                    <label class="form-label">辣度調整</label>
-                    <select id="mod-spicy" class="form-select">
+            html += `
+                <div>
+                    <label class="form-label small text-white-50">辣度調整</label>
+                    <select id="mod-spicy-${prefix}" class="form-select form-select-sm">
                         <option value="不辣">不辣</option>
                         <option value="微辣">微辣</option>
                         <option value="中辣">中辣</option>
@@ -591,29 +816,93 @@
                     </select>
                 </div>`;
         } else if (modifiers === 'addons') {
-            html = `
-                <div class="mb-3">
-                    <label class="form-label">加料選項</label>
-                    <div class="form-check mb-2">
-                        <input class="form-check-input mod-addon" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="addon1">
-                        <label class="form-check-label" for="addon1">加荷包蛋 (+10)</label>
-                    </div>
-                    <div class="form-check mb-2">
-                        <input class="form-check-input mod-addon" type="checkbox" data-extra="15" value="加起司片(+15)" id="addon2">
-                        <label class="form-check-label" for="addon2">加起司片 (+15)</label>
+            html += `
+                <div>
+                    <label class="form-label small text-white-50 mb-1">加料升級</label>
+                    <div class="d-flex gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input mod-addon-${prefix}" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="addon1-${prefix}">
+                            <label class="form-check-label small text-white" for="addon1-${prefix}">加荷包蛋 (+10)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input mod-addon-${prefix}" type="checkbox" data-extra="15" value="加起司片(+15)" id="addon2-${prefix}">
+                            <label class="form-check-label small text-white" for="addon2-${prefix}">加起司片 (+15)</label>
+                        </div>
                     </div>
                 </div>`;
         }
-
-        if (modalBody) modalBody.innerHTML = html;
-        const modifierModal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal'));
-        modifierModal.show();
+        html += `</div>`;
+        return html;
     }
-    // 1. 修改 addToCart 函式簽章
-    function addToCart(id, name, price, customization = '', is_add_on = false, category = '未分類') {
+
+    // 導引至客製化 Modifiers 或直接進購物車
+    function dispatchToModifiersOrCart(mainName, finalPrice, comboPrefix, sides = []) {
+        const mainMods = pendingComboItem.modifiers;
+        const hasMainMods = (mainMods && mainMods !== 'none' && mainMods !== 'undefined');
+        const hasSideMods = (sides && sides.length > 0);
+
+        // 主餐與配餐皆無客製化，直接加入購物車
+        if (!hasMainMods && !hasSideMods) {
+            addToCart(pendingComboItem.id, mainName, finalPrice, comboPrefix, false, pendingComboItem.category);
+            return;
+        }
+
+        currentSelectedItem = {
+            id: pendingComboItem.id,
+            name: mainName,
+            price: finalPrice,
+            modifiers: mainMods,
+            comboPrefix: comboPrefix,
+            category: pendingComboItem.category,
+            sides: sides
+        };
+
+        const modalTitle = document.getElementById('modifierModalTitle');
+        const modalBody = document.getElementById('modifierModalBody');
+        if (modalTitle) {
+            modalTitle.textContent = comboPrefix 
+                ? `客製化選擇 - ${mainName} ${comboPrefix}` 
+                : `客製化選擇 - ${mainName}`;
+        }
+
+        let fullHtml = '';
+
+        // 判斷是否為套餐：有套餐前綴或有配餐時才標註「主餐：」，純單點則直接顯示品名
+        const isComboMode = Boolean(comboPrefix || hasSideMods);
+        const mainTitleText = isComboMode ? `主餐：${mainName}` : mainName;
+
+        // 1. 若該品項有客製化，渲染主品項區塊
+        if (hasMainMods) {
+            fullHtml += generateModifierSectionHtml('main', mainTitleText, mainMods);
+        }
+
+        // 2. 套餐模式下，依序渲染開放客製化的配餐
+        sides.forEach((side) => {
+            fullHtml += generateModifierSectionHtml(side.key, `配餐：${side.name}`, side.modifiers);
+        });
+
+        if (modalBody) modalBody.innerHTML = fullHtml;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).show();
+    }
+
+    function addToCart(id, name, price, customization = '', is_add_on = false, category = '') {
+        const actualCategory = (category && category !== '未分類') ? category : (itemCategoryMap[String(id)] || '未分類');
         const item = cart.find(i => i.id === id && i.customization === customization && i.is_add_on === is_add_on);
-        if (item) item.quantity += 1;
-        else cart.push({id, name, price: Number(price || 0), quantity: 1, customization, is_add_on, category});
+        
+        if (item) {
+            item.quantity += 1;
+            item.category = actualCategory; 
+        } else {
+            cart.push({
+                id: id,
+                name: name,
+                price: Number(price || 0),
+                quantity: 1,
+                customization: customization,
+                is_add_on: is_add_on,
+                category: actualCategory
+            });
+        }
         
         saveCartToStorage();
         updateCartUI();
@@ -624,115 +913,150 @@
         document.body.appendChild(toastEl);
         setTimeout(() => toastEl.remove(), 1300);
     }
-    // 2. 獨立的加購觸發函式
+
     function triggerAddon(id, name, price, modifiers, category) {
+        // 檢查全域加購名額是否已用完
+        if (getTotalAddonsCount() >= getTotalMainDishesCount()) {
+            alert('⚠️ 加購名額已滿！每購買一份主餐限加購一份優惠品。');
+            return;
+        }
+
+        const actualCategory = category || itemCategoryMap[String(id)] || '未分類';
         if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
-            addToCart(id, name, price, '', true, category);
+            addToCart(id, name, price, '', true, actualCategory);
             return;
         }
         currentAddonFlag = true;
+        currentSelectedItem = { 
+            id: id, 
+            name: name, 
+            price: price, 
+            modifiers: modifiers, 
+            category: actualCategory, 
+            comboPrefix: '', 
+            sides: [] 
+        };
         
-        // 復用客製化 Modal 的邏輯
-        currentSelectedItem = { id, name, price, modifiers, category };
         document.getElementById('modifierModalTitle').textContent = `加購客製化 - ${name}`;
-        
-        // 呼叫原有的客製化渲染 (HTML 結構可直接共用原程式碼)
         const modalBody = document.getElementById('modifierModalBody');
-        let html = '';
-        if (modifiers === 'ice_sugar') {
-            html = `<div class="mb-3"><label class="form-label">冰塊量</label><select id="mod-ice" class="form-select"><option value="正常冰">正常冰</option><option value="少冰">少冰</option><option value="去冰">去冰</option><option value="熱飲">熱飲</option></select></div><div class="mb-3"><label class="form-label">甜度</label><select id="mod-sugar" class="form-select"><option value="全糖">全糖</option><option value="半糖">半糖</option><option value="微糖">微糖</option><option value="無糖">無糖</option></select></div>`;
-        } else if (modifiers === 'spicy') {
-            html = `<div class="mb-3"><label class="form-label">辣度調整</label><select id="mod-spicy" class="form-select"><option value="不辣">不辣</option><option value="微辣">微辣</option><option value="中辣">中辣</option><option value="大辣">大辣</option></select></div>`;
-        } else if (modifiers === 'addons') {
-            html = `<div class="mb-3"><label class="form-label">加料選項</label><div class="form-check mb-2"><input class="form-check-input mod-addon" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="addon1"><label class="form-check-label" for="addon1">加荷包蛋 (+10)</label></div><div class="form-check mb-2"><input class="form-check-input mod-addon" type="checkbox" data-extra="15" value="加起司片(+15)" id="addon2"><label class="form-check-label" for="addon2">加起司片 (+15)</label></div></div>`;
+        if (modalBody) {
+            modalBody.innerHTML = generateModifierSectionHtml('main', `加購：${name}`, modifiers);
         }
-        modalBody.innerHTML = html;
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).show();
     }
-    // 3.攔截並改寫確認客製化的送出邏輯
+    // 攔截並改寫確認客製化的送出邏輯
     function confirmAddToCartWithModifier() {
         if (!currentSelectedItem) return;
         const customTextArr = [];
         let extraPrice = 0;
 
-        const ice = document.getElementById('mod-ice');
-        const sugar = document.getElementById('mod-sugar');
-        const spicy = document.getElementById('mod-spicy');
-        const addons = document.querySelectorAll('.mod-addon:checked');
+        // 套餐前綴置於最前方 (例如: [套餐: 超值A餐])
+        if (currentSelectedItem.comboPrefix) {
+            customTextArr.push(currentSelectedItem.comboPrefix);
+        }
 
-        if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
-        if (spicy) customTextArr.push(spicy.value);
-        if (addons.length > 0) {
-            addons.forEach(cb => {
-                customTextArr.push(cb.value);
-                extraPrice += Number(cb.getAttribute('data-extra') || 0);
+        // 1. 抓取主餐客製化
+        const mainMods = currentSelectedItem.modifiers;
+        if (mainMods && mainMods !== 'none' && mainMods !== 'undefined') {
+            const mainTextArr = [];
+            if (mainMods === 'ice_sugar') {
+                const ice = document.getElementById('mod-ice-main');
+                const sugar = document.getElementById('mod-sugar-main');
+                if (ice && sugar) mainTextArr.push(`${ice.value}/${sugar.value}`);
+            } else if (mainMods === 'spicy') {
+                const spicy = document.getElementById('mod-spicy-main');
+                if (spicy) mainTextArr.push(spicy.value);
+            } else if (mainMods === 'addons') {
+                const addons = document.querySelectorAll('.mod-addon-main:checked');
+                addons.forEach(cb => {
+                    mainTextArr.push(cb.value);
+                    extraPrice += Number(cb.getAttribute('data-extra') || 0);
+                });
+            }
+            if (mainTextArr.length > 0) {
+                customTextArr.push(mainTextArr.join('、'));
+            }
+        }
+
+        // 2. 抓取配餐客製化 (例如: 香檸氣泡飲(去冰/微糖))
+        if (currentSelectedItem.sides && currentSelectedItem.sides.length > 0) {
+            currentSelectedItem.sides.forEach(side => {
+                const sideTextArr = [];
+                if (side.modifiers === 'ice_sugar') {
+                    const ice = document.getElementById(`mod-ice-${side.key}`);
+                    const sugar = document.getElementById(`mod-sugar-${side.key}`);
+                    if (ice && sugar) sideTextArr.push(`${ice.value}/${sugar.value}`);
+                } else if (side.modifiers === 'spicy') {
+                    const spicy = document.getElementById(`mod-spicy-${side.key}`);
+                    if (spicy) sideTextArr.push(spicy.value);
+                } else if (side.modifiers === 'addons') {
+                    const addons = document.querySelectorAll(`.mod-addon-${side.key}:checked`);
+                    addons.forEach(cb => {
+                        sideTextArr.push(cb.value);
+                        extraPrice += Number(cb.getAttribute('data-extra') || 0);
+                    });
+                }
+                if (sideTextArr.length > 0) {
+                    customTextArr.push(`${side.name}(${sideTextArr.join('、')})`);
+                }
             });
         }
-        
+
         const customization = customTextArr.join('、');
         const finalPrice = Number(currentSelectedItem.price || 0) + extraPrice;
 
         addToCart(currentSelectedItem.id, currentSelectedItem.name, finalPrice, customization, currentAddonFlag, currentSelectedItem.category);
         currentAddonFlag = false;
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).hide();
-  
-        currentAddonFlag = false; // 執行完畢後重置 Flag
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).hide();
     }
 
 function updateCartUI() {
-        const regItems = cart.filter(i => !i.is_add_on);
-        const regQty = regItems.reduce((sum, i) => sum + i.quantity, 0);
+        // 自動校正分類欄位
+        cart.forEach(item => {
+            item.category = getCartItemCategory(item);
+        });
 
-        // 1. 條件嚴格審核：檢查現存加購品是否仍符合觸發門檻
+        // 1. 條件嚴格審核：主餐被移除時，自動移除不再符合條件的加購品
         let hasRemoved = false;
         cart = cart.filter(item => {
             if (!item.is_add_on) return true;
             
-            // 比對資料庫中該加購品的規則
-            const addonDef = typeof availableAddons !== 'undefined' 
-                ? availableAddons.find(a => String(a.id) === String(item.id)) 
+            const addonDef = (typeof availableAddons !== 'undefined')
+                ? availableAddons.find(a => String(a.id) === String(item.id))
                 : null;
 
             let valid = false;
             if (addonDef) {
-                if (addonDef.trigger_type === 'any') {
-                    valid = regQty > 0;
-                } else if (addonDef.trigger_type === 'category') {
-                    valid = cart.some(c => !c.is_add_on && c.category === addonDef.trigger_target);
-                } else if (addonDef.trigger_type === 'item') {
-                    valid = cart.some(c => !c.is_add_on && c.name === addonDef.trigger_target);
-                }
+                valid = cart.some(c => isItemQualifyingForAddon(c, addonDef));
             }
             if (!valid) hasRemoved = true;
             return valid;
         });
 
-        // 2. 總數防呆：加購品總數量不得超過一般餐點總數量
-        let finalRegQty = cart.filter(i => !i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
-        let finalAddQty = cart.filter(i => i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
+        // 2. 總量嚴格防呆：加購品總數絕對不可超過主餐總數 (1份主餐限配1份加購)
+        const totalMains = getTotalMainDishesCount();
+        let totalAddons = getTotalAddonsCount();
 
-        if (finalAddQty > finalRegQty && finalRegQty >= 0) {
+        if (totalAddons > totalMains) {
             for (let i = cart.length - 1; i >= 0; i--) {
                 if (cart[i].is_add_on) {
-                    while (cart[i].quantity > 0 && finalAddQty > finalRegQty) {
+                    while (cart[i].quantity > 0 && totalAddons > totalMains) {
                         cart[i].quantity--;
-                        finalAddQty--;
+                        totalAddons--;
                     }
                     if (cart[i].quantity === 0) cart.splice(i, 1);
                 }
-                if (finalAddQty <= finalRegQty) break;
+                if (totalAddons <= totalMains) break;
             }
             hasRemoved = true;
         }
 
-        // 若有不符合條件的品項被移出，儲存狀態並提示
         if (hasRemoved) {
             saveCartToStorage();
-            setTimeout(() => alert('⚠️ 購物車餐點異動導致部分加購品不符條件或超出名額，已自動為您調整！'), 100);
+            setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品超出名額或不符條件，已自動為您調整！'), 100);
         }
 
-        // 3. 更新購物車圖示數量與列表渲染
+        // 3. 渲染購物車商品清單
         const container = document.getElementById('cart-items');
         const count = document.getElementById('cart-count');
         const totalItemsCount = cart.reduce((acc, i) => acc + i.quantity, 0);
@@ -776,22 +1100,23 @@ function updateCartUI() {
             }).join('');
         }
 
-        // 4. 動態比對並顯示推薦加購品清單
+        // 4. 動態推薦看板：以 (主餐總數 - 已加購總數) 計算真正的剩餘名額
         if (typeof availableAddons !== 'undefined' && addonContainer) {
-            // 過濾出目前購物車內容滿足解鎖條件的加購品
+            const currentTotalMains = getTotalMainDishesCount();
+            const currentTotalAddons = getTotalAddonsCount();
+            const remainingQuota = Math.max(0, currentTotalMains - currentTotalAddons);
+
+            // 過濾出解鎖條件成立的加購品
             const eligibleAddons = availableAddons.filter(a => {
-                if (a.trigger_type === 'any') return finalRegQty > 0;
-                if (a.trigger_type === 'category') return cart.some(c => !c.is_add_on && c.category === a.trigger_target);
-                if (a.trigger_type === 'item') return cart.some(c => !c.is_add_on && c.name === a.trigger_target);
-                return false;
+                return cart.some(c => isItemQualifyingForAddon(c, a));
             });
 
-            // 條件成立且仍有名額時渲染推薦看板
-            if (finalRegQty > 0 && finalAddQty < finalRegQty && eligibleAddons.length > 0) {
+            // 只有在「有主餐」且「名額尚未用完 (remainingQuota > 0)」時才顯示看板
+            if (currentTotalMains > 0 && remainingQuota > 0 && eligibleAddons.length > 0) {
                 addonContainer.innerHTML = `
                 <div class="mb-2 p-2 bg-secondary bg-opacity-10 rounded border border-secondary">
                     <div class="text-warning small fw-bold mb-2">
-                        <i class="bi bi-stars"></i> 專屬加購優惠 (尚可加購 ${finalRegQty - finalAddQty} 份)
+                        <i class="bi bi-stars"></i> 專屬加購優惠 (尚可加購 ${remainingQuota} 份)
                     </div>
                     <div class="d-flex gap-2 overflow-auto pb-1" style="white-space: nowrap;">
                         ${eligibleAddons.map(a => `
@@ -812,7 +1137,6 @@ function updateCartUI() {
                 addonContainer.innerHTML = '';
             }
         }
-
         calculateTotal();
     }
 
@@ -824,6 +1148,13 @@ function updateCartUI() {
     }
 
     function changeQty(index, delta) {
+        // 點擊「+」時檢查是否超過主餐配額
+        if (delta > 0 && cart[index].is_add_on) {
+            if (getTotalAddonsCount() >= getTotalMainDishesCount()) {
+                alert('⚠️ 加購品數量已達上限（每份主餐限加購1份）！');
+                return;
+            }
+        }
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
         saveCartToStorage();

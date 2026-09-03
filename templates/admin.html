@@ -462,6 +462,80 @@
                         </table>
                     </div>
                 </div>
+                <!-- 套餐組合清單 (Combo List) -->
+                <div class="card card-custom p-4 mb-4 border-success">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-box-seam text-success me-2"></i>套餐組合清單</h5>
+                        <div class="d-flex gap-2">
+                            <!-- 將新增按鈕移至此處的右上角 -->
+                            <button class="btn btn-success btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#addComboModal">
+                                <i class="bi bi-plus-lg me-1"></i> 新增套餐組合
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom align-middle">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>關聯主餐</th>
+                                    <th>套餐名稱</th>
+                                    <th>升級加購價</th>
+                                    <th>配餐內容清單 (Sides)</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- 利用 Jinja 雙層迴圈撈出所有綁定的套餐 -->
+                                {% set has_combo = false %}
+                                {% for item in items %}
+                                    {% for combo in item.combo_options %}
+                                        {% set has_combo = true %}
+                                        <tr>
+                                            <td><span class="badge bg-secondary">{{ item.name }}</span></td>
+                                            <td class="fw-bold text-white">{{ combo.name }}</td>
+                                            <td class="fw-bold text-danger">+${{ combo.additional_price }}</td>
+                                            <td>
+                                                <ul class="mb-0 list-unstyled small text-white-50">
+                                                    {% if combo.item1 %}<li>- {{ combo.item1.name }} {% if combo.item1_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                                    {% if combo.item2 %}<li>- {{ combo.item2.name }} {% if combo.item2_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                                    {% if combo.item3 %}<li>- {{ combo.item3.name }} {% if combo.item3_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                                </ul>
+                                            </td>
+                                            <td class="text-end">
+                                                <!-- 編輯按鈕 -->
+                                                <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                        data-id="{{ combo.id }}"
+                                                        data-main-id="{{ combo.main_item_id }}"
+                                                        data-name="{{ combo.name }}"
+                                                        data-price="{{ combo.additional_price }}"
+                                                        data-desc="{{ combo.description or '' }}"
+                                                        data-item1="{{ combo.item1_id or '' }}"
+                                                        data-item1-cust="{{ 1 if combo.item1_customizable else 0 }}"
+                                                        data-item2="{{ combo.item2_id or '' }}"
+                                                        data-item2-cust="{{ 1 if combo.item2_customizable else 0 }}"
+                                                        data-item3="{{ combo.item3_id or '' }}"
+                                                        data-item3-cust="{{ 1 if combo.item3_customizable else 0 }}"
+                                                        onclick="openEditComboModal(this)">
+                                                    <i class="bi bi-pencil-square"></i> 編輯
+                                                </button>
+                                                <a href="/admin/delete_combo/{{ combo.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除套餐組合【{{ combo.name }}】嗎？')">
+                                                    <i class="bi bi-trash"></i> 刪除
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                {% endfor %}
+                                
+                                {% if not has_combo %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td>
+                                </tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!--  3. 回饋商城管理 (餐點兌換 + 優惠券管理) -->
@@ -992,6 +1066,187 @@
         </div>
     </div>
 
+<!-- 新增套餐組合 Modal -->
+    <div class="modal fade" id="addComboModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-box-seam me-2"></i>新增套餐組合設定</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form action="/admin/add_combo" method="POST">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
+                            <select class="form-select border-warning" name="main_item_id" required>
+                                <option value="" disabled selected>請選擇要綁定套餐的主餐...</option>
+                                {% for it in items if it.category not in ['飲料', '點心', '副餐', '配餐'] %}
+                                <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }} (${{ it.price }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-8">
+                                <label class="form-label small fw-bold">套餐名稱 (Combo Name)</label>
+                                <input type="text" class="form-control" name="name" placeholder="例如：超值A餐" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small fw-bold">加購價 (NT$)</label>
+                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" placeholder="60" min="0" required>
+                            </div>
+                        </div>
+
+                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
+                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
+                            
+                            <!-- 配餐 1 -->
+                            <div class="mb-3" id="combo-side1-group">
+                                <select class="form-select form-select-sm" name="item1_id" id="combo-side1" onchange="checkComboSides(1, 'combo')">
+                                    <option value="">-- 請選擇第一項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="combo-side1-cust" checked>
+                                    <label class="form-check-label small text-warning" for="combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+
+                            <!-- 配餐 2 -->
+                            <div class="mb-3" id="combo-side2-group" style="display: none;">
+                                <select class="form-select form-select-sm" name="item2_id" id="combo-side2" onchange="checkComboSides(2, 'combo')">
+                                    <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="combo-side2-cust" checked>
+                                    <label class="form-check-label small text-warning" for="combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+
+                            <!-- 配餐 3 -->
+                            <div class="mb-3" id="combo-side3-group" style="display: none;">
+                                <select class="form-select form-select-sm" name="item3_id" id="combo-side3" onchange="checkComboSides(3, 'combo')">
+                                    <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="combo-side3-cust" checked>
+                                    <label class="form-check-label small text-warning" for="combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
+                            <textarea class="form-control" name="description" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-success fw-bold text-dark px-4">儲存套餐設定</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!--編輯套餐組合 Modal -->
+    <div class="modal fade" id="editComboModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-pencil-square me-2"></i>編輯套餐組合設定</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <form id="editComboForm" method="POST">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
+                            <select class="form-select border-warning" name="main_item_id" id="edit-combo-main" required>
+                                <option value="" disabled selected>請選擇要綁定套餐的主餐...</option>
+                                {% for it in items if it.category not in ['飲料', '點心', '副餐', '配餐'] %}
+                                <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }} (${{ it.price }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-8">
+                                <label class="form-label small fw-bold">套餐名稱 (Combo Name)</label>
+                                <input type="text" class="form-control" name="name" id="edit-combo-name" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small fw-bold">加購價 (NT$)</label>
+                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="edit-combo-price" min="0" required>
+                            </div>
+                        </div>
+
+                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
+                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
+                            
+                            <!-- 配餐 1 -->
+                            <div class="mb-3" id="edit-combo-side1-group">
+                                <select class="form-select form-select-sm" name="item1_id" id="edit-combo-side1" onchange="checkComboSides(1, 'edit-combo')">
+                                    <option value="">-- 請選擇第一項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="edit-combo-side1-cust">
+                                    <label class="form-check-label small text-warning" for="edit-combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+
+                            <!-- 配餐 2 -->
+                            <div class="mb-3" id="edit-combo-side2-group" style="display: none;">
+                                <select class="form-select form-select-sm" name="item2_id" id="edit-combo-side2" onchange="checkComboSides(2, 'edit-combo')">
+                                    <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="edit-combo-side2-cust">
+                                    <label class="form-check-label small text-warning" for="edit-combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+
+                            <!-- 配餐 3 -->
+                            <div class="mb-3" id="edit-combo-side3-group" style="display: none;">
+                                <select class="form-select form-select-sm" name="item3_id" id="edit-combo-side3" onchange="checkComboSides(3, 'edit-combo')">
+                                    <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
+                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
+                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-check form-switch mt-1">
+                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="edit-combo-side3-cust">
+                                    <label class="form-check-label small text-warning" for="edit-combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
+                            <textarea class="form-control" name="description" id="edit-combo-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
     <!--  Excel 匯入 Modal -->
     <div class="modal fade" id="importExcelModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
@@ -1136,7 +1391,7 @@
             </div>
         </div>
     </div>
-    <!-- 新增：匯出資料 (Export Data) Modal -->
+    <!-- 匯出資料 (Export Data) Modal -->
     <div class="modal fade" id="exportExcelModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -1460,7 +1715,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                 // 1. 即時重繪彈窗內容
                 renderUserCouponsBody(userName, data.coupons);
                 
-                // 2. 💡 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
+                // 2. 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
                 const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
                 btns.forEach(b => {
                     b.dataset.coupons = JSON.stringify(data.coupons);
@@ -1474,7 +1729,98 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             alert('網路錯誤，請稍後再試');
         });
     }
-        
+    
+//  檢查重複配餐並即時更新各選單的可用狀態 (Disabled)
+    function updateComboSideOptions(prefix) {
+        const selects = [
+            document.getElementById(`${prefix}-side1`),
+            document.getElementById(`${prefix}-side2`),
+            document.getElementById(`${prefix}-side3`)
+        ].filter(Boolean);
+
+        // 收集目前已選的所有配餐 ID
+        const chosenValues = selects.map(s => s.value).filter(Boolean);
+
+        selects.forEach(s => {
+            Array.from(s.options).forEach(opt => {
+                if (!opt.value) return;
+                // 若該品項已在其他選單被選取，直接將其停用 (disabled)
+                if (chosenValues.includes(opt.value) && s.value !== opt.value) {
+                    opt.disabled = true;
+                } else {
+                    opt.disabled = false;
+                }
+            });
+        });
+    }
+
+    //  支援新增與編輯彈窗的配餐欄位連動展開與防重複檢查
+    function checkComboSides(level, prefix = 'combo') {
+        const currentVal = document.getElementById(`${prefix}-side${level}`).value;
+        const nextGroup = document.getElementById(`${prefix}-side${level + 1}-group`);
+
+        // 1. 防呆檢查：若選到了其他欄位已選的品項，阻斷並清空
+        if (currentVal) {
+            for (let i = 1; i <= 3; i++) {
+                if (i !== level) {
+                    const otherSelect = document.getElementById(`${prefix}-side${i}`);
+                    if (otherSelect && otherSelect.value && otherSelect.value === currentVal) {
+                        alert('⚠️ 此配餐已在其他欄位選取，不可重複選擇！');
+                        document.getElementById(`${prefix}-side${level}`).value = '';
+                        updateComboSideOptions(prefix);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 2. 展開或收合下一層欄位
+        if (currentVal) {
+            if (nextGroup) nextGroup.style.display = 'block';
+        } else {
+            for (let i = level + 1; i <= 3; i++) {
+                const g = document.getElementById(`${prefix}-side${i}-group`);
+                const s = document.getElementById(`${prefix}-side${i}`);
+                if (g) g.style.display = 'none';
+                if (s) s.value = '';
+            }
+        }
+
+        // 3. 即時更新所有下拉選單的選項禁用狀態
+        updateComboSideOptions(prefix);
+    }
+
+    // 點擊編輯按鈕帶入資料並開啟彈窗
+    function openEditComboModal(btn) {
+        const d = btn.dataset;
+        document.getElementById('editComboForm').action = '/admin/edit_combo/' + d.id;
+        document.getElementById('edit-combo-main').value = d.mainId || '';
+        document.getElementById('edit-combo-name').value = d.name || '';
+        document.getElementById('edit-combo-price').value = d.price || 0;
+        document.getElementById('edit-combo-desc').value = d.desc || '';
+
+        // 配餐 1
+        const side1 = document.getElementById('edit-combo-side1');
+        side1.value = d.item1 || '';
+        document.getElementById('edit-combo-side1-cust').checked = (d.item1Cust === '1');
+
+        // 配餐 2
+        const side2 = document.getElementById('edit-combo-side2');
+        side2.value = d.item2 || '';
+        document.getElementById('edit-combo-side2-cust').checked = (d.item2Cust === '1');
+        document.getElementById('edit-combo-side2-group').style.display = d.item1 ? 'block' : 'none';
+
+        // 配餐 3
+        const side3 = document.getElementById('edit-combo-side3');
+        side3.value = d.item3 || '';
+        document.getElementById('edit-combo-side3-cust').checked = (d.item3Cust === '1');
+        document.getElementById('edit-combo-side3-group').style.display = d.item2 ? 'block' : 'none';
+
+        // 帶入資料後立即更新選項禁用狀態
+        updateComboSideOptions('edit-combo');
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('editComboModal')).show();
+    }
     // --- 原單價、特價與加購價防呆連動邏輯 ---
     function bindDiscountValidation(formId, priceId, inputId, toggleId, addonPriceId, addonToggleId) {
         const form = document.getElementById(formId);
