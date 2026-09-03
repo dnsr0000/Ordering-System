@@ -631,32 +631,46 @@
     }
 
     // 判定購物車特定項目是否符合加購條件
+    // 判定購物車特定項目是否符合加購條件
     function isItemQualifyingForAddon(cartItem, addonDef) {
         if (!cartItem || cartItem.is_add_on) return false;
-        const cat = getCartItemCategory(cartItem);
+        
+        // 清理分類與目標字串的前後空白
+        const cat = (getCartItemCategory(cartItem) || '').trim();
         const target = (addonDef.trigger_target || '').trim();
+        const triggerType = addonDef.trigger_type || 'any';
 
-        if (addonDef.trigger_type === 'category') {
+        if (triggerType === 'category') {
             return cat === target;
         }
-        if (addonDef.trigger_type === 'item') {
-            return cartItem.name.trim() === target;
+        if (triggerType === 'item') {
+            return (cartItem.name || '').trim() === target;
         }
-        if (addonDef.trigger_type === 'any') {
-            const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
-            return cat === '主餐' || !nonMainCategories.includes(cat);
+        if (triggerType === 'any') {
+            // 只要不是加購品本身，任何正常餐點都可以觸發加購
+            return true;
         }
         return false;
     }
-    // 取得購物車中可提供加購資格的主餐總數 (排除飲料、點心、副餐、配餐)
-    function getTotalMainDishesCount() {
-        const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
+
+    // 取得購物車中符合特定加購品條件的餐點數量
+    function getQualifyingItemCountForAddon(addonDef) {
+        if (!addonDef) return 0;
+        
+        return cart
+            .filter(i => !i.is_add_on) // 排除加購品本身
+            .filter(i => isItemQualifyingForAddon(i, addonDef))
+            .reduce((sum, i) => sum + i.quantity, 0);
+    }
+
+    // 保留舊函式名稱以確保相容性 (若其他地方有呼叫此函式)
+    function getTotalMainDishesCount(addonDef) {
+        // 若有傳入加購品定義，按加購品條件算；若無，則算購物車內所有非加購品總數
+        if (addonDef) {
+            return getQualifyingItemCountForAddon(addonDef);
+        }
         return cart
             .filter(i => !i.is_add_on)
-            .filter(i => {
-                const cat = getCartItemCategory(i);
-                return cat === '主餐' || cat === '主食' || !nonMainCategories.includes(cat);
-            })
             .reduce((sum, i) => sum + i.quantity, 0);
     }
 
