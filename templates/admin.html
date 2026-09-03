@@ -482,6 +482,7 @@
                                     <th>套餐名稱</th>
                                     <th>升級加購價</th>
                                     <th>配餐內容清單 (Sides)</th>
+                                    <th>標籤狀態</th>
                                     <th class="text-end">操作</th>
                                 </tr>
                             </thead>
@@ -502,6 +503,30 @@
                                                     {% if combo.item3 %}<li>- {{ combo.item3.name }} {% if combo.item3_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
                                                 </ul>
                                             </td>
+                                            <td>
+                                            {% set is_main_sold = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
+                                            {% set is_side1_sold = combo.item1 and (combo.item1.is_sold_out or (combo.item1.stock is not none and combo.item1.stock <= 0)) %}
+                                            {% set is_side2_sold = combo.item2 and (combo.item2.is_sold_out or (combo.item2.stock is not none and combo.item2.stock <= 0)) %}
+                                            {% set is_side3_sold = combo.item3 and (combo.item3.is_sold_out or (combo.item3.stock is not none and combo.item3.stock <= 0)) %}
+
+                                            {% if is_main_sold %}
+                                                <span class="badge bg-secondary me-1">主餐售完</span>
+                                            {% elif is_side1_sold or is_side2_sold or is_side3_sold %}
+                                                <span class="badge bg-warning text-dark me-1">配餐缺貨</span>
+                                            {% else %}
+                                                <span class="badge bg-success me-1">正常供應</span>
+                                            {% endif %}
+                                            
+                                            <!-- 顯示可否加購標籤 -->
+                                            {% if combo.can_addon %}
+                                                <span class="badge bg-info text-dark me-1">可加購</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary text-white-50 me-1">不可加購</span>
+                                            {% endif %}
+
+                                            {% set side_count = (1 if combo.item1 else 0) + (1 if combo.item2 else 0) + (1 if combo.item3 else 0) %}
+                                            <span class="badge bg-dark text-white-50 border border-secondary">{{ side_count }}樣附餐</span>
+                                            </td>
                                             <td class="text-end">
                                                 <!-- 編輯按鈕 -->
                                                 <button class="btn btn-outline-primary btn-sm me-1" type="button"
@@ -516,6 +541,7 @@
                                                         data-item2-cust="{{ 1 if combo.item2_customizable else 0 }}"
                                                         data-item3="{{ combo.item3_id or '' }}"
                                                         data-item3-cust="{{ 1 if combo.item3_customizable else 0 }}"
+                                                        data-can-addon="{{ 1 if combo.can_addon else 0 }}"
                                                         onclick="openEditComboModal(this)">
                                                     <i class="bi bi-pencil-square"></i> 編輯
                                                 </button>
@@ -529,7 +555,7 @@
                                 
                                 {% if not has_combo %}
                                 <tr>
-                                    <td colspan="5" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td>
+                                    <td colspan="6" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td>
                                 </tr>
                                 {% endif %}
                             </tbody>
@@ -711,6 +737,7 @@
                                     <th>目前紅利點數</th>
                                     <th>持有專屬優惠券狀態</th>
                                     <th>人臉特徵</th>
+                                    <th>最後登入時間</th>
                                     <th class="text-end">操作</th>
                                 </tr>
                             </thead>
@@ -723,7 +750,7 @@
                                     <td class="fw-bold text-white">{{ u.name }}</td>
                                     <td>{{ u.phone }}</td>
                                     <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill text-danger me-1"></i>{{ u.points }} 點</span></td>
-<td>
+                                    <td>
                                         {% set coupons_list = [] %}
                                         {% for uc in u.user_coupons %}
                                             {% set _ = coupons_list.append({'id': uc.id, 'title': uc.coupon.title, 'code': uc.code, 'is_used': uc.is_used}) %}
@@ -740,6 +767,13 @@
                                         <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>已建檔</span>
                                         {% else %}
                                         <span class="badge bg-secondary">未建檔</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if u.last_login_at %}
+                                            <span class="text-info small fw-bold"><i class="bi bi-clock-history me-1"></i>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                                        {% else %}
+                                            <span class="text-white-50 small">尚未記錄</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
@@ -1141,11 +1175,23 @@
                                     <label class="form-check-label small text-warning" for="combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
                             </div>
-                        </div>
+                            <!-- 套餐標籤區 -->
+                            <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
+                                <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
+                                <div class="d-flex flex-wrap gap-3">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="combo-can-addon" checked>
+                                        <label class="form-check-label small fw-bold text-info" for="combo-can-addon">
+                                            <i class="bi bi-bag-plus"></i> 開放加購
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
 
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
-                            <textarea class="form-control" name="description" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                            <div class="mb-2">
+                                <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
+                                <textarea class="form-control" name="description" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                            </div>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -1233,7 +1279,18 @@
                                 </div>
                             </div>
                         </div>
-
+                        <!-- 套餐標籤區 -->
+                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
+                            <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
+                            <div class="d-flex flex-wrap gap-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="edit-combo-can-addon" checked>
+                                    <label class="form-check-label small fw-bold text-info" for="edit-combo-can-addon">
+                                        <i class="bi bi-bag-plus"></i> 開放加購
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
                         <div class="mb-2">
                             <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
                             <textarea class="form-control" name="description" id="edit-combo-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
@@ -1815,6 +1872,8 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         side3.value = d.item3 || '';
         document.getElementById('edit-combo-side3-cust').checked = (d.item3Cust === '1');
         document.getElementById('edit-combo-side3-group').style.display = d.item2 ? 'block' : 'none';
+        // 帶入可否加購開關狀態
+        document.getElementById('edit-combo-can-addon').checked = (d.canAddon !== '0');
 
         // 帶入資料後立即更新選項禁用狀態
         updateComboSideOptions('edit-combo');

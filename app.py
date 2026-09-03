@@ -63,6 +63,7 @@ class User(db.Model):
     photo_path = db.Column(db.String(200), nullable=False)
     feature = db.Column(db.PickleType, nullable=True)
     points = db.Column(db.Integer, default=0)  # 會員紅利點數
+    last_login_at = db.Column(db.DateTime, nullable=True)  # 記錄最後登入時間
 
 class MenuItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -104,6 +105,9 @@ class ComboOption(db.Model):
     item1_customizable = db.Column(db.Boolean, default=True)
     item2_customizable = db.Column(db.Boolean, default=True)
     item3_customizable = db.Column(db.Boolean, default=True)
+
+    # 是否開放加購標籤 (預設開啟 True)
+    can_addon = db.Column(db.Boolean, default=True)
 
     # 關聯設定
     main_item = db.relationship('MenuItem', foreign_keys=[main_item_id], backref=db.backref('combo_options', lazy=True, cascade="all, delete-orphan"))
@@ -179,6 +183,8 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE user ADD COLUMN feature BLOB"))
     if 'points' not in user_cols:
         db.session.execute(db.text("ALTER TABLE user ADD COLUMN points INTEGER DEFAULT 0"))
+    if 'last_login_at' not in user_cols:
+        db.session.execute(db.text("ALTER TABLE user ADD COLUMN last_login_at DATETIME"))
 
     # 2. 檢查 MenuItem 資料表
     menu_info = db.session.execute(db.text("PRAGMA table_info(menu_item)")).fetchall()
@@ -263,6 +269,8 @@ with app.app_context():
             db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item1_customizable BOOLEAN DEFAULT 1"))
             db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item2_customizable BOOLEAN DEFAULT 1"))
             db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN item3_customizable BOOLEAN DEFAULT 1"))
+        if 'can_addon' not in combo_cols:
+            db.session.execute(db.text("ALTER TABLE combo_option ADD COLUMN can_addon BOOLEAN DEFAULT 1"))
         db.session.commit()
 
     # 檢查 MenuItem 是否有 is_manual_popular 欄位，沒有就建立
@@ -365,6 +373,7 @@ def customer_index():
     categories = sorted(list(set(item.category for item in items if item.category)))
     user_points = 0
     user_coupons = []
+    personalized_items = []  # 個人化常點餐點清單
     is_guest = session.get('is_guest', False)
     
     if session.get('user_id'):
@@ -375,6 +384,47 @@ def customer_index():
             user_coupons = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
             session['is_guest'] = False
             is_guest = False
+
+            # 💡 1. 嚴格鎖定「當前會員 ID」名下的有效訂單 (排除 Cancelled)，杜絕跨會員混淆
+            user_orders = Order.query.filter(
+                Order.user_id == user.id,
+                Order.status != 'Cancelled'
+            ).all()
+
+            # 💡 2. 向下相容：僅在該會員 ID 查無任何訂單且姓名非預設訪客時，才補查早期未建 user_id 的舊單
+            if not user_orders and user.name and user.name.strip() not in ['訪客', 'Guest', '']:
+                user_orders = Order.query.filter(
+                    Order.user_id.is_(None),
+                    Order.table_number == user.name.strip(),
+                    Order.status != 'Cancelled'
+                ).all()
+
+            # 💡 3. 以當前上架菜單為基準，純粹統計「該會員自身」各餐點的點購次數
+            if user_orders:
+                item_dict = {it.name.strip(): it for it in items}
+                user_item_counts = {}
+
+                for order in user_orders:
+                    for oi in order.items:
+                        # 排除紅利免費兌換、商城贈品
+                        if '[點數兌換]' in oi.item_name or oi.item_name.startswith('🎁') or oi.customization == '紅利免費兌換':
+                            continue
+                        
+                        # 清理餐點名稱字串
+                        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', oi.item_name).strip()
+                        
+                        # 確保該品項存在於目前菜單中
+                        if clean_name in item_dict:
+                            user_item_counts[clean_name] = user_item_counts.get(clean_name, 0) + int(oi.quantity or 1)
+
+                # 💡 4. 依照「該會員個人點購總次數」由高至低排序，精選前 3 名
+                sorted_fav_names = sorted(
+                    user_item_counts.keys(), 
+                    key=lambda k: user_item_counts[k], 
+                    reverse=True
+                )[:3]
+
+                personalized_items = [item_dict[name] for name in sorted_fav_names if name in item_dict]
             
     return render_template(
         'customer.html',
@@ -382,6 +432,7 @@ def customer_index():
         categories=categories,
         user_points=user_points,
         user_coupons=user_coupons,
+        personalized_items=personalized_items,
         is_guest=is_guest
     )
 
@@ -456,6 +507,27 @@ def submit_order():
     insufficient_items = []
 
     for clean_name, demanded_qty in item_demands.items():
+        # 💡 檢查是否有套餐附屬配餐售完
+        for item_data in items:
+            custom_str = item_data.get('customization', '')
+            # 尋找是否包含 [套餐: 套餐名稱]
+            match = re.search(r'\[套餐:\s*([^\]]+)\]', custom_str)
+            if match:
+                combo_name = match.group(1).strip()
+                # 找到對應主餐名稱
+                clean_main = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item_data['name']).strip()
+                main_item = MenuItem.query.filter_by(name=clean_main).first()
+                if main_item:
+                    combo = ComboOption.query.filter_by(main_item_id=main_item.id, name=combo_name).first()
+                    if combo:
+                        for side in [combo.item1, combo.item2, combo.item3]:
+                            if side and (side.is_sold_out or (side.stock is not None and side.stock <= 0)):
+                                return jsonify({
+                                    'success': False,
+                                    'sold_out': True,
+                                    'sold_out_items': [side.name],
+                                    'message': f'套餐【{combo.name}】附屬配餐【{side.name}】已售罄，無法升級此套餐！'
+                                }), 400
         menu_item = MenuItem.query.filter_by(name=clean_name).first()
         if menu_item:
             curr_stock = menu_item.stock if menu_item.stock is not None else 0
@@ -787,7 +859,8 @@ def register():
                     pass
             return "<script>alert('⚠️ 照片未偵測到清晰人臉！請正對鏡頭並重新拍攝。'); window.history.back();</script>", 400
 
-        new_user = User(name=name, phone=phone, photo_path=filename, feature=feature, points=20)
+
+        new_user = User(name=name, phone=phone, photo_path=filename, feature=feature, points=20, last_login_at=datetime.now())
         db.session.add(new_user)
         db.session.commit()
 
@@ -830,6 +903,8 @@ def face_login():
                     matched_user = u
 
         if best_score >= 0.363 and matched_user:
+            matched_user.last_login_at = datetime.now()
+            db.session.commit()
             session['user_id'] = matched_user.id
             session['user_name'] = matched_user.name
             session['user_points'] = matched_user.points
@@ -853,6 +928,8 @@ def phone_login():
 
     user = User.query.filter_by(phone=phone).first()
     if user:
+        user.last_login_at = datetime.now()
+        db.session.commit()
         session['user_id'] = user.id
         session['user_name'] = user.name
         session['user_points'] = user.points
@@ -1062,6 +1139,7 @@ def add_coupon():
 
     existing = Coupon.query.filter_by(code=code).first()
     if existing:
+        db.session.rollback()
         return "<script>alert('❌ 該優惠代碼已存在，請使用不同代碼！'); window.history.back();</script>", 400
 
     new_coupon = Coupon(
@@ -1086,6 +1164,7 @@ def delete_coupon(id):
 
     coupon = Coupon.query.get_or_404(id)
     db.session.delete(coupon)
+    db.session.expire_all()
     db.session.commit()
     return redirect(url_for('admin_dashboard', tab='rewards'))
 
@@ -1107,6 +1186,7 @@ def edit_coupon(id):
     # 檢查代碼是否與其他優惠券重複 (排除自己)
     existing = Coupon.query.filter(Coupon.code == code, Coupon.id != id).first()
     if existing:
+        db.session.rollback()
         return "<script>alert('❌ 該優惠代碼已被其他優惠券使用！'); window.history.back();</script>", 400
 
     # 💡 若代碼有更動，同步更新會員已持有的票券代碼
@@ -1150,6 +1230,7 @@ def remove_reward_item(id):
     item = MenuItem.query.get_or_404(id)
     item.is_reward = False
     db.session.commit()
+    db.session.expire_all()
     return redirect(url_for('admin_dashboard', tab='rewards'))
 
 @app.route('/admin/add', methods=['POST'])
@@ -1190,8 +1271,10 @@ def add_item():
 
         if can_be_add_on:
             if add_on_price <= 0:
+                db.session.rollback()
                 return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
             if add_on_price >= final_price:
+                db.session.rollback()
                 return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${final_price})！'); window.history.back();</script>", 400
         new_item = MenuItem(
             name=name,
@@ -1266,8 +1349,8 @@ def import_smart():
                             existing.name = name
                             existing.points = points
                         else:
-                            new_user = User(name=name, phone=phone, points=points, photo_path='', feature=None)
-                            db.session.add(new_user)
+                            new_user =User(name=name, phone=phone, photo_path=filename, feature=feature, points=20, last_login_at=datetime.now())
+                        db.session.add(new_user)
                         imported_counts['User'] += 1
 
             # ---------------------------------------------------------
@@ -1448,7 +1531,13 @@ def export_excel():
         # 1. 靜態資料表（無時間區間，直接從第 1 列開始寫入）
         if 'User' in selected_tables:
             users = User.query.all()
-            data = [{'ID': u.id, '姓名(Name)': u.name, '電話(Phone)': u.phone, '紅利點數(Points)': u.points} for u in users]
+            data = [{
+                'ID': u.id, 
+                '姓名(Name)': u.name,
+                '電話(Phone)': u.phone,
+                '紅利點數(Points)': u.points,
+                '最後登入時間(Last Login)': u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else '尚未記錄'
+                } for u in users]
             df = pd.DataFrame(data if data else [{'資料': '目前無資料'}])
             df.to_excel(writer, sheet_name='會員資料(User)', index=False)
 
@@ -1606,6 +1695,7 @@ def edit_item(id):
     item = MenuItem.query.get_or_404(id)
     name = request.form.get('name')
     price = request.form.get('price')
+    from_tab = request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')
     
     if name and price:
         item_price = max(0, round(float(price)))
@@ -1615,8 +1705,10 @@ def edit_item(id):
         add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
         if can_be_add_on:
             if add_on_price <= 0:
+                db.session.rollback()
                 return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
             if add_on_price >= item_price:
+                db.session.rollback()
                 return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${item_price})！'); window.history.back();</script>", 400
 
         # 2. 先定義紅利兌換變數（解決 UnboundLocalError）
@@ -1627,10 +1719,13 @@ def edit_item(id):
         # 3. 執行紅利兌換防呆檢查
         if is_reward:
             if reward_points <= 0:
+                db.session.rollback()
                 return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
             if reward_points > item_price:
+                db.session.rollback()
                 return f"<script>alert('❌ 兌換所需點數 ({reward_points} 點) 不得高於原單價 (${item_price})！'); window.history.back();</script>", 400
             if reward_discount_points > 0 and reward_discount_points >= reward_points:
+                db.session.rollback()
                 return "<script>alert('❌ 「限時優惠點數」必須小於「兌換所需點數」！'); window.history.back();</script>", 400
 
         # 4. 正式更新資料庫屬性
@@ -1678,7 +1773,6 @@ def edit_item(id):
 
         db.session.commit()
         
-    from_tab = request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')
     return redirect(url_for('admin_dashboard', tab=from_tab))
 
 @app.route('/admin/add_combo', methods=['POST'])
@@ -1686,25 +1780,40 @@ def add_combo():
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_dashboard'))
     
-    main_item_id = request.form.get('main_item_id')
-    name = request.form.get('name')
+    main_item_id = int(request.form.get('main_item_id'))
+    name = str(request.form.get('name', '')).strip()
     additional_price = max(0, int(request.form.get('additional_price') or 0))
     description = request.form.get('description', '')
     
-    # 取得配餐 ID，若為空字串則轉為 None
-    item1_id = request.form.get('item1_id') or None
-    item2_id = request.form.get('item2_id') or None
-    item3_id = request.form.get('item3_id') or None
+    item1_id = int(request.form.get('item1_id')) if request.form.get('item1_id') else None
+    item2_id = int(request.form.get('item2_id')) if request.form.get('item2_id') else None
+    item3_id = int(request.form.get('item3_id')) if request.form.get('item3_id') else None
 
-    # 排除空值後檢查是否有重複的品項 ID
-    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s]
+    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
-        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.history.back();</script>", 400
-    
-    # 讀取配餐客製化開關
+        db.session.rollback()
+        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
+
+    existing_name = ComboOption.query.filter_by(
+        main_item_id=main_item_id,
+        name=name
+    ).first()
+    if existing_name:
+        db.session.rollback()
+        return f"<script>alert('❌ 該主餐已存在名為【{name}】的套餐，請使用不同名稱！'); window.location.href='/admin?tab=menu';</script>"
+
+    target_sides_set = set(chosen_sides)
+    existing_combos = ComboOption.query.filter_by(main_item_id=main_item_id).all()
+    for ec in existing_combos:
+        ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
+        if set(ec_sides) == target_sides_set:
+            db.session.rollback()
+            return f"<script>alert('❌ 該主餐已存在包含相同配餐內容的套餐【{ec.name}】，不可重複建立相同組合！'); window.location.href='/admin?tab=menu';</script>"
+
     item1_customizable = True if request.form.get('item1_customizable') == '1' else False
     item2_customizable = True if request.form.get('item2_customizable') == '1' else False
     item3_customizable = True if request.form.get('item3_customizable') == '1' else False
+    can_addon = True if request.form.get('can_addon') == '1' else False
     
     new_combo = ComboOption(
         main_item_id=main_item_id,
@@ -1716,22 +1825,14 @@ def add_combo():
         item3_id=item3_id,
         item1_customizable=item1_customizable,
         item2_customizable=item2_customizable,
-        item3_customizable=item3_customizable
+        item3_customizable=item3_customizable,
+        can_addon=can_addon
     )
     db.session.add(new_combo)
     db.session.commit()
+    db.session.expire_all() 
     return f"<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
 
-@app.route('/admin/delete_combo/<int:id>')
-def delete_combo(id):
-    """刪除套餐組合"""
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin_dashboard'))
-        
-    combo = ComboOption.query.get_or_404(id)
-    db.session.delete(combo)
-    db.session.commit()
-    return redirect(url_for('admin_dashboard', tab='menu'))
 
 @app.route('/admin/edit_combo/<int:id>', methods=['POST'])
 def edit_combo(id):
@@ -1740,19 +1841,40 @@ def edit_combo(id):
         return redirect(url_for('admin_dashboard'))
         
     combo = ComboOption.query.get_or_404(id)
-    main_item_id = request.form.get('main_item_id')
-    name = request.form.get('name')
+    main_item_id = int(request.form.get('main_item_id'))
+    name = str(request.form.get('name', '')).strip()
     additional_price = max(0, int(request.form.get('additional_price') or 0))
     description = request.form.get('description', '')
 
-    item1_id = request.form.get('item1_id') or None
-    item2_id = request.form.get('item2_id') or None
-    item3_id = request.form.get('item3_id') or None
+    item1_id = int(request.form.get('item1_id')) if request.form.get('item1_id') else None
+    item2_id = int(request.form.get('item2_id')) if request.form.get('item2_id') else None
+    item3_id = int(request.form.get('item3_id')) if request.form.get('item3_id') else None
 
 
-    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s]
+    chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
-        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.history.back();</script>", 400
+        db.session.rollback()
+        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
+
+    duplicate_name = ComboOption.query.filter(
+        ComboOption.id != id,
+        ComboOption.main_item_id == main_item_id,
+        ComboOption.name == name
+    ).first()
+    if duplicate_name:
+        db.session.rollback()
+        return f"<script>alert('❌ 該主餐已有其他名為【{name}】的套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+
+    target_sides_set = set(chosen_sides)
+    existing_combos = ComboOption.query.filter(
+        ComboOption.id != id,
+        ComboOption.main_item_id == main_item_id
+    ).all()
+    for ec in existing_combos:
+        ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
+        if set(ec_sides) == target_sides_set:
+            db.session.rollback()
+            return f"<script>alert('❌ 該主餐已有相同配餐組合的套餐【{ec.name}】，請勿重複配置！'); window.location.href='/admin?tab=menu';</script>"
 
     combo.main_item_id = main_item_id
     combo.name = name
@@ -1764,8 +1886,23 @@ def edit_combo(id):
     combo.item1_customizable = True if request.form.get('item1_customizable') == '1' else False
     combo.item2_customizable = True if request.form.get('item2_customizable') == '1' else False
     combo.item3_customizable = True if request.form.get('item3_customizable') == '1' else False
+    combo.can_addon = True if request.form.get('can_addon') == '1' else False
 
     db.session.commit()
+    db.session.expire_all()
+    return redirect(url_for('admin_dashboard', tab='menu'))
+
+
+@app.route('/admin/delete_combo/<int:id>')
+def delete_combo(id):
+    """刪除套餐組合"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+        
+    combo = ComboOption.query.get_or_404(id)
+    db.session.delete(combo)
+    db.session.commit()
+    db.session.expire_all()
     return redirect(url_for('admin_dashboard', tab='menu'))
 
 @app.route('/admin/delete/<int:id>')
@@ -1785,7 +1922,9 @@ def delete_item(id):
                 
     db.session.delete(item)
     db.session.commit()
+    db.session.expire_all()
     return redirect(url_for('admin_dashboard', tab='menu'))
+
 @app.route('/admin/import_excel', methods=['POST'])
 def import_menu_excel():
     """Excel 批量匯入菜單 (支援自身匯出的檔案與自訂格式)"""
@@ -2015,6 +2154,7 @@ def delete_user(id):
     # 3. 刪除會員本身
     db.session.delete(user)
     db.session.commit()
+    db.session.expire_all()
     
     return redirect(url_for('admin_dashboard', tab='users'))
 
