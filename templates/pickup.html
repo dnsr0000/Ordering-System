@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>櫃檯人員取餐核銷介面</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #f8fafc;
+            font-family: "Microsoft JhengHei", -apple-system, sans-serif;
+            min-height: 100vh;
+        }
+        .header-pickup {
+            background: #151e32;
+            border-bottom: 2px solid #334155;
+        }
+        .pickup-card {
+            background: #1e293b;
+            border: 2px solid #22c55e;
+            border-radius: 16px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .btn-pickup-finish {
+            background-color: #22c55e;
+            color: #0b0f19;
+            font-weight: 800;
+            border: none;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 1.15rem;
+            transition: all 0.2s;
+        }
+        .btn-pickup-finish:hover {
+            background-color: #16a34a;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header-pickup py-3 px-4 mb-4 sticky-top">
+        <div class="d-flex justify-content-between align-items-center">
+            <div class="d-flex align-items-center gap-3">
+                <i class="bi bi-person-check-fill text-success fs-2"></i>
+                <div>
+                    <h4 class="mb-0 fw-bold text-white">櫃檯取餐核銷系統</h4>
+                    <small class="text-white-50">待取餐訂單：<span id="readyCountBadge" class="badge bg-success fs-6">0</span> 筆</small>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <div class="input-group input-group-sm" style="width: 250px;">
+                    <span class="input-group-text bg-dark border-secondary text-white"><i class="bi bi-search"></i></span>
+                    <input type="text" id="quickSearchInput" class="form-control bg-dark text-white border-secondary" placeholder="輸入號碼快速核銷..." onkeydown="if(event.key==='Enter') quickPickupByNumber()">
+                    <button class="btn btn-warning fw-bold" onclick="quickPickupByNumber()">核銷</button>
+                </div>
+                <a href="/counter" target="_blank" class="btn btn-outline-info btn-sm fw-bold">
+                    <i class="bi bi-display me-1"></i> 開啟叫號大螢幕
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <div class="container-fluid px-4 pb-4">
+        <div id="pickupCardsGrid" class="row g-3"></div>
+
+        <div id="noOrdersMessage" class="text-center py-5" style="display: none;">
+            <i class="bi bi-check2-circle text-success display-1"></i>
+            <h3 class="text-white-50 mt-3">目前所有餐點皆已取餐完畢！</h3>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentOrders = [];
+
+        function fetchPickupOrders() {
+            fetch('/api/admin_live_orders')
+                .then(res => res.json())
+                .then(data => {
+                    if (!data.success || !data.orders) return;
+                    // 僅抓取「已出餐 (Completed)」等待取餐的訂單
+                    currentOrders = data.orders.filter(o => o.status === 'Completed');
+                    renderCards(currentOrders);
+                })
+                .catch(err => console.error("獲取訂單失敗:", err));
+        }
+
+        function renderCards(orders) {
+            const grid = document.getElementById('pickupCardsGrid');
+            const noMsg = document.getElementById('noOrdersMessage');
+            const countBadge = document.getElementById('readyCountBadge');
+
+            countBadge.innerText = orders.length;
+
+            if (orders.length === 0) {
+                grid.innerHTML = '';
+                noMsg.style.display = 'block';
+                return;
+            }
+            noMsg.style.display = 'none';
+
+            grid.innerHTML = orders.map(o => `
+                <div class="col-12 col-md-6 col-lg-4 col-xl-3">
+                    <div class="pickup-card p-3 h-100">
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
+                                <div>
+                                    <h2 class="fw-bold text-success mb-0">#${String(o.pickup_number || o.id).padStart(3, '0')}</h2>
+                                    <small class="text-white-50">單號 #${o.id} • ${o.user_name}</small>
+                                </div>
+                                <span class="badge bg-primary fs-6">${o.order_type}</span>
+                            </div>
+
+                            <div class="my-3" style="max-height: 180px; overflow-y: auto;">
+                                ${o.items.map(it => `
+                                    <div class="d-flex justify-content-between small text-white-50 mb-1">
+                                        <span class="text-white fw-bold">${it.item_name}</span>
+                                        <span>x ${it.quantity}</span>
+                                    </div>
+                                    ${it.customization ? `<div class="text-danger small mb-1">${it.customization}</div>` : ''}
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <div class="pt-2 border-top border-secondary">
+                            <button class="btn btn-pickup-finish w-100" onclick="markAsPickedUp(${o.id})">
+                                <i class="bi bi-check-circle-fill me-1"></i> 顧客已取餐
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function markAsPickedUp(orderId) {
+            fetch(`/api/mark_picked_up/${orderId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    fetchPickupOrders();
+                } else {
+                    alert(data.message || '操作失敗');
+                }
+            })
+            .catch(err => alert('連線異常，請稍後再試！'));
+        }
+
+        function quickPickupByNumber() {
+            const input = document.getElementById('quickSearchInput');
+            const targetNum = Number(input.value.trim());
+            if (!targetNum) return;
+
+            const matchedOrder = currentOrders.find(o => Number(o.pickup_number || o.id) === targetNum);
+            if (matchedOrder) {
+                markAsPickedUp(matchedOrder.id);
+                input.value = '';
+            } else {
+                alert(`查無取餐號碼 #${String(targetNum).padStart(3, '0')} 之待領取訂單！`);
+            }
+        }
+
+        // 使用 SSE 即時推播監聽
+        let pickupLastSignature = null;
+
+        function initSSE() {
+            if (!window.EventSource) {
+                setInterval(fetchPickupOrders, 3000);
+                return;
+            }
+            const sse = new EventSource('/api/orders_stream');
+            sse.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (pickupLastSignature === null || pickupLastSignature !== data.state_signature) {
+                        pickupLastSignature = data.state_signature;
+                        fetchPickupOrders();
+                    }
+                } catch (e) {
+                    console.error("解析 SSE 資料失敗:", e);
+                }
+            };
+        }
+
+        fetchPickupOrders();
+        initSSE();
+    </script>
+</body>
+</html>

@@ -200,7 +200,7 @@
             </div>
         </div>
         {% endif %}
-        
+
         <!--專屬於您的常點餐點 -->
         {% if not is_guest %}
         <div class="mb-4">
@@ -1589,7 +1589,7 @@ function updateCartUI() {
             if (data.available_coupons !== undefined) {
                 updateAvailableCouponsUI(data.available_coupons);
             }
-            document.getElementById('receipt-order-id').textContent = '#' + data.order_id;
+            document.getElementById('receipt-order-id').innerHTML = `取餐編號：#${String(data.pickup_number).padStart(3, '0')}<br><small class="text-muted fs-6">系統單號：#${data.order_id}</small>`;
             document.getElementById('receipt-user').textContent = data.user_name;
             document.getElementById('receipt-type').textContent = data.order_type;
             if (data.order_type === '外帶') {
@@ -1650,6 +1650,7 @@ function updateCartUI() {
                                 <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
                                 <span class="badge ${badgeClass}">${o.status}</span>
                                 <span class="badge bg-primary ms-1">${o.order_type}</span>
+                                <span class="badge bg-warning text-dark fw-bold ms-1">取餐 #${String(o.pickup_number || o.order_id).padStart(3, '0')}</span>
                             </div>
                             <small class="text-muted">${o.created_at}</small>
                         </div>
@@ -1799,6 +1800,7 @@ function updateCartUI() {
                                 <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
                                 <span class="badge ${badgeClass}">${o.status}</span>
                                 <span class="badge bg-primary ms-1">${o.order_type}</span>
+                                <span class="badge bg-warning text-dark fw-bold ms-1">取餐 #${String(o.pickup_number || o.order_id).padStart(3, '0')}</span>
                             </div>
                             <small class="text-muted">${o.created_at}</small>
                         </div>

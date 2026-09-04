@@ -119,6 +119,7 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)
     table_number = db.Column(db.String(50), default='訪客')
+    pickup_number = db.Column(db.Integer, default=1)  # 每日取餐編號 (1~999 循環)
     total_price = db.Column(db.Integer, nullable=False)
     payment_method = db.Column(db.String(50), default='Cash')
     order_type = db.Column(db.String(50), default='內用')
@@ -251,6 +252,39 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE menu_item ADD COLUMN is_manual_popular BOOLEAN DEFAULT 0"))
     if 'completed_at' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN completed_at DATETIME'))
+    if 'pickup_number' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN pickup_number INTEGER DEFAULT 1'))
+    # 自動依訂單先後重新賦予 1~999 取餐流水號
+    try:
+        from collections import defaultdict
+        all_orders = Order.query.order_by(Order.created_at.asc(), Order.id.asc()).all()
+        
+        # 依日期 (YYYY-MM-DD) 分組
+        orders_by_date = defaultdict(list)
+        for o in all_orders:
+            d_key = o.created_at.date() if o.created_at else datetime.now().date()
+            orders_by_date[d_key].append(o)
+        
+        needs_commit = False
+        for d_key, d_orders in orders_by_date.items():
+            p_nums = [o.pickup_number for o in d_orders]
+            if len(d_orders) > 1 and len(set(p_nums)) <= 1:
+                cur_no = 1
+                for o in d_orders:
+                    o.pickup_number = cur_no
+                    cur_no = (cur_no % 999) + 1
+                needs_commit = True
+            elif len(d_orders) == 1 and d_orders[0].pickup_number is None:
+                d_orders[0].pickup_number = 1
+                needs_commit = True
+
+        if needs_commit:
+            db.session.commit()
+            print("✅ 歷史訂單取餐流水號校正完成！")
+    except Exception as e:
+        db.session.rollback()
+        print(f"校正歷史取餐編號失敗: {e}")
+    
     # 4. 檢查 OrderItem 資料表
     order_item_info = db.session.execute(db.text("PRAGMA table_info(order_item)")).fetchall()
     order_item_cols = [col[1] for col in order_item_info]
@@ -490,6 +524,20 @@ def submit_order():
     promo_code = str(data.get('promo_code', '')).strip().upper()
     use_points = int(data.get('use_points', 0))
 
+    # 計算今日取餐編號 (1 ~ 999 循環)
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    max_pickup = db.session.query(db.func.max(Order.pickup_number)).filter(
+        Order.created_at >= today_start,
+        Order.created_at <= today_end
+    ).scalar()
+
+    if max_pickup and max_pickup > 0:
+        next_pickup = (max_pickup % 999) + 1
+    else:
+        next_pickup = 1
+    
     if not items:
         return jsonify({'error': '購物車為空'}), 400
 
@@ -626,7 +674,8 @@ def submit_order():
         status='Pending',
         points_used=points_used,
         points_earned=points_earned,
-        discount_amount=int(total_discount)
+        discount_amount=int(total_discount),
+        pickup_number=next_pickup
     )
     db.session.add(new_order)
     db.session.flush()
@@ -676,6 +725,7 @@ def submit_order():
 
     return jsonify({
         'order_id': new_order.id,
+        'pickup_number': next_pickup,
         'user_name': user_name,
         'subtotal': subtotal,
         'discount_amount': total_discount,
@@ -798,6 +848,7 @@ def my_orders():
     status_map = {
         'Pending': '製作中',
         'Completed': '已出餐',
+        'PickedUp': '已取餐',
         'Cancelled': '已取消'
     }
     
@@ -813,11 +864,12 @@ def my_orders():
                 'subtotal': i.price * i.quantity,
                 'customization': i.customization or ''
             })
-        
+        pickup_val = o.pickup_number if (getattr(o, 'pickup_number', None) is not None and o.pickup_number > 0) else o.id
+
         result.append({
             'order_id': o.id,
             'user_order_no': user_order_no, 
-            'table_number': o.table_number,
+            'pickup_number': pickup_val,
             'total_price': round(o.total_price),
             'discount_amount': round(o.discount_amount or 0),
             'points_used': round(o.points_used or 0),
@@ -1007,7 +1059,7 @@ def build_order_analytics(orders, limit=1):
     today = datetime.now().date()
     today_orders = [o for o in orders if o.created_at and o.created_at.date() == today and o.status != 'Cancelled']
     pending_orders = [o for o in today_orders if o.status == 'Pending']
-    completed_today_orders = [o for o in today_orders if o.status == 'Completed']
+    completed_today_orders = [o for o in today_orders if o.status in ['Completed', 'PickedUp']]
 
     # 💡 1. 平均每單價格：過濾掉實付金額為 0 元的純點數兌換單
     paid_today_orders = [o for o in today_orders if (o.total_price or 0) > 0]
@@ -2048,9 +2100,9 @@ def update_order_status(id):
     data = request.get_json()
     new_status = data.get('status')
 
-    if new_status in ['Pending', 'Completed', 'Cancelled']:
+    if new_status in ['Pending', 'Completed', 'PickedUp', 'Cancelled']:
         order.status = new_status
-        if new_status == 'Completed':
+        if new_status == 'Completed' and not order.completed_at:
             order.completed_at = datetime.now()
         db.session.commit()
         return jsonify({'message': '狀態更新成功', 'status': new_status})
@@ -2192,6 +2244,7 @@ def api_kitchen_orders():
 
         orders_data.append({
             'id': o.id,
+            'pickup_number': o.pickup_number if getattr(o, 'pickup_number', None) else o.id,
             'table_number': o.table_number,
             'order_type': o.order_type,
             'need_cutlery': bool(o.need_cutlery) if getattr(o, 'need_cutlery', None) is not None else True,
@@ -2220,14 +2273,14 @@ def kitchen_update_status(id):
 
 @app.route('/api/admin_live_orders')
 def api_admin_live_orders():
-    """供店家後台即時同步今日訂單看板、營運指標與最新菜單庫存"""
-    if not session.get('admin_logged_in'):
-        return jsonify({'error': '未授權'}), 401
+    """供店家後台、櫃檯與叫號看板即時同步今日訂單看板、營運指標與最新菜單庫存"""
     db.session.expire_all()
 
-    today = datetime.now().date()
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
     today_orders = Order.query.filter(
-        db.func.date(Order.created_at) == today
+        Order.created_at >= today_start,
+        Order.created_at <= today_end
     ).order_by(Order.id.desc()).all()
 
     orders_data = []
@@ -2241,6 +2294,7 @@ def api_admin_live_orders():
 
         orders_data.append({
             'id': o.id,
+            'pickup_number': o.pickup_number if getattr(o, 'pickup_number', None) else o.id,
             'user_name': o.user.name if o.user else '非會員',
             'order_type': o.order_type,
             'payment_method': o.payment_method,
@@ -2261,14 +2315,6 @@ def api_admin_live_orders():
         'is_sold_out': bool(item.is_sold_out) or ((item.stock or 0) <= 0)
     } for item in all_items]
 
-    valid_today = [o for o in today_orders if o.status != 'Cancelled']
-    pending_orders = [o for o in today_orders if o.status == 'Pending']
-    completed_orders = [o for o in today_orders if o.status == 'Completed']
-    paid_orders = [o for o in valid_today if (o.total_price or 0) > 0]
-    
-    today_revenue = sum(o.total_price or 0 for o in paid_orders)
-    pending_items_qty = sum(sum(i.quantity or 1 for i in o.items) for o in pending_orders)
-    eta_minutes = max(5, pending_items_qty * 2 + 4) if pending_orders else 0
     all_orders = Order.query.order_by(Order.id.desc()).all()
     analytics = build_order_analytics(all_orders, limit=3)
 
@@ -2301,25 +2347,46 @@ def kitchen_complete_all():
     return jsonify({'success': True, 'message': f'✅ 已成功將 {count} 筆訂單批次完成出餐！', 'count': count})
 
 # ==============================================================================
+# 櫃檯取餐路由
+# ==============================================================================
+@app.route('/pickup')
+def pickup_management():
+    """供櫃檯人員使用的取餐核銷操作頁面"""
+    return render_template('pickup.html')
+
+@app.route('/api/mark_picked_up/<int:id>', methods=['POST'])
+def api_mark_picked_up(id):
+    """櫃檯人員一鍵核銷取餐"""
+    order = Order.query.get_or_404(id)
+    order.status = 'PickedUp'
+    db.session.commit()
+    return jsonify({'success': True, 'message': f'取餐編號 #{order.pickup_number} (單號 #{order.id}) 已完成取餐！'})
+
+# ==============================================================================
 # SSE (Server-Sent Events) 即時推播串流路由
 # ==============================================================================
 @app.route('/api/orders_stream')
 def orders_stream():
-    """透過 SSE 即時向前端推播待製作訂單數與狀態更新事件"""
+    """透過 SSE 即時向前端推播今日所有訂單狀態特徵與變更事件"""
     def event_stream():
         while True:
-            time.sleep(2)  # 每 2 秒檢查一次
+            time.sleep(1) 
             with app.app_context():
-                # 💡 重設 session 防止讀取快取
-                db.session.remove()
-                today = datetime.now().date()
-                pending_count = Order.query.filter(
-                    Order.status == 'Pending',
-                    db.func.date(Order.created_at) == today
-                ).count()
+                db.session.remove() 
+                today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                
+                orders_status = db.session.query(Order.id, Order.status).filter(
+                    Order.created_at >= today_start,
+                    Order.created_at <= today_end
+                ).order_by(Order.id.asc()).all()
+                
+                state_signature = ",".join(f"{oid}:{status}" for oid, status in orders_status)
+                pending_count = sum(1 for _, s in orders_status if s == 'Pending')
                 
                 payload = json.dumps({
                     'timestamp': time.time(),
+                    'state_signature': state_signature,
                     'pending_count': pending_count
                 })
                 yield f"data: {payload}\n\n"
@@ -2327,7 +2394,14 @@ def orders_stream():
     return Response(event_stream(), mimetype='text/event-stream')
 
 # ==============================================================================
-# 9. 程式進入點 (Main Entry)
+# 9. 櫃檯取餐叫號看板路由 (Counter Display System)
+# ==============================================================================
+@app.route('/counter')
+def counter_display():
+    """櫃檯專屬取餐叫號即時看板"""
+    return render_template('counter.html')
+# ==============================================================================
+# 10. 程式進入點 (Main Entry)
 # ==============================================================================
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000, debug=True)

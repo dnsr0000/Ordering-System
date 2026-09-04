@@ -179,7 +179,7 @@
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">#{{ order.id }}</h5>
+                                <h5 class="fw-bold text-warning mb-0">取餐 #{{ '%03d' % (order.pickup_number or order.id) }} <small class="text-white-50 fs-6">(單號 #{{ order.id }})</small></h5>
                                 <div class="d-flex gap-1">
                                     <span class="badge bg-primary">{{ order.order_type }}</span>
                                     <span class="badge bg-secondary">{{ order.payment_method }}</span>
@@ -223,10 +223,12 @@
                                     <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ (order.discount_amount or 0)|round|int }}</small>
                                     <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
                                 </div>
+                                <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'PickedUp' %}border-secondary{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}"></div>
                                 <div style="min-width: 130px;">
                                     <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value, this)">
                                         <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
                                         <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
+                                        <option value="PickedUp" {% if order.status == 'PickedUp' %}selected{% endif %}>📦 已取餐</option>
                                         <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
                                     </select>
                                 </div>
@@ -1562,6 +1564,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                 card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
                 if (newStatus === 'Pending') card.classList.add('border-warning');
                 else if (newStatus === 'Completed') card.classList.add('border-success');
+                else if (newStatus === 'PickedUp') card.classList.add('border-secondary');
                 else if (newStatus === 'Cancelled') card.classList.add('border-danger');
                 else card.classList.add('border-info');
             }
@@ -2141,13 +2144,14 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     let borderClass = 'border-info';
                     if (order.status === 'Pending') borderClass = 'border-warning';
                     else if (order.status === 'Completed') borderClass = 'border-success';
+                    else if (order.status === 'PickedUp') borderClass = 'border-secondary';
                     else if (order.status === 'Cancelled') borderClass = 'border-danger';
 
                     return `
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${borderClass}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">#${order.id}</h5>
+                                <h5 class="fw-bold text-warning mb-0">取餐 #${String(order.pickup_number || order.id).padStart(3, '0')} <small class="text-white-50 fs-6">(單號 #${order.id})</small></h5>
                                 <div class="d-flex gap-1">
                                     <span class="badge bg-primary">${order.order_type}</span>
                                     <span class="badge bg-secondary">${order.payment_method}</span>
@@ -2187,11 +2191,12 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                     <span class="text-white fw-bold fs-5">$${Math.round(order.total_price)}</span>
                                 </div>
                                 <div style="min-width: 130px;">
-                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
-                                        <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
-                                        <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
-                                        <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
-                                    </select>
+                                <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
+                                    <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
+                                    <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
+                                    <option value="PickedUp" ${order.status === 'PickedUp' ? 'selected' : ''}>📦 已取餐</option>
+                                    <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
+                                </select>
                                 </div>
                             </div>
                         </div>
@@ -2303,6 +2308,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
     // ==============================================================================
     let adminEventSource = null;
     let lastPendingCount = null;
+    let adminLastSignature = null;
 
     function initAdminSSE() {
         if (!window.EventSource) {
@@ -2315,8 +2321,9 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         adminEventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
-                // 只要狀態或筆數有變化即時刷新後台看板與分析指標
-                if (lastPendingCount !== data.pending_count) {
+                // 狀態簽名有變更（如取餐核銷）或待製作數改變時，即時刷新後台訂單看板
+                if (adminLastSignature === null || adminLastSignature !== data.state_signature || lastPendingCount !== data.pending_count) {
+                    adminLastSignature = data.state_signature;
                     lastPendingCount = data.pending_count;
                     syncAdminLiveOrders();
                 }

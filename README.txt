@@ -28,7 +28,10 @@ Project Root/
     ├── admin.html                          # 店家管理後台 (登入、菜單、套餐與儀表板)
     ├── customer.html                       # 顧客點餐首頁 (Kiosk UI、套餐彈窗與多重客製化)
     ├── register.html                       # 會員註冊、雙軌登入與相機拍攝介面
+    ├──counter.html                         # 前台叫號機
+    ├──pickup.html                           # 前台叫號機後台控制
     └── rewards.html                        # 會員紅利回饋商城
+
 
 💻 安裝與執行環境 (Environment & Setup)
 1. 作業系統：Windows 11 (25H2)
