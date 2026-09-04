@@ -142,7 +142,7 @@
                 'desc': final_desc,
                 'sides': sides_info,
                 'is_sold': 1 if is_combo_sold else 0,
-                'can_addon': 1 if (c.can_addon is not defined or c.can_addon) else 0
+                'can_addon': 1 if (c.can_addon is none or c.can_addon) else 0
             }) %}
         {% endfor %}
 
@@ -245,7 +245,7 @@
                         'desc': final_desc,
                         'sides': sides_info,
                         'is_sold': 1 if is_combo_sold else 0,
-                        'can_addon': 1 if (c.can_addon is not defined or c.can_addon) else 0
+                        'can_addon': 1 if (c.can_addon is none or c.can_addon) else 0
                     }) %}
                 {% endfor %}
 
@@ -386,7 +386,7 @@
                 'desc': final_desc,
                 'sides': sides_info,
                 'is_sold': 1 if is_combo_sold else 0,
-                'can_addon': 1 if (c.can_addon is not defined or c.can_addon) else 0
+                'can_addon': 1 if (c.can_addon is none or c.can_addon) else 0
             }) %}
         {% endfor %}
 
@@ -758,41 +758,100 @@
         {% endfor %}
     };
 
-    // 判斷特定購物車品項是否符合該加購品的解鎖條件
+    // 1. 取得購物車品項所屬分類
     function getCartItemCategory(item) {
         if (item.category && item.category !== '未分類') return item.category.trim();
-        if (item.id && itemCategoryMap[String(item.id)]) return itemCategoryMap[String(item.id)];
-        if (item.name && itemCategoryMap[item.name]) return itemCategoryMap[item.name];
+        if (item.id && itemCategoryMap[String(item.id)]) return itemCategoryMap[String(item.id)].trim();
+        if (item.name && itemCategoryMap[item.name]) return itemCategoryMap[item.name].trim();
         return '未分類';
     }
 
-    // 判定購物車特定項目是否符合加購條件
+    // 2. 判定品項是否符合加購資格（關鍵：加購品絕對不可再次當作資格母體）
     function isItemQualifyingForAddon(cartItem, addonDef) {
-        if (!cartItem || cartItem.is_add_on) return false;
-        const cat = getCartItemCategory(cartItem);
-        const target = (addonDef.trigger_target || '').trim();
+        // 嚴格阻斷：只要是加購品，一律不具備解鎖其他加購品的資格
+        if (!cartItem || cartItem.is_add_on === true || cartItem.is_add_on === 'true') {
+            return false;
+        }
+        // 排除後台設定關閉加購權限之套餐
+        if (cartItem.can_addon === false) {
+            return false;
+        }
 
-        if (addonDef.trigger_type === 'category') {
-            return cat === target;
+        const cat = getCartItemCategory(cartItem);
+        const triggerType = addonDef.trigger_type || 'any';
+        const target = (addonDef.trigger_target || '').trim().toLowerCase();
+
+        if (triggerType === 'category') {
+            return cat.trim().toLowerCase() === target;
         }
-        if (addonDef.trigger_type === 'item') {
-            return cartItem.name.trim() === target;
+        if (triggerType === 'item') {
+            return cartItem.name.trim().toLowerCase() === target;
         }
-        if (addonDef.trigger_type === 'any') {
-            const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
-            return cat === '主餐' || !nonMainCategories.includes(cat);
+        if (triggerType === 'any') {
+            return true;
         }
         return false;
+    }
+    // 購物車內能提供該加購品資格的品項總數量
+    function getQualifyingCountForAddon(addonDef) {
+        return cart
+            .filter(i => isItemQualifyingForAddon(i, addonDef))
+            .reduce((sum, i) => sum + i.quantity, 0);
+    }
+    // 獨立計算：購物車內該加購品已經使用的數量
+    function getUsedCountForAddon(addonId) {
+        return cart
+            .filter(i => i.is_add_on && String(i.id) === String(addonId))
+            .reduce((sum, i) => sum + i.quantity, 0);
+    }
+    // 計算特定加購品當前的剩餘配額 (Remaining Quota)
+    function getRemainingQuotaForAddon(addonDef) {
+        // A. 全域總量防呆：購物車內「所有加購品總數」不得超過「所有正價合格商品總數」
+        const totalRegularDishes = cart
+            .filter(i => !i.is_add_on && i.can_addon !== false)
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+        const totalAddonsInCart = cart
+            .filter(i => i.is_add_on)
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+        const globalRemainingQuota = Math.max(0, totalRegularDishes - totalAddonsInCart);
+        if (globalRemainingQuota <= 0) return 0;
+
+        // B. 條件專屬配額：該特定條件（如特定分類）提供的正價商品數 - 已被該條件消耗的加購品總數
+        const qualifyingCount = cart
+            .filter(i => isItemQualifyingForAddon(i, addonDef))
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+        const usedCountForCondition = cart
+            .filter(i => i.is_add_on)
+            .filter(i => {
+                const def = (typeof availableAddons !== 'undefined')
+                    ? availableAddons.find(a => String(a.id) === String(i.id))
+                    : null;
+                if (!def) return false;
+                // 只要消耗的是相同觸發條件（例如同一個特定分類），就共用該分類名額
+                return (def.trigger_type || 'any') === (addonDef.trigger_type || 'any') &&
+                    (def.trigger_target || '').trim().toLowerCase() === (addonDef.trigger_target || '').trim().toLowerCase();
+            })
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+        const conditionRemainingQuota = Math.max(0, qualifyingCount - usedCountForCondition);
+
+        // 取兩者嚴格最小值（既不能超過該分類名額，也不能超過全單 1:1 總名額）
+        return Math.min(globalRemainingQuota, conditionRemainingQuota);
     }
     // 取得購物車中可提供加購資格的主餐總數 (排除飲料、點心、副餐、配餐)
     function getTotalMainDishesCount() {
         const nonMainCategories = ['飲料', '點心', '副餐', '配餐'];
         return cart
             .filter(i => !i.is_add_on)
-            .filter(i => i.can_addon !== false) 
+            .filter(i => i.can_addon !== false)
             .filter(i => {
                 const cat = getCartItemCategory(i);
-                return cat === '主餐' || cat === '主食' || !nonMainCategories.includes(cat);
+                const isMain = (cat === '主餐' || cat === '主食' || !nonMainCategories.includes(cat));
+                const isQualifying = typeof availableAddons !== 'undefined' && availableAddons.some(a => isItemQualifyingForAddon(i, a));
+                return isMain || isQualifying;
             })
             .reduce((sum, i) => sum + i.quantity, 0);
     }
@@ -1041,7 +1100,9 @@
 
     function addToCart(id, name, price, customization = '', is_add_on = false, category = '', can_addon = true) {
         const actualCategory = (category && category !== '未分類') ? category : (itemCategoryMap[String(id)] || '未分類');
-        const item = cart.find(i => i.id === id && i.customization === customization && i.is_add_on === is_add_on);
+        const isAddonBool = (is_add_on === true || is_add_on === 'true');
+        
+        const item = cart.find(i => String(i.id) === String(id) && i.customization === customization && Boolean(i.is_add_on) === isAddonBool);
         
         if (item) {
             item.quantity += 1;
@@ -1053,33 +1114,37 @@
                 price: Number(price || 0),
                 quantity: 1,
                 customization: customization,
-                is_add_on: is_add_on,
+                is_add_on: isAddonBool,
                 category: actualCategory,
                 can_addon: Boolean(can_addon)
             });
         }
         saveCartToStorage();
         updateCartUI();
-        
-        const toastEl = document.createElement('div');
-        toastEl.className = 'position-fixed bottom-0 end-0 m-3 bg-success text-white p-2 rounded shadow';
-        toastEl.innerHTML = `已加入：${name} ${is_add_on ? '(加購)' : ''} <span class="fw-bold">+1</span>`;
-        document.body.appendChild(toastEl);
-        setTimeout(() => toastEl.remove(), 1300);
     }
 
+    // 點擊加購按鈕
     function triggerAddon(id, name, price, modifiers, category) {
-        // 檢查全域加購名額是否已用完
-        if (getTotalAddonsCount() >= getTotalMainDishesCount()) {
-            alert('⚠️ 加購名額已滿！每購買一份主餐限加購一份優惠品。');
+        const addonDef = (typeof availableAddons !== 'undefined')
+            ? availableAddons.find(a => String(a.id) === String(id))
+            : null;
+
+        if (!addonDef) {
+            alert('⚠️ 查無此加購品設定！');
+            return;
+        }
+
+        if (getRemainingQuotaForAddon(addonDef) <= 0) {
+            alert('⚠️ 加購名額已用完！每購買一份合格餐點限加購一份優惠品，加購品無法再次折抵。');
             return;
         }
 
         const actualCategory = category || itemCategoryMap[String(id)] || '未分類';
         if (!modifiers || modifiers === 'none' || modifiers === 'undefined') {
-            addToCart(id, name, price, '', true, actualCategory);
+            addToCart(id, name, price, '', true, actualCategory, false);
             return;
         }
+
         currentAddonFlag = true;
         currentSelectedItem = { 
             id: id, 
@@ -1088,7 +1153,7 @@
             modifiers: modifiers, 
             category: actualCategory, 
             comboPrefix: '', 
-            sides: [] ,
+            sides: [],
             canAddon: false
         };
         
@@ -1098,6 +1163,22 @@
             modalBody.innerHTML = generateModifierSectionHtml('main', `加購：${name}`, modifiers);
         }
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).show();
+    }
+    // 購物車數量變更控制 (+/-)
+    function changeQty(index, delta) {
+        if (delta > 0 && cart[index].is_add_on) {
+            const addonDef = (typeof availableAddons !== 'undefined')
+                ? availableAddons.find(a => String(a.id) === String(cart[index].id))
+                : null;
+            if (!addonDef || getRemainingQuotaForAddon(addonDef) <= 0) {
+                alert('⚠️ 加購品數量已達上限！');
+                return;
+            }
+        }
+        cart[index].quantity += delta;
+        if (cart[index].quantity <= 0) cart.splice(index, 1);
+        saveCartToStorage();
+        updateCartUI();
     }
     // 攔截並改寫確認客製化的送出邏輯
     function confirmAddToCartWithModifier() {
@@ -1190,53 +1271,55 @@
         }
     }
 
-function updateCartUI() {
-        // 自動校正分類欄位
+    function updateCartUI() {
         cart.forEach(item => {
             item.category = getCartItemCategory(item);
         });
 
-        // 1. 條件嚴格審核：主餐被移除時，自動移除不再符合條件的加購品
         let hasRemoved = false;
+
+        // 1. 條件審核：解鎖母體若不存在，自動移除該加購品
         cart = cart.filter(item => {
             if (!item.is_add_on) return true;
-            
             const addonDef = (typeof availableAddons !== 'undefined')
                 ? availableAddons.find(a => String(a.id) === String(item.id))
                 : null;
 
-            let valid = false;
-            if (addonDef) {
-                valid = cart.some(c => isItemQualifyingForAddon(c, addonDef));
+            if (!addonDef) return false;
+            
+            // 檢查購物車內是否有「正價非加購品」滿足條件
+            const hasQualifyingItem = cart.some(c => isItemQualifyingForAddon(c, addonDef));
+            if (!hasQualifyingItem) {
+                hasRemoved = true;
+                return false;
             }
-            if (!valid) hasRemoved = true;
-            return valid;
+            return true;
         });
 
-        // 2. 總量嚴格防呆：加購品總數絕對不可超過主餐總數 (1份主餐限配1份加購)
-        const totalMains = getTotalMainDishesCount();
-        let totalAddons = getTotalAddonsCount();
+        // 2. 總量防呆：加購品總量不得超過正價餐點總量 (1:1 配對)
+        const totalRegular = cart.filter(i => !i.is_add_on && i.can_addon !== false).reduce((sum, i) => sum + i.quantity, 0);
+        let totalAddons = cart.filter(i => i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
 
-        if (totalAddons > totalMains) {
+        if (totalAddons > totalRegular) {
             for (let i = cart.length - 1; i >= 0; i--) {
                 if (cart[i].is_add_on) {
-                    while (cart[i].quantity > 0 && totalAddons > totalMains) {
+                    while (cart[i].quantity > 0 && totalAddons > totalRegular) {
                         cart[i].quantity--;
                         totalAddons--;
+                        hasRemoved = true;
                     }
                     if (cart[i].quantity === 0) cart.splice(i, 1);
                 }
-                if (totalAddons <= totalMains) break;
+                if (totalAddons <= totalRegular) break;
             }
-            hasRemoved = true;
         }
 
         if (hasRemoved) {
             saveCartToStorage();
-            setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品超出名額或不符條件，已自動為您調整！'), 100);
+            setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品名額不足，已自動為您調整數量！'), 100);
         }
 
-        // 3. 渲染購物車商品清單
+        // 3. 渲染購物車品項列表
         const container = document.getElementById('cart-items');
         const count = document.getElementById('cart-count');
         const totalItemsCount = cart.reduce((acc, i) => acc + i.quantity, 0);
@@ -1280,28 +1363,23 @@ function updateCartUI() {
             }).join('');
         }
 
-        // 4. 動態推薦看板：以 (主餐總數 - 已加購總數) 計算真正的剩餘名額
+        // 4. 加購推薦看板：只要正價商品名額已被用完，立刻清空隱藏看板
         if (typeof availableAddons !== 'undefined' && addonContainer) {
-            const currentTotalMains = getTotalMainDishesCount();
-            const currentTotalAddons = getTotalAddonsCount();
-            const remainingQuota = Math.max(0, currentTotalMains - currentTotalAddons);
+            const eligibleAddons = availableAddons
+                .map(a => ({ ...a, remainingQuota: getRemainingQuotaForAddon(a) }))
+                .filter(a => a.remainingQuota > 0);
 
-            // 過濾出解鎖條件成立的加購品
-            const eligibleAddons = availableAddons.filter(a => {
-                return cart.some(c => isItemQualifyingForAddon(c, a));
-            });
-
-            // 只有在「有主餐」且「名額尚未用完 (remainingQuota > 0)」時才顯示看板
-            if (currentTotalMains > 0 && remainingQuota > 0 && eligibleAddons.length > 0) {
+            if (eligibleAddons.length > 0) {
                 addonContainer.innerHTML = `
                 <div class="mb-2 p-2 bg-secondary bg-opacity-10 rounded border border-secondary">
                     <div class="text-warning small fw-bold mb-2">
-                        <i class="bi bi-stars"></i> 專屬加購優惠 (尚可加購 ${remainingQuota} 份)
+                        <i class="bi bi-stars"></i> 專屬加購優惠
                     </div>
                     <div class="d-flex gap-2 overflow-auto pb-1" style="white-space: nowrap;">
                         ${eligibleAddons.map(a => `
-                            <div class="card bg-dark border-secondary p-2 d-inline-block shadow-sm flex-shrink-0" style="width: 130px; white-space: normal;">
+                            <div class="card bg-dark border-secondary p-2 d-inline-block shadow-sm flex-shrink-0" style="width: 135px; white-space: normal;">
                                 <div class="small fw-bold text-white text-truncate" title="${a.name}">${a.name}</div>
+                                <div class="text-info" style="font-size: 0.7rem;">尚可加購 ${a.remainingQuota} 份</div>
                                 <div class="mt-1 d-flex justify-content-between align-items-center">
                                     <div>
                                         <del class="text-white-50" style="font-size:0.7rem;">$${a.original_price}</del> 
