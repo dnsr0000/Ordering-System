@@ -385,13 +385,11 @@ def customer_index():
             session['is_guest'] = False
             is_guest = False
 
-            # 💡 1. 嚴格鎖定「當前會員 ID」名下的有效訂單 (排除 Cancelled)，杜絕跨會員混淆
             user_orders = Order.query.filter(
                 Order.user_id == user.id,
                 Order.status != 'Cancelled'
             ).all()
 
-            # 💡 2. 向下相容：僅在該會員 ID 查無任何訂單且姓名非預設訪客時，才補查早期未建 user_id 的舊單
             if not user_orders and user.name and user.name.strip() not in ['訪客', 'Guest', '']:
                 user_orders = Order.query.filter(
                     Order.user_id.is_(None),
@@ -399,7 +397,6 @@ def customer_index():
                     Order.status != 'Cancelled'
                 ).all()
 
-            # 💡 3. 以當前上架菜單為基準，純粹統計「該會員自身」各餐點的點購次數
             if user_orders:
                 item_dict = {it.name.strip(): it for it in items}
                 user_item_counts = {}
@@ -417,7 +414,7 @@ def customer_index():
                         if clean_name in item_dict:
                             user_item_counts[clean_name] = user_item_counts.get(clean_name, 0) + int(oi.quantity or 1)
 
-                # 💡 4. 依照「該會員個人點購總次數」由高至低排序，精選前 3 名
+                # 依照「該會員個人點購總次數」由高至低排序，精選前 3 名
                 sorted_fav_names = sorted(
                     user_item_counts.keys(), 
                     key=lambda k: user_item_counts[k], 
@@ -2226,8 +2223,6 @@ def api_admin_live_orders():
     """供店家後台即時同步今日訂單看板、營運指標與最新菜單庫存"""
     if not session.get('admin_logged_in'):
         return jsonify({'error': '未授權'}), 401
-    
-    # 💡 清除快取，強制取得最新資料庫狀態
     db.session.expire_all()
 
     today = datetime.now().date()
@@ -2274,18 +2269,14 @@ def api_admin_live_orders():
     today_revenue = sum(o.total_price or 0 for o in paid_orders)
     pending_items_qty = sum(sum(i.quantity or 1 for i in o.items) for o in pending_orders)
     eta_minutes = max(5, pending_items_qty * 2 + 4) if pending_orders else 0
+    all_orders = Order.query.order_by(Order.id.desc()).all()
+    analytics = build_order_analytics(all_orders, limit=3)
 
     return jsonify({
         'success': True, 
         'orders': orders_data,
         'menu_items': menu_items_data,
-        'analytics': {
-            'today_orders': len(valid_today),
-            'today_revenue': today_revenue,
-            'pending_count': len(pending_orders),
-            'completed_today': len(completed_orders),
-            'eta_minutes': eta_minutes
-        }
+        'analytics': analytics
     })
 
 @app.route('/api/kitchen_complete_all', methods=['POST'])

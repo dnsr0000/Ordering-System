@@ -487,11 +487,11 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <!-- 利用 Jinja 雙層迴圈撈出所有綁定的套餐 -->
-                                {% set has_combo = false %}
+                                <!-- 撈出所有綁定的套餐 -->
+                                {% set all_combos = [] %}
                                 {% for item in items %}
                                     {% for combo in item.combo_options %}
-                                        {% set has_combo = true %}
+                                        {% set _ = all_combos.append(combo) %}
                                         <tr>
                                             <td><span class="badge bg-secondary">{{ item.name }}</span></td>
                                             <td class="fw-bold text-white">{{ combo.name }}</td>
@@ -517,7 +517,6 @@
                                                 <span class="badge bg-success me-1">正常供應</span>
                                             {% endif %}
                                             
-                                            <!-- 顯示可否加購標籤 -->
                                             {% if combo.can_addon %}
                                                 <span class="badge bg-info text-dark me-1">可加購</span>
                                             {% else %}
@@ -528,7 +527,6 @@
                                             <span class="badge bg-dark text-white-50 border border-secondary">{{ side_count }}樣附餐</span>
                                             </td>
                                             <td class="text-end">
-                                                <!-- 編輯按鈕 -->
                                                 <button class="btn btn-outline-primary btn-sm me-1" type="button"
                                                         data-id="{{ combo.id }}"
                                                         data-main-id="{{ combo.main_item_id }}"
@@ -552,8 +550,8 @@
                                         </tr>
                                     {% endfor %}
                                 {% endfor %}
-                                
-                                {% if not has_combo %}
+
+                                {% if all_combos | length == 0 %}
                                 <tr>
                                     <td colspan="6" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td>
                                 </tr>
@@ -612,11 +610,6 @@
                                         {% else %}
                                             <span class="text-white-50 small">無特價</span>
                                         {% endif %}
-                                    </td>
-                                    <td class="text-end">
-                                        <a href="/admin/delete_coupon/{{ cp.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
-                                            <i class="bi bi-trash"></i> 刪除
-                                        </a>
                                     </td>
                                     <td class="text-end">
                                     <button class="btn btn-outline-primary btn-sm me-1" type="button"
@@ -2116,21 +2109,24 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     const elRevenue = document.getElementById('stat-today-revenue');
                     const elEta = document.getElementById('stat-eta-minutes');
                     const elCompleted = document.getElementById('stat-completed-today');
+                    const elAiAdvice = document.querySelector('#analytics-pane .border.border-secondary');
 
                     if (elPending) elPending.innerText = data.analytics.pending_count;
                     if (elOrders) elOrders.innerText = data.analytics.today_orders;
                     if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
                     if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
                     if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
+                    if (elAiAdvice && data.analytics.ai_advice) elAiAdvice.innerText = data.analytics.ai_advice;
+                    
                 }
 
-                // 3. 略過訂單列表重繪判斷
-                if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
-                const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
-                if (activeTab !== 'orders') return;
-
+                // 3. 實時訂單看板重新繪製
                 const grid = document.getElementById('admin-orders-grid');
                 if (!grid) return;
+
+                if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
+                    return;
+                }
 
                 if (data.orders.length === 0) {
                     grid.innerHTML = `
