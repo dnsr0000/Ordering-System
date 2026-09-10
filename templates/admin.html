@@ -1505,8 +1505,11 @@
                             <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Analytics" id="exp-analytics" checked>
                             <label class="form-check-label fw-bold text-info" for="exp-analytics">營運資訊與熱銷排行 (Analytics)</label>
                         </div>
-
-                        <!-- 日期選擇區塊 (預設隱藏，由 JS 控制顯示) -->
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="AdminLog" id="exp-adminlog" checked>
+                            <label class="form-check-label fw-bold text-warning" for="exp-adminlog">管理員進出日誌 (AdminLog)</label>
+                        </div>
+                        <!-- 日期選擇區塊 (預設隱藏) -->
                         <div class="row g-2 p-3 rounded bg-dark border border-secondary" id="export-date-range">
                             <div class="col-6">
                                 <label class="form-label small fw-bold text-warning">開始日期 (Start Date)</label>
@@ -2569,7 +2572,7 @@ document.addEventListener("DOMContentLoaded", function () {
                 }
             })
             .catch(err => console.log('更新 AI 建議略過:', err));
-    }, 5000);
+    }, 10000);
 
 });
     </script>

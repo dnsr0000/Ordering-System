@@ -7,6 +7,7 @@ import re
 import requests
 import threading
 import unicodedata
+import random
 try:
     import google.generativeai as genai
 except ModuleNotFoundError:
@@ -20,15 +21,21 @@ from flask_sqlalchemy import SQLAlchemy
 from openpyxl.styles import Font
 from dotenv import load_dotenv
 from flask import Response
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # ==============================================================================
 # 1. 應用程式基礎設定 (App Configuration)
 # ==============================================================================
-# 💡 自動載入專案根目錄的 .env 檔案
+# 自動載入專案根目錄的 .env 檔案
 load_dotenv()
 
 # 從環境變數安全讀取金鑰
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# 從 .env 讀取管理員帳密 (若未設定則給予預設值)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "1234")
+# 讀取明文密碼後立即透過 generate_password_hash 轉換，確保執行期間記憶體內只有 Hash 值
+ADMIN_PASSWORD_HASH = generate_password_hash(os.getenv("ADMIN_PASSWORD", "1234"))
 
 if GEMINI_API_KEY and genai is not None:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -66,6 +73,7 @@ class User(db.Model):
     feature = db.Column(db.PickleType, nullable=True)
     points = db.Column(db.Integer, default=0)  # 會員紅利點數
     last_login_at = db.Column(db.DateTime, nullable=True)  # 記錄最後登入時間
+    last_logout_at = db.Column(db.DateTime, nullable=True)  # 記錄最後登出時間
 
 class MenuItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -133,6 +141,7 @@ class Order(db.Model):
     discount_amount = db.Column(db.Integer, default=0)
     completed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
+    customer_log_id = db.Column(db.Integer, nullable=True)  # 關聯顧客/訪客進出日誌 ID
     items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
     @property
     def user(self):
@@ -160,7 +169,7 @@ class Coupon(db.Model):
     reward_discount_points = db.Column(db.Integer, default=0)        # 限時特惠點數 (0代表無特惠)
     is_reward = db.Column(db.Boolean, default=True)                  # 是否上架至回饋商城
 
-# --- 💡 各會員專屬持有與兌換紀錄資料表 (分開管理) ---
+# --- 各會員專屬持有與兌換紀錄資料表 (分開管理) ---
 class UserCoupon(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -173,6 +182,56 @@ class UserCoupon(db.Model):
     user = db.relationship('User', backref=db.backref('user_coupons', lazy=True, cascade="all, delete-orphan"))
     coupon = db.relationship('Coupon', backref=db.backref('user_coupons', lazy=True, cascade="all, delete-orphan"))
 
+# --- 管理員登入/登出日誌資料表 ---
+class AdminLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), nullable=False)
+    login_at = db.Column(db.DateTime, default=datetime.now)
+    logout_at = db.Column(db.DateTime, nullable=True)
+    ip_address = db.Column(db.String(50), default='')
+
+# --- 顧客/訪客進出日誌與點餐紀錄---
+class CustomerLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_type = db.Column(db.String(20), nullable=False)   # '會員' 或 '訪客'
+    identifier = db.Column(db.String(100), nullable=False) # 會員姓名(含電話) 或 訪客隨機編號
+    login_at = db.Column(db.DateTime, default=datetime.now)
+    logout_at = db.Column(db.DateTime, nullable=True)
+    ordered_items = db.Column(db.Text, default='')          # 該階段下單之餐點內容匯總
+    ip_address = db.Column(db.String(50), default='')
+
+# --- 顧客進出工作階段輔助函式 ---
+def start_customer_session(user_type, identifier):
+    """開啟並記錄顧客/訪客登入階段"""
+    close_customer_session()  # 若先前有未結束的 Session 則先自動封存
+    log = CustomerLog(
+        user_type=user_type,
+        identifier=identifier,
+        login_at=datetime.now(),
+        ip_address=request.remote_addr or ''
+    )
+    db.session.add(log)
+    db.session.commit()
+    session['customer_log_id'] = log.id
+    return log.id
+
+def close_customer_session():
+    """標記顧客/訪客登出離線時間"""
+    log_id = session.get('customer_log_id')
+    if log_id:
+        log = db.session.get(CustomerLog, log_id)
+        if log and not log.logout_at:
+            log.logout_at = datetime.now()
+    
+    # 若有會員身分，同步記錄最後登出時間
+    user_id = session.get('user_id')
+    if user_id:
+        user = db.session.get(User, user_id)
+        if user:
+            user.last_logout_at = datetime.now()
+
+    db.session.commit()
+    session.pop('customer_log_id', None)
 # ==============================================================================
 # 3. 資料庫結構自動檢查與補齊 (Auto Migration)
 # ==============================================================================
@@ -188,6 +247,8 @@ with app.app_context():
         db.session.execute(db.text("ALTER TABLE user ADD COLUMN points INTEGER DEFAULT 0"))
     if 'last_login_at' not in user_cols:
         db.session.execute(db.text("ALTER TABLE user ADD COLUMN last_login_at DATETIME"))
+    if 'last_logout_at' not in user_cols:
+        db.session.execute(db.text("ALTER TABLE user ADD COLUMN last_logout_at DATETIME"))
 
     # 2. 檢查 MenuItem 資料表
     menu_info = db.session.execute(db.text("PRAGMA table_info(menu_item)")).fetchall()
@@ -256,6 +317,8 @@ with app.app_context():
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN completed_at DATETIME'))
     if 'pickup_number' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN pickup_number INTEGER DEFAULT 1'))
+    if 'customer_log_id' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN customer_log_id INTEGER'))
     # 自動依訂單先後重新賦予 1~999 取餐流水號
     try:
         from collections import defaultdict
@@ -374,7 +437,7 @@ def update_popular_items():
             db.func.sum(OrderItem.quantity).label('total_qty')
         ).join(Order, OrderItem.order_id == Order.id
         ).filter(Order.status != 'Cancelled'
-        ).filter(~OrderItem.item_name.like('%[點數兌換]%')  # 💡 排除點數兌換
+        ).filter(~OrderItem.item_name.like('%[點數兌換]%')  #   排除點數兌換
         ).group_by(OrderItem.item_name
         ).order_by(db.desc('total_qty')
         ).all()
@@ -543,18 +606,18 @@ def submit_order():
     if not items:
         return jsonify({'error': '購物車為空'}), 400
 
-    # 💡 1. 加總購物車中各餐點的需求總量（合併同品名但不同客製化的數量）
+    #   1. 加總購物車中各餐點的需求總量（合併同品名但不同客製化的數量）
     item_demands = {}
     for item_data in items:
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item_data['name']).strip()
         item_demands[clean_name] = item_demands.get(clean_name, 0) + int(item_data.get('quantity', 1))
 
-    # 💡 2. 嚴格比對資料庫剩餘庫存
+    #   2. 嚴格比對資料庫剩餘庫存
     sold_out_items = []
     insufficient_items = []
 
     for clean_name, demanded_qty in item_demands.items():
-        # 💡 檢查是否有套餐附屬配餐售完
+        #   檢查是否有套餐附屬配餐售完
         for item_data in items:
             custom_str = item_data.get('customization', '')
             # 尋找是否包含 [套餐: 套餐名稱]
@@ -658,8 +721,9 @@ def submit_order():
     if user:
         user.points = user.points - points_used + points_earned
         session['user_points'] = user.points
+        user.last_logout_at = datetime.now() 
         
-        # 💡 將會員持有的專屬優惠券正式標記為「已使用」
+        #   將會員持有的專屬優惠券正式標記為「已使用」
         if target_user_coupon:
             target_user_coupon.is_used = True
             target_user_coupon.used_at = datetime.now()
@@ -677,7 +741,8 @@ def submit_order():
         points_used=points_used,
         points_earned=points_earned,
         discount_amount=int(total_discount),
-        pickup_number=next_pickup
+        pickup_number=next_pickup,
+        customer_log_id=session.get('customer_log_id')
     )
     db.session.add(new_order)
     db.session.flush()
@@ -704,8 +769,26 @@ def submit_order():
     db.session.commit()
     update_popular_items()
     _AI_ADVICE_STATE['last_signature'] = None
-
+    # 自動將本次下單餐點追加至當前顧客的進出紀錄中
+    log_id = session.get('customer_log_id')
+    if log_id:
+        customer_log = db.session.get(CustomerLog, log_id)
+        if customer_log:
+            items_summary = ", ".join([
+                f"{it['name']} x{it['quantity']}" + (f"({it.get('customization')})" if it.get('customization') else "")
+                for it in items
+            ])
+            entry = f"[取餐#{next_pickup} 單號#{new_order.id}] {items_summary}"
+            if customer_log.ordered_items:
+                customer_log.ordered_items += f" ； {entry}"
+            else:
+                customer_log.ordered_items = entry
+            # 客人下單成功即視為完成點餐離場
+            customer_log.logout_at = datetime.now()
+            db.session.commit()
+        session.pop('customer_log_id', None)
     receipt_items = []
+
     for item in items:
         receipt_items.append({
             'name': item['name'],
@@ -781,7 +864,7 @@ def redeem_reward():
         user.points -= req_points
         session['user_points'] = user.points
 
-        # 💡 新增該會員專屬未使用的優惠券實體
+        #   新增該會員專屬未使用的優惠券實體
         user_coupon = UserCoupon(
             user_id=user.id,
             coupon_id=coupon.id,
@@ -815,7 +898,7 @@ def redeem_reward():
     session['user_points'] = user.points
     db.session.commit()
     
-    # 💡 讀取前端傳入之客製化內容與加料加價
+    #   讀取前端傳入之客製化內容與加料加價
     customization = str(data.get('customization', '')).strip()
     extra_price = int(data.get('extra_price', 0))
     
@@ -919,6 +1002,8 @@ def register():
         session['user_id'] = new_user.id
         session['user_name'] = new_user.name
         session['user_points'] = new_user.points
+        start_customer_session('會員', f"{new_user.name} ({new_user.phone})")
+
         return redirect(url_for('customer_index'))
         
     return render_template('register.html', login_mode=False)
@@ -956,10 +1041,13 @@ def face_login():
 
         if best_score >= 0.363 and matched_user:
             matched_user.last_login_at = datetime.now()
+            matched_user.last_logout_at = None
             db.session.commit()
             session['user_id'] = matched_user.id
             session['user_name'] = matched_user.name
             session['user_points'] = matched_user.points
+
+            start_customer_session('會員', f"{matched_user.name} ({matched_user.phone})")
             return jsonify({
                 'success': True,
                 'user_name': matched_user.name,
@@ -981,10 +1069,13 @@ def phone_login():
     user = User.query.filter_by(phone=phone).first()
     if user:
         user.last_login_at = datetime.now()
+        user.last_logout_at = None
         db.session.commit()
         session['user_id'] = user.id
         session['user_name'] = user.name
         session['user_points'] = user.points
+
+        start_customer_session('會員', f"{user.name} ({user.phone})")
         return jsonify({
             'success': True,
             'user_name': user.name,
@@ -996,27 +1087,40 @@ def phone_login():
 # 訪客快速點餐路由
 @app.route('/guest_login')
 def guest_login():
-    """清除舊登入狀態並建立訪客 Session"""
+    """清除舊登入狀態，產生訪客專屬隨機編號並開啟進出紀錄"""
     session.clear()
+    
+    random_guest_id = f"訪客-{random.randint(1000, 9999)}"
+    
     session['user_id'] = None
-    session['user_name'] = '訪客'
+    session['user_name'] = random_guest_id
     session['is_guest'] = True
     session['user_points'] = 0
+    
+    start_customer_session('訪客', random_guest_id)
     return redirect(url_for('customer_index'))
 
 @app.route('/logout')
 def logout():
+    user_id = session.get('user_id')
+    if user_id:
+        user = db.session.get(User, user_id)
+        if user:
+            user.last_logout_at = datetime.now()  # 記錄會員登出時間
+            db.session.commit()
+    close_customer_session()
     session.clear()
     return redirect(url_for('customer_index'))
 
 # ==============================================================================
 # AI 智慧營運建議生成函式 (依訂單狀態更新驅動)
 # ==============================================================================
+# 建立全域狀態快取與非同步線程控制
 _AI_ADVICE_STATE = {
     'last_signature': None,
     'cached_advice': None,
-    'cooldown_until': 0,
-    'is_fetching': False
+    'is_fetching': False,
+    'cooldown_until': 0 
 }
 
 def get_orders_state_signature():
@@ -1029,17 +1133,16 @@ def get_orders_state_signature():
     ).order_by(Order.id.asc()).all()
     return ",".join(f"{oid}:{status}" for oid, status in orders)
 
-# 建立全域狀態快取與非同步線程控制
-_AI_ADVICE_STATE = {
-    'last_signature': None,
-    'cached_advice': None,
-    'is_fetching': False
-}
 
 def _async_fetch_gemini_advice(analytics_data, signature):
-    """背景執行緒：非同步向 Gemini 請求最新營運建議，不阻塞主線程"""
+    """背景執行緒：非同步向 Gemini 請求最新營運建議，若遇 429 則自動鎖定冷卻降級"""
     import requests
     global _AI_ADVICE_STATE
+
+    # 檢查是否仍在冷卻期內，若冷卻中則略過請求
+    if time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0):
+        _AI_ADVICE_STATE['is_fetching'] = False
+        return
 
     try:
         top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
@@ -1071,47 +1174,66 @@ def _async_fetch_gemini_advice(analytics_data, signature):
         print("[*] 背景工作啟動：向 Gemini 請求最新營運建議...")
         resp = requests.post(url, headers=headers, json=payload, timeout=30)
         res_json = resp.json()
+
         if resp.status_code == 200:
             candidates = res_json.get('candidates', [])
             if candidates and 'content' in candidates[0]:
                 text = candidates[0]['content']['parts'][0]['text'].strip()
                 clean_text = text.replace('"', '').replace('「', '').replace('」', '').strip()
                 
-                # 檢查句尾是否有正常結束標點（。！或!），若被截斷則自動補全或使用備援規則
                 valid_endings = ('。', '！', '!', '；', ';')
                 if len(clean_text) >= 12 and clean_text.endswith(valid_endings):
                     _AI_ADVICE_STATE['cached_advice'] = clean_text
                 elif len(clean_text) >= 12:
-                    # 若只是少最後句號，補上句號確保通順
                     _AI_ADVICE_STATE['cached_advice'] = clean_text + '。'
                 else:
                     _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
                 
                 _AI_ADVICE_STATE['last_signature'] = signature
                 print(f"[V] 背景生成完成！建議已更新: {_AI_ADVICE_STATE['cached_advice']}")
+        elif resp.status_code == 429:
+            # 鎖定 60 秒冷卻
+            _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
+            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = signature
+            print("[!] 偵測到 Gemini API 配額已滿 (429)，啟動 60 秒冷卻降級；60 秒後若有訂單更新將自動重新嘗試連線。")
         else:
             err_msg = res_json.get('error', {}).get('message', '')
             print(f"Gemini API 回傳錯誤 ({resp.status_code}): {err_msg}")
+            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = signature
     except Exception as e:
         print(f"背景連線異常: {e}")
+        _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+        _AI_ADVICE_STATE['last_signature'] = signature
     finally:
         _AI_ADVICE_STATE['is_fetching'] = False
 
 def generate_ai_business_advice(analytics_data):
-    """0 毫秒即時回傳建議，並在背景依訂單異動自動更新"""
+    """0 毫秒即時回傳建議：訂單異動時更新，冷卻期過後自動重試連線"""
     global _AI_ADVICE_STATE
     current_signature = get_orders_state_signature()
+    now_ts = time.time()
 
-    # 訂單狀態異動且背景無任務運行時啟動 Thread
-    if _AI_ADVICE_STATE['last_signature'] != current_signature and not _AI_ADVICE_STATE['is_fetching']:
-        _AI_ADVICE_STATE['is_fetching'] = True
-        t = threading.Thread(
-            target=_async_fetch_gemini_advice,
-            args=(analytics_data, current_signature),
-            daemon=True
-        )
-        t.start()
+    # 1. 訂單狀態有異動時：
+    if _AI_ADVICE_STATE['last_signature'] != current_signature:
+        # 若仍在 60 秒冷卻期內，直接重新以本地動態規則算出最新建議
+        if now_ts < _AI_ADVICE_STATE.get('cooldown_until', 0):
+            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = current_signature
+            return _AI_ADVICE_STATE['cached_advice']
+        
+        # 若已過冷卻期且背景未在執行，啟動執行緒發送請求
+        if not _AI_ADVICE_STATE['is_fetching']:
+            _AI_ADVICE_STATE['is_fetching'] = True
+            t = threading.Thread(
+                target=_async_fetch_gemini_advice,
+                args=(analytics_data, current_signature),
+                daemon=True
+            )
+            t.start()
 
+    # 2. 立即回傳最新建議
     return _AI_ADVICE_STATE['cached_advice'] or fallback_advice(analytics_data)
 
 def fallback_advice(analytics_data):
@@ -1125,7 +1247,7 @@ def fallback_advice(analytics_data):
         return f"⚠️ 廚房負載偏高（{pending} 筆待製作，預估等待 {eta} 分鐘），建議啟動備料支援並暫緩外帶出餐推播。"
     elif aov < 150 and aov > 0:
         hot_item = top_items[0]['name'] if top_items else '熱門餐點'
-        return f"💡 平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
+        return f"  平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
     elif pending == 0 and analytics_data.get('today_orders', 0) > 0:
         return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
     else:
@@ -1140,12 +1262,12 @@ def build_order_analytics(orders, limit=1):
     pending_orders = [o for o in today_orders if o.status == 'Pending']
     completed_today_orders = [o for o in today_orders if o.status in ['Completed', 'PickedUp']]
 
-    # 💡 1. 平均每單價格：過濾掉實付金額為 0 元的純點數兌換單
+    #   1. 平均每單價格：過濾掉實付金額為 0 元的純點數兌換單
     paid_today_orders = [o for o in today_orders if (o.total_price or 0) > 0]
     total_revenue = sum((o.total_price or 0) for o in paid_today_orders)
     avg_order_value = total_revenue / len(paid_today_orders) if paid_today_orders else 0
 
-    # 💡 2. 平均每單時間 (分鐘)：優先以實際出餐時間計算，若無則依餐點數量推估
+    #   2. 平均每單時間 (分鐘)：優先以實際出餐時間計算，若無則依餐點數量推估
     actual_durations = []
     for o in completed_today_orders:
         if getattr(o, 'completed_at', None) and o.created_at:
@@ -1219,8 +1341,17 @@ def admin_dashboard():
     if request.method == 'POST' and 'username' in request.form:
         username = request.form.get('username')
         password = request.form.get('password')
-        if username == '1234' and password == '1234':
+        if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
             session['admin_logged_in'] = True
+            # 記錄管理員登入時間
+            log = AdminLog(
+                username=username,
+                login_at=datetime.now(),
+                ip_address=request.remote_addr or ''
+            )
+            db.session.add(log)
+            db.session.commit()
+            session['admin_log_id'] = log.id
             return redirect(url_for('admin_dashboard'))
         else:
             return "<script>alert('❌ 帳號或密碼錯誤！'); window.history.back();</script>", 401
@@ -1238,7 +1369,7 @@ def admin_dashboard():
     # 1. 營運分析保持使用全部歷史訂單進行統計
     analytics = build_order_analytics(all_orders, limit=limit)
     
-    # 2. 💡 實時訂單看板：過濾只留下「今天」建立的訂單（實現每日重製）
+    # 2. 實時訂單看板：每日重製
     today = datetime.now().date()
     today_orders = [o for o in all_orders if o.created_at and o.created_at.date() == today]
 
@@ -1256,7 +1387,16 @@ def admin_dashboard():
 
 @app.route('/admin/logout')
 def admin_logout():
+    # 若有當前登入的 Log ID，補上登出時間
+    log_id = session.get('admin_log_id')
+    if log_id:
+        log = db.session.get(AdminLog, log_id)
+        if log and not log.logout_at:
+            log.logout_at = datetime.now()
+            db.session.commit()
+            
     session.pop('admin_logged_in', None)
+    session.pop('admin_log_id', None)
     return redirect(url_for('admin_dashboard'))
 
 @app.route('/admin/add_coupon', methods=['POST'])
@@ -1326,7 +1466,7 @@ def edit_coupon(id):
         db.session.rollback()
         return "<script>alert('❌ 該優惠代碼已被其他優惠券使用！'); window.history.back();</script>", 400
 
-    # 💡 若代碼有更動，同步更新會員已持有的票券代碼
+    #   若代碼有更動，同步更新會員已持有的票券代碼
     if coupon.code != code:
         UserCoupon.query.filter_by(coupon_id=coupon.id).update({UserCoupon.code: code})
 
@@ -1726,7 +1866,7 @@ def import_smart():
 
 @app.route('/admin/export_excel', methods=['POST'])
 def export_excel():
-    """根據勾選的資料表匯出 SQLite 資料為 Excel (精確計算 Emoji 寬度與按需顯示日期區間)"""
+    """根據勾選的資料表匯出 SQLite 資料為 Excel"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_dashboard'))
         
@@ -1737,12 +1877,17 @@ def export_excel():
     start_date_str = request.form.get('start_date')
     end_date_str = request.form.get('end_date')
     
-    orders_query = Order.query
+    start_date = None
+    end_date = None
     if start_date_str:
         start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
-        orders_query = orders_query.filter(Order.created_at >= start_date)
     if end_date_str:
         end_date = datetime.strptime(end_date_str, '%Y-%m-%d') + timedelta(days=1, seconds=-1)
+
+    orders_query = Order.query
+    if start_date:
+        orders_query = orders_query.filter(Order.created_at >= start_date)
+    if end_date:
         orders_query = orders_query.filter(Order.created_at <= end_date)
 
     filtered_orders = orders_query.all()
@@ -1752,17 +1897,29 @@ def export_excel():
     
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         
-        # 1. 靜態資料表（無時間區間，直接從第 1 列開始寫入）
+        # 會員資料表：直接納入會員進出時間 (Login At / Logout At)
         if 'User' in selected_tables:
             users = User.query.all()
-            data = [{
-                'ID': u.id, 
-                '姓名(Name)': u.name,
-                '電話(Phone)': u.phone,
-                '紅利點數(Points)': u.points,
-                '最後登入時間(Last Login)': u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else '尚未記錄'
-                } for u in users]
-            df = pd.DataFrame(data if data else [{'資料': '目前無資料'}])
+            user_data = []
+            for u in users:
+                login_str = u.last_login_at.strftime('%Y-%m-%d %H:%M:%S') if u.last_login_at else '尚未記錄'
+                
+                if not u.last_login_at:
+                    logout_str = '尚未記錄'
+                elif not u.last_logout_at or u.last_logout_at < u.last_login_at:
+                    logout_str = '尚未登出'
+                else:
+                    logout_str = u.last_logout_at.strftime('%Y-%m-%d %H:%M:%S')
+
+                user_data.append({
+                    'ID': u.id, 
+                    '姓名(Name)': u.name,
+                    '電話(Phone)': u.phone,
+                    '紅利點數(Points)': u.points,
+                    '最後登入時間(Last Login)': login_str,
+                    '最後登出時間(Last Logout)': logout_str
+                })
+            df = pd.DataFrame(user_data if user_data else [{'資料': '目前無資料'}])
             df.to_excel(writer, sheet_name='會員資料(User)', index=False)
 
         if 'MenuItem' in selected_tables:
@@ -1807,10 +1964,57 @@ def export_excel():
             df = pd.DataFrame(data if data else [{'資料': '目前無資料'}])
             df.to_excel(writer, sheet_name='會員持券(UserCoupon)', index=False)
 
-        # 2. 動態資料表（受時間區間影響，預留第 1 列放置區間文字 startrow=1）
+        #  歷史訂單表：納入訪客隨機編號、進場時間、離場時間
         if 'Order' in selected_tables:
-            data = [{'ID': o.id, '會員ID(User ID)': o.user_id, '桌號/稱呼': o.table_number, '總金額(Total)': o.total_price, '付款方式(Payment)': o.payment_method, '狀態(Status)': o.status, '使用紅利': o.points_used, '建立時間': o.created_at.strftime('%Y-%m-%d %H:%M') if o.created_at else ''} for o in filtered_orders]
-            df = pd.DataFrame(data if data else [{'資料': '所選日期範圍內無訂單'}])
+            order_data = []
+            for o in filtered_orders:
+                log = db.session.get(CustomerLog, o.customer_log_id) if getattr(o, 'customer_log_id', None) else None
+                
+                # 身分識別
+                if o.user_id:
+                    cust_identifier = o.user_id
+                else:
+                    if o.table_number and str(o.table_number).startswith('訪客-'):
+                        cust_identifier = o.table_number
+                    else:
+                        cust_identifier = f"訪客-{o.pickup_number:03d}" if getattr(o, 'pickup_number', None) else f"訪客-{o.id}"
+
+                # 判定進場時間：
+                # 1. 優先抓 CustomerLog 的進入時間
+                # 2. 若為會員且無 Log，抓取會員登入時間 (last_login_at)
+                # 3. 若為歷史舊單無日誌，不硬套下單時間，標記為「未記錄」以防混淆
+                login_dt = None
+                if log and log.login_at:
+                    login_dt = log.login_at
+                elif o.user and o.user.last_login_at and o.user.last_login_at <= o.created_at:
+                    login_dt = o.user.last_login_at
+
+                if login_dt:
+                    login_str = login_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    seconds = int((o.created_at - login_dt).total_seconds()) if o.created_at else 0
+                    if seconds > 0:
+                        m, s = divmod(seconds, 60)
+                        duration_str = f"{m}分{s}秒" if m > 0 else f"{s}秒"
+                    else:
+                        duration_str = "即時下單"
+                else:
+                    login_str = "未記錄"
+                    duration_str = "無進場紀錄"
+
+                order_data.append({
+                    'ID': o.id,
+                    '取餐編號(Pickup No)': f"#{o.pickup_number:03d}" if getattr(o, 'pickup_number', None) else f"#{o.id}",
+                    '身分/會員ID(Customer ID)': cust_identifier, 
+                    '進場時間(Login At)': login_str,
+                    '點餐耗時(Duration)': duration_str,
+                    '下單時間(Order Created)': o.created_at.strftime('%Y-%m-%d %H:%M:%S') if o.created_at else '',
+                    '出餐時間(Completed At)': o.completed_at.strftime('%Y-%m-%d %H:%M:%S') if o.completed_at else '未出餐',
+                    '總金額(Total)': o.total_price,
+                    '付款方式(Payment)': o.payment_method,
+                    '狀態(Status)': o.status,
+                    '使用紅利': o.points_used
+                })
+            df = pd.DataFrame(order_data if order_data else [{'資料': '所選日期範圍內無訂單'}])
             df.to_excel(writer, sheet_name='訂單總覽(Order)', index=False, startrow=1)
 
         if 'OrderItem' in selected_tables:
@@ -1856,13 +2060,35 @@ def export_excel():
             df_sales = pd.DataFrame(sales_data if sales_data else [{'資料': '所選日期範圍內無銷售資料'}])
             df_sales.to_excel(writer, sheet_name='區間熱銷排行(ItemSales)', index=False, startrow=1)
 
-        # 3. 欄位寬度與時間標示後處理
+        # 管理員日誌
+        if 'AdminLog' in selected_tables:
+            logs_query = AdminLog.query
+            if start_date:
+                logs_query = logs_query.filter(AdminLog.login_at >= start_date)
+            if end_date:
+                logs_query = logs_query.filter(AdminLog.login_at <= end_date)
+            filtered_logs = logs_query.order_by(AdminLog.id.desc()).all()
+
+            data = [{
+                'ID': lg.id,
+                '管理員帳號(Username)': lg.username,
+                '登入時間(Login At)': lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '',
+                '登出時間(Logout At)': lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '尚未登出 / 瀏覽器關閉',
+                'IP 位址(IP Address)': lg.ip_address or '本機'
+            } for lg in filtered_logs]
+            df_admin_log = pd.DataFrame(data if data else [{'資料': '所選日期範圍內無管理員登入紀錄'}])
+            df_admin_log.to_excel(writer, sheet_name='管理員進出日誌(AdminLog)', index=False, startrow=1)
+
+        # 3. 日期標題與欄位寬度格式化
         display_start = start_date_str if start_date_str else '全部區間 (All)'
         display_end = end_date_str if end_date_str else '全部區間 (All)'
         date_range_text = f"報表資料區間：{display_start} ~ {display_end}"
         
-        # 僅限以下具備時間條件的工作表加入日期標題
-        date_dependent_sheets = {'訂單總覽(Order)', '訂單明細(OrderItem)', '區間營運總覽(Analytics)', '區間熱銷排行(ItemSales)'}
+        date_dependent_sheets = {
+            '訂單總覽(Order)', '訂單明細(OrderItem)', 
+            '區間營運總覽(Analytics)', '區間熱銷排行(ItemSales)', 
+            '管理員進出日誌(AdminLog)'
+        }
 
         def calculate_display_width(val):
             if val is None:
@@ -1871,7 +2097,6 @@ def export_excel():
             width = 0.0
             for char in text:
                 status = unicodedata.east_asian_width(char)
-                # 處理寬字元、中文字與 Emoji (如 🎁)
                 if status in ('F', 'W') or ord(char) >= 0x2600 or ord(char) >= 0x1F000:
                     width += 2.2
                 else:
@@ -1879,16 +2104,13 @@ def export_excel():
             return int(width)
 
         for sheet_name, ws in writer.sheets.items():
-            # 只有時間相關工作表在 A1 填入標題
             if sheet_name in date_dependent_sheets:
                 ws.cell(row=1, column=1, value=date_range_text).font = Font(bold=True, color="0055aa")
 
-            # 依欄位最長內容自動計算寬度
             for col in ws.columns:
                 max_len = 0
                 column_letter = col[0].column_letter
                 for cell in col:
-                    # 排除 A1 標題以避免第一欄寬度被撐過大
                     if sheet_name in date_dependent_sheets and cell.row == 1 and cell.column == 1:
                         continue
                     cell_len = calculate_display_width(cell.value)
@@ -1898,7 +2120,6 @@ def export_excel():
                 ws.column_dimensions[column_letter].width = max(max_len + 4, 12)
 
     output.seek(0)
-    
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     date_suffix = f"_{start_date_str}_to_{end_date_str}" if start_date_str and end_date_str else ""
     filename = f"Kiosk_Export_{timestamp}{date_suffix}.xlsx"
@@ -2306,13 +2527,13 @@ def toggle_user_coupon(uc_id):
         return jsonify({'success': False, 'message': '未授權'}), 401
     
     uc = UserCoupon.query.get_or_404(uc_id)
-    # 💡 明確進行布林狀態反轉
+    #   明確進行布林狀態反轉
     uc.is_used = not bool(uc.is_used)
     uc.used_at = datetime.now() if uc.is_used else None
     db.session.commit()
-    db.session.expire_all()  # 💡 清除快取
+    db.session.expire_all()  #   清除快取
     
-    # 💡 直接從資料庫重新撈取該會員所有票券的最新狀態
+    #  直接從資料庫重新撈取該會員所有票券的最新狀態
     all_user_coupons = UserCoupon.query.filter_by(user_id=uc.user_id).order_by(UserCoupon.id.asc()).all()
     coupons_list = [{
         'id': c.id,
@@ -2516,10 +2737,10 @@ def kitchen_complete_all():
         return jsonify({'success': False, 'message': '目前沒有待製作的訂單！'})
 
     count = len(pending_orders)
-    now = datetime.now()  # 💡 記錄當下出餐時間
+    now = datetime.now()  #   記錄當下出餐時間
     for o in pending_orders:
         o.status = 'Completed'
-        o.completed_at = now  # 💡 補上這行
+        o.completed_at = now  #   補上這行
 
     db.session.commit()
     return jsonify({'success': True, 'message': f'✅ 已成功將 {count} 筆訂單批次完成出餐！', 'count': count})

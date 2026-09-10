@@ -68,3 +68,8 @@ Project Root/
 1. 純英文路徑 (ASCII Path Required)：OpenCV 讀取 ONNX 模型時不支援中文路徑，請確保專案路徑全英文。
 2. 資料庫遷移 (Auto Migration)：系統已內建 PRAGMA table_info 檢查，啟動時會自動補齊缺失欄位（如套餐 `can_addon` 等），若遇極端結構衝突，可直接刪除 menu.db 重新啟動。
 3. 攝影機權限：人臉辨識預設調用本機第一台攝影機 (`cv2.VideoCapture(0)`)，如無法開啟請確認瀏覽器授權。
+
+.env須包含的內容:
+GEMINI_API_KEY=
+ADMIN_USERNAME=""
+ADMIN_PASSWORD=""
