@@ -59,6 +59,13 @@
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
         }
+        .auto-expand-desc {
+            resize: none;
+            overflow-y: hidden;
+            min-height: 42px;
+            line-height: 1.5;
+            transition: height 0.15s ease;
+        }
     </style>
 </head>
 <body>
@@ -328,7 +335,7 @@
                                     <h6 class="fw-bold text-white mb-3"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運簡報</h6>
                                     <div class="mb-3">
                                         <div class="text-white-50 small">平均每單 (排除純點數訂單)</div>
-                                        <div class="fw-bold fs-4 text-warning">${{ analytics.avg_order_value|round(0)|int }}</div>
+                                        <div class="fw-bold fs-4 text-warning">$<span id="stat-avg-order-value">{{ analytics.avg_order_value|round(0)|int }}</span></div>
                                     </div>
 
                                     <div class="mb-3">
@@ -342,9 +349,9 @@
                                     </div>
                                     <div>
                                         <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
-                                        <div class="text-white p-2 rounded bg-secondary bg-opacity-25 border border-secondary" style="font-size: 0.9rem; line-height: 1.5;">
-                                            {{ analytics.ai_advice }}
-                                        </div>
+                                    <div id="stat-ai-advice" class="p-3 bg-dark bg-opacity-50 rounded border border-secondary text-white-50 small">
+                                        {{ analytics.ai_advice }}
+                                    </div>
                                     </div>
                                 </div>
                             </div>
@@ -379,7 +386,7 @@
                                     <th>標籤狀態</th>
                                     <th>商城狀態</th>
                                     <th>數量 (剩餘 / 總量)</th> 
-                                    <th class="text-end">操作</th>
+                                    <th class="text-end" style="min-width: 140px; white-space: nowrap;">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -428,37 +435,38 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="text-end">
-                                    <button class="btn btn-outline-primary btn-sm me-1" type="button"
-                                            data-id="{{ item.id }}" 
-                                            data-name="{{ item.name }}" 
-                                            data-category="{{ item.category }}"
-                                            data-modifiers="{{ item.modifiers or 'none' }}" 
-                                            data-price="{{ item.price }}"
-                                            data-stock="{{ item.stock or 0 }}"
-                                            data-total-stock="{{ item.total_stock or 0 }}"
-                                            data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
-                                            data-is-discount="{{ 1 if item.is_discount else 0 }}"
-                                            data-discount-price="{{ item.discount_price or 0 }}"
-                                            data-description="{{ item.description or '' }}" 
-                                            data-image="{{ item.image_path or '' }}"
-                                            data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
-                                            data-new="{{ 1 if item.is_new else 0 }}"
-                                            data-is-reward="{{ 1 if item.is_reward else 0 }}"
-                                            data-reward-points="{{ item.reward_points or 0 }}"
-                                            data-reward-discount="{{ item.reward_discount_points or 0 }}"
-                                            data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
-                                            data-addon-price="{{ item.add_on_price or 0 }}"
-                                            data-addon-trigger-type="{{ item.addon_trigger_type or 'any' }}"
-                                            data-addon-trigger-target="{{ item.addon_trigger_target or '' }}"
-                                            onclick="openEditModal(this)">
-                                        <i class="bi bi-pencil-square"></i> 編輯
-                                    </button>
-                                        <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
-                                            <i class="bi bi-trash"></i> 刪除
-                                        </a>
+                                    <td class="text-end text-nowrap">
+                                        <div class="d-inline-flex justify-content-end align-items-center gap-2">
+                                            <button class="btn btn-outline-primary btn-sm" type="button"
+                                                    data-id="{{ item.id }}" 
+                                                    data-name="{{ item.name }}" 
+                                                    data-category="{{ item.category }}"
+                                                    data-modifiers="{{ item.modifiers or 'none' }}" 
+                                                    data-price="{{ item.price }}"
+                                                    data-stock="{{ item.stock or 0 }}"
+                                                    data-total-stock="{{ item.total_stock or 0 }}"
+                                                    data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
+                                                    data-is-discount="{{ 1 if item.is_discount else 0 }}"
+                                                    data-discount-price="{{ item.discount_price or 0 }}"
+                                                    data-description="{{ item.description or '' }}" 
+                                                    data-image="{{ item.image_path or '' }}"
+                                                    data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
+                                                    data-new="{{ 1 if item.is_new else 0 }}"
+                                                    data-is-reward="{{ 1 if item.is_reward else 0 }}"
+                                                    data-reward-points="{{ item.reward_points or 0 }}"
+                                                    data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                                    data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
+                                                    data-addon-price="{{ item.add_on_price or 0 }}"
+                                                    data-addon-trigger-type="{{ item.addon_trigger_type or 'any' }}"
+                                                    data-addon-trigger-target="{{ item.addon_trigger_target or '' }}"
+                                                    onclick="openEditModal(this)">
+                                                <i class="bi bi-pencil-square"></i> 編輯
+                                            </button>
+                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
+                                                <i class="bi bi-trash"></i> 刪除
+                                            </a>
+                                        </div>
                                     </td>
-                                </tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -898,7 +906,7 @@
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點名稱</label>
-                            <input type="text" class="form-control" name="name" placeholder="例如：招牌牛肉漢堡" required>
+                            <input type="text" class="form-control" name="name" id="add-name" placeholder="例如：招牌牛肉漢堡" required>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -955,8 +963,13 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small fw-bold">商品描述</label>
-                            <input type="text" class="form-control" name="description" placeholder="簡短餐點介紹">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-add" onclick="generateAIDescription('add')" style="font-size: 0.75rem;">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
+                                </button>
+                            </div>
+                            <textarea class="form-control auto-expand-desc" name="description" id="add-description" rows="1" placeholder="簡短餐點介紹，或輸入名稱後點擊上方按鈕自動生成" oninput="autoExpandTextarea(this)"></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點照片</label>
@@ -1071,8 +1084,13 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small fw-bold">商品描述</label>
-                            <input type="text" class="form-control" name="description" id="edit-description">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-edit" onclick="generateAIDescription('edit')" style="font-size: 0.75rem;">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
+                                </button>
+                            </div>
+                            <textarea class="form-control auto-expand-desc" name="description" id="edit-description" rows="1" oninput="autoExpandTextarea(this)"></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點照片 (更換)</label>
@@ -1515,6 +1533,11 @@
 
 const menuCategories = [...new Set([{% for it in items if it.category %}'{{ it.category }}',{% endfor %}])];
 const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
+    function autoExpandTextarea(el) {
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+    }
     // --- 即時時鐘更新邏輯 ---
     function updateAdminClock() {
         const clockEl = document.getElementById('live-clock');
@@ -1619,7 +1642,9 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
         document.getElementById('edit-can-addon').checked = d.canAddon === '1';
         document.getElementById('edit-addon-price').value = Math.round(Number(d.addonPrice || 0));
-        document.getElementById('edit-description').value = d.description || '';
+        const editDescEl = document.getElementById('edit-description');
+        editDescEl.value = d.description || '';
+        setTimeout(() => autoExpandTextarea(editDescEl), 150);
         document.getElementById('edit-recommended').checked = d.recommended === '1';
         document.getElementById('edit-new').checked = d.new === '1';
         document.getElementById('edit-is-reward').checked = d.isReward === '1';
@@ -2112,15 +2137,18 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     const elRevenue = document.getElementById('stat-today-revenue');
                     const elEta = document.getElementById('stat-eta-minutes');
                     const elCompleted = document.getElementById('stat-completed-today');
-                    const elAiAdvice = document.querySelector('#analytics-pane .border.border-secondary');
+                    const elAvg = document.getElementById('stat-avg-order-value');
+                    const elAiAdvice = document.getElementById('stat-ai-advice') || document.querySelector('#analytics-pane .border.border-secondary');
 
                     if (elPending) elPending.innerText = data.analytics.pending_count;
                     if (elOrders) elOrders.innerText = data.analytics.today_orders;
                     if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
                     if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
                     if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
-                    if (elAiAdvice && data.analytics.ai_advice) elAiAdvice.innerText = data.analytics.ai_advice;
-                    
+                    if (elAvg && data.analytics.avg_order_value !== undefined) elAvg.innerText = Math.round(data.analytics.avg_order_value);
+                    if (elAiAdvice && data.analytics.ai_advice) {
+                        elAiAdvice.innerText = data.analytics.ai_advice;
+                    }
                 }
 
                 // 3. 實時訂單看板重新繪製
@@ -2345,6 +2373,62 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             }
         };
     }
+
+    // ==============================================================================
+// AI 菜單生成與智慧描述 (AI Copywriter)
+// ==============================================================================
+function generateAIDescription(mode = 'add') {
+    const nameInput = document.getElementById(`${mode}-name`);
+    const categoryInput = mode === 'add' 
+        ? document.querySelector('#addItemForm [name="category"]') 
+        : document.getElementById('edit-category');
+    const descInput = document.getElementById(`${mode}-description`);
+    const btn = document.getElementById(`btn-ai-${mode}`);
+
+    const name = (nameInput ? nameInput.value : '').trim();
+    const category = (categoryInput ? categoryInput.value : '').trim();
+
+    // 1. 防呆校驗：餐點名稱不得為空
+    if (!name) {
+        alert('⚠️ 請先輸入「餐點名稱」，AI 才能為您量身打造文案！');
+        if (nameInput) nameInput.focus();
+        return;
+    }
+
+    // 2. 切換為 Loading 狀態
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> 生成中...';
+
+    // 3. 發送非同步請求至後端
+    fetch('/api/generate_item_description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, category: category })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            if (descInput) {
+                descInput.value = data.description;
+                autoExpandTextarea(descInput);
+                // 聚焦並高亮提示
+                descInput.focus();
+            }
+        }else {
+            alert(`❌ ${data.message || '生成失敗，請稍後再試！'}`);
+        }
+    })
+    .catch(err => {
+        console.error('AI Copywriter 請求錯誤:', err);
+        alert('⚠️ 伺服器連線異常，請檢查網路或 API Key 設定！');
+    })
+    .finally(() => {
+        // 4. 復原按鈕狀態
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+    });
+}
 // ==============================================================================
 // 系統初始化與事件綁定
 // ==============================================================================
@@ -2471,6 +2555,21 @@ document.addEventListener("DOMContentLoaded", function () {
     // ---------------------------------------------------------
     if (typeof syncAdminLiveOrders === 'function') syncAdminLiveOrders();
     if (typeof initAdminSSE === 'function') initAdminSSE();
+
+    // 💡 每 3 秒檢查一次是否有最新產生的 AI 營運建議，避免手動重整網頁
+    setInterval(() => {
+        fetch('/api/admin_live_orders')
+            .then(res => res.json())
+            .then(data => {
+                if (data.analytics && data.analytics.ai_advice) {
+                    const elAiAdvice = document.getElementById('stat-ai-advice') || document.querySelector('#analytics-pane .border.border-secondary');
+                    if (elAiAdvice && elAiAdvice.innerText !== data.analytics.ai_advice) {
+                        elAiAdvice.innerText = data.analytics.ai_advice;
+                    }
+                }
+            })
+            .catch(err => console.log('更新 AI 建議略過:', err));
+    }, 5000);
 
 });
     </script>

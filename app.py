@@ -4,6 +4,8 @@ import cv2
 import json
 import io
 import re
+import requests
+import threading
 import unicodedata
 try:
     import google.generativeai as genai
@@ -135,7 +137,7 @@ class Order(db.Model):
     @property
     def user(self):
         if self.user_id:
-            return User.query.get(self.user_id)
+            return db.session.get(User, self.user_id)
         return None
     
 class OrderItem(db.Model):
@@ -411,7 +413,7 @@ def customer_index():
     is_guest = session.get('is_guest', False)
     
     if session.get('user_id'):
-        user = User.query.get(session['user_id'])
+        user = db.session.get(User, session['user_id'])
         if user:
             user_points = user.points
             session['user_points'] = user.points
@@ -619,7 +621,7 @@ def submit_order():
     promo_discount = 0
     target_user_coupon = None
     user_id = session.get('user_id')
-    user = User.query.get(user_id) if user_id else None
+    user = db.session.get(User, user_id) if user_id else None
 
     if promo_code:
         if user:
@@ -681,7 +683,7 @@ def submit_order():
     db.session.flush()
 
     for item in items:
-        # 1. 💡 新增：過濾餐點名稱並抓取對應 MenuItem 扣除庫存
+        # 1. 過濾餐點名稱並抓取對應 MenuItem 扣除庫存
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item['name']).strip()
         menu_item = MenuItem.query.filter_by(name=clean_name).first()
         if menu_item:
@@ -701,6 +703,7 @@ def submit_order():
 
     db.session.commit()
     update_popular_items()
+    _AI_ADVICE_STATE['last_signature'] = None
 
     receipt_items = []
     for item in items:
@@ -741,13 +744,13 @@ def submit_order():
         'available_coupons': latest_user_coupons
     })
 
-# --- 🎁 動態紅利回饋商城頁面 ---
+# --- 動態紅利回饋商城頁面 ---
 @app.route('/rewards')
 def rewards_store():
     if not session.get('user_id'):
         return redirect(url_for('face_login'))
     
-    user = User.query.get(session['user_id'])
+    user = db.session.get(User, session['user_id'])
     if not user:
         return redirect(url_for('logout'))
         
@@ -762,12 +765,12 @@ def redeem_reward():
     if not session.get('user_id'):
         return jsonify({'success': False, 'message': '請先登入會員！'}), 401
         
-    user = User.query.get(session['user_id'])
+    user = db.session.get(User, session['user_id'])
     data = request.get_json() or {}
 
     # 1. 兌換優惠券：建立獨立 UserCoupon 實體
     if 'coupon_id' in data:
-        coupon = Coupon.query.get(data.get('coupon_id'))
+        coupon = db.session.get(Coupon,data.get('coupon_id'))
         if not coupon:
             return jsonify({'success': False, 'message': '無效的優惠券！'}), 400
         
@@ -797,7 +800,7 @@ def redeem_reward():
         })
 
     # 2. 兌換餐點 (支援客製化選項與加料差額)
-    item = MenuItem.query.get(data.get('item_id'))
+    item = db.session.get(MenuItem,data.get('item_id'))
     if not item or not item.is_reward:
         return jsonify({'success': False, 'message': '無效的兌換商品！'}), 400
 
@@ -1007,20 +1010,41 @@ def logout():
     return redirect(url_for('customer_index'))
 
 # ==============================================================================
-# 💡 新增：AI 智慧營運建議生成函式 (具備 Fallback 備援機制)
+# AI 智慧營運建議生成函式 (依訂單狀態更新驅動)
 # ==============================================================================
-def generate_ai_business_advice(analytics_data):
-    """將即時營運指標傳送給 Gemini 模型生成動態店長建議"""
-    try:
-        if not GEMINI_API_KEY:
-            raise ValueError("未設定 GEMINI_API_KEY")
+_AI_ADVICE_STATE = {
+    'last_signature': None,
+    'cached_advice': None,
+    'cooldown_until': 0,
+    'is_fetching': False
+}
 
-        # 使用 gemini-1.5-flash 模型生成
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
+def get_orders_state_signature():
+    """取得今日訂單狀態特徵簽章"""
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+    orders = db.session.query(Order.id, Order.status).filter(
+        Order.created_at >= today_start,
+        Order.created_at <= today_end
+    ).order_by(Order.id.asc()).all()
+    return ",".join(f"{oid}:{status}" for oid, status in orders)
+
+# 建立全域狀態快取與非同步線程控制
+_AI_ADVICE_STATE = {
+    'last_signature': None,
+    'cached_advice': None,
+    'is_fetching': False
+}
+
+def _async_fetch_gemini_advice(analytics_data, signature):
+    """背景執行緒：非同步向 Gemini 請求最新營運建議，不阻塞主線程"""
+    import requests
+    global _AI_ADVICE_STATE
+
+    try:
         top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
         prompt = f"""
-你是一位專業的餐飲營運顧問。請根據以下今日餐廳的即時營運數據，用繁體中文給出 1~2 句精準、具體的營運行動建議（繁體中文，字數 60 字以內，語氣專業積極）：
+你是一位專業的餐飲營運顧問。請根據以下今日餐廳的即時營運數據，用繁體中文給出 1~2 句精準、具體的營運行動建議（字數 60 字以內，語氣專業積極）：
 - 今日訂單數：{analytics_data.get('today_orders', 0)} 筆
 - 今日營收：NT$ {analytics_data.get('today_revenue', 0)}
 - 平均客單價：NT$ {int(analytics_data.get('avg_order_value', 0))}
@@ -1030,13 +1054,68 @@ def generate_ai_business_advice(analytics_data):
 
 直接輸出建議內容，不要加多餘問候語。
 """
-        response = model.generate_content(prompt)
-        if response and response.text:
-            return response.text.strip()
-    except Exception as e:
-        print(f"AI 生成建議失敗或未配置 Key，使用動態規則生成: {e}")
+        api_key_clean = GEMINI_API_KEY.strip().strip("'").strip('"')
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key_clean
+        }
+        payload = {
+            "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考、分析或草稿，直接給出繁體中文營運建議。\n" + prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 800,
+                "temperature": 0.2
+            }
+        }
 
-    # --- 💡 Fallback 動態規則推論 (若 API 未設定或連線失敗時自動無縫接軌) ---
+        print("[*] 背景工作啟動：向 Gemini 請求最新營運建議...")
+        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        res_json = resp.json()
+        if resp.status_code == 200:
+            candidates = res_json.get('candidates', [])
+            if candidates and 'content' in candidates[0]:
+                text = candidates[0]['content']['parts'][0]['text'].strip()
+                clean_text = text.replace('"', '').replace('「', '').replace('」', '').strip()
+                
+                # 檢查句尾是否有正常結束標點（。！或!），若被截斷則自動補全或使用備援規則
+                valid_endings = ('。', '！', '!', '；', ';')
+                if len(clean_text) >= 12 and clean_text.endswith(valid_endings):
+                    _AI_ADVICE_STATE['cached_advice'] = clean_text
+                elif len(clean_text) >= 12:
+                    # 若只是少最後句號，補上句號確保通順
+                    _AI_ADVICE_STATE['cached_advice'] = clean_text + '。'
+                else:
+                    _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+                
+                _AI_ADVICE_STATE['last_signature'] = signature
+                print(f"[V] 背景生成完成！建議已更新: {_AI_ADVICE_STATE['cached_advice']}")
+        else:
+            err_msg = res_json.get('error', {}).get('message', '')
+            print(f"Gemini API 回傳錯誤 ({resp.status_code}): {err_msg}")
+    except Exception as e:
+        print(f"背景連線異常: {e}")
+    finally:
+        _AI_ADVICE_STATE['is_fetching'] = False
+
+def generate_ai_business_advice(analytics_data):
+    """0 毫秒即時回傳建議，並在背景依訂單異動自動更新"""
+    global _AI_ADVICE_STATE
+    current_signature = get_orders_state_signature()
+
+    # 訂單狀態異動且背景無任務運行時啟動 Thread
+    if _AI_ADVICE_STATE['last_signature'] != current_signature and not _AI_ADVICE_STATE['is_fetching']:
+        _AI_ADVICE_STATE['is_fetching'] = True
+        t = threading.Thread(
+            target=_async_fetch_gemini_advice,
+            args=(analytics_data, current_signature),
+            daemon=True
+        )
+        t.start()
+
+    return _AI_ADVICE_STATE['cached_advice'] or fallback_advice(analytics_data)
+
+def fallback_advice(analytics_data):
+    """本地動態規則推論 (0延遲即時生成)"""
     pending = analytics_data.get('pending_count', 0)
     eta = analytics_data.get('eta_minutes', 0)
     aov = analytics_data.get('avg_order_value', 0)
@@ -1120,10 +1199,19 @@ def build_order_analytics(orders, limit=1):
         'avg_order_time': avg_order_time,
         'top_items': top_items,
         'eta_minutes': eta_minutes,
-        'completed_today': len(completed_today_orders)
+        'completed_today': len(completed_today_orders),
+        'ai_advice': _AI_ADVICE_STATE.get('cached_advice') or fallback_advice({
+            'today_orders': len(today_orders),
+            'today_revenue': total_revenue,
+            'pending_count': len(pending_orders),
+            'avg_order_value': avg_order_value,
+            'avg_order_time': avg_order_time,
+            'top_items': top_items,
+            'eta_minutes': eta_minutes,
+            'completed_today': len(completed_today_orders)
+        })
     }
 
-    analytics_result['ai_advice'] = generate_ai_business_advice(analytics_result)
     return analytics_result
 
 @app.route('/admin', methods=['GET', 'POST'])
@@ -1349,6 +1437,93 @@ def add_item():
         db.session.commit()
         
     return redirect(url_for('admin_dashboard', tab='menu'))
+
+# ==============================================================================
+# AI 智慧菜單文案生成路由 (AI Copywriter)
+# ==============================================================================
+@app.route('/api/generate_item_description', methods=['POST'])
+def api_generate_item_description():
+    if not session.get('admin_logged_in'):
+        return jsonify({'success': False, 'message': '未授權管理者'}), 401
+
+    data = request.get_json() or {}
+    name = str(data.get('name', '')).strip()
+    category = str(data.get('category', '')).strip()
+
+    if not name:
+        return jsonify({'success': False, 'message': '請先輸入餐點名稱！'}), 400
+
+    if not GEMINI_API_KEY:
+        return jsonify({'success': False, 'message': '尚未配置 GEMINI_API_KEY！'}), 400
+
+    prompt = f"""
+你是一位專業的餐飲品牌文案策劃師。
+請為以下餐點撰寫一段誘人、生動且具體的美食商品介紹：
+- 餐點名稱：{name}
+- 餐點分類：{category if category else '特色美饌'}
+
+【生成要求】：
+1. 繁體中文，篇幅約 2~3 句話（簡潔有力即可）。
+2. 聚焦於具體的「口感層次」、「料理手法」或「主要風味特色」（如：酥脆焦香、慢火細熬、清爽甘甜）。
+3. 【嚴格禁止】：
+   - 絕對禁止在文字中標註字數計數、序號或編號（如 (1)、(2) 等）。
+   - 絕對不要在結尾出現「每一口都是...」、「極致美味」、「令人回味無窮」、「幸福滋味」等空洞套話。
+   - 嚴禁包含任何引號、Markdown 符號（如 **）或多餘問候語，只輸出純文字介紹。
+"""
+
+    try:
+        api_key_clean = GEMINI_API_KEY.strip().strip("'").strip('"')
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key_clean
+        }
+        payload = {
+            "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，文案必須在 70 字以內完整收尾，結尾必須有完整句號。\n" + prompt}]}],
+            "generationConfig": {
+                "maxOutputTokens": 1200,
+                "temperature": 0.3
+            }
+        }
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=45)
+        res_json = resp.json()
+        if resp.status_code == 200:
+            candidates = res_json.get('candidates', [])
+            if candidates and 'content' in candidates[0]:
+                text = candidates[0]['content']['parts'][0]['text'].strip()
+                
+                # 1. 移除字數計數括號，例如 (1)、(22)、[1] 等數字標記
+                cleaned_desc = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', text)
+                
+                # 2. 清理多餘引號與 Markdown 符號
+                cleaned_desc = cleaned_desc.replace('"', '').replace("'", '').replace('「', '').replace('」', '').replace('*', '').strip()
+                
+                # 3. 確保文案完整，若句尾缺標點則補上句號
+                if cleaned_desc and not cleaned_desc.endswith(('。', '！', '!')):
+                    cleaned_desc += '。'
+                    
+                return jsonify({'success': True, 'description': cleaned_desc})
+            else:
+                fallback = f"嚴選優質新鮮食材現點現做，完美保留【{name}】原汁原味與豐富口感。"
+                return jsonify({'success': True, 'description': fallback})
+        elif resp.status_code == 429:
+            print("Gemini API 達每分鐘上限 (429)，自動降級採用本地豐富備援。")
+            import random
+            v_list = ["嚴選新鮮食材現點現做", "特選在地優質原料慢火細熬", "以黃金比例獨門香料精心烹製"]
+            t_list = ["完美保留料理原汁原味", "外酥內嫩且肉汁豐盈飽滿", "口感層次豐富且香氣撲鼻"]
+            fallback = f"{random.choice(v_list)}，{random.choice(t_list)}。"
+            return jsonify({'success': True, 'description': fallback})
+        else:
+            print(f"Gemini API 錯誤 ({resp.status_code})")
+            fallback = f"嚴選優質新鮮食材精心製作，保留【{name}】濃郁香氣與多層次口感。"
+            return jsonify({'success': True, 'description': fallback})
+
+    except Exception as e:
+        print(f"呼叫異常: {e}")
+        fallback = f"嚴選優質新鮮食材現點現做，保留【{name}】豐富口感與濃郁香氣，經典層次風味令人回味無窮。"
+        return jsonify({'success': True, 'description': fallback})
 
 @app.route('/admin/import_smart', methods=['POST'])
 def import_smart():
@@ -2105,6 +2280,8 @@ def update_order_status(id):
         if new_status == 'Completed' and not order.completed_at:
             order.completed_at = datetime.now()
         db.session.commit()
+        _AI_ADVICE_STATE['last_signature'] = None
+
         return jsonify({'message': '狀態更新成功', 'status': new_status})
 
     return jsonify({'error': '無效的狀態'}), 400
@@ -2161,7 +2338,7 @@ def api_user_available_coupons():
         return jsonify({'success': False, 'coupons': [], 'points': 0})
 
     db.session.expire_all()
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     if not user:
         return jsonify({'success': False, 'coupons': [], 'points': 0})
 
@@ -2317,6 +2494,7 @@ def api_admin_live_orders():
 
     all_orders = Order.query.order_by(Order.id.desc()).all()
     analytics = build_order_analytics(all_orders, limit=3)
+    analytics['ai_advice'] = generate_ai_business_advice(analytics)
 
     return jsonify({
         'success': True, 
