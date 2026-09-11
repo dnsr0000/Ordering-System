@@ -8,6 +8,7 @@ import requests
 import threading
 import unicodedata
 import random
+import zipfile
 try:
     import google.generativeai as genai
 except ModuleNotFoundError:
@@ -1204,7 +1205,7 @@ def fallback_advice(analytics_data):
         return f"⚠️ 廚房負載偏高（{pending} 筆待製作，預估等待 {eta} 分鐘），建議啟動備料支援並暫緩外帶出餐推播。"
     elif aov < 150 and aov > 0:
         hot_item = top_items[0]['name'] if top_items else '熱門餐點'
-        return f"💡 平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
+        return f" 平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
     elif pending == 0 and analytics_data.get('today_orders', 0) > 0:
         return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
     else:
@@ -2269,6 +2270,136 @@ def export_excel():
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 
+# ==============================================================================
+# 資料庫與相片一鍵打包備份路由
+@app.route('/admin/backup_system')
+def backup_system():
+    """一鍵將 SQLite 資料庫 (menu.db) 與所有會員相片 (static/member) 打包為 ZIP 下載"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+
+    try:
+        # 1. 確保當前資料庫交易全數提交
+        db.session.commit()
+
+        # 2. 建立記憶體二進位串流 (In-Memory Buffer)
+        memory_file = io.BytesIO()
+        db_path = os.path.join(BASE_DIR, 'menu.db')
+        member_folder = app.config['UPLOAD_FOLDER_MEMBER']
+
+        # 3. 建立 ZIP 壓縮檔案
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # 打包資料庫檔案
+            if os.path.exists(db_path):
+                zf.write(db_path, arcname='menu.db')
+
+            # 打包會員人臉註冊相片 (維持目錄結構)
+            if os.path.exists(member_folder):
+                for root, _, files in os.walk(member_folder):
+                    for file in files:
+                        full_path = os.path.join(root, file)
+                        # 保留 static/member/ 階層路徑
+                        arc_name = os.path.join('static', 'member', file)
+                        zf.write(full_path, arcname=arc_name)
+
+        # 4. 指針歸零並回傳檔案串流
+        memory_file.seek(0)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        download_name = f"Kiosk_Backup_{timestamp}.zip"
+
+        return send_file(
+            memory_file,
+            download_name=download_name,
+            as_attachment=True,
+            mimetype='application/zip'
+        )
+
+    except Exception as e:
+        return f"<script>alert('❌ 備份作業失敗：{e}'); window.history.back();</script>", 500
+# ==============================================================================
+#  系統備份還原路由
+@app.route('/admin/restore_backup', methods=['POST'])
+def restore_backup():
+    """接收備份 ZIP 檔，依勾選條件篩選並安全還原資料庫 (menu.db) 與會員相片"""
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin_dashboard'))
+
+    file = request.files.get('backup_zip')
+    if not file or file.filename == '':
+        return "<script>alert('❌ 請選擇要還原的備份 ZIP 檔案！'); window.history.back();</script>", 400
+
+    restore_db = True if request.form.get('restore_db') == '1' else False
+    restore_photos = True if request.form.get('restore_photos') == '1' else False
+    overwrite_photos = True if request.form.get('overwrite_photos') == '1' else False
+
+    if not restore_db and not restore_photos:
+        return "<script>alert('❌ 請至少勾選一項欲還原的內容（資料庫或會員相片）！'); window.history.back();</script>", 400
+
+    db_path = os.path.join(BASE_DIR, 'menu.db')
+    member_dir = os.path.abspath(app.config['UPLOAD_FOLDER_MEMBER'])
+    os.makedirs(member_dir, exist_ok=True)
+
+    allowed_img_exts = {'.jpg', '.jpeg', '.png', '.webp'}
+    restored_db_status = False
+    restored_photo_count = 0
+    skipped_photo_count = 0
+
+    try:
+        with zipfile.ZipFile(file, 'r') as zf:
+            namelist = zf.namelist()
+
+            # 1. 還原資料庫
+            if restore_db:
+                db_entry = next((name for name in namelist if os.path.basename(name) == 'menu.db'), None)
+                if db_entry:
+                    db_bytes = zf.read(db_entry)
+                    if db_bytes.startswith(b'SQLite format 3\x00'):
+                        db.session.remove()
+                        db.engine.dispose()
+                        with open(db_path, 'wb') as f:
+                            f.write(db_bytes)
+                        restored_db_status = True
+                    else:
+                        return "<script>alert('❌ 壓縮檔內的 menu.db 格式不符或已損壞！'); window.history.back();</script>", 400
+
+            # 2. 還原會員照片
+            if restore_photos:
+                for entry_name in namelist:
+                    if 'member' in entry_name.lower():
+                        filename = os.path.basename(entry_name)
+                        if not filename:
+                            continue
+
+                        _, ext = os.path.splitext(filename)
+                        if ext.lower() not in allowed_img_exts:
+                            continue
+
+                        dest_file_path = os.path.abspath(os.path.join(member_dir, filename))
+                        if not dest_file_path.startswith(member_dir):
+                            continue
+
+                        if os.path.exists(dest_file_path) and not overwrite_photos:
+                            skipped_photo_count += 1
+                            continue
+
+                        with open(dest_file_path, 'wb') as img_out:
+                            img_out.write(zf.read(entry_name))
+                        restored_photo_count += 1
+
+        msg_parts = ["✅ 系統備份還原完成！"]
+        if restore_db:
+            msg_parts.append(f"➤ 資料庫 (menu.db)：{'成功還原覆蓋' if restored_db_status else '壓縮檔中無資料庫檔'}")
+        if restore_photos:
+            msg_parts.append(f"➤ 會員相片：成功寫入 {restored_photo_count} 張 (已略過既有 {skipped_photo_count} 張)")
+
+        alert_msg = "\\n".join(msg_parts)
+        return f"<script>alert('{alert_msg}'); window.location.href='/admin';</script>"
+
+    except zipfile.BadZipFile:
+        return "<script>alert('❌ 上傳的檔案非有效的 ZIP 壓縮檔！'); window.history.back();</script>", 400
+    except Exception as e:
+        return f"<script>alert('❌ 還原過程發生錯誤：{e}'); window.history.back();</script>", 500
+# ==============================================================================
 @app.route('/admin/edit/<int:id>', methods=['POST'])
 def edit_item(id):
     """店家編輯菜單品項"""
@@ -2941,9 +3072,31 @@ def counter_display():
 # 10. 程式進入點 (Main Entry)
 # ==============================================================================
 if __name__ == '__main__':
-    # 1. 停用 ANSI 顏色轉碼，防止 Windows Console 原生寫入崩潰
+
+    # 1. 強制讓 Python 繞過 Click 注入的 Windows Console 包裝器
+    os.environ["PYTHONLEGACYWINDOWSSTDIO"] = "1"
     os.environ["NO_COLOR"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
-    
-    # 2. 正常啟動（use_reloader=False 可避免大型 GGUF 模型被載入兩次吃光 RAM）
+
+    # 2. 徹底關閉引發崩潰的 Flask 啟動橫幅輸出
+    try:
+        from flask import cli
+        cli.show_server_banner = lambda *args, **kwargs: None
+    except Exception:
+        pass
+
+    # 3. 確保標準輸出編碼安全
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+    print("\n" + "="*50)
+    print("🚀 自助點餐系統正常啟動中...")
+    print("👉 前台首頁: http://127.0.0.1:5000/")
+    print("👉 店家後台: http://127.0.0.1:5000/admin")
+    print("="*50 + "\n")
+
+    # 4. 正常啟動伺服器
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)

@@ -3,10 +3,10 @@ instance/
 menu.db
 *.db
 
-# 忽略使用者上傳的靜態檔案 (保留目錄但不上傳內容)
+# 忽略使用者上傳的靜態檔案
 static/member/*
 !static/member/.gitkeep
-# 排除特定格式的圖片 (選用)
+# 排除特定格式的圖片
 *.jpg
 *.jpeg
 *.png
@@ -16,11 +16,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# 虛擬環境 (如果有使用的話)
+# 虛擬環境
 venv/
 env/
 .env
 
 .vscode/
-
+#排除本地模型
 qwen2.5-1.5b-instruct-q4_k_m.gguf

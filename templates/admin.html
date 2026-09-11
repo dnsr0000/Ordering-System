@@ -121,18 +121,18 @@
                 <button class="btn btn-outline-success btn-sm fw-bold ms-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#exportExcelModal">
                     <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出資料
                 </button>
-                <form action="/admin/import_smart" method="POST" enctype="multipart/form-data" class="d-inline m-0" id="smartImportForm">
-                    <input type="file" name="file" id="smartImportFile" accept=".xlsx, .xls" class="d-none" onchange="document.getElementById('smartImportForm').submit();">
-                    <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" onclick="document.getElementById('smartImportFile').click();">
-                        <i class="bi bi-cloud-upload me-1"></i> 匯入資料
-                    </button>
-                </form>
-                <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold">
-                <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
+                <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#importModal">
+                    <i class="bi bi-cloud-upload me-1"></i> 匯入資料
+                </button>
+                <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db) 與所有會員相片嗎？');">
+                    <i class="bi bi-archive-fill me-1"></i> 備份會員照片和資料庫
+                </a>
+                <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold ms-2">
+                    <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
                 </a>
             </div>
             
-            <!-- 🕒 右側加入即時時鐘與操作按鈕 -->
+            <!-- 右側加入即時時鐘與操作按鈕 -->
             <div class="d-flex align-items-center gap-3">
                 <div class="text-white-50 small d-none d-md-block bg-dark px-3 py-1.5 rounded border border-secondary" style="font-family: monospace;">
                     <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">2026/00/00 00:00:00</span>
@@ -1407,7 +1407,7 @@
         </div>
     </div>
 
-    <!-- 💡 編輯優惠券 Modal -->
+    <!--  編輯優惠券 Modal -->
     <div class="modal fade" id="editCouponModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -1529,6 +1529,118 @@
             </div>
         </div>
     </div>
+
+    <!-- 🌟 [新增] 整合式匯入資料 Modal (含備份 ZIP 篩選還原與 Excel 智慧匯入) -->
+    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary pb-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-cloud-arrow-up-fill text-info fs-4"></i>
+                        <h5 class="modal-title fw-bold text-white mb-0">資料匯入與系統還原</h5>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body p-4">
+                    <!-- 模式切換頁籤 (Nav Tabs) -->
+                    <ul class="nav nav-pills mb-4 border-bottom border-secondary pb-3" id="importModalTab" role="tablist">
+                        <li class="nav-item me-2" role="presentation">
+                            <button class="nav-link active" id="tab-restore-zip" data-bs-toggle="pill" data-bs-target="#pane-restore-zip" type="button" role="tab">
+                                <i class="bi bi-archive-fill text-warning me-1"></i> 還原備份檔 (ZIP 壓縮檔)
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="tab-import-excel" data-bs-toggle="pill" data-bs-target="#pane-import-excel" type="button" role="tab">
+                                <i class="bi bi-file-earmark-spreadsheet text-info me-1"></i> 智慧匯入 Excel 報表
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content" id="importModalTabContent">
+                        <!-- ------------------------------------------------------------- -->
+                        <!-- 頁籤 1：系統備份 ZIP 還原 (含項目篩選機制) -->
+                        <!-- ------------------------------------------------------------- -->
+                        <div class="tab-pane fade show active" id="pane-restore-zip" role="tabpanel">
+                            <form action="/admin/restore_backup" method="POST" enctype="multipart/form-data" onsubmit="return confirm('⚠️ 警告：系統還原將依下方設定覆寫現有檔案與紀錄，確定要繼續執行嗎？');">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold text-warning">選擇系統備份壓縮檔 (ZIP File)</label>
+                                    <input type="file" class="form-control" name="backup_zip" accept=".zip" required>
+                                    <small class="text-white-50">支援上傳「一鍵備份系統」產生之 <code>Kiosk_Backup_*.zip</code> 檔案。</small>
+                                </div>
+
+                                <div class="p-3 rounded bg-dark border border-secondary mb-3">
+                                    <p class="small fw-bold text-warning mb-2">
+                                        <i class="bi bi-funnel-fill me-1"></i> 還原項目篩選機制 (Filter Options)：
+                                    </p>
+
+                                    <!-- 篩選 1：資料庫 -->
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" name="restore_db" value="1" id="filter-rst-db" checked>
+                                        <label class="form-check-label fw-bold text-white" for="filter-rst-db">
+                                            還原 SQLite 資料庫 (<code>menu.db</code>)
+                                        </label>
+                                        <div class="text-white-50 small ps-1">涵蓋所有菜單、會員資料、歷史訂單、日誌與優惠券。</div>
+                                    </div>
+
+                                    <!-- 篩選 2：會員相片 -->
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="restore_photos" value="1" id="filter-rst-photos" checked onchange="document.getElementById('filter-photo-opt').style.display = this.checked ? 'block' : 'none';">
+                                        <label class="form-check-label fw-bold text-white" for="filter-rst-photos">
+                                            還原會員人臉特徵相片 (<code>static/member/</code>)
+                                        </label>
+                                        <div class="text-white-50 small ps-1">自動比對二進位安全路徑，匯入刷臉相片。</div>
+                                    </div>
+
+                                    <!-- 篩選 3：衝突覆寫開關 -->
+                                    <div class="ps-4 mb-1" id="filter-photo-opt">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="overwrite_photos" value="1" id="filter-rst-overwrite" checked>
+                                            <label class="form-check-label small text-warning" for="filter-rst-overwrite">
+                                                遇到同名相片時強制覆寫 (預設勾選)
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                                    <button type="submit" class="btn btn-warning btn-sm fw-bold text-dark px-4">
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i> 開始執行還原
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- ------------------------------------------------------------- -->
+                        <!-- 頁籤 2：Excel 智慧匯入 (原 import_smart 功能) -->
+                        <!-- ------------------------------------------------------------- -->
+                        <div class="tab-pane fade" id="pane-import-excel" role="tabpanel">
+                            <form action="/admin/import_smart" method="POST" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold text-info">選擇 Excel 試算表檔案</label>
+                                    <input type="file" class="form-control" name="file" accept=".xlsx, .xls" required>
+                                    <small class="text-white-50">支援包含會員 (User)、菜單品項 (MenuItem)、優惠券 (Coupon) 之試算表。</small>
+                                </div>
+
+                                <div class="p-3 rounded bg-dark border border-secondary text-white-50 small mb-3">
+                                    <div class="fw-bold text-white mb-1"><i class="bi bi-info-circle text-info me-1"></i> 智慧辨識機制說明：</div>
+                                    系統會自動判斷工作表 (Sheet) 名稱與欄位特徵，進行現有資料比對更新或批次新增，無需嚴格限制 Sheet 順序。
+                                </div>
+
+                                <div class="d-flex justify-content-end gap-2">
+                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
+                                    <button type="submit" class="btn btn-info btn-sm fw-bold text-dark px-4">
+                                        <i class="bi bi-file-earmark-arrow-up me-1"></i> 智慧解析並匯入
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 
@@ -1580,11 +1692,11 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
     // 後台切換訂單狀態時更新
     function changeOrderStatus(orderId, newStatus, selectEl) {
         localStorage.setItem('adminActiveTab', 'orders');
-        // 1. 💡 當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
+        // 1.  當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
         if (selectEl) {
             selectEl.blur();
             
-            // 2. 💡 立即原地切換卡片外框邊框顏色
+            // 2.  立即原地切換卡片外框邊框顏色
             const card = selectEl.closest('.card-custom');
             if (card) {
                 card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
@@ -2095,7 +2207,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             .then(data => {
                 if (!data || !data.success) return;
 
-                // 1. 💡 即時同步「菜單品項」剩餘數量標籤、標籤狀態與編輯按鈕
+                // 1.  即時同步「菜單品項」剩餘數量標籤、標籤狀態與編輯按鈕
                 if (data.menu_items) {
                     data.menu_items.forEach(it => {
                         // A. 更新雙格數量標籤中的剩餘數量及徽章顏色
@@ -2106,7 +2218,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                 ((it.stock <= 0 || it.is_sold_out) ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-success'));
                         }
 
-                        // B. 💡 即時刷新「標籤狀態」中的「已售完」徽章
+                        // B.  即時刷新「標籤狀態」中的「已售完」徽章
                         const tagCell = document.getElementById(`item-tags-${it.id}`);
                         if (tagCell) {
                             const existingSoldOutBadge = tagCell.querySelector('.sold-out-badge');
@@ -2559,7 +2671,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (typeof syncAdminLiveOrders === 'function') syncAdminLiveOrders();
     if (typeof initAdminSSE === 'function') initAdminSSE();
 
-    // 💡 每 3 秒檢查一次是否有最新產生的 AI 營運建議，避免手動重整網頁
+    //  每 3 秒檢查一次是否有最新產生的 AI 營運建議，避免手動重整網頁
     setInterval(() => {
         fetch('/api/admin_live_orders')
             .then(res => res.json())
