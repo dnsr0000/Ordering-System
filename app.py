@@ -22,6 +22,7 @@ from openpyxl.styles import Font
 from dotenv import load_dotenv
 from flask import Response
 from werkzeug.security import generate_password_hash, check_password_hash
+from llama_cpp import Llama
 
 # ==============================================================================
 # 1. 應用程式基礎設定 (App Configuration)
@@ -59,6 +60,9 @@ app.config['UPLOAD_FOLDER_MENU'] = UPLOAD_FOLDER_MENU
 # OpenCV 人臉辨識模型路徑
 YUNET_MODEL = os.path.join(BASE_DIR, "face_detection_yunet_2023mar.onnx")
 SFACE_MODEL = os.path.join(BASE_DIR, "face_recognition_sface_2021dec.onnx")
+
+# 
+LOCAL_MODEL_PATH = os.path.join(BASE_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 
 db = SQLAlchemy(app)
 
@@ -1114,13 +1118,69 @@ def logout():
 
 # ==============================================================================
 # AI 智慧營運建議生成函式 (依訂單狀態更新驅動)
+# 本地模型 (SLM) 初始化與推論核心 (Llama-cpp-python)
+try:
+    from llama_cpp import Llama
+except ImportError:
+    Llama = None
+
+LOCAL_MODEL_PATH = os.path.join(BASE_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
+
+local_llm = None
+if Llama and os.path.exists(LOCAL_MODEL_PATH):
+    try:
+        local_llm = Llama(
+            model_path=LOCAL_MODEL_PATH,
+            n_ctx=2048,      # 放寬至 2048 避免張量下溢
+            n_batch=512,     # 明確指定批次上限
+            n_threads=4,     # 配合 CPU 核心數
+            verbose=False
+        )
+        print("✅ 本地繁中 SLM (Qwen2.5-1.5B GGUF) 載入完成！")
+    except Exception as e:
+        print(f"本地 SLM 載入失敗: {e}")
+else:
+    if not os.path.exists(LOCAL_MODEL_PATH):
+        print("⚠️ 未檢測到本地模型檔 qwen2.5-1.5b-instruct-q4_k_m.gguf，遇超額將退回本地規則。")
+
+# 建立本地模型專屬的執行緒鎖，防止並發衝突導致 llama_decode returned -1
+_LLM_LOCK = threading.Lock()
+
+def run_local_slm(prompt_text, max_tokens=100):
+    """純本機 Python 推論，線程安全保護版本"""
+    if not local_llm:
+        return None
+
+    formatted_prompt = f"""<|im_start|>system
+你是一位專業餐飲營運顧問，請嚴格使用台灣繁體中文給出 1~2 句具體營運建議（60字以內），禁止思考草稿。<|im_end|>
+<|im_start|>user
+{prompt_text}<|im_end|>
+<|im_start|>assistant
+"""
+    with _LLM_LOCK:
+        try:
+            local_llm.reset()
+            
+            res = local_llm(
+                formatted_prompt,
+                max_tokens=max_tokens,
+                temperature=0.3,
+                stop=["<|im_end|>", "\n\n"]
+            )
+            output = res["choices"][0]["text"].strip()
+            return output.replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
+        except Exception as e:
+            print(f"本地 SLM 推論異常: {e}")
+            return None
 # ==============================================================================
-# 建立全域狀態快取與非同步線程控制
+# AI 智慧營運建議全域快取與狀態管理
+# ==============================================================================
 _AI_ADVICE_STATE = {
     'last_signature': None,
     'cached_advice': None,
     'is_fetching': False,
-    'cooldown_until': 0 
+    'cooldown_until': 0,
+    'last_request_time': 0
 }
 
 def get_orders_state_signature():
@@ -1133,18 +1193,67 @@ def get_orders_state_signature():
     ).order_by(Order.id.asc()).all()
     return ",".join(f"{oid}:{status}" for oid, status in orders)
 
+def fallback_advice(analytics_data):
+    """第三層防線：本地動態規則推論 (0延遲即時生成)"""
+    pending = analytics_data.get('pending_count', 0)
+    eta = analytics_data.get('eta_minutes', 0)
+    aov = analytics_data.get('avg_order_value', 0)
+    top_items = analytics_data.get('top_items', [])
+
+    if pending >= 5 or eta > 20:
+        return f"⚠️ 廚房負載偏高（{pending} 筆待製作，預估等待 {eta} 分鐘），建議啟動備料支援並暫緩外帶出餐推播。"
+    elif aov < 150 and aov > 0:
+        hot_item = top_items[0]['name'] if top_items else '熱門餐點'
+        return f"💡 平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
+    elif pending == 0 and analytics_data.get('today_orders', 0) > 0:
+        return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
+    else:
+        return "🌟 今日營業剛起步，請確認廚房出單機與各項食材庫存是否充足。"
+
+def _resolve_offline_advice(analytics_data):
+    """嘗試第二層本地 SLM 生成；若無本地模型則退回第三層規則"""
+    if local_llm:
+        print("[*] 正在透過本機 Qwen2.5-1.5B 進行本地推論，請稍候...")
+        top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
+        prompt = f"數據：待製作 {analytics_data.get('pending_count', 0)} 筆、預估出餐 {analytics_data.get('eta_minutes', 0)} 分鐘、今日營收 ${analytics_data.get('today_revenue', 0)}、熱銷餐點：{top_items_str}。"
+        
+        local_res = run_local_slm(prompt)
+        if local_res and len(local_res) >= 10:
+            if not local_res.endswith(('。', '！', '!')):
+                local_res += '。'
+            result = f"{local_res}"
+            print(f"[V] 本機 SLM 生成完成：{result}")
+            return result
+        else:
+            print("[!] 本機 SLM 輸出為空或異常，改用動態規則兜底。")
+    else:
+        print("[*] 未載入本機模型，直接套用本地動態規則。")
+
+    return fallback_advice(analytics_data)
 
 def _async_fetch_gemini_advice(analytics_data, signature):
-    """背景執行緒：非同步向 Gemini 請求最新營運建議，若遇 429 則自動鎖定冷卻降級"""
+    """背景執行緒：所有耗時運算（Gemini / 本地 SLM）皆在此非同步執行"""
     import requests
     global _AI_ADVICE_STATE
 
-    # 檢查是否仍在冷卻期內，若冷卻中則略過請求
-    if time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0):
-        _AI_ADVICE_STATE['is_fetching'] = False
-        return
-
     try:
+        api_key_clean = (GEMINI_API_KEY or "").strip().strip("'").strip('"')
+        
+        # 1. 未配置金鑰：直接交給本地 SLM，不發送網路請求
+        if not api_key_clean or api_key_clean in ["YOUR_API_KEY", "1234", "none"]:
+            print("[*] 未配置 Gemini API Key，直接啟動本地推論模式...")
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = signature
+            return
+
+        # 2. 處於冷卻期：直接交給本地 SLM，不重複打雲端 API
+        if time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0):
+            print("[*] 處於 API 冷卻期，由本地 SLM 進行生成...")
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = signature
+            return
+
+        # 3. 正常模式：呼叫 Gemini API
         top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
         prompt = f"""
 你是一位專業的餐飲營運顧問。請根據以下今日餐廳的即時營運數據，用繁體中文給出 1~2 句精準、具體的營運行動建議（字數 60 字以內，語氣專業積極）：
@@ -1157,22 +1266,21 @@ def _async_fetch_gemini_advice(analytics_data, signature):
 
 直接輸出建議內容，不要加多餘問候語。
 """
-        api_key_clean = GEMINI_API_KEY.strip().strip("'").strip('"')
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key_clean
         }
         payload = {
-            "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考、分析或草稿，直接給出繁體中文營運建議。\n" + prompt}]}],
+            "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，繁體中文介紹，必須有完整句號收尾。\n" + prompt}]}],
             "generationConfig": {
                 "maxOutputTokens": 800,
-                "temperature": 0.2
+                "temperature": 0.3
             }
         }
 
         print("[*] 背景工作啟動：向 Gemini 請求最新營運建議...")
-        resp = requests.post(url, headers=headers, json=payload, timeout=30)
+        resp = requests.post(url, headers=headers, json=payload, timeout=20)
         res_json = resp.json()
 
         if resp.status_code == 200:
@@ -1187,45 +1295,51 @@ def _async_fetch_gemini_advice(analytics_data, signature):
                 elif len(clean_text) >= 12:
                     _AI_ADVICE_STATE['cached_advice'] = clean_text + '。'
                 else:
-                    _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+                    _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
                 
                 _AI_ADVICE_STATE['last_signature'] = signature
                 print(f"[V] 背景生成完成！建議已更新: {_AI_ADVICE_STATE['cached_advice']}")
-        elif resp.status_code == 429:
-            # 鎖定 60 秒冷卻
+        elif resp.status_code in [401, 403, 429]:
             _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
-            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            print(f"[!] Gemini 回應代碼 ({resp.status_code})，啟動 60 秒冷卻並切換本地 SLM。")
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
             _AI_ADVICE_STATE['last_signature'] = signature
-            print("[!] 偵測到 Gemini API 配額已滿 (429)，啟動 60 秒冷卻降級；60 秒後若有訂單更新將自動重新嘗試連線。")
         else:
             err_msg = res_json.get('error', {}).get('message', '')
-            print(f"Gemini API 回傳錯誤 ({resp.status_code}): {err_msg}")
-            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            print(f"Gemini API 異常 ({resp.status_code}): {err_msg}")
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
             _AI_ADVICE_STATE['last_signature'] = signature
     except Exception as e:
-        print(f"背景連線異常: {e}")
-        _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+        print(f"背景連線異常，切換至本地備援: {e}")
+        _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
         _AI_ADVICE_STATE['last_signature'] = signature
     finally:
         _AI_ADVICE_STATE['is_fetching'] = False
 
 def generate_ai_business_advice(analytics_data):
-    """0 毫秒即時回傳建議：訂單異動時更新，冷卻期過後自動重試連線"""
+    """0 毫秒即時回傳：主線程不卡頓，加入 15 秒防抖保護避免打爆 Gemini 免費配額"""
     global _AI_ADVICE_STATE
     current_signature = get_orders_state_signature()
     now_ts = time.time()
 
-    # 1. 訂單狀態有異動時：
+    # 1. 訂單特徵有變動時：
     if _AI_ADVICE_STATE['last_signature'] != current_signature:
-        # 若仍在 60 秒冷卻期內，直接重新以本地動態規則算出最新建議
+        # 若仍在 429 冷卻期內：直接交給本地 SLM/規則運算，不打擾雲端
         if now_ts < _AI_ADVICE_STATE.get('cooldown_until', 0):
-            _AI_ADVICE_STATE['cached_advice'] = fallback_advice(analytics_data)
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
             _AI_ADVICE_STATE['last_signature'] = current_signature
             return _AI_ADVICE_STATE['cached_advice']
-        
-        # 若已過冷卻期且背景未在執行，啟動執行緒發送請求
+
+        # 若距離上次雲端請求小於 15 秒（防抖間隔）：先用本地 SLM 應急，防止觸發 429
+        if (now_ts - _AI_ADVICE_STATE.get('last_request_time', 0)) < 15:
+            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
+            _AI_ADVICE_STATE['last_signature'] = current_signature
+            return _AI_ADVICE_STATE['cached_advice']
+
+        # 已過間隔且背景無任務：啟動背景執行緒請求 Gemini
         if not _AI_ADVICE_STATE['is_fetching']:
             _AI_ADVICE_STATE['is_fetching'] = True
+            _AI_ADVICE_STATE['last_request_time'] = now_ts
             t = threading.Thread(
                 target=_async_fetch_gemini_advice,
                 args=(analytics_data, current_signature),
@@ -1233,26 +1347,9 @@ def generate_ai_business_advice(analytics_data):
             )
             t.start()
 
-    # 2. 立即回傳最新建議
+    # 2. 立即回傳快取建議（無快取則即時運算兜底）
     return _AI_ADVICE_STATE['cached_advice'] or fallback_advice(analytics_data)
 
-def fallback_advice(analytics_data):
-    """本地動態規則推論 (0延遲即時生成)"""
-    pending = analytics_data.get('pending_count', 0)
-    eta = analytics_data.get('eta_minutes', 0)
-    aov = analytics_data.get('avg_order_value', 0)
-    top_items = analytics_data.get('top_items', [])
-
-    if pending >= 5 or eta > 20:
-        return f"⚠️ 廚房負載偏高（{pending} 筆待製作，預估等待 {eta} 分鐘），建議啟動備料支援並暫緩外帶出餐推播。"
-    elif aov < 150 and aov > 0:
-        hot_item = top_items[0]['name'] if top_items else '熱門餐點'
-        return f"  平均客單價（${int(aov)}）偏低，建議前台推廣「{hot_item}」加料升級或推播點數滿額加價購優惠券。"
-    elif pending == 0 and analytics_data.get('today_orders', 0) > 0:
-        return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
-    else:
-        return "🌟 今日營業剛起步，請確認廚房出單機與各項食材庫存是否充足。"
-    
 # ==============================================================================
 # 7. 店家後台管理路由 (Admin Management Routes)
 # ==============================================================================
@@ -1581,6 +1678,27 @@ def add_item():
 # ==============================================================================
 # AI 智慧菜單文案生成路由 (AI Copywriter)
 # ==============================================================================
+# ==============================================================================
+# AI 智慧菜單文案生成路由 (AI Copywriter - 具備三層自動降級機制)
+# ==============================================================================
+def fallback_menu_description(name, category):
+    """第三層兜底：本地動態辭庫隨機組裝高品質美食文案 (0ms 延遲保證成功)"""
+    import random
+    intros = [
+        "嚴選優質新鮮食材現點現做",
+        "特選產地直送原料慢火細熬",
+        "黃金比例獨門秘方精準調配",
+        "主廚匠心工藝悉心烹調",
+        "保留食材純粹原汁原味"
+    ]
+    traits = [
+        "香氣四溢且口感層次鮮明",
+        "風味醇厚濃郁且回味無窮",
+        "外酥內嫩且肉汁豐盈飽滿",
+        "口感清爽甘醇且韻味悠長",
+        "每一口都帶來無與倫比的美味體驗"
+    ]
+    return f"{random.choice(intros)}，【{name}】{random.choice(traits)}。"
 @app.route('/api/generate_item_description', methods=['POST'])
 def api_generate_item_description():
     if not session.get('admin_logged_in'):
@@ -1593,9 +1711,6 @@ def api_generate_item_description():
     if not name:
         return jsonify({'success': False, 'message': '請先輸入餐點名稱！'}), 400
 
-    if not GEMINI_API_KEY:
-        return jsonify({'success': False, 'message': '尚未配置 GEMINI_API_KEY！'}), 400
-
     prompt = f"""
 你是一位專業的餐飲品牌文案策劃師。
 請為以下餐點撰寫一段誘人、生動且具體的美食商品介紹：
@@ -1603,67 +1718,90 @@ def api_generate_item_description():
 - 餐點分類：{category if category else '特色美饌'}
 
 【生成要求】：
-1. 繁體中文，篇幅約 2~3 句話（簡潔有力即可）。
-2. 聚焦於具體的「口感層次」、「料理手法」或「主要風味特色」（如：酥脆焦香、慢火細熬、清爽甘甜）。
-3. 【嚴格禁止】：
-   - 絕對禁止在文字中標註字數計數、序號或編號（如 (1)、(2) 等）。
-   - 絕對不要在結尾出現「每一口都是...」、「極致美味」、「令人回味無窮」、「幸福滋味」等空洞套話。
-   - 嚴禁包含任何引號、Markdown 符號（如 **）或多餘問候語，只輸出純文字介紹。
+1. 繁體中文，篇幅約 2~3 句話（簡潔有力，70字以內）。
+2. 聚焦於「口感層次」、「料理手法」或「風味特色」（如：酥脆焦香、慢火細熬、清爽甘甜）。
+3. 嚴禁包含字數編號 (如 (1)、(2))、引號、Markdown 符號或思考草稿，直接輸出文案本身。
 """
 
-    try:
-        api_key_clean = GEMINI_API_KEY.strip().strip("'").strip('"')
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key_clean
-        }
-        payload = {
-            "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，文案必須在 70 字以內完整收尾，結尾必須有完整句號。\n" + prompt}]}],
-            "generationConfig": {
-                "maxOutputTokens": 1200,
-                "temperature": 0.3
+    api_key_clean = (GEMINI_API_KEY or "").strip().strip("'").strip('"')
+
+    # --------------------------------------------------------------------------
+    # 第一層：嘗試呼叫 Google Gemini 3.6 Flash (保留型號，檢查是否在 429 冷卻期)
+    is_in_cooldown = time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0)
+    
+    if api_key_clean and api_key_clean not in ["YOUR_API_KEY", "1234", "none"] and not is_in_cooldown:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key_clean
             }
-        }
+            system_instruction = "你是一位專業的美食文案師。請直接輸出最終的繁體中文介紹，嚴格禁止輸出任何思考過程、草稿檢查、字數驗證或英文自我問答。"
+            payload = {
+                "contents": [{"parts": [{"text": f"{system_instruction}\n\n{prompt}"}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 1200,
+                    "temperature": 0.2
+                }
+            }
+            print("[*] 正在向 Gemini (gemini-3.6-flash) 請求生成餐點文案...")
 
-        resp = requests.post(url, headers=headers, json=payload, timeout=45)
-        res_json = resp.json()
-        if resp.status_code == 200:
+            resp = requests.post(url, headers=headers, json=payload, timeout=15)
+            res_json = resp.json() if resp.status_code == 200 else {}
             candidates = res_json.get('candidates', [])
-            if candidates and 'content' in candidates[0]:
-                text = candidates[0]['content']['parts'][0]['text'].strip()
-                
-                # 1. 移除字數計數括號，例如 (1)、(22)、[1] 等數字標記
-                cleaned_desc = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', text)
-                
-                # 2. 清理多餘引號與 Markdown 符號
-                cleaned_desc = cleaned_desc.replace('"', '').replace("'", '').replace('「', '').replace('」', '').replace('*', '').strip()
-                
-                # 3. 確保文案完整，若句尾缺標點則補上句號
-                if cleaned_desc and not cleaned_desc.endswith(('。', '！', '!')):
-                    cleaned_desc += '。'
-                    
-                return jsonify({'success': True, 'description': cleaned_desc})
-            else:
-                fallback = f"嚴選優質新鮮食材現點現做，完美保留【{name}】原汁原味與豐富口感。"
-                return jsonify({'success': True, 'description': fallback})
-        elif resp.status_code == 429:
-            print("Gemini API 達每分鐘上限 (429)，自動降級採用本地豐富備援。")
-            import random
-            v_list = ["嚴選新鮮食材現點現做", "特選在地優質原料慢火細熬", "以黃金比例獨門香料精心烹製"]
-            t_list = ["完美保留料理原汁原味", "外酥內嫩且肉汁豐盈飽滿", "口感層次豐富且香氣撲鼻"]
-            fallback = f"{random.choice(v_list)}，{random.choice(t_list)}。"
-            return jsonify({'success': True, 'description': fallback})
-        else:
-            print(f"Gemini API 錯誤 ({resp.status_code})")
-            fallback = f"嚴選優質新鮮食材精心製作，保留【{name}】濃郁香氣與多層次口感。"
-            return jsonify({'success': True, 'description': fallback})
 
-    except Exception as e:
-        print(f"呼叫異常: {e}")
-        fallback = f"嚴選優質新鮮食材現點現做，保留【{name}】豐富口感與濃郁香氣，經典層次風味令人回味無窮。"
-        return jsonify({'success': True, 'description': fallback})
+            if resp.status_code == 200 and candidates:
+                if 'content' in candidates[0]:
+                    parts = candidates[0]['content'].get('parts', [])
+                    if parts:
+                        text = parts[0].get('text', '').strip()
+
+                        # 移除思考雜質
+                        text = re.sub(r'(?i)(?:words|chars|perfect|focus on|texture|cooking|flavor|\b(?:yes|no)\b)[^。\n]*[。\n]?', '', text)
+                        text = re.sub(r'[a-zA-Z\?\/]+', '', text)
+
+                        # 移除編號與引號
+                        cleaned_desc = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', text)
+                        cleaned_desc = cleaned_desc.replace('"', '').replace("'", '').replace('「', '').replace('」', '').replace('*', '').replace('`', '').strip()
+                        cleaned_desc = re.sub(r'^[，,。\s]+', '', cleaned_desc)
+
+                        if cleaned_desc and not cleaned_desc.endswith(('。', '！', '!')):
+                            cleaned_desc += '。'
+
+                        if len(cleaned_desc) >= 12:
+                            print("[V] Gemini 文案生成成功！")
+                            return jsonify({'success': True, 'description': cleaned_desc})
+            elif resp.status_code in [401, 403, 429]:
+                _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
+                print(f"[!] Gemini 回應代碼 ({resp.status_code})，啟動 60 秒冷卻並切換本地第二層...")
+            else:
+                print(f"[!] Gemini 回應代碼 ({resp.status_code})，準備切換至本地第二層...")
+        except Exception as e:
+            print(f"[!] Gemini 連線異常 ({e})，準備切換至本地第二層...")
+
+    # --------------------------------------------------------------------------
+    # 第二層：嘗試呼叫本機 Qwen2.5-1.5B (GGUF 本地大模型)
+    if local_llm:
+        print("[*] 正在使用本機 Qwen2.5-1.5B 產生商品文案...")
+        local_prompt = f"請為餐點【{name}】（分類：{category or '美饌'}）撰寫一段 50 字以內的誘人繁體中文商品介紹，直接輸出文案。"
+        local_desc = run_local_slm(local_prompt, max_tokens=120)
+        
+        if local_desc and len(local_desc) >= 12:
+            cleaned_local = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', local_desc)
+            cleaned_local = cleaned_local.replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
+            if not cleaned_local.endswith(('。', '！', '!')):
+                cleaned_local += '。'
+            
+            print(f"[V] 本地 SLM 文案生成完成：{cleaned_local}")
+            return jsonify({'success': True, 'description': cleaned_local})
+        else:
+            print("[!] 本地 SLM 輸出長度不足或為空，退回第三層動態辭庫...")
+
+    # --------------------------------------------------------------------------
+    # 第三層
+    print("[*] 啟用本地第三層動態辭庫生成文案。")
+    fallback_desc = fallback_menu_description(name, category)
+    return jsonify({'success': True, 'description': fallback_desc})
 
 @app.route('/admin/import_smart', methods=['POST'])
 def import_smart():
@@ -2803,4 +2941,9 @@ def counter_display():
 # 10. 程式進入點 (Main Entry)
 # ==============================================================================
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # 1. 停用 ANSI 顏色轉碼，防止 Windows Console 原生寫入崩潰
+    os.environ["NO_COLOR"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    
+    # 2. 正常啟動（use_reloader=False 可避免大型 GGUF 模型被載入兩次吃光 RAM）
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
