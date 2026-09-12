@@ -37,6 +37,7 @@ from sqlalchemy.engine import Engine
 MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
 MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024
 
+
 # 全域鎖定物件，防止多線程同時修改訂單資料
 _ORDER_CHECKOUT_LOCK = threading.Lock()
 
@@ -266,6 +267,12 @@ def start_customer_session(user_type, identifier):
     session['customer_log_id'] = log.id
     return log.id
 
+def clear_customer_session():
+    """僅清除前台顧客與會員相關的 Session，保留後台管理員狀態"""
+    customer_keys = ['user_id', 'user_name', 'user_points', 'is_guest', 'customer_log_id']
+    for key in customer_keys:
+        session.pop(key, None)
+
 def close_customer_session():
     """標記顧客/訪客登出離線時間"""
     log_id = session.get('customer_log_id')
@@ -435,33 +442,61 @@ with app.app_context():
 # 4. 影像處理與人臉辨識演算法核心 (AI & Image Processing)
 # ==============================================================================
 def save_and_fix_image(file_storage, dest_path):
-    """讀取照片、修正 EXIF 方向旋轉問題並壓縮存檔"""
-    img = Image.open(file_storage)
-    img = ImageOps.exif_transpose(img)
-    img = img.convert("RGB")
-    img.thumbnail((800, 800))
-    img.save(dest_path, "JPEG", quality=88)
+    """讀取照片、修正 EXIF 方向、驗證圖檔完整性並壓縮存檔"""
+    try:
+        # 重置指針防止空檔讀取
+        file_storage.seek(0)
+        img = Image.open(file_storage)
+        
+        # 驗證圖檔完整性
+        img.verify()
+        
+        # verify() 會關閉檔案，重新開啟以供處理
+        file_storage.seek(0)
+        img = Image.open(file_storage)
+        
+        img = ImageOps.exif_transpose(img)
+        img = img.convert("RGB")
+        img.thumbnail((800, 800))
+        img.save(dest_path, "JPEG", quality=88)
+        return True
+    except Exception as e:
+        print(f"[!] 圖片讀取或壓縮失敗 (檔案損壞或格式不支援): {e}")
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+            except OSError:
+                pass
+        return False
 
 def extract_feature(image_path):
-    """使用 YuNet 與 SFace 進行人臉特徵提取"""
+    """使用 YuNet 與 SFace 進行人臉特徵提取 (含矩陣邊界安全檢查)"""
     if not os.path.exists(YUNET_MODEL) or not os.path.exists(SFACE_MODEL):
         return None
 
-    detector = cv2.FaceDetectorYN.create(YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
-    recognizer = cv2.FaceRecognizerSF.create(SFACE_MODEL, "")
+    try:
+        detector = cv2.FaceDetectorYN.create(YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+        recognizer = cv2.FaceRecognizerSF.create(SFACE_MODEL, "")
 
-    img = cv2.imread(image_path)
-    if img is None:
+        img = cv2.imread(image_path)
+        if img is None or img.size == 0:
+            return None
+
+        h, w, _ = img.shape
+        if h < 20 or w < 20:  # 尺寸過小不處理
+            return None
+
+        detector.setInputSize((w, h))
+        _, faces = detector.detect(img)
+
+        if faces is not None and len(faces) > 0:
+            aligned_face = recognizer.alignCrop(img, faces[0])
+            feature = recognizer.feature(aligned_face)
+            return feature
+    except Exception as e:
+        print(f"[!] 人臉特徵分析過程異常: {e}")
         return None
 
-    h, w, _ = img.shape
-    detector.setInputSize((w, h))
-    _, faces = detector.detect(img)
-
-    if faces is not None and len(faces) > 0:
-        aligned_face = recognizer.alignCrop(img, faces[0])
-        feature = recognizer.feature(aligned_face)
-        return feature
     return None
 
 def compare_faces(feat1, feat2):
@@ -512,6 +547,17 @@ def update_popular_items():
     except Exception as e:
         db.session.rollback()
         print(f"自動更新熱門失敗: {e}")
+
+# ==============================================================================
+# 全域 Request 限制與 413 例外攔截
+# ==============================================================================
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 限制請求上限
+@app.errorhandler(413)
+def request_entity_too_large(error):
+    """防止過大 Payload 造成伺服器 OOM"""
+    if request.is_json or request.path.startswith('/api/'):
+        return jsonify({'success': False, 'message': '上傳內容超出系統限制 (上限 50MB)！'}), 413
+    return "<script>alert('❌ 上傳檔案過大，超出伺服器處理限制 (最大 50MB)！'); window.history.back();</script>", 413
 
 # ==============================================================================
 # 5. 前台點餐與行銷優惠路由 (Customer & Marketing Routes)
@@ -1079,7 +1125,9 @@ def register():
 
         filename = f"{phone}_{int(time.time())}.jpg"
         filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], filename)
-        save_and_fix_image(photo, filepath)
+        success = save_and_fix_image(photo, filepath)
+        if not success:
+            return "<script>alert('❌ 上傳的相片檔案已損壞或格式不支援，請上傳清晰的 JPG/PNG 圖片！'); window.history.back();</script>", 400
 
         feature = extract_feature(filepath)
         if feature is None:
@@ -1184,7 +1232,7 @@ def phone_login():
 @app.route('/guest_login')
 def guest_login():
     """清除舊登入狀態，產生訪客專屬隨機編號並開啟進出紀錄"""
-    session.clear()
+    clear_customer_session()
     
     random_guest_id = f"訪客-{random.randint(1000, 9999)}"
     
@@ -1205,7 +1253,7 @@ def logout():
             user.last_logout_at = datetime.now()  # 記錄會員登出時間
             db.session.commit()
     close_customer_session()
-    session.clear()
+    clear_customer_session()
     return redirect(url_for('customer_index'))
 
 # ==============================================================================
@@ -1225,7 +1273,7 @@ if Llama and os.path.exists(LOCAL_MODEL_PATH):
             n_threads=4,     # 配合 CPU 核心數
             verbose=False
         )
-        print("✅ 本地繁中 SLM (Qwen2.5-1.5B GGUF) 載入完成！")
+        print("✅ 本地繁中 SLM  載入完成！")
     except Exception as e:
         print(f"本地 SLM 載入失敗: {e}")
 else:
@@ -1246,21 +1294,26 @@ def run_local_slm(prompt_text, max_tokens=100):
 {prompt_text}<|im_end|>
 <|im_start|>assistant
 """
-    with _LLM_LOCK:
-        try:
-            local_llm.reset()
-            
-            res = local_llm(
-                formatted_prompt,
-                max_tokens=max_tokens,
-                temperature=0.3,
-                stop=["<|im_end|>", "\n\n"]
-            )
-            output = res["choices"][0]["text"].strip()
-            return output.replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
-        except Exception as e:
-            print(f"本地 SLM 推論異常: {e}")
-            return None
+    acquired = _LLM_LOCK.acquire(timeout=3.0)
+    if not acquired:
+        print("[!] 本地 SLM 忙碌中，立即啟動第三層動態辭庫進行熔斷備援。")
+        return None
+
+    try:
+        local_llm.reset()
+        res = local_llm(
+            formatted_prompt,
+            max_tokens=max_tokens,
+            temperature=0.3,
+            stop=["<|im_end|>", "\n\n"]
+        )
+        output = res["choices"][0]["text"].strip()
+        return output.replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
+    except Exception as e:
+        print(f"[!] 本地 SLM 推論異常: {e}")
+        return None
+    finally:
+        _LLM_LOCK.release()
 # ==============================================================================
 # AI 智慧營運建議全域快取與狀態管理
 # ==============================================================================
@@ -1283,7 +1336,7 @@ def get_orders_state_signature():
     return ",".join(f"{oid}:{status}" for oid, status in orders)
 
 def fallback_advice(analytics_data):
-    """第三層防線：本地動態規則推論 (0延遲即時生成)"""
+    """第三層防線：本地動態規則推論"""
     pending = analytics_data.get('pending_count', 0)
     eta = analytics_data.get('eta_minutes', 0)
     aov = analytics_data.get('avg_order_value', 0)
@@ -3228,22 +3281,28 @@ def api_mark_picked_up(id):
 # SSE (Server-Sent Events) 即時推播串流路由
 # ==============================================================================
 class OrderEventBus:
-    def __init__(self):
-        self._subscribers = []
+    def __init__(self, max_subscribers=150):
+        self._subscribers = set()
         self._lock = threading.Lock()
+        self._max_subscribers = max_subscribers
 
     def subscribe(self):
-        """為新連線的客戶端建立專屬 Queue"""
-        q = queue.Queue(maxsize=10)
+        """為新連線的客戶端建立專屬 Queue，具備上限保護"""
         with self._lock:
-            self._subscribers.append(q)
-        return q
+            # 清理過量連線保護伺服器
+            if len(self._subscribers) >= self._max_subscribers:
+                # 剔除最早的一個佇列
+                oldest_q = next(iter(self._subscribers))
+                self._subscribers.remove(oldest_q)
+
+            q = queue.Queue(maxsize=10)
+            self._subscribers.add(q)
+            return q
 
     def unsubscribe(self, q):
-        """客戶端離線時移除 Queue，釋放記憶體"""
+        """客戶端離線時主動移除 Queue，釋放記憶體"""
         with self._lock:
-            if q in self._subscribers:
-                self._subscribers.remove(q)
+            self._subscribers.discard(q)
 
     def get_current_payload(self):
         """查詢今日特徵簽章並打包為 JSON 字串"""
@@ -3265,53 +3324,55 @@ class OrderEventBus:
             })
         except Exception as e:
             print(f"[!] 取得訂單特徵簽章失敗: {e}")
-            return json.dumps({
-                'timestamp': time.time(),
-                'state_signature': '',
-                'pending_count': 0
-            })
+            return json.dumps({'timestamp': time.time(), 'state_signature': '', 'pending_count': 0})
 
     def notify(self):
-        """當訂單狀態變更時呼叫：查一次 DB 並廣播至所有客戶端"""
-        with app.app_context():
-            payload = self.get_current_payload()
+        """當訂單狀態變更時呼叫：查一次 DB 並廣播，自動清除死佇列"""
+        try:
+            with app.app_context():
+                payload = self.get_current_payload()
+        except Exception as e:
+            print(f"[!] SSE 廣播打包異常: {e}")
+            return
+
+        dead_queues = []
         with self._lock:
             for q in list(self._subscribers):
                 try:
                     q.put_nowait(payload)
                 except queue.Full:
+                    # 佇列持續塞滿代表該客戶端已斷線或無回應，標記清除
                     try:
                         q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    try:
                         q.put_nowait(payload)
-                    except queue.Full:
-                        pass
+                    except Exception:
+                        dead_queues.append(q)
+
+            # 移除失聯的訂閱者
+            for dq in dead_queues:
+                self._subscribers.discard(dq)
 
 order_event_bus = OrderEventBus()
 
 @app.route('/api/orders_stream')
 def orders_stream():
-    """透過 SSE 向前端推播訂單狀態變更 (事件驅動，平時不查 DB)"""
+    """向前端推播訂單狀態變更 (加入 Broken Pipe 與網路中斷防護)"""
     def event_stream():
         client_queue = order_event_bus.subscribe()
         try:
-            # 客戶端剛建立連線時，主動推送一次最新狀態
             with app.app_context():
                 initial_payload = order_event_bus.get_current_payload()
             yield f"data: {initial_payload}\n\n"
 
-            # 阻塞等待通知；無事件時線程進入睡眠，完全不存取資料庫
             while True:
                 try:
                     payload = client_queue.get(timeout=15)
                     yield f"data: {payload}\n\n"
                 except queue.Empty:
-                    # 15 秒無事件時發送 SSE 規範之註釋心跳 (以冒號開頭)，瀏覽器自動忽略且不會斷線
+                    # 15 秒發送心跳，若連線已死會在 yield 時拋出例外
                     yield ": keep-alive\n\n"
-        except GeneratorExit:
-            pass
+        except (GeneratorExit, BrokenPipeError, ConnectionResetError, IOError):
+            pass  # 客戶端正常或非正常關閉視窗，靜默處理
         finally:
             order_event_bus.unsubscribe(client_queue)
 
