@@ -86,5 +86,6 @@ Project Root/
 ⚙️ 環境變數設定 (.env)
 在專案根目錄建立 `.env` 檔案並填入以下內容：
 GEMINI_API_KEY="你的_GEMINI_API_金鑰" # 若留空則系統自動全程走本地 Qwen2.5 SLM 推論
+SECRET_KEY="請使用_secrets_token_hex_32_產生的長字串" //可透過終端機執行 python -c "import secrets; print(secrets.token_hex(32))" 產生
 ADMIN_USERNAME="1234"
 ADMIN_PASSWORD="1234"

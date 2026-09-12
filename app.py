@@ -26,10 +26,15 @@ from dotenv import load_dotenv
 from flask import Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from llama_cpp import Llama
+from werkzeug.utils import secure_filename
 
 # ==============================================================================
 # 1. 應用程式基礎設定 (App Configuration)
 # ==============================================================================
+# 最大單一還原檔案限制 15MB，總解壓縮量限制 150MB
+MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
+MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024
+
 # 自動載入專案根目錄的 .env 檔案
 load_dotenv()
 
@@ -45,7 +50,13 @@ if GEMINI_API_KEY and genai is not None:
     genai.configure(api_key=GEMINI_API_KEY)
 
 app = Flask(__name__)
-app.secret_key = "ordering_system_secret_key"
+
+# 安全設定：動態或環境變數 Secret Key
+app.secret_key = os.getenv("SECRET_KEY")
+if not app.secret_key:
+    app.secret_key = os.urandom(32).hex()
+    print("⚠️ 未在 .env 檢測到 SECRET_KEY，已自動生成臨時 Session 金鑰。建議在 .env 中設定！")
+
 app.permanent_session_lifetime = timedelta(days=7)
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -586,9 +597,9 @@ def verify_promo():
 
 @app.route('/submit_order', methods=['POST'])
 def submit_order():
-    """處理結帳、核銷會員專屬優惠券、扣抵點數、累積新點數"""
-    data = request.get_json()
-    items = data.get('items', [])
+    """安全強化版：強制後端重新計價，徹底防禦 0 元下單與金額篡改"""
+    data = request.get_json() or {}
+    raw_items = data.get('items', [])
     payment_method = data.get('payment_method', 'Cash')
     order_type = data.get('order_type', '內用')
     need_cutlery = bool(data.get('need_cutlery', True)) if order_type == '外帶' else False
@@ -596,7 +607,10 @@ def submit_order():
     promo_code = str(data.get('promo_code', '')).strip().upper()
     use_points = int(data.get('use_points', 0))
 
-    # 計算今日取餐編號 (1 ~ 999 循環)
+    if not raw_items:
+        return jsonify({'error': '購物車為空'}), 400
+
+    # 1. 計算今日取餐編號 (1 ~ 999 循環)
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -605,72 +619,124 @@ def submit_order():
         Order.created_at <= today_end
     ).scalar()
 
-    if max_pickup and max_pickup > 0:
-        next_pickup = (max_pickup % 999) + 1
-    else:
-        next_pickup = 1
-    
-    if not items:
-        return jsonify({'error': '購物車為空'}), 400
+    next_pickup = (max_pickup % 999) + 1 if (max_pickup and max_pickup > 0) else 1
 
-    #   1. 加總購物車中各餐點的需求總量（合併同品名但不同客製化的數量）
+    # 2. 伺服器端逐項重新計價與庫存檢查
+    verified_items = []
     item_demands = {}
-    for item_data in items:
-        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item_data['name']).strip()
-        item_demands[clean_name] = item_demands.get(clean_name, 0) + int(item_data.get('quantity', 1))
+    user_id = session.get('user_id')
 
-    #   2. 嚴格比對資料庫剩餘庫存
+    for client_item in raw_items:
+        raw_name = str(client_item.get('name', '')).strip()
+        raw_custom = str(client_item.get('customization', '')).strip()
+        quantity = max(1, int(client_item.get('quantity', 1)))
+        is_add_on = bool(client_item.get('is_add_on', False))
+
+        # 判定是否宣稱為點數兌換商品
+        is_claimed_reward = ('[點數兌換]' in raw_name) or ('reward_' in str(client_item.get('id', '')))
+
+        # 清洗餐點名稱
+        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', raw_name).strip()
+
+        # 查詢資料庫真實品項
+        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        if not menu_item:
+            # 嘗試以 ID 查詢
+            try:
+                item_db_id = int(client_item.get('id'))
+                menu_item = db.session.get(MenuItem, item_db_id)
+            except (ValueError, TypeError):
+                menu_item = None
+
+        if not menu_item:
+            return jsonify({'error': f'餐點【{clean_name}】不存在於系統中！'}), 400
+
+        # 庫存需求累計
+        item_demands[menu_item.name] = item_demands.get(menu_item.name, 0) + quantity
+
+        # ----------------------------------------------------
+        # 後端計價邏輯：
+        # ----------------------------------------------------
+        unit_price = 0
+
+        # A. 客製化加料額外金額計算 (加荷包蛋(+10)、加起司片(+15) 等)
+        extra_modifier_price = 0
+        if raw_custom:
+            # 抓取客製化字串中所有 (+數字) 的加價部分
+            matches = re.findall(r'\(\+(\d+)\)', raw_custom)
+            for m in matches:
+                extra_modifier_price += int(m)
+
+        # B. 判斷基本單價
+        if is_claimed_reward:
+            # 點數兌換商品防偽驗證
+            if not user_id:
+                return jsonify({'error': '非會員無法訂購紅利商城兌換餐點！'}), 403
+            if not menu_item.is_reward:
+                return jsonify({'error': f'餐點【{menu_item.name}】未開放紅利兌換！'}), 400
+            # 兌換商品本體為 0 元，僅加上加料升級差額
+            unit_price = extra_modifier_price
+        elif is_add_on:
+            # 加購品防偽驗證
+            if not menu_item.can_be_add_on:
+                return jsonify({'error': f'餐點【{menu_item.name}】非合法加購品項！'}), 400
+            unit_price = menu_item.add_on_price + extra_modifier_price
+        else:
+            # 一般餐點：特價優先，無特價則原價
+            base_price = menu_item.discount_price if (menu_item.is_discount and menu_item.discount_price > 0) else menu_item.price
+
+            # C. 套餐組合加價驗證
+            combo_extra_price = 0
+            combo_match = re.search(r'\[套餐:\s*([^\]]+)\]', raw_custom)
+            if combo_match:
+                combo_name = combo_match.group(1).strip()
+                combo_opt = ComboOption.query.filter_by(main_item_id=menu_item.id, name=combo_name).first()
+                if combo_opt:
+                    combo_extra_price = combo_opt.additional_price
+                    # 檢查套餐配餐庫存
+                    for side in [combo_opt.item1, combo_opt.item2, combo_opt.item3]:
+                        if side and (side.is_sold_out or (side.stock is not None and side.stock <= 0)):
+                            return jsonify({
+                                'success': False,
+                                'sold_out': True,
+                                'sold_out_items': [side.name],
+                                'message': f'套餐【{combo_opt.name}】附屬配餐【{side.name}】已售罄，無法點選！'
+                            }), 400
+
+            unit_price = base_price + combo_extra_price + extra_modifier_price
+
+        verified_items.append({
+            'menu_item': menu_item,
+            'display_name': raw_name,
+            'price': int(unit_price),
+            'quantity': quantity,
+            'customization': raw_custom
+        })
+
+    # 3. 庫存嚴格校驗
     sold_out_items = []
     insufficient_items = []
-
-    for clean_name, demanded_qty in item_demands.items():
-        #   檢查是否有套餐附屬配餐售完
-        for item_data in items:
-            custom_str = item_data.get('customization', '')
-            # 尋找是否包含 [套餐: 套餐名稱]
-            match = re.search(r'\[套餐:\s*([^\]]+)\]', custom_str)
-            if match:
-                combo_name = match.group(1).strip()
-                # 找到對應主餐名稱
-                clean_main = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item_data['name']).strip()
-                main_item = MenuItem.query.filter_by(name=clean_main).first()
-                if main_item:
-                    combo = ComboOption.query.filter_by(main_item_id=main_item.id, name=combo_name).first()
-                    if combo:
-                        for side in [combo.item1, combo.item2, combo.item3]:
-                            if side and (side.is_sold_out or (side.stock is not None and side.stock <= 0)):
-                                return jsonify({
-                                    'success': False,
-                                    'sold_out': True,
-                                    'sold_out_items': [side.name],
-                                    'message': f'套餐【{combo.name}】附屬配餐【{side.name}】已售罄，無法升級此套餐！'
-                                }), 400
-        menu_item = MenuItem.query.filter_by(name=clean_name).first()
-        if menu_item:
-            curr_stock = menu_item.stock if menu_item.stock is not None else 0
-            
-            # 完全無庫存或標記為售完
-            if menu_item.is_sold_out or curr_stock <= 0:
-                sold_out_items.append(clean_name)
-            # 點購數量超過現有剩餘數量
+    for item_name, demanded_qty in item_demands.items():
+        m_item = MenuItem.query.filter_by(name=item_name).first()
+        if m_item:
+            curr_stock = m_item.stock if m_item.stock is not None else 0
+            if m_item.is_sold_out or curr_stock <= 0:
+                sold_out_items.append(item_name)
             elif demanded_qty > curr_stock:
                 insufficient_items.append({
-                    'name': clean_name,
+                    'name': item_name,
                     'available': curr_stock,
                     'demanded': demanded_qty
                 })
 
-    # 若有已售完商品：回傳售完提示
     if sold_out_items:
-        unique_sold_out = list(set(sold_out_items))
         return jsonify({
             'success': False,
             'sold_out': True,
-            'sold_out_items': unique_sold_out,
-            'message': f'部分餐點已售罄：{"、".join(unique_sold_out)}'
+            'sold_out_items': list(set(sold_out_items)),
+            'message': f'部分餐點已售罄：{"、".join(set(sold_out_items))}'
         }), 400
 
-    # 若有點購數量大於庫存商品：阻擋下單並回傳剩餘量
     if insufficient_items:
         msg_list = [f"【{i['name']}】僅剩 {i['available']} 份（您點了 {i['demanded']} 份）" for i in insufficient_items]
         return jsonify({
@@ -679,18 +745,13 @@ def submit_order():
             'insufficient_items': insufficient_items,
             'message': "；\n".join(msg_list)
         }), 400
-    
-    for item_data in items:
-        menu_item = MenuItem.query.filter_by(name=item_data['name']).first()
-        if menu_item and menu_item.is_sold_out:
-            return jsonify({'error': f'餐點【{menu_item.name}】已售罄，請從購物車移除！'}), 400
-    # 1. 計算商品原始小計
-    subtotal = sum(item['price'] * item['quantity'] for item in items)
-    
-    # 2. 促銷代碼計算與核銷驗證
+
+    # 4. 金額重新核算
+    subtotal = sum(v['price'] * v['quantity'] for v in verified_items)
+
+    # 5. 優惠代碼驗證與計算
     promo_discount = 0
     target_user_coupon = None
-    user_id = session.get('user_id')
     user = db.session.get(User, user_id) if user_id else None
 
     if promo_code:
@@ -702,8 +763,7 @@ def submit_order():
                     promo_discount = min(cp.discount_value, subtotal)
                 else:
                     promo_discount = round(subtotal * (1.0 - cp.discount_value))
-        
-        # 若非會員持有券，檢查公開免點數券
+
         if not target_user_coupon:
             pub_cp = Coupon.query.filter_by(code=promo_code, is_reward=False, reward_points=0).first()
             if pub_cp and subtotal >= pub_cp.min_spend:
@@ -714,30 +774,29 @@ def submit_order():
 
     remaining_amount = max(0, subtotal - promo_discount)
 
-    # 3. 計算會員紅利折抵 (1 點 = $1)
+    # 6. 會員紅利扣抵核算
     points_used = 0
     if user and use_points > 0:
         points_used = int(min(user.points, use_points, remaining_amount))
 
     final_price = max(0, remaining_amount - points_used)
     total_discount = promo_discount + points_used
-
-    # 4. 累積新點數 (實付金額每滿 $10 累積 1 點)
     points_earned = int(final_price // 100) if user else 0
 
+    # 7. 更新會員點數與票券狀態
     if user:
         user.points = user.points - points_used + points_earned
         session['user_points'] = user.points
-        user.last_logout_at = datetime.now() 
-        
-        #   將會員持有的專屬優惠券正式標記為「已使用」
+        user.last_logout_at = datetime.now()
+
         if target_user_coupon:
             target_user_coupon.is_used = True
             target_user_coupon.used_at = datetime.now()
 
+    # 8. 寫入資料庫
     user_name = session.get('user_name', '訪客')
     new_order = Order(
-        user_id=session.get('user_id'),
+        user_id=user_id,
         table_number=user_name,
         total_price=int(final_price),
         payment_method=payment_method,
@@ -754,56 +813,49 @@ def submit_order():
     db.session.add(new_order)
     db.session.flush()
 
-    for item in items:
-        # 1. 過濾餐點名稱並抓取對應 MenuItem 扣除庫存
-        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', item['name']).strip()
-        menu_item = MenuItem.query.filter_by(name=clean_name).first()
-        if menu_item:
-            menu_item.stock = max(0, (menu_item.stock or 0) - int(item.get('quantity', 1)))
-            if menu_item.stock == 0:
-                menu_item.is_sold_out = True  # 庫存扣至 0 時自動標記售完
+    receipt_items = []
+    for v in verified_items:
+        # 扣除庫存
+        m_item = v['menu_item']
+        m_item.stock = max(0, (m_item.stock or 0) - v['quantity'])
+        if m_item.stock == 0:
+            m_item.is_sold_out = True
 
-        # 2. 原本的建立 OrderItem 程式碼保持不變
         order_item = OrderItem(
             order_id=new_order.id,
-            item_name=item['name'],
-            price=int(item['price']),
-            quantity=item['quantity'],
-            customization=item.get('customization', '')
+            item_name=v['display_name'],
+            price=v['price'],
+            quantity=v['quantity'],
+            customization=v['customization']
         )
         db.session.add(order_item)
+
+        receipt_items.append({
+            'name': v['display_name'],
+            'price': v['price'],
+            'quantity': v['quantity'],
+            'subtotal': v['price'] * v['quantity'],
+            'customization': v['customization']
+        })
 
     db.session.commit()
     update_popular_items()
     _AI_ADVICE_STATE['last_signature'] = None
-    # 自動將本次下單餐點追加至當前顧客的進出紀錄中
+
+    # 更新顧客訪問日誌
     log_id = session.get('customer_log_id')
     if log_id:
         customer_log = db.session.get(CustomerLog, log_id)
         if customer_log:
             items_summary = ", ".join([
-                f"{it['name']} x{it['quantity']}" + (f"({it.get('customization')})" if it.get('customization') else "")
-                for it in items
+                f"{it['name']} x{it['quantity']}" + (f"({it['customization']})" if it['customization'] else "")
+                for it in receipt_items
             ])
             entry = f"[取餐#{next_pickup} 單號#{new_order.id}] {items_summary}"
-            if customer_log.ordered_items:
-                customer_log.ordered_items += f" ； {entry}"
-            else:
-                customer_log.ordered_items = entry
-            # 客人下單成功即視為完成點餐離場
+            customer_log.ordered_items = f"{customer_log.ordered_items} ； {entry}" if customer_log.ordered_items else entry
             customer_log.logout_at = datetime.now()
             db.session.commit()
         session.pop('customer_log_id', None)
-    receipt_items = []
-
-    for item in items:
-        receipt_items.append({
-            'name': item['name'],
-            'price': item['price'],
-            'quantity': item['quantity'],
-            'subtotal': item['price'] * item['quantity'],
-            'customization': item.get('customization', '')
-        })
 
     latest_user_coupons = []
     if user:
@@ -815,7 +867,9 @@ def submit_order():
                 'title': uc.coupon.title,
                 'min_spend': uc.coupon.min_spend
             })
+
     order_event_bus.notify()
+
     return jsonify({
         'order_id': new_order.id,
         'pickup_number': next_pickup,
@@ -2370,7 +2424,7 @@ def backup_system():
 
     except Exception as e:
         return f"<script>alert('❌ 備份作業失敗：{e}'); window.history.back();</script>", 500
-# ==============================================================================
+
 #  系統備份還原路由
 @app.route('/admin/restore_backup', methods=['POST'])
 def restore_backup():
@@ -2389,7 +2443,7 @@ def restore_backup():
     if not restore_db and not restore_photos:
         return "<script>alert('❌ 請至少勾選一項欲還原的內容（資料庫或會員相片）！'); window.history.back();</script>", 400
 
-    db_path = os.path.join(BASE_DIR, 'menu.db')
+    db_path = os.path.abspath(os.path.join(BASE_DIR, 'menu.db'))
     member_dir = os.path.abspath(app.config['UPLOAD_FOLDER_MEMBER'])
     os.makedirs(member_dir, exist_ok=True)
 
@@ -2400,13 +2454,30 @@ def restore_backup():
 
     try:
         with zipfile.ZipFile(file, 'r') as zf:
+            total_uncompressed_size = 0
+            
+            # 1. 預先掃描驗證：檢查 Zip Bomb、檔案大小與非預期符號連結
+            for info in zf.infolist():
+                # 防禦 Zip Bomb
+                if info.file_size > MAX_SINGLE_FILE_SIZE:
+                    return f"<script>alert('❌ 壓縮檔內包含異常過大檔案 ({info.filename})，已終止還原！'); window.history.back();</script>", 400
+
+                total_uncompressed_size += info.file_size
+                if total_uncompressed_size > MAX_TOTAL_EXTRACT_SIZE:
+                    return "<script>alert('❌ 壓縮檔解壓總容量超過系統上限 (150MB)，疑似惡意檔案！'); window.history.back();</script>", 400
+
+                # 防禦 Symlink (符號連結可能指向系統關鍵設定檔)
+                if (info.external_attr >> 16) & 0o120000 == 0o120000:
+                    return "<script>alert('❌ 檢測到不安全的符號連結，終止還原作業！'); window.history.back();</script>", 400
+
             namelist = zf.namelist()
 
-            # 1. 還原資料庫
+            # 2. 還原 SQLite 資料庫
             if restore_db:
-                db_entry = next((name for name in namelist if os.path.basename(name) == 'menu.db'), None)
+                db_entry = next((name for name in namelist if os.path.basename(name.replace('\\', '/')) == 'menu.db'), None)
                 if db_entry:
                     db_bytes = zf.read(db_entry)
+                    # 驗證 SQLite Magic Header
                     if db_bytes.startswith(b'SQLite format 3\x00'):
                         db.session.remove()
                         db.engine.dispose()
@@ -2414,33 +2485,39 @@ def restore_backup():
                             f.write(db_bytes)
                         restored_db_status = True
                     else:
-                        return "<script>alert('❌ 壓縮檔內的 menu.db 格式不符或已損壞！'); window.history.back();</script>", 400
+                        return "<script>alert('❌ 壓縮檔內的 menu.db 標頭格式不符，非合法 SQLite 檔案！'); window.history.back();</script>", 400
 
-            # 2. 還原會員照片
+            # 3. 還原會員照片
             if restore_photos:
                 for entry_name in namelist:
-                    if 'member' in entry_name.lower():
-                        filename = os.path.basename(entry_name)
-                        if not filename:
+                    normalized_entry = entry_name.replace('\\', '/')
+                    if 'member' in normalized_entry.lower() and not normalized_entry.endswith('/'):
+                        raw_filename = os.path.basename(normalized_entry)
+                        safe_filename = secure_filename(raw_filename)
+
+                        if not safe_filename:
                             continue
 
-                        _, ext = os.path.splitext(filename)
+                        _, ext = os.path.splitext(safe_filename)
                         if ext.lower() not in allowed_img_exts:
                             continue
 
-                        dest_file_path = os.path.abspath(os.path.join(member_dir, filename))
-                        if not dest_file_path.startswith(member_dir):
+                        # Canonical Path 嚴格驗證：確保路徑絕對落在 member_dir 內部
+                        dest_file_path = os.path.abspath(os.path.join(member_dir, safe_filename))
+                        if os.path.commonpath([member_dir, dest_file_path]) != member_dir:
+                            print(f"[!] 攔截到非法路徑穿越行為: {entry_name}")
                             continue
 
                         if os.path.exists(dest_file_path) and not overwrite_photos:
                             skipped_photo_count += 1
                             continue
 
+                        # 寫入相片
                         with open(dest_file_path, 'wb') as img_out:
                             img_out.write(zf.read(entry_name))
                         restored_photo_count += 1
 
-        msg_parts = ["✅ 系統備份還原完成！"]
+        msg_parts = ["✅ 系統備份安全還原完成！"]
         if restore_db:
             msg_parts.append(f"➤ 資料庫 (menu.db)：{'成功還原覆蓋' if restored_db_status else '壓縮檔中無資料庫檔'}")
         if restore_photos:
