@@ -831,6 +831,7 @@
                             <div class="col-6">
                                 <label class="form-label small fw-bold" id="disc-val-label">折抵金額 (NT$)</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="discount_value" id="coupon-disc-val" placeholder="50" required>
+                                <div id="coupon-disc-hint" class="small mt-1 text-warning fw-bold" style="display: none;"></div>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -1436,6 +1437,7 @@
                             <div class="col-6">
                                 <label class="form-label small fw-bold" id="edit-coupon-disc-val-label">折抵金額 (NT$)</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="discount_value" id="edit-coupon-disc-val" required>
+                                <div id="edit-coupon-disc-hint" class="small mt-1 text-warning fw-bold" style="display: none;"></div>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -1682,19 +1684,22 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         openUserCouponsModal(userName, coupons);
     }
     function toggleDiscInput(type) {
-        const label = document.getElementById('disc-val-label');
-        const input = document.getElementById('coupon-disc-val');
-        input.min = '0';
-        if (type === 'percent') {
-            label.innerText = '折扣折數 (例如 0.9 代表9折)';
-            input.placeholder = '0.9';
-            input.max = '0.99';
-        } else {
-            label.innerText = '折抵金額 (NT$)';
-            input.placeholder = '50';
-            input.removeAttribute('max');
-        }
+    const label = document.getElementById('disc-val-label');
+    const input = document.getElementById('coupon-disc-val');
+    input.min = '0';
+    if (type === 'percent') {
+        label.innerText = '折扣折數 (支援 0.9、9 或 90)';
+        input.placeholder = '例如 0.9 或 90 (代表9折)';
+        input.max = '99';
+        input.step = '0.01';
+    } else {
+        label.innerText = '折抵金額 (NT$)';
+        input.placeholder = '50';
+        input.removeAttribute('max');
+        input.step = '1';
     }
+    updateDiscountHint('coupon');
+}
 
     // 後台切換訂單狀態時更新
     function changeOrderStatus(orderId, newStatus, selectEl) {
@@ -2153,22 +2158,23 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
 
     //  切換編輯優惠券折抵模式的單位提示
     function toggleEditCouponDiscInput(type) {
-        const label = document.getElementById('edit-coupon-disc-val-label');
-        const input = document.getElementById('edit-coupon-disc-val');
-        if (!label || !input) return;
-        
-        if (type === 'percent') {
-            label.innerText = '折扣折數 (例如 0.95 代表95折)';
-            input.placeholder = '0.95';
-            input.max = '0.99';
-            input.step = '0.01';
-        } else {
-            label.innerText = '折抵金額 (NT$)';
-            input.placeholder = '50';
-            input.removeAttribute('max');
-            input.step = '1';
-        }
+    const label = document.getElementById('edit-coupon-disc-val-label');
+    const input = document.getElementById('edit-coupon-disc-val');
+    if (!label || !input) return;
+    
+    if (type === 'percent') {
+        label.innerText = '折扣折數 (支援 0.9、9 或 90)';
+        input.placeholder = '例如 0.9 或 90 (代表9折)';
+        input.max = '99';
+        input.step = '0.01';
+    } else {
+        label.innerText = '折抵金額 (NT$)';
+        input.placeholder = '50';
+        input.removeAttribute('max');
+        input.step = '1';
     }
+    updateDiscountHint('edit-coupon');
+}
 
     // 監聽數值輸入：輸入 0.x 時自動輔助切換為打折百分比
     document.getElementById('edit-coupon-disc-val')?.addEventListener('input', function() {
@@ -2195,6 +2201,8 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-coupon-min-spend').value = Math.round(Number(d.minSpend || 0));
         document.getElementById('edit-coupon-reward-points').value = d.rewardPoints || 0;
         document.getElementById('edit-coupon-reward-discount').value = d.rewardDiscountPoints || 0;
+
+        updateDiscountHint('edit-coupon');
 
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editCouponModal')).show();
     }
@@ -2551,6 +2559,61 @@ function generateAIDescription(mode = 'add') {
         btn.innerHTML = originalHtml;
     });
 }
+
+// 即時換算並回顯折數提示
+function updateDiscountHint(prefix) {
+    const typeSelect = document.getElementById(`${prefix}-disc-type`);
+    const valInput = document.getElementById(`${prefix}-disc-val`);
+    const hintDiv = document.getElementById(`${prefix}-hint`);
+
+    if (!typeSelect || !valInput || !hintDiv) return;
+
+    const valStr = valInput.value.trim();
+    if (!valStr || isNaN(valStr)) {
+        hintDiv.style.display = 'none';
+        return;
+    }
+
+    const val = parseFloat(valStr);
+    if (val <= 0) {
+        hintDiv.className = 'small mt-1 text-danger';
+        hintDiv.innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> 請輸入大於 0 的數值';
+        hintDiv.style.display = 'block';
+        return;
+    }
+
+    if (typeSelect.value === 'percent') {
+        let safePercent = val;
+        // 自動換算邏輯：90 -> 0.9，9 -> 0.9
+        if (val > 10.0 && val <= 100.0) {
+            safePercent = val / 100.0;
+        } else if (val > 1.0 && val <= 10.0) {
+            safePercent = val / 10.0;
+        }
+
+        if (safePercent >= 1.0) {
+            hintDiv.className = 'small mt-1 text-danger';
+            hintDiv.innerHTML = '<i class="bi bi-x-circle me-1"></i> 折扣不可大於等於全額 (無折扣)';
+        } else {
+            const discountFold = (safePercent * 10).toFixed(1).replace(/\.0$/, '');
+            hintDiv.className = 'small mt-1 text-info fw-bold';
+            hintDiv.innerHTML = `<i class="bi bi-magic me-1"></i> 系統將辨識為：<strong>${discountFold} 折</strong> (乘數 ${safePercent.toFixed(2)})`;
+        }
+        hintDiv.style.display = 'block';
+    } else {
+        hintDiv.className = 'small mt-1 text-success';
+        hintDiv.innerHTML = `<i class="bi bi-cash me-1"></i> 結帳整單現折：<strong>$${Math.round(val)} 元</strong>`;
+        hintDiv.style.display = 'block';
+    }
+}
+
+// 綁定輸入即時監聽事件
+['coupon', 'edit-coupon'].forEach(prefix => {
+    const valInput = document.getElementById(`${prefix}-disc-val`);
+    if (valInput) {
+        valInput.addEventListener('input', () => updateDiscountHint(prefix));
+    }
+});
 // ==============================================================================
 // 系統初始化與事件綁定
 // ==============================================================================

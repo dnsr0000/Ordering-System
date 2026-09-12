@@ -191,6 +191,7 @@ class Order(db.Model):
     points_used = db.Column(db.Integer, default=0)
     points_earned = db.Column(db.Integer, default=0)
     discount_amount = db.Column(db.Integer, default=0)
+    coupon_code = db.Column(db.String(50), default='')
     completed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
     customer_log_id = db.Column(db.Integer, nullable=True)  # 關聯顧客/訪客進出日誌 ID
@@ -377,6 +378,8 @@ with app.app_context():
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN pickup_number INTEGER DEFAULT 1'))
     if 'customer_log_id' not in order_cols:
         db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN customer_log_id INTEGER'))
+    if 'coupon_code' not in order_cols:
+        db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN coupon_code VARCHAR(50) DEFAULT ""'))
     # 自動依訂單先後重新賦予 1~999 取餐流水號
     try:
         from collections import defaultdict
@@ -548,6 +551,29 @@ def update_popular_items():
         db.session.rollback()
         print(f"自動更新熱門失敗: {e}")
 
+def sanitize_discount_value(discount_type, discount_value):
+    """
+    標準化優惠券折扣數值防呆：
+    - fixed (固定金額)：強制大於等於 0。
+    - percent (打折百分比)：
+      1. 若輸入 10~100 (例如 90 代表 9 折、85 代表 85 折)，自動除以 100 轉為 0.9 / 0.85。
+      2. 若輸入 1~10 (例如 9 代表 9 折、8.5 代表 85 折)，自動除以 10 轉為 0.9 / 0.85。
+      3. 強制約束在 0.01 ~ 0.99 之間，防止產生負折扣或 0 元除錯異常。
+    """
+    try:
+        val = float(discount_value)
+    except (ValueError, TypeError):
+        return 0.0
+
+    if discount_type == 'percent':
+        if 10.0 < val <= 100.0:
+            val = val / 100.0
+        elif 1.0 < val <= 10.0:
+            val = val / 10.0
+        return round(min(max(val, 0.01), 0.99), 2)
+    else:
+        return max(0.0, round(val, 2))
+
 # ==============================================================================
 # 全域 Request 限制與 413 例外攔截
 # ==============================================================================
@@ -669,8 +695,9 @@ def verify_promo():
         discount = min(coupon.discount_value, subtotal)
         msg = f'已折抵現金 ${int(discount)} 元！'
     else:
-        discount = round(subtotal * (1.0 - coupon.discount_value))
-        msg = f'已套用 {round(coupon.discount_value * 10, 1)} 折優惠，折抵 ${int(discount)} 元！'
+        safe_percent = sanitize_discount_value('percent', coupon.discount_value)
+        discount = min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
+        msg = f'已套用 {round(safe_percent * 10, 1)} 折優惠，折抵 ${int(discount)} 元！'
 
     return jsonify({'valid': True, 'discount': discount, 'message': msg})
 
@@ -805,7 +832,8 @@ def submit_order():
                     if cp.discount_type == 'fixed':
                         promo_discount = min(cp.discount_value, subtotal)
                     else:
-                        promo_discount = round(subtotal * (1.0 - cp.discount_value))
+                        safe_percent = sanitize_discount_value('percent', cp.discount_value)
+                        promo_discount = min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
 
                     # 條件式原子更新：確保該優惠券尚未被其他並發請求核銷
                     coupon_update = db.session.execute(
@@ -872,6 +900,7 @@ def submit_order():
                 points_used=points_used,
                 points_earned=points_earned,
                 discount_amount=int(total_discount),
+                coupon_code=promo_code if promo_code else '',
                 pickup_number=next_pickup,
                 customer_log_id=session.get('customer_log_id')
             )
@@ -957,6 +986,103 @@ def submit_order():
         'current_user_points': session.get('user_points', 0),
         'available_coupons': latest_user_coupons
     })
+
+# ==============================================================================
+# 訂單全鏈路回滾服務 (庫存復原、紅利退還、優惠券重置)
+# ==============================================================================
+def cancel_order_and_rollback(order):
+    """將訂單標記為取消，並全自動原子回滾庫存、會員紅利與優惠券"""
+    if order.status == 'Cancelled':
+        return False, "該訂單早已取消，不重複執行回滾！"
+
+    # 1. 庫存全數復原
+    for oi in order.items:
+        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', oi.item_name).strip()
+        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        if menu_item:
+            menu_item.stock = (menu_item.stock or 0) + (oi.quantity or 1)
+            # 若補回庫存大於 0，自動解除售完標記
+            if menu_item.stock > 0 and menu_item.is_sold_out:
+                menu_item.is_sold_out = False
+
+    # 2. 會員紅利點數與專屬優惠券復原
+    if order.user_id:
+        user = db.session.get(User, order.user_id)
+        if user:
+            # 退回下單時扣抵的紅利
+            if order.points_used > 0:
+                user.points = (user.points or 0) + order.points_used
+
+            # 扣回下單贈送的紅利 (設有 max(0, ...) 保護，防止點數變負數)
+            if order.points_earned > 0:
+                user.points = max(0, (user.points or 0) - order.points_earned)
+
+            # 退回已使用的專屬優惠券
+            if getattr(order, 'coupon_code', None):
+                used_coupon = UserCoupon.query.filter_by(
+                    user_id=user.id,
+                    code=order.coupon_code,
+                    is_used=True
+                ).first()
+                if used_coupon:
+                    used_coupon.is_used = False
+                    used_coupon.used_at = None
+
+    order.status = 'Cancelled'
+    db.session.commit()
+    
+    update_popular_items()
+    _AI_ADVICE_STATE['last_signature'] = None
+    order_event_bus.notify()
+    return True, f"訂單 #{order.id} 已成功取消，庫存、點數與優惠券已全數回滾返還！"
+
+
+@app.route('/admin/update_order_status/<int:id>', methods=['POST'])
+def update_order_status(id):
+    """後台更新訂單狀態 (支援取消回滾)"""
+    if not session.get('admin_logged_in'):
+        return jsonify({'error': '未授權'}), 401
+        
+    order = Order.query.get_or_404(id)
+    data = request.get_json() or {}
+    new_status = data.get('status')
+
+    if new_status == 'Cancelled':
+        success, msg = cancel_order_and_rollback(order)
+        return jsonify({'message': msg, 'status': 'Cancelled'})
+
+    if new_status in ['Pending', 'Completed', 'PickedUp']:
+        order.status = new_status
+        if new_status == 'Completed' and not order.completed_at:
+            order.completed_at = datetime.now()
+        db.session.commit()
+        _AI_ADVICE_STATE['last_signature'] = None
+        order_event_bus.notify()
+        return jsonify({'message': '狀態更新成功', 'status': new_status})
+
+    return jsonify({'error': '無效的狀態'}), 400
+
+
+@app.route('/api/kitchen_update_status/<int:id>', methods=['POST'])
+def kitchen_update_status(id):
+    """廚房更新出單狀態 (支援取消回滾)"""
+    order = Order.query.get_or_404(id)
+    data = request.get_json() or {}
+    new_status = data.get('status', 'Completed')
+
+    if new_status == 'Cancelled':
+        success, msg = cancel_order_and_rollback(order)
+        return jsonify({'success': True, 'message': msg})
+
+    if new_status in ['Pending', 'Completed']:
+        order.status = new_status
+        if new_status == 'Completed':
+            order.completed_at = datetime.now()
+        db.session.commit()
+        order_event_bus.notify()
+        return jsonify({'success': True, 'message': f'訂單 #{order.id} 狀態已更新為 {new_status}'})
+
+    return jsonify({'success': False, 'message': '無效的狀態'}), 400
 
 # --- 動態紅利回饋商城頁面 ---
 @app.route('/rewards')
@@ -1581,6 +1707,7 @@ def admin_dashboard():
         username = request.form.get('username')
         password = request.form.get('password')
         if username == ADMIN_USERNAME and check_password_hash(ADMIN_PASSWORD_HASH, password):
+            session.permanent = True  # 啟用 7 天持久 Cookie
             session['admin_logged_in'] = True
             # 記錄管理員登入時間
             log = AdminLog(
@@ -1647,7 +1774,8 @@ def add_coupon():
     title = request.form.get('title')
     code = request.form.get('code', '').strip().upper()
     discount_type = request.form.get('discount_type', 'fixed')
-    discount_value = max(0.0, float(request.form.get('discount_value') or 0))
+    raw_discount_value = request.form.get('discount_value') or 0
+    discount_value = sanitize_discount_value(discount_type, raw_discount_value)
     min_spend = max(0.0, float(request.form.get('min_spend') or 0))
     reward_points = max(0, int(request.form.get('reward_points') or 0))
     reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
@@ -1694,7 +1822,8 @@ def edit_coupon(id):
     title = request.form.get('title')
     code = request.form.get('code', '').strip().upper()
     discount_type = request.form.get('discount_type', 'fixed')
-    discount_value = max(0.0, float(request.form.get('discount_value') or 0))
+    raw_discount_value = request.form.get('discount_value') or 0
+    discount_value = sanitize_discount_value(discount_type, raw_discount_value)
     min_spend = max(0.0, float(request.form.get('min_spend') or 0))
     reward_points = max(0, int(request.form.get('reward_points') or 0))
     reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
@@ -2143,7 +2272,8 @@ def import_smart():
                         dtype = str(row.get('discount_type', 'fixed')).strip()
                         if dtype not in ['fixed', 'percent']: 
                             dtype = 'fixed'
-                        
+                        raw_dval = row.get('discount_value', 0)
+                        dvalue = sanitize_discount_value(dtype, raw_dval)
                         try: dvalue = max(0.0, float(row.get('discount_value', 0)))
                         except: dvalue = 0.0
                         try: min_sp = max(0.0, float(row.get('min_spend', 0)))
@@ -2869,6 +2999,8 @@ def delete_item(id):
         return redirect(url_for('admin_dashboard'))
         
     item = MenuItem.query.get_or_404(id)
+
+    # 1. 刪除餐點照片
     if item.image_path:
         filepath = os.path.join(app.config['UPLOAD_FOLDER_MENU'], item.image_path)
         if os.path.exists(filepath):
@@ -2876,10 +3008,17 @@ def delete_item(id):
                 os.remove(filepath)
             except Exception:
                 pass
-                
+
+    # 2. 將包含該配餐的所有套餐欄位安全設為 None
+    ComboOption.query.filter_by(item1_id=id).update({ComboOption.item1_id: None})
+    ComboOption.query.filter_by(item2_id=id).update({ComboOption.item2_id: None})
+    ComboOption.query.filter_by(item3_id=id).update({ComboOption.item3_id: None})
+
+    # 3. 刪除品項 (若為主餐，其 combo_options 會由 cascade 自動刪除)
     db.session.delete(item)
     db.session.commit()
     db.session.expire_all()
+    update_popular_items()
     return redirect(url_for('admin_dashboard', tab='menu'))
 
 @app.route('/admin/import_excel', methods=['POST'])
@@ -2998,28 +3137,6 @@ def import_menu_excel():
         db.session.rollback()
         return f"<script>alert('匯入解析失敗：{e}'); window.history.back();</script>", 500
 
-@app.route('/admin/update_order_status/<int:id>', methods=['POST'])
-def update_order_status(id):
-    """更新訂單製作/出餐狀態"""
-    if not session.get('admin_logged_in'):
-        return jsonify({'error': '未授權'}), 401
-        
-    order = Order.query.get_or_404(id)
-    data = request.get_json()
-    new_status = data.get('status')
-
-    if new_status in ['Pending', 'Completed', 'PickedUp', 'Cancelled']:
-        order.status = new_status
-        if new_status == 'Completed' and not order.completed_at:
-            order.completed_at = datetime.now()
-        db.session.commit()
-        _AI_ADVICE_STATE['last_signature'] = None
-        order_event_bus.notify()
-
-        return jsonify({'message': '狀態更新成功', 'status': new_status})
-
-    return jsonify({'error': '無效的狀態'}), 400
-
 # --- 編輯會員資料 (姓名、手機、紅利點數) ---
 @app.route('/admin/edit_user/<int:id>', methods=['POST'])
 def edit_user(id):
@@ -3092,12 +3209,13 @@ def api_user_available_coupons():
 # --- 刪除會員 ---
 @app.route('/admin/delete_user/<int:id>')
 def delete_user(id):
+    """去識別化保留歷史訂單，確保營收報表完全正確"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin_dashboard'))
 
     user = User.query.get_or_404(id)
     
-    # 1. 刪除會員的大頭貼檔案
+    # 1. 刪除會員頭像實體檔
     if user.photo_path:
         filepath = os.path.join(app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
         if os.path.exists(filepath):
@@ -3106,12 +3224,13 @@ def delete_user(id):
             except Exception:
                 pass
 
-    #  2. 新增：查詢並刪除該會員名下的所有訂單
-    user_orders = Order.query.filter_by(user_id=id).all()
-    for order in user_orders:
-        db.session.delete(order)
+    # 2. 歷史訂單去識別化保留 (不再刪除訂單，保護會計與營收統計)
+    Order.query.filter_by(user_id=id).update({
+        Order.user_id: None,
+        Order.table_number: f"{user.name} (已註銷會員)"
+    }, synchronize_session=False)
 
-    # 3. 刪除會員本身
+    # 3. 刪除會員主體 (其持有的 UserCoupon 會由 cascade 自動清理)
     db.session.delete(user)
     db.session.commit()
     db.session.expire_all()
@@ -3166,22 +3285,6 @@ def api_kitchen_orders():
         })
 
     return jsonify({'success': True, 'orders': orders_data})
-
-@app.route('/api/kitchen_update_status/<int:id>', methods=['POST'])
-def kitchen_update_status(id):
-    """廚房一鍵出餐或取消訂單"""
-    order = Order.query.get_or_404(id)
-    data = request.get_json() or {}
-    new_status = data.get('status', 'Completed')
-
-    if new_status in ['Pending', 'Completed', 'Cancelled']:
-        order.status = new_status
-        if new_status == 'Completed':
-            order.completed_at = datetime.now()
-        db.session.commit()
-        order_event_bus.notify()
-        return jsonify({'success': True, 'message': f'訂單 #{order.id} 狀態已更新為 {new_status}'})
-    return jsonify({'success': False, 'message': '無效的狀態'}), 400
 
 @app.route('/api/admin_live_orders')
 def api_admin_live_orders():
