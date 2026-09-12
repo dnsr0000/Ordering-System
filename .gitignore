@@ -2,6 +2,8 @@
 instance/
 menu.db
 *.db
+*.db-wal
+*.db-shm
 
 # 忽略使用者上傳的靜態檔案
 static/member/*

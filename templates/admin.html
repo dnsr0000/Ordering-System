@@ -124,8 +124,8 @@
                 <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#importModal">
                     <i class="bi bi-cloud-upload me-1"></i> 匯入資料
                 </button>
-                <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db) 與所有會員相片嗎？');">
-                    <i class="bi bi-archive-fill me-1"></i> 備份會員照片和資料庫
+                <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db)、會員相片與餐點照片的完整備份嗎？');">
+                    <i class="bi bi-archive-fill me-1"></i> 備份系統與全相片
                 </a>
                 <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold ms-2">
                     <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
@@ -1530,7 +1530,7 @@
         </div>
     </div>
 
-    <!-- 🌟 [新增] 整合式匯入資料 Modal (含備份 ZIP 篩選還原與 Excel 智慧匯入) -->
+    <!-- 整合式匯入資料 Modal (含備份 ZIP 篩選還原與 Excel 智慧匯入) -->
     <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -1591,13 +1591,20 @@
                                         </label>
                                         <div class="text-white-50 small ps-1">自動比對二進位安全路徑，匯入刷臉相片。</div>
                                     </div>
-
-                                    <!-- 篩選 3：衝突覆寫開關 -->
+                                    <!-- 篩選 3：菜單餐點照片 -->
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" name="restore_menu_photos" value="1" id="filter-rst-menu-photos" checked>
+                                        <label class="form-check-label fw-bold text-white" for="filter-rst-menu-photos">
+                                            還原菜單餐點照片 (<code>static/menu/</code>)
+                                        </label>
+                                        <div class="text-white-50 small ps-1">匯入所有菜單品項之展示縮圖與高清圖檔。</div>
+                                    </div>
+                                    <!-- 篩選 4：衝突覆寫開關 -->
                                     <div class="ps-4 mb-1" id="filter-photo-opt">
                                         <div class="form-check">
                                             <input class="form-check-input" type="checkbox" name="overwrite_photos" value="1" id="filter-rst-overwrite" checked>
                                             <label class="form-check-label small text-warning" for="filter-rst-overwrite">
-                                                遇到同名相片時強制覆寫 (預設勾選)
+                                                遇到同名相片時強制覆寫
                                             </label>
                                         </div>
                                     </div>
