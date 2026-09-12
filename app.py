@@ -4,11 +4,13 @@ import cv2
 import json
 import io
 import re
+import sys
 import requests
 import threading
 import unicodedata
 import random
 import zipfile
+import queue
 try:
     import google.generativeai as genai
 except ModuleNotFoundError:
@@ -813,7 +815,7 @@ def submit_order():
                 'title': uc.coupon.title,
                 'min_spend': uc.coupon.min_spend
             })
-
+    order_event_bus.notify()
     return jsonify({
         'order_id': new_order.id,
         'pickup_number': next_pickup,
@@ -1823,37 +1825,61 @@ def import_smart():
             s = str(val).strip().lower()
             return s in ['1', 'true', '是', 'yes', 'y']
 
+        def clean_phone_number(val):
+            """清理與格式化手機號碼，避免 Excel 浮點數轉換問題"""
+            if pd.isna(val): return ""
+            s = str(val).strip()
+            if s.endswith('.0'):
+                s = s[:-2]
+            # 若為台灣 9 碼數字（缺開頭 0），補齊為 10 碼
+            if len(s) == 9 and s.startswith('9'):
+                s = '0' + s
+            return s
+
         # 走訪檔案內所有的工作表 (Sheet)
         for sheet in excel_file.sheet_names:
             df = pd.read_excel(excel_file, sheet_name=sheet)
             if df.empty: continue
 
-            # 將所有欄位名稱轉小寫，用作純英文特徵辨識輔助
             cols_lower = [str(c).lower() for c in df.columns]
 
             # ---------------------------------------------------------
             # 1. 辨識是否為「會員資料 (User)」
             # ---------------------------------------------------------
             if 'User' in sheet or '會員' in sheet or '電話(Phone)' in df.columns or 'phone' in cols_lower or '電話' in df.columns:
-                col_map = {'姓名(Name)': 'name', '姓名': 'name', '電話(Phone)': 'phone', '電話': 'phone', '紅利點數(Points)': 'points', '紅利點數': 'points'}
+                col_map = {
+                    '姓名(Name)': 'name', '姓名': 'name', 'name': 'name',
+                    '電話(Phone)': 'phone', '電話': 'phone', 'phone': 'phone',
+                    '紅利點數(Points)': 'points', '紅利點數': 'points', 'points': 'points'
+                }
                 df_user = df.rename(columns=col_map)
                 
                 if 'name' in df_user.columns and 'phone' in df_user.columns:
                     for _, row in df_user.iterrows():
                         name = str(row.get('name', '')).strip()
-                        phone = str(row.get('phone', '')).strip()
-                        if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料': continue
+                        phone = clean_phone_number(row.get('phone', ''))
+                        if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料': 
+                            continue
                         
-                        try: points = int(row.get('points', 0))
-                        except: points = 0
+                        try: 
+                            points = int(row.get('points', 0))
+                        except: 
+                            points = 0
                         
                         existing = User.query.filter_by(phone=phone).first()
                         if existing:
                             existing.name = name
                             existing.points = points
                         else:
-                            new_user =User(name=name, phone=phone, photo_path=filename, feature=feature, points=20, last_login_at=datetime.now())
-                        db.session.add(new_user)
+                            new_user = User(
+                                name=name, 
+                                phone=phone, 
+                                photo_path='', 
+                                feature=None, 
+                                points=points if points > 0 else 20, 
+                                last_login_at=None
+                            )
+                            db.session.add(new_user)
                         imported_counts['User'] += 1
 
             # ---------------------------------------------------------
@@ -1861,25 +1887,28 @@ def import_smart():
             # ---------------------------------------------------------
             elif 'MenuItem' in sheet or '菜單' in sheet or '單價(Price)' in df.columns or 'price' in cols_lower or '單價' in df.columns:
                 col_map = {
-                    '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name',
-                    '分類(Category)': 'category', '分類': 'category',
-                    '單價(Price)': 'price', '單價': 'price',
-                    '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers',
-                    '商品描述(Description)': 'description', '簡介': 'description',
-                    '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended',
-                    '新品上市(Is New)': 'is_new', '新品': 'is_new',
-                    '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount',
-                    '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price',
-                    '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward',
-                    '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points',
-                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points'
+                    '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name', 'name': 'name',
+                    '分類(Category)': 'category', '分類': 'category', 'category': 'category',
+                    '單價(Price)': 'price', '單價': 'price', 'price': 'price',
+                    '剩餘數量(Stock)': 'stock', '剩餘數量': 'stock', '庫存': 'stock', 'stock': 'stock',
+                    '總量(Total Stock)': 'total_stock', '總量': 'total_stock', 'total_stock': 'total_stock',
+                    '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers', 'modifiers': 'modifiers',
+                    '商品描述(Description)': 'description', '簡介': 'description', 'description': 'description',
+                    '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended', 'is_recommended': 'is_recommended',
+                    '新品上市(Is New)': 'is_new', '新品': 'is_new', 'is_new': 'is_new',
+                    '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount', 'is_discount': 'is_discount',
+                    '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price', 'discount_price': 'discount_price',
+                    '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward', 'is_reward': 'is_reward',
+                    '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points', 'reward_points': 'reward_points',
+                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points'
                 }
                 df_menu = df.rename(columns=col_map)
                 
                 if 'name' in df_menu.columns and 'price' in df_menu.columns:
                     for _, row in df_menu.iterrows():
                         name = str(row.get('name', '')).strip()
-                        if not name or pd.isna(row.get('name')) or name == '目前無資料': continue
+                        if not name or pd.isna(row.get('name')) or name == '目前無資料': 
+                            continue
                         
                         category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
                         try: price = max(0, round(float(row.get('price', 0))))
@@ -1890,9 +1919,14 @@ def import_smart():
                         except: reward_points = 0
                         try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
                         except: reward_discount_points = 0
+                        try: stock = max(0, int(row.get('stock', 50)))
+                        except: stock = 50
+                        try: total_stock = max(stock, int(row.get('total_stock', 50)))
+                        except: total_stock = 50
 
                         modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
-                        if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']: modifiers = 'none'
+                        if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']: 
+                            modifiers = 'none'
 
                         description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
                         
@@ -1914,17 +1948,37 @@ def import_smart():
                             existing.is_new = is_new
                             existing.is_discount = is_disc
                             existing.is_reward = is_rew
+                            existing.stock = stock
+                            existing.total_stock = total_stock
+                            existing.is_sold_out = (stock <= 0)
                         else:
                             new_item = MenuItem(
-                                name=name, category=category, price=price, modifiers=modifiers, description=description,
-                                image_path='', is_recommended=False, is_manual_popular=is_rec,
-                                is_discount=is_disc, discount_price=discount_price, is_new=is_new,
-                                is_reward=is_rew, reward_points=reward_points, reward_discount_points=reward_discount_points
+                                name=name, 
+                                category=category, 
+                                price=price, 
+                                modifiers=modifiers, 
+                                description=description,
+                                image_path='', 
+                                is_recommended=False, 
+                                is_manual_popular=is_rec,
+                                is_discount=is_disc, 
+                                discount_price=discount_price, 
+                                is_new=is_new,
+                                is_reward=is_rew, 
+                                reward_points=reward_points, 
+                                reward_discount_points=reward_discount_points,
+                                stock=stock,
+                                total_stock=total_stock,
+                                is_sold_out=(stock <= 0),
+                                can_be_add_on=False,
+                                add_on_price=0,
+                                addon_trigger_type='any',
+                                addon_trigger_target=''
                             )
                             db.session.add(new_item)
                         imported_counts['MenuItem'] += 1
 
-# ---------------------------------------------------------
+            # ---------------------------------------------------------
             # 3. 辨識是否為「優惠券 (Coupon)」
             # ---------------------------------------------------------
             elif 'Coupon' in sheet or '優惠券' in sheet or '代碼(Code)' in df.columns or 'code' in cols_lower or '代碼' in df.columns:
@@ -1944,10 +1998,12 @@ def import_smart():
                     for _, row in df_coupon.iterrows():
                         code = str(row.get('code', '')).strip().upper()
                         title = str(row.get('title', '')).strip()
-                        if not code or not title or pd.isna(row.get('code')) or code == '目前無資料': continue
+                        if not code or not title or pd.isna(row.get('code')) or code == '目前無資料': 
+                            continue
                         
                         dtype = str(row.get('discount_type', 'fixed')).strip()
-                        if dtype not in ['fixed', 'percent']: dtype = 'fixed'
+                        if dtype not in ['fixed', 'percent']: 
+                            dtype = 'fixed'
                         
                         try: dvalue = max(0.0, float(row.get('discount_value', 0)))
                         except: dvalue = 0.0
@@ -1958,7 +2014,6 @@ def import_smart():
                         try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
                         except: reward_discount_points = 0
                         
-                        # 判斷是否上架回饋商城：若欄位有明確指定則依欄位；無欄位時若點數大於 0 則自動設為 True
                         if 'is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward')):
                             is_reward = parse_bool(row.get('is_reward'))
                         else:
@@ -1988,8 +2043,7 @@ def import_smart():
                         imported_counts['Coupon'] += 1
 
         db.session.commit()
-        update_popular_items()  # 重算一次菜單熱門推薦
-        
+        update_popular_items()
         # 組合成功訊息並返回前端
         msg = f"✅ 智慧匯入完成！\\n" \
               f"共處理更新與新增：\\n" \
@@ -2771,6 +2825,7 @@ def update_order_status(id):
             order.completed_at = datetime.now()
         db.session.commit()
         _AI_ADVICE_STATE['last_signature'] = None
+        order_event_bus.notify()
 
         return jsonify({'message': '狀態更新成功', 'status': new_status})
 
@@ -2935,6 +2990,7 @@ def kitchen_update_status(id):
         if new_status == 'Completed':
             order.completed_at = datetime.now()
         db.session.commit()
+        order_event_bus.notify()
         return jsonify({'success': True, 'message': f'訂單 #{order.id} 狀態已更新為 {new_status}'})
     return jsonify({'success': False, 'message': '無效的狀態'}), 400
 
@@ -3009,9 +3065,10 @@ def kitchen_complete_all():
     now = datetime.now()  #   記錄當下出餐時間
     for o in pending_orders:
         o.status = 'Completed'
-        o.completed_at = now  #   補上這行
+        o.completed_at = now
 
     db.session.commit()
+    order_event_bus.notify()
     return jsonify({'success': True, 'message': f'✅ 已成功將 {count} 筆訂單批次完成出餐！', 'count': count})
 
 # ==============================================================================
@@ -3028,38 +3085,109 @@ def api_mark_picked_up(id):
     order = Order.query.get_or_404(id)
     order.status = 'PickedUp'
     db.session.commit()
+    order_event_bus.notify()
     return jsonify({'success': True, 'message': f'取餐編號 #{order.pickup_number} (單號 #{order.id}) 已完成取餐！'})
 
 # ==============================================================================
 # SSE (Server-Sent Events) 即時推播串流路由
 # ==============================================================================
+class OrderEventBus:
+    def __init__(self):
+        self._subscribers = []
+        self._lock = threading.Lock()
+
+    def subscribe(self):
+        """為新連線的客戶端建立專屬 Queue"""
+        q = queue.Queue(maxsize=10)
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q):
+        """客戶端離線時移除 Queue，釋放記憶體"""
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+    def get_current_payload(self):
+        """查詢今日特徵簽章並打包為 JSON 字串"""
+        try:
+            today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+            orders_status = db.session.query(Order.id, Order.status).filter(
+                Order.created_at >= today_start,
+                Order.created_at <= today_end
+            ).order_by(Order.id.asc()).all()
+            
+            state_signature = ",".join(f"{oid}:{status}" for oid, status in orders_status)
+            pending_count = sum(1 for _, s in orders_status if s == 'Pending')
+            
+            return json.dumps({
+                'timestamp': time.time(),
+                'state_signature': state_signature,
+                'pending_count': pending_count
+            })
+        except Exception as e:
+            print(f"[!] 取得訂單特徵簽章失敗: {e}")
+            return json.dumps({
+                'timestamp': time.time(),
+                'state_signature': '',
+                'pending_count': 0
+            })
+
+    def notify(self):
+        """當訂單狀態變更時呼叫：查一次 DB 並廣播至所有客戶端"""
+        with app.app_context():
+            payload = self.get_current_payload()
+        with self._lock:
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    try:
+                        q.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        q.put_nowait(payload)
+                    except queue.Full:
+                        pass
+
+order_event_bus = OrderEventBus()
+
 @app.route('/api/orders_stream')
 def orders_stream():
-    """透過 SSE 即時向前端推播今日所有訂單狀態特徵與變更事件"""
+    """透過 SSE 向前端推播訂單狀態變更 (事件驅動，平時不查 DB)"""
     def event_stream():
-        while True:
-            time.sleep(1) 
+        client_queue = order_event_bus.subscribe()
+        try:
+            # 客戶端剛建立連線時，主動推送一次最新狀態
             with app.app_context():
-                db.session.remove() 
-                today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-                today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-                
-                orders_status = db.session.query(Order.id, Order.status).filter(
-                    Order.created_at >= today_start,
-                    Order.created_at <= today_end
-                ).order_by(Order.id.asc()).all()
-                
-                state_signature = ",".join(f"{oid}:{status}" for oid, status in orders_status)
-                pending_count = sum(1 for _, s in orders_status if s == 'Pending')
-                
-                payload = json.dumps({
-                    'timestamp': time.time(),
-                    'state_signature': state_signature,
-                    'pending_count': pending_count
-                })
-                yield f"data: {payload}\n\n"
+                initial_payload = order_event_bus.get_current_payload()
+            yield f"data: {initial_payload}\n\n"
 
-    return Response(event_stream(), mimetype='text/event-stream')
+            # 阻塞等待通知；無事件時線程進入睡眠，完全不存取資料庫
+            while True:
+                try:
+                    payload = client_queue.get(timeout=15)
+                    yield f"data: {payload}\n\n"
+                except queue.Empty:
+                    # 15 秒無事件時發送 SSE 規範之註釋心跳 (以冒號開頭)，瀏覽器自動忽略且不會斷線
+                    yield ": keep-alive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            order_event_bus.unsubscribe(client_queue)
+
+    return Response(
+        event_stream(), 
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        }
+    )
 
 # ==============================================================================
 # 9. 櫃檯取餐叫號看板路由 (Counter Display System)
@@ -3094,8 +3222,8 @@ if __name__ == '__main__':
 
     print("\n" + "="*50)
     print("🚀 自助點餐系統正常啟動中...")
-    print("👉 前台首頁: http://127.0.0.1:5000/")
-    print("👉 店家後台: http://127.0.0.1:5000/admin")
+    print("前台首頁: http://127.0.0.1:5000/")
+    print("店家後台: http://127.0.0.1:5000/admin")
     print("="*50 + "\n")
 
     # 4. 正常啟動伺服器
