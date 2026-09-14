@@ -52,9 +52,6 @@ Kiosk_Export_*.xlsx
 # 本地 GGUF 邊緣語言模型 (通常 > 1GB)
 models/*.gguf
 
-# 若不希望將 OpenCV ONNX 權重檔納入版本控制，可取消以下註解：
-# models/*.onnx
-
 # 保留 models 目錄結構
 !models/.gitkeep
 
@@ -93,3 +90,5 @@ Desktop.ini
 
 # macOS
 .DS_Store
+
+repomix-output.xml
