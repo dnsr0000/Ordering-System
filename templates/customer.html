@@ -768,11 +768,10 @@
 
     // 2. 判定品項是否符合加購資格（關鍵：加購品絕對不可再次當作資格母體）
     function isItemQualifyingForAddon(cartItem, addonDef) {
-        // 嚴格阻斷：只要是加購品，一律不具備解鎖其他加購品的資格
+        // 阻斷加購品作為母體
         if (!cartItem || cartItem.is_add_on === true || cartItem.is_add_on === 'true') {
             return false;
         }
-        // 排除後台設定關閉加購權限之套餐
         if (cartItem.can_addon === false) {
             return false;
         }
@@ -781,15 +780,24 @@
         const triggerType = addonDef.trigger_type || 'any';
         const target = (addonDef.trigger_target || '').trim().toLowerCase();
 
+        // 1. 指定分類：嚴格比對目標分類（若未填則預設對齊該加購品本身所屬分類）
         if (triggerType === 'category') {
-            return cat.trim().toLowerCase() === target;
+            const expectedCategory = target || (addonDef.category || '').trim().toLowerCase();
+            return cat.trim().toLowerCase() === expectedCategory;
         }
+
+        // 2. 指定餐點：嚴格比對特定品名
         if (triggerType === 'item') {
             return cartItem.name.trim().toLowerCase() === target;
         }
+
+        // 3. 通用加購 (any) 防呆：
+        // 非特定條件加購品時，只有「主餐/主食」才具備通用加購資格，其他非主餐類別（飲料、點心、副餐）不可跨類別解鎖
         if (triggerType === 'any') {
-            return true;
+            const nonMain = ['飲料', '點心', '副餐', '配餐'];
+            return !nonMain.includes(cat);
         }
+
         return false;
     }
     // 購物車內能提供該加購品資格的品項總數量
@@ -806,6 +814,7 @@
     }
     // 計算特定加購品當前的剩餘配額 (Remaining Quota)
     function getRemainingQuotaForAddon(addonDef) {
+        // 1. 全域配額：所有正價餐點 - 已使用加購品
         const totalRegularDishes = cart
             .filter(i => !i.is_add_on && i.can_addon !== false)
             .reduce((sum, i) => sum + i.quantity, 0);
@@ -817,12 +826,14 @@
         const globalRemainingQuota = Math.max(0, totalRegularDishes - totalAddonsInCart);
         if (globalRemainingQuota <= 0) return 0;
 
-        // 符合此加購品專屬條件的正價商品數
+        // 2. 符合該加購品條件的正價餐點數量
         const qualifyingCount = cart
             .filter(i => isItemQualifyingForAddon(i, addonDef))
             .reduce((sum, i) => sum + i.quantity, 0);
 
-        // 購物車內已佔用同條件配額的加購品總數量
+        if (qualifyingCount <= 0) return 0;
+
+        // 3. 購物車中已消耗該資格母體的加購品總數
         const targetKey = (addonDef.trigger_target || '').trim().toLowerCase();
         const targetType = addonDef.trigger_type || 'any';
 
@@ -833,8 +844,11 @@
                     ? availableAddons.find(a => String(a.id) === String(i.id))
                     : null;
                 if (!def) return false;
-                return (def.trigger_type || 'any') === targetType &&
-                    (def.trigger_target || '').trim().toLowerCase() === targetKey;
+                
+                const curType = def.trigger_type || 'any';
+                const curTarget = (def.trigger_target || '').trim().toLowerCase();
+                
+                return curType === targetType && curTarget === targetKey;
             })
             .reduce((sum, i) => sum + i.quantity, 0);
 
@@ -901,7 +915,54 @@
             dispatchToModifiersOrCart(pendingComboItem.name, pendingComboItem.price, '');
         }
     }
+    function refundRewardItemAndRemove(index) {
+        const item = cart[index];
+        if (!item) return;
 
+        // 解析原始商品 ID
+        let rawId = item.reward_item_id || item.item_id;
+        if (!rawId && String(item.id).startsWith('reward_')) {
+            const parts = String(item.id).split('_');
+            if (parts.length >= 2) rawId = parseInt(parts[1]);
+        }
+
+        const payload = {
+            item_id: rawId,
+            name: item.name,
+            points: item.points_cost || 0,
+            quantity: item.quantity || 1
+        };
+
+        fetch('/api/refund_reward_item', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(async r => {
+            const data = await r.json();
+            if (!r.ok || !data.success) {
+                throw new Error(data.message || `連線失敗 (代碼 ${r.status})`);
+            }
+            return data;
+        })
+        .then(data => {
+            currentUserPoints = data.current_points;
+            const navPts = document.getElementById('nav-user-points');
+            if (navPts) navPts.innerText = currentUserPoints;
+            const cartPts = document.getElementById('cart-user-points');
+            if (cartPts) cartPts.innerText = currentUserPoints;
+            alert(`🎉 ${data.message}`);
+
+            // 後端退點成功後，才從購物車剔除
+            cart.splice(index, 1);
+            saveCartToStorage();
+            updateCartUI();
+        })
+        .catch(err => {
+            console.error("退還紅利點數失敗:", err);
+            alert(`❌ 退點失敗：${err.message}\n請確認已手動重啟伺服器並維持登入狀態！`);
+        });
+    }
     // 觸控卡片渲染函式
     function renderComboCards(item) {
         const titleEl = document.getElementById('comboModalTitle');
@@ -1167,15 +1228,36 @@
     }
     // 購物車數量變更控制 (+/-)
     function changeQty(index, delta) {
-        if (delta > 0 && cart[index].is_add_on) {
+        const item = cart[index];
+        if (!item) return;
+
+        // 1. 防呆：紅利商品禁止在購物車直接點擊「+」擴增數量
+        if (delta > 0 && (item.is_reward || String(item.id).startsWith('reward_') || (item.name && item.name.includes('[點數兌換]')))) {
+            alert('⚠️ 紅利兌換餐點無法直接增加數量，如需多份請前往回饋商城再次兌換！');
+            return;
+        }
+
+        // 2. 加購品名額防呆
+        if (delta > 0 && item.is_add_on) {
             const addonDef = (typeof availableAddons !== 'undefined')
-                ? availableAddons.find(a => String(a.id) === String(cart[index].id))
+                ? availableAddons.find(a => String(a.id) === String(item.id))
                 : null;
             if (!addonDef || getRemainingQuotaForAddon(addonDef) <= 0) {
                 alert('⚠️ 加購品數量已達上限！');
                 return;
             }
         }
+
+        // 3. 扣減數量降至 0 時，若是紅利商品觸發退點流程
+        if (delta < 0 && (item.quantity + delta <= 0)) {
+            if (item.is_reward || String(item.id).startsWith('reward_') || (item.name && item.name.includes('[點數兌換]'))) {
+                if (confirm(`確定要移除兌換餐點【${item.name}】嗎？移除後將返還扣除的紅利點數。`)) {
+                    refundRewardItemAndRemove(index);
+                }
+                return;
+            }
+        }
+
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
         saveCartToStorage();
@@ -1348,34 +1430,39 @@
         }
 
         if (container) {
-            container.innerHTML = cart.map((item, idx) => {
-                const isSoldOut = !!item.is_sold_out;
+            container.innerHTML = cart.map(function (item, idx) {
+                const isSoldOut = Boolean(item.is_sold_out);
                 const addonBadge = item.is_add_on ? '<span class="badge bg-info text-dark ms-1">加購</span>' : '';
-                return `
-                <div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${isSoldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
-                    <div>
-                        <div class="fw-bold ${isSoldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
-                            ${item.name} ${addonBadge} ${isSoldOut ? '<span class="badge bg-danger ms-1">已售完</span>' : ''}
-                        </div>
-                        ${item.customization ? `<small class="text-info d-block ${isSoldOut ? 'text-decoration-line-through text-white-50' : ''}">${item.customization}</small>` : ''}
-                        <small class="text-white-50 ${isSoldOut ? 'text-decoration-line-through' : ''}">$${Math.round(item.price)} x ${item.quantity}</small>
-                    </div>
-                    <div class="d-flex align-items-center">
-                        ${isSoldOut ? `
-                            <button class="btn btn-sm btn-outline-danger fw-bold" onclick="removeCartItem(${idx})">
-                                <i class="bi bi-trash"></i> 移除
-                            </button>
-                        ` : `
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, -1)">-</button>
-                                <button class="btn btn-outline-secondary text-white" onclick="changeQty(${idx}, 1)">+</button>
-                            </div>
-                        `}
-                    </div>
-                </div>`;
+                const isRewardItem = Boolean(item.is_reward) || String(item.id).startsWith('reward_') || (item.name && item.name.includes('[點數兌換]'));
+
+                let actionBtnHtml = '';
+                if (isSoldOut || isRewardItem) {
+                    actionBtnHtml = '<button class="btn btn-sm btn-outline-danger fw-bold" onclick="removeCartItem(' + idx + ')"><i class="bi bi-trash"></i> 移除</button>';
+                } else {
+                    actionBtnHtml = '<div class="btn-group btn-group-sm">' +
+                        '<button class="btn btn-outline-secondary text-white" onclick="changeQty(' + idx + ', -1)">-</button>' +
+                        '<button class="btn btn-outline-secondary text-white" onclick="changeQty(' + idx + ', 1)">+</button>' +
+                        '</div>';
+                }
+
+                const customNoteHtml = item.customization 
+                    ? '<small class="text-info d-block ' + (isSoldOut ? 'text-decoration-line-through text-white-50' : '') + '">' + item.customization + '</small>' 
+                    : '';
+
+                return '<div class="d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ' + (isSoldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : '') + '">' +
+                    '<div>' +
+                        '<div class="fw-bold ' + (isSoldOut ? 'text-decoration-line-through text-danger' : 'text-warning') + '">' +
+                            item.name + ' ' + addonBadge + (isSoldOut ? ' <span class="badge bg-danger ms-1">已售完</span>' : '') +
+                        '</div>' +
+                        customNoteHtml +
+                        '<small class="text-white-50 ' + (isSoldOut ? 'text-decoration-line-through' : '') + '">$' + Math.round(item.price) + ' x ' + item.quantity + '</small>' +
+                    '</div>' +
+                    '<div class="d-flex align-items-center">' +
+                        actionBtnHtml +
+                    '</div>' +
+                '</div>';
             }).join('');
         }
-
         // 4. 加購推薦看板：只要正價商品名額已被用完，立刻清空隱藏看板
         if (typeof availableAddons !== 'undefined' && addonContainer) {
             const eligibleAddons = availableAddons
@@ -1411,13 +1498,19 @@
         calculateTotal();
     }
 
-    // 新增：一鍵移除單一商品函式
+    // 一鍵移除單一商品函式
     function removeCartItem(index) {
+        const item = cart[index];
+        if (item && (item.is_reward || String(item.id).startsWith('reward_') || (item.name && item.name.includes('[點數兌換]')))) {
+            if (confirm(`確定要移除兌換餐點【${item.name}】嗎？移除後將返還扣除的紅利點數。`)) {
+                refundRewardItemAndRemove(index);
+            }
+            return;
+        }
         cart.splice(index, 1);
         saveCartToStorage();
         updateCartUI();
     }
-
 
 
     function selectUserCoupon(code) {

@@ -67,9 +67,66 @@ def redeem_reward():
         'remaining_points': refreshed_user.points,
         'redeemed_item': {
             'id': f'reward_{item.id}_{int(time.time())}',
+            'reward_item_id': item.id,
             'name': f'🎁 [點數兌換] {item.name}',
             'price': extra_price,
+            'points_cost': req_points,
+            'is_reward': True,
             'customization': customization if customization else '紅利免費兌換',
             'quantity': 1
         }
+    })
+
+@rewards_bp.route('/api/refund_reward_item', methods=['POST'])
+def refund_reward_item():
+    """購物車刪除商城兌換品項時，全額返還已扣除之點數 (支援 ID 與品名雙重反查)"""
+    user_id = session.get('user_id')
+    if not user_id:
+        return jsonify({'success': False, 'message': '請先登入會員！'}), 401
+
+    data = request.get_json() or {}
+    item_id = data.get('item_id')
+    raw_name = str(data.get('name', '')).strip()
+    fallback_points = int(data.get('points', 0))
+    quantity = max(1, int(data.get('quantity', 1)))
+
+    menu_item = None
+    # 1. 優先透過 ID 查詢
+    if item_id:
+        try:
+            menu_item = db.session.get(MenuItem, int(item_id))
+        except (ValueError, TypeError):
+            menu_item = None
+
+    # 2. 兜底保障：若 ID 遺失或查無，剔除前綴後以品名反查
+    if not menu_item and raw_name:
+        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', raw_name).strip()
+        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+
+    pts_to_refund = 0
+    if menu_item:
+        unit_pts = menu_item.reward_discount_points if (menu_item.reward_discount_points and menu_item.reward_discount_points > 0) else menu_item.reward_points
+        pts_to_refund = unit_pts * quantity
+
+    # 3. 前端攜帶點數兜底
+    if pts_to_refund <= 0 and fallback_points > 0:
+        pts_to_refund = fallback_points * quantity
+
+    if pts_to_refund <= 0:
+        return jsonify({'success': False, 'message': '無法核對此兌換商品的退點額度！'}), 400
+
+    user = db.session.get(User, user_id)
+    if not user:
+        return jsonify({'success': False, 'message': '查無此會員！'}), 404
+
+    # 直接使用 ORM 物件更新點數，防止快取不同步
+    user.points = (user.points or 0) + pts_to_refund
+    db.session.commit()
+
+    session['user_points'] = user.points
+
+    return jsonify({
+        'success': True,
+        'message': f'已成功退還 {pts_to_refund} 點紅利點數！',
+        'current_points': user.points
     })

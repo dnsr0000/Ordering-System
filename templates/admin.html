@@ -929,7 +929,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning">特價金額 (NT$)</label>
-                            <input type="number" min="0" class="form-control" name="discount_price" placeholder="無特價填 0" value="0">
+                            <input type="number" min="0" class="form-control" name="discount_price" id="add-discount-price" placeholder="無特價填 0" value="0">
                         </div>
                         <div class="row g-2 mb-3 bg-secondary bg-opacity-25 p-2 rounded border border-secondary">
                             <div class="col-6 d-flex align-items-center">
@@ -1147,45 +1147,44 @@
 
                         <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
                             <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
-                            
                             <!-- 配餐 1 -->
                             <div class="mb-3" id="combo-side1-group">
-                                <select name="item1_id" id="add_combo_item1" class="form-select form-select-sm" onchange="syncComboCustomizable(1, 'add')">
+                                <select class="form-select form-select-sm" name="item1_id" id="combo-side1" onchange="checkComboSides(1, 'combo'); syncSideCustomizable(1, 'combo');">
                                     <option value="">-- 請選擇第一項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }} data-modifiers="{{ it.modifiers or 'none' }}"">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="combo-side1-cust" checked>
+                                <div class="form-check form-switch mt-1" style="display: none;">
+                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="combo-side1-cust">
                                     <label class="form-check-label small text-warning" for="combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
                             </div>
 
                             <!-- 配餐 2 -->
                             <div class="mb-3" id="combo-side2-group" style="display: none;">
-                                <select name="item1_id" id="add_combo_item2" class="form-select form-select-sm" onchange="syncComboCustomizable(2, 'add')">
+                                <select class="form-select form-select-sm" name="item2_id" id="combo-side2" onchange="checkComboSides(2, 'combo'); syncSideCustomizable(2, 'combo');">
                                     <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
                                     <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="combo-side2-cust" checked>
+                                <div class="form-check form-switch mt-1" style="display: none;">
+                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="combo-side2-cust">
                                     <label class="form-check-label small text-warning" for="combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
                             </div>
 
                             <!-- 配餐 3 -->
                             <div class="mb-3" id="combo-side3-group" style="display: none;">
-                                <select name="item1_id" id="add_combo_item3" class="form-select form-select-sm" onchange="syncComboCustomizable(3, 'add')">
+                                <select class="form-select form-select-sm" name="item3_id" id="combo-side3" onchange="checkComboSides(3, 'combo'); syncSideCustomizable(3, 'combo');">
                                     <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
                                     <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="combo-side3-cust" checked>
+                                <div class="form-check form-switch mt-1" style="display: none;">
+                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="combo-side3-cust">
                                     <label class="form-check-label small text-warning" for="combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
                             </div>
@@ -1273,7 +1272,7 @@
                                     <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
+                                <div class="form-check form-switch mt-1" style="display: none;">
                                     <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="edit-combo-side2-cust">
                                     <label class="form-check-label small text-warning" for="edit-combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
@@ -1287,7 +1286,7 @@
                                     <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
+                                <div class="form-check form-switch mt-1" style="display: none;">
                                     <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="edit-combo-side3-cust">
                                     <label class="form-check-label small text-warning" for="edit-combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
@@ -2044,12 +2043,19 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         if (input && toggle) {
             input.addEventListener('input', function () {
                 const val = Number(this.value);
-                if (val > 0) toggle.checked = true;
-                else if (this.value === '' || val <= 0) toggle.checked = false;
+                if (val > 0) {
+                    toggle.checked = true;
+                } else {
+                    toggle.checked = false;
+                }
             });
             toggle.addEventListener('change', function () {
-                if (!this.checked) input.value = 0;
-                else if (Number(input.value) <= 0) { input.value = ''; input.focus(); }
+                if (!this.checked) {
+                    input.value = 0;
+                } else if (Number(input.value) <= 0) {
+                    input.value = '';
+                    input.focus();
+                }
             });
         }
 
@@ -2415,7 +2421,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             targetSel.setAttribute('required', 'required');
 
             // 2. 過濾排除當前餐點所屬的分類
-            const filteredCategories = menuCategories.filter(c => c && c !== selfCategory);
+            const filteredCategories = menuCategories.filter(c => c);
 
             targetSel.innerHTML = '<option value="" disabled selected>-- 請選擇指定分類 --</option>' +
                 (filteredCategories.length > 0
@@ -2607,25 +2613,24 @@ function updateDiscountHint(prefix) {
         hintDiv.style.display = 'block';
     }
 }
+
 function syncSideCustomizable(index, prefix = 'edit-combo', isCustomizable = null) {
     const selectEl = document.getElementById(`${prefix}-side${index}`);
     const checkbox = document.getElementById(`${prefix}-side${index}-cust`);
     if (!selectEl || !checkbox) return;
 
-    // 取得開關外層的包裝容器
     const switchBox = checkbox.closest('.form-check') || checkbox.parentElement;
     const selectedOpt = selectEl.options[selectEl.selectedIndex];
-    const modifiers = selectedOpt ? (selectedOpt.dataset.modifiers || 'none') : 'none';
+    // 若 option 缺少屬性，預設視為 none
+    const modifiers = selectedOpt ? (selectedOpt.getAttribute('data-modifiers') || 'none') : 'none';
 
-    // 若未選擇配餐，或該餐點「無客製化選項（none）」
     if (!selectEl.value || modifiers === 'none') {
         checkbox.checked = false;
         checkbox.disabled = true;
-        if (switchBox) switchBox.style.display = 'none'; // 完全隱藏開關
+        if (switchBox) switchBox.style.setProperty('display', 'none', 'important');
     } else {
-        if (switchBox) switchBox.style.display = 'block'; // 具備客製化選項時才顯示
+        if (switchBox) switchBox.style.setProperty('display', 'block', 'important');
         checkbox.disabled = false;
-        // 若有傳入既有的勾選狀態則保留，否則預設為勾選
         checkbox.checked = (isCustomizable !== null) ? Boolean(isCustomizable) : true;
     }
 }

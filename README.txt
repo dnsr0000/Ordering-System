@@ -4,23 +4,23 @@
 
 📝 專案簡介 (Project Overview)
 本專案為一套整合網頁前端、電腦視覺 (Computer Vision) 與邊緣語言模型 (Edge SLM) 的實體店面自助點餐機 (Kiosk) 整合系統。
-系統提供顧客端流暢點餐、購物車狀態維持、套餐升級與深度客製化選項，並導入 YuNet 與 SFace 實現會員刷臉秒級登入。
-後端採用 Flask 模組化藍圖 (Blueprint) 與分層架構 (Service Layer)，整合店家管理儀表板 (Admin Dashboard)、廚房出單看板 (KDS)、櫃檯取餐與叫號核銷系統，更具備「雲端 Gemini API → 本地端 Qwen2.5 SLM → 本地動態規則」三層無縫降級機制，支援全天候零中斷的 AI 智慧營運決策與菜單文案自動生成[cite: 43, 53]。
+系統提供顧客端流暢點餐、購物車狀態維持、套餐升級、條件式加購與深度客製化選項，並導入 YuNet 與 SFace 實現會員刷臉秒級登入。
+後端採用 Flask 模組化藍圖 (Blueprint) 與職責分離架構 (Service Layer)，整合店家管理儀表板 (Admin Dashboard)、廚房出單看板 (KDS)、櫃檯取餐與叫號核銷系統，更具備「雲端 Gemini API → 本地端 Qwen2.5 SLM → 本地動態規則」三層無縫降級機制，支援全天候零中斷的 AI 智慧營運決策與菜單文案自動生成。
 
 🚀 核心技術與架構 (Technologies & Architecture)
 - Backend: Flask (Python - Application Factory Pattern 搭配 Blueprint 模組化設計)
-- Architecture: 職責分離分層架構 (Route Controllers, Service Layer, ORM Models, Singletons)[cite: 51, 52]
-- Database: SQLite (SQLAlchemy 關聯式架構，含 PRAGMA WAL 高併發讀寫分離與超時鎖定)[cite: 51, 53]
-- Computer Vision: OpenCV (YuNet 人臉偵測 + SFace 人臉特徵向量餘弦比對)[cite: 44, 53]
-- Edge AI / SLM: llama-cpp-python (本地推論 GGUF 權重，內建 Threading Lock 避免解碼衝突)[cite: 43, 52, 53]
-- Cloud AI: Google Gemini API (gemini-3.6-flash 高效語意理解)[cite: 43, 53]
-- Real-time Stream: SSE (Server-Sent Events 廣播佇列即時推送訂單特徵簽章)[cite: 45, 53]
-- Frontend: HTML5, Bootstrap 5, Vanilla JavaScript (含 LocalStorage 狀態持久化)
+- Architecture: 職責分離分層架構 (Route Controllers, Service Layer, ORM Models, Singletons)
+- Database: SQLite (SQLAlchemy 關聯式架構，含 PRAGMA WAL 高併發讀寫分離、超時鎖定與自動結構遷移)
+- Computer Vision: OpenCV (YuNet 人臉偵測 + SFace 特徵向量餘弦比對，內建模型全域快取單例與警告日誌壓制)
+- Edge AI / SLM: llama-cpp-python (本地推論 GGUF 權重，內建 Threading Lock 避免解碼衝突)
+- Cloud AI: Google Gemini API (gemini-3.6-flash 高效語意理解)
+- Real-time Stream: SSE (Server-Sent Events 廣播佇列即時推送訂單特徵簽章，具備 Request 生命週期防護)
+- Frontend: HTML5, Bootstrap 5, Vanilla JavaScript (含 LocalStorage 狀態持久化、條件加購名額池化與動態退點連動)
 
 📂 專案架構圖 (Project Structure)
 Project Root/
 ├── app/                                    # 核心應用程式套件 (Flask Application Package)
-│   ├── __init__.py                         # 應用程式工廠 (create_app)、PRAGMA 監聽與全域 413 例外攔截
+│   ├── __init__.py                         # 應用程式工廠 (create_app)、PRAGMA 監聽、自動遷移觸發與全域 413 例外攔截
 │   ├── config.py                           # 集中設定檔 (環境變數、資料庫 URI、模型路徑、限制常數)
 │   ├── extensions.py                       # 單例擴充元件 (db、ORDER_CHECKOUT_LOCK、LLM_LOCK)
 │   ├── models/                             # 資料庫 ORM 模型層 (Models Layer)
@@ -31,19 +31,20 @@ Project Root/
 │   │   └── coupon.py                       # 優惠券模板 (Coupon)、會員持有券 (UserCoupon)
 │   ├── services/                           # 商業邏輯與演算法服務層 (Service Layer)
 │   │   ├── __init__.py                     # 服務層匯出模組
-│   │   ├── cv_service.py                   # 影像前處理、EXIF 修正、YuNet 人臉偵測與 SFace 特徵提取
+│   │   ├── cv_service.py                   # 影像前處理、EXIF 修正、YuNet 人臉偵測與 SFace 模型快取單例管理
 │   │   ├── ai_service.py                   # Gemini 3.6 Flash、Qwen2.5 SLM 推論與三層降級兜底演算法
 │   │   ├── order_service.py                # 結帳臨界區防護、庫存自動扣減、訂單全量回滾與營運分析
+│   │   ├── migration_service.py            # 資料庫結構動態檢查、每日取餐流水號校正與歷史套餐無客製化旗標清洗
 │   │   └── event_bus.py                    # SSE 訂單即時推播廣播器 (OrderEventBus)
 │   └── routes/                             # 功能路由控制器藍圖 (Flask Blueprints)
 │       ├── __init__.py                     # 路由藍圖模組
-│       ├── customer.py                     # 前台點餐、優惠碼驗證、購物車結帳、我的訂單
+│       ├── customer.py                     # 前台點餐、優惠碼驗證、購物車結帳、取餐號碼互斥發放、我的訂單
 │       ├── auth.py                         # 會員註冊、人臉辨識登入、手機號碼登入、訪客模式與登出
-│       ├── rewards.py                      # 紅利商城頁面、點數兌換優惠券與餐點
-│       ├── admin.py                        # 後台儀表板、菜單/套餐/會員 CRUD、備份還原與 Excel 匯入匯出
+│       ├── rewards.py                      # 紅利商城頁面、點數兌換優惠券/餐點、購物車移除退還點數 API
+│       ├── admin.py                        # 後台儀表板、菜單/套餐/會員 CRUD、安全備份還原與 Excel 智慧匯入匯出
 │       ├── kitchen.py                      # KDS 廚房出單看板、訂單合併與批次出餐
-│       ├── pickup.py                       # 櫃檯顧客叫號螢幕、取餐核銷與 SSE 串流推播
-│       └── common.py                       # 前台顧客進出工作階段 (Session Tracking) 輔助工具
+│       ├── pickup.py                       # 櫃檯顧客叫號螢幕、取餐核銷與安全 SSE 串流推播
+│       └── common.py                       # 前台顧客進出工作階段 (CustomerLog Session Tracking) 輔助工具
 ├── database/                               # 資料庫專屬資料夾
 │   ├── menu.db                             # 主資料庫
 │   ├── menu.db-wal                         # WAL 預寫日誌 (若存在)
@@ -56,8 +57,8 @@ Project Root/
 │   ├── menu/                               # 店家上傳之餐點圖檔
 │   └── member/                             # 會員註冊時擷取之人臉相片
 ├── templates/                              # 前端 HTML 模板
-│   ├── admin.html                          # 店家管理後台 (儀表板、菜單、套餐、會員與 AI 文案生成)
-│   ├── customer.html                       # 顧客點餐首頁 (Kiosk UI、套餐彈窗與多重客製化)
+│   ├── admin.html                          # 店家管理後台 (儀表板、菜單、套餐客製化連動、會員與 AI 文案生成)
+│   ├── customer.html                       # 顧客點餐首頁 (Kiosk UI、套餐彈窗、加購分組池化與多重客製化)
 │   ├── register.html                       # 會員註冊、雙軌登入與鏡頭擷取介面
 │   ├── kitchen.html                        # KDS 廚房即時出單與配料看板
 │   ├── counter.html                        # 櫃檯顧客取餐叫號螢幕
@@ -68,7 +69,7 @@ Project Root/
 
 💻 安裝與執行環境 (Environment & Setup)
 1. 作業系統：Windows 11 (25H2) / Linux / macOS
-2. Python 版本：Python 3.10+
+2. Python 版本：Python 3.10+ (支援至 Python 3.14 環境)
 3. 安裝必備套件 (Dependencies):
    打開終端機 (Terminal) 執行以下指令：
    pip install flask flask-sqlalchemy opencv-python numpy pandas openpyxl werkzeug google-generativeai python-dotenv llama-cpp-python
@@ -77,7 +78,7 @@ Project Root/
      pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 
 4. 本地模型配置 (選配，確保離線 AI 運作)：
-   至 Hugging Face 下載 `qwen2.5-1.5b-instruct-q4_k_m.gguf`，放置於 `models/` 資料夾下[cite: 51, 53]：
+   至 Hugging Face 下載 `qwen2.5-1.5b-instruct-q4_k_m.gguf`，放置於 `models/` 資料夾下：
    https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/tree/main
 
 5. 啟動伺服器：
@@ -88,7 +89,7 @@ Project Root/
 🤖 三層無縫降級 AI 機制 (Tri-tier Resilient AI Architecture)
 系統在「智慧營運建議 (AI Insight)」與「菜單商品文案生成 (AI Copywriter)」模組中建構了三層自動降級防護網：
 1. 第一層 (主要 - 雲端)：優先請求 Google Gemini 3.6 Flash，獲取高語意品質輸出。
-2. 第二層 (備援 - 本地邊緣 AI)：當遇 API Key 未配置、無網路連線、403 或 429 配額超額時，啟動 60 秒冷卻，自動切換至本機 `Qwen2.5-1.5B (GGUF)` 進行純本機推論（內建 threading.Lock 執行緒鎖，防並發衝突與記憶體覆寫）[cite: 43, 53]。
+2. 第二層 (備援 - 本地邊緣 AI)：當遇 API Key 未配置、無網路連線、403 或 429 配額超額時，啟動 60 秒冷卻，自動切換至本機 `Qwen2.5-1.5B (GGUF)` 進行純本機推論（內建 threading.Lock 執行緒鎖，防並發衝突與記憶體覆寫）。
 3. 第三層 (兜底 - 本地動態規則)：若本機未加載 GGUF 權重，則退回本地動態營運規則與美食辭庫演算法，0 毫秒極速組裝回傳，全流程不報錯、無錯誤彈窗、不卡死主執行緒。
 
 🔑 系統功能指南 (Features Guide)
@@ -97,27 +98,38 @@ Project Root/
 - 雙軌登入：首頁支援「刷臉自動辨識」與「手機號碼」雙通道登入，亦支援隨機訪客快速點餐。
 - 智能註冊：提供鏡頭視訊彈窗取景，後端 YuNet 演算法強制過濾無人臉相片。
 - 套餐與客製化：點選主餐可選擇單點或升級套餐（支援至多三款配餐），支援同介面多品項客製化（甜度/冰塊/加料）。
-- 會員紅利：結帳實付金額自動累積點數，點數可用於折抵消費或至「M-Points 回饋商城」兌換專屬優惠券與指定餐點。
+- 智慧加購體系：
+  * 加購配額池化管理：嚴格依條件分組累算（特定類別/單品），加購品不可作為資格母體。
+  * 通用加購 (`any`) 防呆：限定僅「主餐」具備通用加購資格，飲料、點心、副餐等不可跨類別任意解鎖。
+- 會員紅利與商城：
+  * 消費實付每滿 $100 自動累積 1 點紅利（1 點 = $1 折現）。
+  * 紅利商城支援以點數兌換專屬優惠券與指定餐點。
+  * 購物車彈性退點：自購物車移除商城兌換餐點時，後端驗證並即時全額返還已扣除之紅利點數。
 
 【店家後台 - Admin Dashboard】
-- 進入方式：客用首頁點擊管理員入口，或造訪 http://127.0.0.1:5000/admin (預設帳密：1234 / 1234)。
-- AI 智慧文案：編輯或新增餐點時，點擊「AI 生成文案」即可根據餐點名稱與分類秒級撰寫誘人描述。
+- 進入方式：首頁點擊管理員入口，或造訪 http://127.0.0.1:5000/admin (預設帳密：1234 / 1234)。
+- AI 智慧文案：編輯或新增餐點時，點擊「AI 生成文案」即可根據品名與分類秒級撰寫誘人描述。
+- 菜單與加購管理：新增品項特價金額具備雙向連動驗證，加購條件支援包含自身分類之指定解鎖設定。
+- 套餐設定防呆：
+  * 配餐欄位具備動態防重複選取校驗。
+  * 配餐屬性連動：選取無客製化品項（如：水）時，自動隱藏並停用客製化開關，後端同步進行二次校驗。
 - 營運分析看板：即時統計待製作單數、出餐等待時間 (ETA)、客單價，並由 AI 產出具體經營建議。
 - 資料匯入匯出：支援多工作表 (Sheet) Excel 智慧雙向匯入與匯出（包含進場留存耗時、取餐流水號與營運報表）。
-- 備份與還原：一鍵打包 SQLite 資料庫與實體相片為 ZIP 檔案，內建 Zip Bomb 與檔案大小安全防護[cite: 32, 51]。
+- 備份與還原：一鍵打包 SQLite 資料庫與實體相片為 ZIP 檔案，內建 Zip Bomb 與檔案大小安全防護。
 
 【廚房與櫃檯協作 - KDS & Counter】
 - 廚房看板 (kitchen.html)：透過 SSE 串流實現零延遲更新，同單同品項客製化自動歸納合併，支援單筆出餐與一鍵批次出餐。
-- 櫃檯叫號 (counter.html) 與核銷 (pickup.html)：支援 1~999 每日循環取餐流水號，狀態即時同步。
+- 櫃檯叫號 (counter.html) 與核銷 (pickup.html)：支援 1~999 每日循環取餐流水號，狀態即時推播同步。
 
 ⚠️ 重要注意事項與排錯 (Troubleshooting)
 1. 純英文路徑：OpenCV 與 GGUF 模型載入不支援包含中文字元的目錄路徑，請確保專案根目錄全為英數字。
-2. Windows Console 寫入保護：伺服器啟動已加入 `NO_COLOR=1` 與 `use_reloader=False` 設定，避免 Windows 控制台彩色控制碼崩潰與多程序重複載入模型問題。
+2. Windows Console 寫入保護：伺服器啟動已加入 `NO_COLOR=1` 與 `use_reloader=False` 設定，避免控制台彩色控制碼崩潰與多程序重複載入模型問題。
 3. 攝影機授權：使用人臉辨識登入時，請確保瀏覽器已允許本機攝影機存取權限。
+4. SSE 串流連線：串流初始資料已解耦於 Flask Request Context 外生成，防範非同步串流中斷引發之 `Working outside of application context` 異常。
 
 ⚙️ 環境變數設定 (.env)
 在專案根目錄建立 `.env` 檔案並填入以下內容：
 GEMINI_API_KEY="你的_GEMINI_API_金鑰" # 若留空則系統自動全程走本地 Qwen2.5 SLM 推論
-SECRET_KEY="請使用_secrets_token_hex_32_產生的長字串" //可透過終端機執行 python -c "import secrets; print(secrets.token_hex(32))" 產生
+SECRET_KEY="請使用_secrets_token_hex_32_產生的長字串" # 可透過終端機執行 python -c "import secrets; print(secrets.token_hex(32))" 產生
 ADMIN_USERNAME="1234"
 ADMIN_PASSWORD="1234"
