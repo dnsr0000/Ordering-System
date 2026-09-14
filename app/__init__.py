@@ -17,7 +17,8 @@ def create_app(config_class=Config):
     os.makedirs(config_class.DATABASE_DIR, exist_ok=True)
     os.makedirs(config_class.UPLOAD_FOLDER_MEMBER, exist_ok=True)
     os.makedirs(config_class.UPLOAD_FOLDER_MENU, exist_ok=True)
-
+    os.makedirs(config_class.MODELS_DIR, exist_ok=True)
+    
     # 初始化資料庫
     db.init_app(app)
 
@@ -56,7 +57,7 @@ def create_app(config_class=Config):
     # 初始化資料庫資料表與執行自動遷移
     with app.app_context():
         db.create_all()
-        # 🌟 自動執行結構檢測與舊資料補齊
+        #  自動執行結構檢測與舊資料補齊
         from app.services.migration_service import run_database_migrations
         run_database_migrations()
 

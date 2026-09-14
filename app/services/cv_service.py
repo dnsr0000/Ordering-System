@@ -3,6 +3,20 @@ import cv2
 from PIL import Image, ImageOps
 from app.config import Config
 
+cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
+
+#  全域模型快取變數
+_detector = None
+_recognizer = None
+
+def get_face_models():
+    global _detector, _recognizer
+    if _recognizer is None and os.path.exists(Config.SFACE_MODEL):
+        _recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
+    if _detector is None and os.path.exists(Config.YUNET_MODEL):
+        _detector = cv2.FaceDetectorYN.create(Config.YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+    return _detector, _recognizer
+
 def save_and_fix_image(file_storage, dest_path):
     try:
         file_storage.seek(0)
@@ -24,11 +38,10 @@ def save_and_fix_image(file_storage, dest_path):
         return False
 
 def extract_feature(image_path):
-    if not os.path.exists(Config.YUNET_MODEL) or not os.path.exists(Config.SFACE_MODEL):
+    detector, recognizer = get_face_models()
+    if detector is None or recognizer is None:
         return None
     try:
-        detector = cv2.FaceDetectorYN.create(Config.YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
-        recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
         img = cv2.imread(image_path)
         if img is None or img.size == 0 or img.shape[0] < 20 or img.shape[1] < 20:
             return None
@@ -44,5 +57,7 @@ def extract_feature(image_path):
 def compare_faces(feat1, feat2):
     if feat1 is None or feat2 is None:
         return 0.0
-    recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
+    _, recognizer = get_face_models()
+    if recognizer is None:
+        return 0.0
     return recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)

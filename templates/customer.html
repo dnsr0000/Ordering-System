@@ -806,7 +806,6 @@
     }
     // 計算特定加購品當前的剩餘配額 (Remaining Quota)
     function getRemainingQuotaForAddon(addonDef) {
-        // A. 全域總量防呆：購物車內「所有加購品總數」不得超過「所有正價合格商品總數」
         const totalRegularDishes = cart
             .filter(i => !i.is_add_on && i.can_addon !== false)
             .reduce((sum, i) => sum + i.quantity, 0);
@@ -818,10 +817,14 @@
         const globalRemainingQuota = Math.max(0, totalRegularDishes - totalAddonsInCart);
         if (globalRemainingQuota <= 0) return 0;
 
-        // B. 條件專屬配額：該特定條件（如特定分類）提供的正價商品數 - 已被該條件消耗的加購品總數
+        // 符合此加購品專屬條件的正價商品數
         const qualifyingCount = cart
             .filter(i => isItemQualifyingForAddon(i, addonDef))
             .reduce((sum, i) => sum + i.quantity, 0);
+
+        // 購物車內已佔用同條件配額的加購品總數量
+        const targetKey = (addonDef.trigger_target || '').trim().toLowerCase();
+        const targetType = addonDef.trigger_type || 'any';
 
         const usedCountForCondition = cart
             .filter(i => i.is_add_on)
@@ -830,15 +833,13 @@
                     ? availableAddons.find(a => String(a.id) === String(i.id))
                     : null;
                 if (!def) return false;
-                // 只要消耗的是相同觸發條件（例如同一個特定分類），就共用該分類名額
-                return (def.trigger_type || 'any') === (addonDef.trigger_type || 'any') &&
-                    (def.trigger_target || '').trim().toLowerCase() === (addonDef.trigger_target || '').trim().toLowerCase();
+                return (def.trigger_type || 'any') === targetType &&
+                    (def.trigger_target || '').trim().toLowerCase() === targetKey;
             })
             .reduce((sum, i) => sum + i.quantity, 0);
 
         const conditionRemainingQuota = Math.max(0, qualifyingCount - usedCountForCondition);
 
-        // 取兩者嚴格最小值（既不能超過該分類名額，也不能超過全單 1:1 總名額）
         return Math.min(globalRemainingQuota, conditionRemainingQuota);
     }
     // 取得購物車中可提供加購資格的主餐總數 (排除飲料、點心、副餐、配餐)
@@ -1053,7 +1054,7 @@
         const mainMods = pendingComboItem.modifiers;
         const hasMainMods = (mainMods && mainMods !== 'none' && mainMods !== 'undefined');
         const hasSideMods = (sides && sides.length > 0);
-
+        currentAddonFlag = false;
         if (!hasMainMods && !hasSideMods) {
             addToCart(pendingComboItem.id, mainName, finalPrice, comboPrefix, false, pendingComboItem.category, canAddon);
             return;
@@ -1278,25 +1279,36 @@
 
         let hasRemoved = false;
 
-        // 1. 條件審核：解鎖母體若不存在，自動移除該加購品
-        cart = cart.filter(item => {
-            if (!item.is_add_on) return true;
-            const addonDef = (typeof availableAddons !== 'undefined')
-                ? availableAddons.find(a => String(a.id) === String(item.id))
-                : null;
+       // 按觸發條件分類統計可用正價額度與加購品
+        if (typeof availableAddons !== 'undefined') {
+            const conditionUsage = {}; 
 
-            if (!addonDef) return false;
-            
-            // 檢查購物車內是否有「正價非加購品」滿足條件
-            const hasQualifyingItem = cart.some(c => isItemQualifyingForAddon(c, addonDef));
-            if (!hasQualifyingItem) {
-                hasRemoved = true;
-                return false;
-            }
-            return true;
-        });
+            cart.forEach(item => {
+                if (!item.is_add_on) return;
 
-        // 2. 總量防呆：加購品總量不得超過正價餐點總量 (1:1 配對)
+                const addonDef = availableAddons.find(a => String(a.id) === String(item.id));
+                if (!addonDef) {
+                    item.quantity = 0;
+                    hasRemoved = true;
+                    return;
+                }
+
+                const condKey = `${addonDef.trigger_type || 'any'}_${(addonDef.trigger_target || '').trim().toLowerCase()}`;
+                const qualifyingTotal = getQualifyingCountForAddon(addonDef);
+                const currentUsed = conditionUsage[condKey] || 0;
+
+                // 該條件下的加購總數不可超過合格正價商品數
+                if (currentUsed + item.quantity > qualifyingTotal) {
+                    const allowedQty = Math.max(0, qualifyingTotal - currentUsed);
+                    if (item.quantity !== allowedQty) {
+                        item.quantity = allowedQty;
+                        hasRemoved = true;
+                    }
+                }
+                conditionUsage[condKey] = currentUsed + item.quantity;
+            });
+        }
+
         const totalRegular = cart.filter(i => !i.is_add_on && i.can_addon !== false).reduce((sum, i) => sum + i.quantity, 0);
         let totalAddons = cart.filter(i => i.is_add_on).reduce((sum, i) => sum + i.quantity, 0);
 
@@ -1308,17 +1320,18 @@
                         totalAddons--;
                         hasRemoved = true;
                     }
-                    if (cart[i].quantity === 0) cart.splice(i, 1);
                 }
                 if (totalAddons <= totalRegular) break;
             }
         }
 
+        // 清除數量歸零的品項
+        cart = cart.filter(item => item.quantity > 0);
+
         if (hasRemoved) {
             saveCartToStorage();
-            setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品名額不足，已自動為您調整數量！'), 100);
+            setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品名額不足，已自動調整數量！'), 100);
         }
-
         // 3. 渲染購物車品項列表
         const container = document.getElementById('cart-items');
         const count = document.getElementById('cart-count');
@@ -1405,19 +1418,7 @@
         updateCartUI();
     }
 
-    function changeQty(index, delta) {
-        // 點擊「+」時檢查是否超過主餐配額
-        if (delta > 0 && cart[index].is_add_on) {
-            if (getTotalAddonsCount() >= getTotalMainDishesCount()) {
-                alert('⚠️ 加購品數量已達上限（每份主餐限加購1份）！');
-                return;
-            }
-        }
-        cart[index].quantity += delta;
-        if (cart[index].quantity <= 0) cart.splice(index, 1);
-        saveCartToStorage();
-        updateCartUI();
-    }
+
 
     function selectUserCoupon(code) {
         const promoInput = document.getElementById('promoInput');
@@ -1977,6 +1978,16 @@
                     clearInterval(myOrdersTimer);
                     myOrdersTimer = null;
                 }
+            });
+        }
+    });
+    // 監聽客製化彈窗關閉時重置加購標籤
+    document.addEventListener("DOMContentLoaded", function () {
+        const modModalEl = document.getElementById('modifierModal');
+        if (modModalEl) {
+            modModalEl.addEventListener('hidden.bs.modal', function () {
+                currentAddonFlag = false;
+                currentSelectedItem = null;
             });
         }
     });

@@ -2,6 +2,7 @@ import os
 import io
 import time
 import zipfile
+import re
 import unicodedata
 import pandas as pd
 from datetime import datetime, timedelta
@@ -93,7 +94,7 @@ def add_item():
     price = request.form.get('price')
     if name and price:
         final_price = max(0, round(float(price)))
-        can_be_add_on = bool(request.form.get('can_be_add_on'))
+        can_be_add_on = True if request.form.get('can_be_add_on') else False
         add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
         
         if can_be_add_on:
@@ -109,21 +110,29 @@ def add_item():
             filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, image_filename)
             save_and_fix_image(image, filepath)
 
+        is_sold_out = request.form.get('is_sold_out') == '1'
+        is_rec = request.form.get('is_recommended') == '1'
+        is_new = request.form.get('is_new') == '1'
+        is_discount = request.form.get('is_discount') == '1'
+
+        stock_val = max(0, int(request.form.get('stock') or 0))
+        total_stock_val = max(stock_val, int(request.form.get('total_stock') or stock_val))
+
         new_item = MenuItem(
             name=name,
             category=request.form.get('category', '主餐'),
             modifiers=request.form.get('modifiers', 'none'),
             price=final_price,
-            stock=max(0, int(request.form.get('stock') or 0)),
-            total_stock=max(0, int(request.form.get('total_stock') or 50)),
+            stock=stock_val,
+            total_stock=total_stock_val,
             description=request.form.get('description', ''),
             image_path=image_filename,
-            is_sold_out=request.form.get('is_sold_out') == '1',
-            is_recommended=request.form.get('is_recommended') == '1',
-            is_manual_popular=request.form.get('is_recommended') == '1',
-            is_discount=request.form.get('is_discount') == '1',
+            is_sold_out=is_sold_out,
+            is_recommended=is_rec,
+            is_manual_popular=is_rec,
+            is_discount=is_discount,
             discount_price=max(0, round(float(request.form.get('discount_price') or 0))),
-            is_new=request.form.get('is_new') == '1',
+            is_new=is_new,
             can_be_add_on=can_be_add_on,
             add_on_price=add_on_price,
             addon_trigger_type=request.form.get('addon_trigger_type', 'any'),
@@ -221,23 +230,57 @@ def delete_item(id):
 # ==============================================================================
 # 套餐組合 CRUD
 # ==============================================================================
+def check_side_customizable(item_id, is_checked):
+    """檢查配餐是否具備客製化群組，無客製化品項一律強制為 False"""
+    if not item_id or not is_checked:
+        return False
+    item = db.session.get(MenuItem, item_id)
+    if not item or not item.modifiers or item.modifiers == 'none':
+        return False
+    return True
+
 @admin_bp.route('/admin/add_combo', methods=['POST'])
 def add_combo():
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin.admin_dashboard'))
+    
     main_item_id = int(request.form.get('main_item_id'))
     name = str(request.form.get('name', '')).strip()
     additional_price = max(0, int(request.form.get('additional_price') or 0))
     description = request.form.get('description', '')
-
+    
     item1_id = int(request.form.get('item1_id')) if request.form.get('item1_id') else None
     item2_id = int(request.form.get('item2_id')) if request.form.get('item2_id') else None
     item3_id = int(request.form.get('item3_id')) if request.form.get('item3_id') else None
 
     chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
+        db.session.rollback()
         return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
 
+    #同主餐名稱重複防呆
+    existing_name = ComboOption.query.filter_by(
+        main_item_id=main_item_id,
+        name=name
+    ).first()
+    if existing_name:
+        db.session.rollback()
+        return f"<script>alert('❌ 該主餐已存在名為【{name}】的套餐，請使用不同名稱！'); window.location.href='/admin?tab=menu';</script>"
+
+    #同主餐配餐內容重複防呆
+    target_sides_set = set(chosen_sides)
+    existing_combos = ComboOption.query.filter_by(main_item_id=main_item_id).all()
+    for ec in existing_combos:
+        ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
+        if set(ec_sides) == target_sides_set:
+            db.session.rollback()
+            return f"<script>alert('❌ 該主餐已存在包含相同配餐內容的套餐【{ec.name}】，不可重複建立相同組合！'); window.location.href='/admin?tab=menu';</script>"
+
+    item1_customizable = check_side_customizable(item1_id, request.form.get('item1_customizable') == '1')
+    item2_customizable = check_side_customizable(item2_id, request.form.get('item2_customizable') == '1')
+    item3_customizable = check_side_customizable(item3_id, request.form.get('item3_customizable') == '1')
+    can_addon = True if request.form.get('can_addon') == '1' else False
+    
     new_combo = ComboOption(
         main_item_id=main_item_id,
         name=name,
@@ -246,19 +289,22 @@ def add_combo():
         item1_id=item1_id,
         item2_id=item2_id,
         item3_id=item3_id,
-        item1_customizable=(request.form.get('item1_customizable') == '1'),
-        item2_customizable=(request.form.get('item2_customizable') == '1'),
-        item3_customizable=(request.form.get('item3_customizable') == '1'),
-        can_addon=(request.form.get('can_addon') == '1')
+        item1_customizable=item1_customizable,
+        item2_customizable=item2_customizable,
+        item3_customizable=item3_customizable,
+        can_addon=can_addon
     )
     db.session.add(new_combo)
     db.session.commit()
-    return redirect(url_for('admin.admin_dashboard', tab='menu'))
+    db.session.expire_all() 
+    return f"<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
 def edit_combo(id):
+    """編輯現有套餐組合設定"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin.admin_dashboard'))
+        
     combo = ComboOption.query.get_or_404(id)
     main_item_id = int(request.form.get('main_item_id'))
     name = str(request.form.get('name', '')).strip()
@@ -271,7 +317,30 @@ def edit_combo(id):
 
     chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
+        db.session.rollback()
         return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
+
+    #同主餐名稱重複防呆 (排除自己)
+    duplicate_name = ComboOption.query.filter(
+        ComboOption.id != id,
+        ComboOption.main_item_id == main_item_id,
+        ComboOption.name == name
+    ).first()
+    if duplicate_name:
+        db.session.rollback()
+        return f"<script>alert('❌ 該主餐已有其他名為【{name}】的套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+
+    #同主餐配餐內容重複防呆 (排除自己)
+    target_sides_set = set(chosen_sides)
+    existing_combos = ComboOption.query.filter(
+        ComboOption.id != id,
+        ComboOption.main_item_id == main_item_id
+    ).all()
+    for ec in existing_combos:
+        ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
+        if set(ec_sides) == target_sides_set:
+            db.session.rollback()
+            return f"<script>alert('❌ 該主餐已有相同配餐組合的套餐【{ec.name}】，請勿重複配置！'); window.location.href='/admin?tab=menu';</script>"
 
     combo.main_item_id = main_item_id
     combo.name = name
@@ -280,11 +349,13 @@ def edit_combo(id):
     combo.item1_id = item1_id
     combo.item2_id = item2_id
     combo.item3_id = item3_id
-    combo.item1_customizable = (request.form.get('item1_customizable') == '1')
-    combo.item2_customizable = (request.form.get('item2_customizable') == '1')
-    combo.item3_customizable = (request.form.get('item3_customizable') == '1')
-    combo.can_addon = (request.form.get('can_addon') == '1')
+    combo.item1_customizable = check_side_customizable(item1_id, request.form.get('item1_customizable') == '1')
+    combo.item2_customizable = check_side_customizable(item2_id, request.form.get('item2_customizable') == '1')
+    combo.item3_customizable = check_side_customizable(item3_id, request.form.get('item3_customizable') == '1')
+    combo.can_addon = True if request.form.get('can_addon') == '1' else False
+
     db.session.commit()
+    db.session.expire_all()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
 @admin_bp.route('/admin/delete_combo/<int:id>')
@@ -723,14 +794,33 @@ def export_excel():
         if 'Analytics' in selected_tables:
             valid_orders = [o for o in filtered_orders if o.status != 'Cancelled']
             tot_revenue = sum(o.total_price or 0 for o in valid_orders)
+            total_points = sum(o.points_used or 0 for o in valid_orders)
             analytics_data = [
                 {'指標 (Metric)': '區間總訂單數', '數值 (Value)': len(filtered_orders)},
                 {'指標 (Metric)': '有效訂單數', '數值 (Value)': len(valid_orders)},
                 {'指標 (Metric)': '總營收', '數值 (Value)': tot_revenue},
                 {'指標 (Metric)': '總折扣折抵', '數值 (Value)': sum(o.discount_amount or 0 for o in valid_orders)},
+                {'指標 (Metric)': '紅利使用總額 (Points Used)', '數值 (Value)': total_points},
                 {'指標 (Metric)': '平均客單價', '數值 (Value)': round(tot_revenue / len(valid_orders), 2) if valid_orders else 0}
             ]
             pd.DataFrame(analytics_data).to_excel(writer, sheet_name='區間營運總覽(Analytics)', index=False, startrow=1)
+
+            # 區間熱銷排行 (依銷售數量排序，排除紅利免費兌換品項)
+            item_stats = {}
+            for o in valid_orders:
+                for item in o.items:
+                    if '[點數兌換]' in item.item_name or item.item_name.startswith('🎁') or item.customization == '紅利免費兌換':
+                        continue
+                    if item.item_name not in item_stats:
+                        item_stats[item.item_name] = {'qty': 0, 'rev': 0}
+                    item_stats[item.item_name]['qty'] += (item.quantity or 1)
+                    item_stats[item.item_name]['rev'] += ((item.price or 0) * (item.quantity or 1))
+
+            sales_data = [
+                {'餐點名稱 (Item Name)': name, '銷售數量 (Qty)': stats['qty'], '創造營收 (Revenue)': stats['rev']}
+                for name, stats in sorted(item_stats.items(), key=lambda x: x[1]['qty'], reverse=True)
+            ]
+            pd.DataFrame(sales_data if sales_data else [{'資料': '所選日期範圍內無銷售資料'}]).to_excel(writer, sheet_name='區間熱銷排行(ItemSales)', index=False, startrow=1)
 
         if 'AdminLog' in selected_tables:
             logs_query = AdminLog.query
@@ -744,108 +834,400 @@ def export_excel():
             } for lg in logs_query.order_by(AdminLog.id.desc()).all()]
             pd.DataFrame(log_data if log_data else [{'資料': '目前無紀錄'}]).to_excel(writer, sheet_name='管理員進出日誌(AdminLog)', index=False, startrow=1)
 
-        # 欄寬自適應格式化
+        # 日期區間標題與欄寬自適應格式化 (中文全形字元加權計算，避免欄位過窄)
+        display_start = start_date_str if start_date_str else '全部區間 (All)'
+        display_end = end_date_str if end_date_str else '全部區間 (All)'
+        date_range_text = f"報表資料區間：{display_start} ~ {display_end}"
+
+        date_dependent_sheets = {
+            '訂單總覽(Order)', '訂單明細(OrderItem)',
+            '區間營運總覽(Analytics)', '區間熱銷排行(ItemSales)',
+            '管理員進出日誌(AdminLog)'
+        }
+
+        def calculate_display_width(val):
+            if val is None:
+                return 0
+            text = str(val)
+            width = 0.0
+            for char in text:
+                status = unicodedata.east_asian_width(char)
+                if status in ('F', 'W') or ord(char) >= 0x2600 or ord(char) >= 0x1F000:
+                    width += 2.2
+                else:
+                    width += 1.1
+            return int(width)
+
         for sheet_name, ws in writer.sheets.items():
+            if sheet_name in date_dependent_sheets:
+                ws.cell(row=1, column=1, value=date_range_text).font = Font(bold=True, color="0055aa")
+
             for col in ws.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
-                ws.column_dimensions[col[0].column_letter].width = max(max_len + 4, 12)
+                max_len = 0
+                column_letter = col[0].column_letter
+                for cell in col:
+                    if sheet_name in date_dependent_sheets and cell.row == 1 and cell.column == 1:
+                        continue
+                    cell_len = calculate_display_width(cell.value)
+                    if cell_len > max_len:
+                        max_len = cell_len
+                ws.column_dimensions[column_letter].width = max(max_len + 4, 12)
 
     output.seek(0)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return send_file(output, download_name=f"Kiosk_Export_{timestamp}.xlsx", as_attachment=True, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    date_suffix = f"_{start_date_str}_to_{end_date_str}" if start_date_str and end_date_str else ""
+    filename = f"Kiosk_Export_{timestamp}{date_suffix}.xlsx"
+    return send_file(output, download_name=filename, as_attachment=True, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 # ==============================================================================
 # Excel 匯入 (菜單匯入與多工作表智慧匯入)
 # ==============================================================================
 @admin_bp.route('/admin/import_excel', methods=['POST'])
 def import_menu_excel():
+    """Excel 批量匯入菜單 (支援自身匯出的檔案與自訂格式)"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin.admin_dashboard'))
+        
     file = request.files.get('file')
     if not file or file.filename == '':
-        return "<script>alert('請選擇檔案！'); window.history.back();</script>", 400
+        return "<script>alert('請選擇 Excel/CSV 檔案！'); window.history.back();</script>", 400
+
     try:
-        df = pd.read_excel(file) if not file.filename.endswith('.csv') else pd.read_csv(file)
-        col_map = {
-            '餐點名稱(Name)': 'name', '分類(Category)': 'category', '單價(Price)': 'price',
-            '客製化群組(Modifiers)': 'modifiers', '商品描述(Description)': 'description',
-            '熱門推薦(Recommended)': 'is_recommended', '新品上市(Is New)': 'is_new',
-            '是否特價(Is Discount)': 'is_discount', '特價金額(Discount Price)': 'discount_price',
-            '開放紅利兌換(Is Reward)': 'is_reward', '兌換所需點數(Reward Points)': 'reward_points'
+        if file.filename.endswith('.csv'):
+            df = pd.read_csv(file)
+        else:
+            excel_file = pd.ExcelFile(file)
+            target_sheet = None
+            for sheet in excel_file.sheet_names:
+                if '菜單' in sheet or 'MenuItem' in sheet or 'menu' in sheet.lower():
+                    target_sheet = sheet
+                    break
+            df = pd.read_excel(excel_file, sheet_name=target_sheet if target_sheet else 0)
+
+        column_mapping = {
+            '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name', '名稱': 'name', 'name': 'name',
+            '分類(Category)': 'category', '分類': 'category', 'category': 'category',
+            '單價(Price)': 'price', '單價': 'price', '原單價': 'price', 'price': 'price',
+            '客製化類型(Modifiers)': 'modifiers', '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers', '客製化': 'modifiers', 'modifiers': 'modifiers',
+            '商品描述(Description)': 'description', '簡介': 'description', '描述': 'description', 'description': 'description',
+            '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended', '熱門推薦': 'is_recommended', 'is_recommended': 'is_recommended',
+            '新品上市(Is New)': 'is_new', '新品': 'is_new', 'is_new': 'is_new',
+            '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount', '特價': 'is_discount', 'is_discount': 'is_discount',
+            '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price', 'discount_price': 'discount_price',
+            '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward', 'is_reward': 'is_reward',
+            '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points', 'reward_points': 'reward_points',
+            '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points'
         }
-        df.rename(columns=col_map, inplace=True)
+        df.rename(columns=column_mapping, inplace=True)
+
+        #必要欄位防呆
+        if 'name' not in df.columns or 'price' not in df.columns:
+            return "<script>alert('檔案缺少必要欄位：「餐點名稱」或「單價」！'); window.history.back();</script>", 400
+
+        #安全的布林轉換
+        def parse_bool(val):
+            if pd.isna(val):
+                return False
+            s = str(val).strip().lower()
+            return s in ['1', 'true', '是', 'yes', 'y']
+
         for _, row in df.iterrows():
             name = str(row.get('name', '')).strip()
-            if name and not pd.isna(row.get('name')):
-                new_item = MenuItem(
-                    name=name, category=str(row.get('category', '主餐')).strip(),
-                    price=max(0, round(float(row.get('price', 0)))), modifiers=str(row.get('modifiers', 'none')).strip(),
-                    description=str(row.get('description', '')).strip(),
-                    is_discount=(str(row.get('is_discount', '')).lower() in ['true', '1', '是']),
-                    discount_price=max(0, round(float(row.get('discount_price', 0)))),
-                    is_recommended=(str(row.get('is_recommended', '')).lower() in ['true', '1', '是']),
-                    is_new=(str(row.get('is_new', '')).lower() in ['true', '1', '是']),
-                    is_reward=(str(row.get('is_reward', '')).lower() in ['true', '1', '是']),
-                    reward_points=max(0, int(row.get('reward_points', 0)))
-                )
-                db.session.add(new_item)
+            if not name or pd.isna(row.get('name')) or name == '目前無資料':
+                continue
+
+            category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
+            
+            try: price = max(0, round(float(row.get('price', 0))))
+            except (ValueError, TypeError): price = 0
+
+            try: discount_price = max(0, round(float(row.get('discount_price', 0))))
+            except (ValueError, TypeError): discount_price = 0
+
+            try: reward_points = max(0, int(row.get('reward_points', 0)))
+            except (ValueError, TypeError): reward_points = 0
+
+            try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
+            except (ValueError, TypeError): reward_discount_points = 0
+
+            modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
+            if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
+                modifiers = 'none'
+
+            description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
+            
+            is_recommended = parse_bool(row.get('is_recommended'))
+            is_new = parse_bool(row.get('is_new'))
+            is_discount = parse_bool(row.get('is_discount'))
+            is_reward = parse_bool(row.get('is_reward'))
+
+            new_item = MenuItem(
+                name=name,
+                category=category,
+                price=price,
+                modifiers=modifiers,
+                description=description,
+                image_path='',
+                is_recommended=False,
+                is_manual_popular=is_recommended,
+                is_discount=is_discount, 
+                discount_price=discount_price,
+                is_new=is_new,
+                is_reward=is_reward,
+                reward_points=reward_points,
+                reward_discount_points=reward_discount_points
+            )
+            db.session.add(new_item)
+
         db.session.commit()
         update_popular_items()
         return redirect(url_for('admin.admin_dashboard', tab='menu'))
+
     except Exception as e:
+        db.session.rollback()
         return f"<script>alert('匯入解析失敗：{e}'); window.history.back();</script>", 500
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
 def import_smart():
+    """智慧匯入功能：自動辨識 Excel 中的工作表與純英文/中文欄位，並匯入/更新對應資料表"""
     if not session.get('admin_logged_in'):
         return redirect(url_for('admin.admin_dashboard'))
+
     file = request.files.get('file')
     if not file or file.filename == '':
         return "<script>alert('❌ 請選擇 Excel 檔案！'); window.history.back();</script>", 400
+
     try:
         excel_file = pd.ExcelFile(file)
+        imported_counts = {'User': 0, 'MenuItem': 0, 'Coupon': 0}
+
+        #安全的布林轉換與手機號碼清洗
+        def parse_bool(val):
+            if pd.isna(val): return False
+            s = str(val).strip().lower()
+            return s in ['1', 'true', '是', 'yes', 'y']
+
+        def clean_phone_number(val):
+            """清理與格式化手機號碼，避免 Excel 浮點數轉換問題"""
+            if pd.isna(val): return ""
+            s = str(val).strip()
+            if s.endswith('.0'):
+                s = s[:-2]
+            if len(s) == 9 and s.startswith('9'):
+                s = '0' + s
+            return s
+
         for sheet in excel_file.sheet_names:
             df = pd.read_excel(excel_file, sheet_name=sheet)
             if df.empty: continue
-            cols_lower = [c.lower() for c in df.columns]
 
-            # 1. 辨識會員
-            if 'User' in sheet or '會員' in sheet or 'phone' in cols_lower:
-                df.rename(columns={'姓名(Name)': 'name', '電話(Phone)': 'phone', '紅利點數(Points)': 'points'}, inplace=True)
-                for _, r in df.iterrows():
-                    name, phone = str(r.get('name', '')).strip(), str(r.get('phone', '')).strip()
-                    if name and phone:
-                        u = User.query.filter_by(phone=phone).first()
-                        if u: u.name = name; u.points = int(r.get('points', 0))
-                        else: db.session.add(User(name=name, phone=phone, photo_path='', points=int(r.get('points', 20))))
+            cols_lower = [str(c).lower() for c in df.columns]
 
-            # 2. 辨識菜單
-            elif 'MenuItem' in sheet or '菜單' in sheet or 'price' in cols_lower:
-                df.rename(columns={'餐點名稱(Name)': 'name', '分類(Category)': 'category', '單價(Price)': 'price'}, inplace=True)
-                for _, r in df.iterrows():
-                    name = str(r.get('name', '')).strip()
-                    if name:
-                        it = MenuItem.query.filter_by(name=name).first()
-                        p = max(0, round(float(r.get('price', 0))))
-                        cat = str(r.get('category', '主餐')).strip()
-                        if it: it.price = p; it.category = cat
-                        else: db.session.add(MenuItem(name=name, price=p, category=cat))
+            # 1. 辨識是否為「會員資料 (User)」
+            if 'User' in sheet or '會員' in sheet or '電話(Phone)' in df.columns or 'phone' in cols_lower or '電話' in df.columns:
+                col_map = {
+                    '姓名(Name)': 'name', '姓名': 'name', 'name': 'name',
+                    '電話(Phone)': 'phone', '電話': 'phone', 'phone': 'phone',
+                    '紅利點數(Points)': 'points', '紅利點數': 'points', 'points': 'points'
+                }
+                df_user = df.rename(columns=col_map)
+                
+                if 'name' in df_user.columns and 'phone' in df_user.columns:
+                    for _, row in df_user.iterrows():
+                        name = str(row.get('name', '')).strip()
+                        phone = clean_phone_number(row.get('phone', ''))
+                        if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料': 
+                            continue
+                        
+                        try: points = int(row.get('points', 0))
+                        except: points = 0
+                        
+                        existing = User.query.filter_by(phone=phone).first()
+                        if existing:
+                            existing.name = name
+                            existing.points = points
+                        else:
+                            new_user = User(
+                                name=name, 
+                                phone=phone, 
+                                photo_path='', 
+                                feature=None, 
+                                points=points if points > 0 else 20, 
+                                last_login_at=None
+                            )
+                            db.session.add(new_user)
+                        imported_counts['User'] += 1
 
-            # 3. 辨識優惠券
-            elif 'Coupon' in sheet or '優惠券' in sheet or 'code' in cols_lower:
-                df.rename(columns={'代碼(Code)': 'code', '標題(Title)': 'title', '折抵值(Discount Value)': 'discount_value'}, inplace=True)
-                for _, r in df.iterrows():
-                    code, title = str(r.get('code', '')).strip(), str(r.get('title', '')).strip()
-                    if code and title:
-                        cp = Coupon.query.filter_by(code=code).first()
-                        val = float(r.get('discount_value', 0))
-                        if cp: cp.title = title; cp.discount_value = val
-                        else: db.session.add(Coupon(code=code, title=title, discount_value=val))
+            # 2. 辨識是否為「菜單品項 (MenuItem)」
+            elif 'MenuItem' in sheet or '菜單' in sheet or '單價(Price)' in df.columns or 'price' in cols_lower or '單價' in df.columns:
+                col_map = {
+                    '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name', 'name': 'name',
+                    '分類(Category)': 'category', '分類': 'category', 'category': 'category',
+                    '單價(Price)': 'price', '單價': 'price', 'price': 'price',
+                    '剩餘數量(Stock)': 'stock', '剩餘數量': 'stock', '庫存': 'stock', 'stock': 'stock',
+                    '總量(Total Stock)': 'total_stock', '總量': 'total_stock', 'total_stock': 'total_stock',
+                    '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers', 'modifiers': 'modifiers',
+                    '商品描述(Description)': 'description', '簡介': 'description', 'description': 'description',
+                    '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended', 'is_recommended': 'is_recommended',
+                    '新品上市(Is New)': 'is_new', '新品': 'is_new', 'is_new': 'is_new',
+                    '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount', 'is_discount': 'is_discount',
+                    '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price', 'discount_price': 'discount_price',
+                    '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward', 'is_reward': 'is_reward',
+                    '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points', 'reward_points': 'reward_points',
+                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points'
+                }
+                df_menu = df.rename(columns=col_map)
+                
+                if 'name' in df_menu.columns and 'price' in df_menu.columns:
+                    for _, row in df_menu.iterrows():
+                        name = str(row.get('name', '')).strip()
+                        if not name or pd.isna(row.get('name')) or name == '目前無資料': 
+                            continue
+                        
+                        category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
+                        try: price = max(0, round(float(row.get('price', 0))))
+                        except: price = 0
+                        try: discount_price = max(0, round(float(row.get('discount_price', 0))))
+                        except: discount_price = 0
+                        try: reward_points = max(0, int(row.get('reward_points', 0)))
+                        except: reward_points = 0
+                        try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
+                        except: reward_discount_points = 0
+                        try: stock = max(0, int(row.get('stock', 50)))
+                        except: stock = 50
+                        try: total_stock = max(stock, int(row.get('total_stock', 50)))
+                        except: total_stock = 50
+
+                        modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
+                        if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']: 
+                            modifiers = 'none'
+
+                        description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
+                        
+                        is_rec = parse_bool(row.get('is_recommended'))
+                        is_new = parse_bool(row.get('is_new'))
+                        is_disc = parse_bool(row.get('is_discount'))
+                        is_rew = parse_bool(row.get('is_reward'))
+
+                        existing = MenuItem.query.filter_by(name=name).first()
+                        if existing:
+                            #完整同步所有欄位，非僅同步價格與分類
+                            existing.category = category
+                            existing.price = price
+                            existing.discount_price = discount_price
+                            existing.reward_points = reward_points
+                            existing.reward_discount_points = reward_discount_points
+                            existing.modifiers = modifiers
+                            existing.description = description
+                            existing.is_manual_popular = is_rec
+                            existing.is_new = is_new
+                            existing.is_discount = is_disc
+                            existing.is_reward = is_rew
+                            existing.stock = stock
+                            existing.total_stock = total_stock
+                            existing.is_sold_out = (stock <= 0)
+                        else:
+                            new_item = MenuItem(
+                                name=name, 
+                                category=category, 
+                                price=price, 
+                                modifiers=modifiers, 
+                                description=description,
+                                image_path='', 
+                                is_recommended=False, 
+                                is_manual_popular=is_rec,
+                                is_discount=is_disc, 
+                                discount_price=discount_price, 
+                                is_new=is_new,
+                                is_reward=is_rew, 
+                                reward_points=reward_points, 
+                                reward_discount_points=reward_discount_points,
+                                stock=stock,
+                                total_stock=total_stock,
+                                is_sold_out=(stock <= 0),
+                                can_be_add_on=False,
+                                add_on_price=0,
+                                addon_trigger_type='any',
+                                addon_trigger_target=''
+                            )
+                            db.session.add(new_item)
+                        imported_counts['MenuItem'] += 1
+
+            # 3. 辨識是否為「優惠券 (Coupon)」
+            elif 'Coupon' in sheet or '優惠券' in sheet or '代碼(Code)' in df.columns or 'code' in cols_lower or '代碼' in df.columns:
+                col_map = {
+                    '代碼(Code)': 'code', '代碼': 'code', 'code': 'code', '優惠代碼': 'code',
+                    '標題(Title)': 'title', '標題': 'title', 'title': 'title', '優惠券名稱': 'title', '名稱': 'title',
+                    '折抵類型(Discount Type)': 'discount_type', '折抵類型': 'discount_type', '折抵方式': 'discount_type', 'discount_type': 'discount_type',
+                    '折抵值(Discount Value)': 'discount_value', '折抵值': 'discount_value', '折抵金額': 'discount_value', 'discount_value': 'discount_value',
+                    '門檻(Min Spend)': 'min_spend', '門檻': 'min_spend', '最低消費門檻': 'min_spend', '使用門檻': 'min_spend', 'min_spend': 'min_spend',
+                    '兌換所需點數(Reward Points)': 'reward_points', '兌換所需點數': 'reward_points', '兌換點數': 'reward_points', '點數': 'reward_points', 'reward_points': 'reward_points',
+                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '限時特惠點數': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points',
+                    '上架回饋商城(Is Reward)': 'is_reward', '是否上架': 'is_reward', '上架商城': 'is_reward', 'is_reward': 'is_reward'
+                }
+                df_coupon = df.rename(columns=col_map)
+                
+                if 'code' in df_coupon.columns and 'title' in df_coupon.columns:
+                    for _, row in df_coupon.iterrows():
+                        code = str(row.get('code', '')).strip().upper()
+                        title = str(row.get('title', '')).strip()
+                        if not code or not title or pd.isna(row.get('code')) or code == '目前無資料': 
+                            continue
+                        
+                        dtype = str(row.get('discount_type', 'fixed')).strip()
+                        if dtype not in ['fixed', 'percent']: 
+                            dtype = 'fixed'
+                        raw_dval = row.get('discount_value', 0)
+                        dvalue = sanitize_discount_value(dtype, raw_dval)
+                        try: min_sp = max(0.0, float(row.get('min_spend', 0)))
+                        except: min_sp = 0.0
+                        try: reward_points = max(0, int(row.get('reward_points', 0)))
+                        except: reward_points = 0
+                        try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
+                        except: reward_discount_points = 0
+                        
+                        if 'is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward')):
+                            is_reward = parse_bool(row.get('is_reward'))
+                        else:
+                            is_reward = True if reward_points > 0 else True
+
+                        existing = Coupon.query.filter_by(code=code).first()
+                        if existing:
+                            #完整同步優惠券欄位
+                            existing.title = title
+                            existing.discount_type = dtype
+                            existing.discount_value = dvalue
+                            existing.min_spend = min_sp
+                            existing.reward_points = reward_points
+                            existing.reward_discount_points = reward_discount_points
+                            existing.is_reward = is_reward
+                        else:
+                            new_coupon = Coupon(
+                                code=code,
+                                title=title,
+                                discount_type=dtype,
+                                discount_value=dvalue,
+                                min_spend=min_sp,
+                                reward_points=reward_points,
+                                reward_discount_points=reward_discount_points,
+                                is_reward=is_reward
+                            )
+                            db.session.add(new_coupon)
+                        imported_counts['Coupon'] += 1
 
         db.session.commit()
-        return "<script>alert('✅ 智慧匯入完成！'); window.location.href='/admin';</script>"
+        update_popular_items()
+        msg = f"✅ 智慧匯入完成！\\n" \
+              f"共處理更新與新增：\\n" \
+              f"➤ 會員 (User): {imported_counts['User']} 筆\\n" \
+              f"➤ 菜單 (MenuItem): {imported_counts['MenuItem']} 筆\\n" \
+              f"➤ 優惠券 (Coupon): {imported_counts['Coupon']} 筆"
+        
+        return f"<script>alert('{msg}'); window.location.href='/admin';</script>"
+
     except Exception as e:
-        return f"<script>alert('❌ 匯入失敗：{e}'); window.history.back();</script>", 500
+        db.session.rollback()
+        return f"<script>alert('❌ 檔案解析失敗，請確認檔案格式是否正確！\\n錯誤訊息: {e}'); window.history.back();</script>", 500
 
 # ==============================================================================
 # 前端即時輪詢與 AI 文案生成 API (絕對路徑保持 /api/...)
@@ -879,33 +1261,98 @@ def api_admin_live_orders():
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])
 def api_generate_item_description():
+    """AI 智慧菜單文案生成路由 (AI Copywriter - 具備三層自動降級機制)"""
     if not session.get('admin_logged_in'):
         return jsonify({'success': False, 'message': '未授權管理者'}), 401
+
     data = request.get_json() or {}
-    name, category = str(data.get('name', '')).strip(), str(data.get('category', '')).strip()
+    name = str(data.get('name', '')).strip()
+    category = str(data.get('category', '')).strip()
+
     if not name:
         return jsonify({'success': False, 'message': '請先輸入餐點名稱！'}), 400
 
+    prompt = f"""
+你是一位專業的餐飲品牌文案策劃師。
+請為以下餐點撰寫一段誘人、生動且具體的美食商品介紹：
+- 餐點名稱：{name}
+- 餐點分類：{category if category else '特色美饌'}
+
+【生成要求】：
+1. 繁體中文，篇幅約 2~3 句話（簡潔有力，70字以內）。
+2. 聚焦於「口感層次」、「料理手法」或「風味特色」（如：酥脆焦香、慢火細熬、清爽甘甜）。
+3. 嚴禁包含字數編號 (如 (1)、(2))、引號、Markdown 符號或思考草稿，直接輸出文案本身。
+"""
+
     api_key_clean = (Config.GEMINI_API_KEY or "").strip().strip("'").strip('"')
-    if api_key_clean and api_key_clean not in ["YOUR_API_KEY", "1234", "none"]:
+
+    # --------------------------------------------------------------------------
+    # 第一層：嘗試呼叫 Google Gemini 3.6 Flash
+    is_in_cooldown = time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0)
+    
+    if api_key_clean and api_key_clean not in ["YOUR_API_KEY", "1234", "none"] and not is_in_cooldown:
         try:
             import requests
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
+            system_instruction = "你是一位專業的美食文案師。請直接輸出最終的繁體中文介紹，嚴格禁止輸出任何思考過程、草稿檢查、字數驗證或英文自我問答。"
             payload = {
-                "contents": [{"parts": [{"text": f"請為餐點【{name}】（分類：{category}）撰寫50字以內繁體中文商品介紹，直接輸出文案，禁英文思考草稿。"}]}],
-                "generationConfig": {"maxOutputTokens": 400, "temperature": 0.2}
+                "contents": [{"parts": [{"text": f"{system_instruction}\n\n{prompt}"}]}],
+                "generationConfig": {
+                    "maxOutputTokens": 1200,
+                    "temperature": 0.2
+                }
             }
-            resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key_clean}, json=payload, timeout=10)
-            if resp.status_code == 200:
-                text = resp.json()['candidates'][0]['content']['parts'][0]['text'].strip().replace('"', '').replace('「', '').replace('」', '').strip()
-                if not text.endswith(('。', '！', '!')): text += '。'
-                return jsonify({'success': True, 'description': text})
-        except Exception:
-            pass
+            print("[*] 正在向 Gemini (gemini-3.6-flash) 請求生成餐點文案...") 
 
-    local_desc = run_local_slm(f"請為餐點【{name}】（分類：{category}）撰寫50字以內繁體中文商品介紹，直接輸出文案。", max_tokens=120)
-    if local_desc and len(local_desc) >= 10:
-        if not local_desc.endswith(('。', '！', '!')): local_desc += '。'
-        return jsonify({'success': True, 'description': local_desc})
+            resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key_clean}, json=payload, timeout=15)
+            res_json = resp.json() if resp.status_code == 200 else {}
+            candidates = res_json.get('candidates', [])
 
-    return jsonify({'success': True, 'description': fallback_menu_description(name, category)})
+            if resp.status_code == 200 and candidates:
+                if 'content' in candidates[0]:
+                    parts = candidates[0]['content'].get('parts', [])
+                    if parts:
+                        text = parts[0].get('text', '').strip()
+
+                        text = re.sub(r'(?i)(?:words|chars|perfect|focus on|texture|cooking|flavor|\b(?:yes|no)\b)[^。\n]*[。\n]?', '', text)
+                        text = re.sub(r'[a-zA-Z\?\/]+', '', text)
+                        cleaned_desc = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', text)
+                        cleaned_desc = cleaned_desc.replace('"', '').replace("'", '').replace('「', '').replace('」', '').replace('*', '').replace('`', '').strip()
+                        cleaned_desc = re.sub(r'^[，,。\s]+', '', cleaned_desc)
+
+                        if cleaned_desc and not cleaned_desc.endswith(('。', '！', '!')):
+                            cleaned_desc += '。'
+
+                        if len(cleaned_desc) >= 12:
+                            print("[V] Gemini 文案生成成功！") 
+                            return jsonify({'success': True, 'description': cleaned_desc})
+            elif resp.status_code in [401, 403, 429]:
+                _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
+                print(f"[!] Gemini 回應代碼 ({resp.status_code})，啟動 60 秒冷卻並切換本地第二層...") 
+            else:
+                print(f"[!] Gemini 回應代碼 ({resp.status_code})，準備切換至本地第二層...") 
+        except Exception as e:
+            print(f"[!] Gemini 連線異常 ({e})，準備切換至本地第二層...") 
+
+    # --------------------------------------------------------------------------
+    # 第二層：嘗試呼叫本機 Qwen2.5-1.5B (GGUF 本地大模型)
+    print("[*] 正在使用本機 Qwen2.5-1.5B 產生商品文案...") 
+    local_prompt = f"請為餐點【{name}】（分類：{category or '美饌'}）撰寫一段 50 字以內的誘人繁體中文商品介紹，直接輸出文案。"
+    local_desc = run_local_slm(local_prompt, max_tokens=120)
+    
+    if local_desc and len(local_desc) >= 12:
+        cleaned_local = re.sub(r'[\(\[\（]\s*\d+\s*[\)\]\）]', '', local_desc)
+        cleaned_local = cleaned_local.replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
+        if not cleaned_local.endswith(('。', '！', '!')):
+            cleaned_local += '。'
+        
+        print(f"[V] 本地 SLM 文案生成完成：{cleaned_local}") 
+        return jsonify({'success': True, 'description': cleaned_local})
+    else:
+        print("[!] 本地 SLM 輸出長度不足或為空，退回第三層動態辭庫...") 
+
+    # --------------------------------------------------------------------------
+    # 第三層
+    print("[*] 啟用本地第三層動態辭庫生成文案。") 
+    fallback_desc = fallback_menu_description(name, category)
+    return jsonify({'success': True, 'description': fallback_desc})

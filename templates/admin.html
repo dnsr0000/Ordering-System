@@ -507,11 +507,11 @@
                                             <td class="fw-bold text-white">{{ combo.name }}</td>
                                             <td class="fw-bold text-danger">+${{ combo.additional_price }}</td>
                                             <td>
-                                                <ul class="mb-0 list-unstyled small text-white-50">
-                                                    {% if combo.item1 %}<li>- {{ combo.item1.name }} {% if combo.item1_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                                    {% if combo.item2 %}<li>- {{ combo.item2.name }} {% if combo.item2_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                                    {% if combo.item3 %}<li>- {{ combo.item3.name }} {% if combo.item3_customizable %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                                </ul>
+                                            <ul class="mb-0 list-unstyled small text-white-50">
+                                                {% if combo.item1 %}<li>- {{ combo.item1.name }} {% if combo.item1_customizable and combo.item1.modifiers and combo.item1.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                                {% if combo.item2 %}<li>- {{ combo.item2.name }} {% if combo.item2_customizable and combo.item2.modifiers and combo.item2.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                                {% if combo.item3 %}<li>- {{ combo.item3.name }} {% if combo.item3_customizable and combo.item3.modifiers and combo.item3.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
+                                            </ul>
                                             </td>
                                             <td>
                                             {% set is_main_sold = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
@@ -946,7 +946,7 @@
                                 <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
                                 <div class="d-flex gap-2">
                                     <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="add-addon-type" onchange="toggleAddonTarget('add')">
-                                        <option value="any">購買任一主餐皆可</option>
+                                        <option value="any">購買任一餐點皆可</option>
                                         <option value="category">需購買特定分類</option>
                                         <option value="item">需購買特定餐點</option>
                                     </select>
@@ -1033,7 +1033,7 @@
                                 <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
                                 <div class="d-flex gap-2">
                                     <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="edit-addon-type" onchange="toggleAddonTarget('edit')">
-                                        <option value="any">購買任一主餐皆可</option>
+                                        <option value="any">購買任一餐點皆可</option>
                                         <option value="category">需購買特定分類</option>
                                         <option value="item">需購買特定餐點</option>
                                     </select>
@@ -1150,10 +1150,10 @@
                             
                             <!-- 配餐 1 -->
                             <div class="mb-3" id="combo-side1-group">
-                                <select class="form-select form-select-sm" name="item1_id" id="combo-side1" onchange="checkComboSides(1, 'combo')">
+                                <select name="item1_id" id="add_combo_item1" class="form-select form-select-sm" onchange="syncComboCustomizable(1, 'add')">
                                     <option value="">-- 請選擇第一項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }} data-modifiers="{{ it.modifiers or 'none' }}"">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-check form-switch mt-1">
@@ -1164,10 +1164,10 @@
 
                             <!-- 配餐 2 -->
                             <div class="mb-3" id="combo-side2-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item2_id" id="combo-side2" onchange="checkComboSides(2, 'combo')">
+                                <select name="item1_id" id="add_combo_item2" class="form-select form-select-sm" onchange="syncComboCustomizable(2, 'add')">
                                     <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-check form-switch mt-1">
@@ -1178,10 +1178,10 @@
 
                             <!-- 配餐 3 -->
                             <div class="mb-3" id="combo-side3-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item3_id" id="combo-side3" onchange="checkComboSides(3, 'combo')">
+                                <select name="item1_id" id="add_combo_item3" class="form-select form-select-sm" onchange="syncComboCustomizable(3, 'add')">
                                     <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-check form-switch mt-1">
@@ -1253,13 +1253,13 @@
                             
                             <!-- 配餐 1 -->
                             <div class="mb-3" id="edit-combo-side1-group">
-                                <select class="form-select form-select-sm" name="item1_id" id="edit-combo-side1" onchange="checkComboSides(1, 'edit-combo')">
+                                <select class="form-select form-select-sm" name="item1_id" id="edit-combo-side1" onchange="checkComboSides(1, 'edit-combo'); syncSideCustomizable(1, 'edit-combo');">
                                     <option value="">-- 請選擇第一項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
-                                <div class="form-check form-switch mt-1">
+                                <div class="form-check form-switch mt-1" style="display: none;">
                                     <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="edit-combo-side1-cust">
                                     <label class="form-check-label small text-warning" for="edit-combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
                                 </div>
@@ -1267,10 +1267,10 @@
 
                             <!-- 配餐 2 -->
                             <div class="mb-3" id="edit-combo-side2-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item2_id" id="edit-combo-side2" onchange="checkComboSides(2, 'edit-combo')">
+                                <select class="form-select form-select-sm" name="item2_id" id="edit-combo-side2" onchange="checkComboSides(2, 'edit-combo'); syncSideCustomizable(2, 'edit-combo');">
                                     <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-check form-switch mt-1">
@@ -1281,10 +1281,10 @@
 
                             <!-- 配餐 3 -->
                             <div class="mb-3" id="edit-combo-side3-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item3_id" id="edit-combo-side3" onchange="checkComboSides(3, 'edit-combo')">
+                                <select class="form-select form-select-sm" name="item3_id" id="edit-combo-side3" onchange="checkComboSides(3, 'edit-combo'); syncSideCustomizable(3, 'edit-combo');">
                                     <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
                                     {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }}</option>
+                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-check form-switch mt-1">
@@ -2004,22 +2004,23 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-combo-price').value = d.price || 0;
         document.getElementById('edit-combo-desc').value = d.desc || '';
 
-        // 配餐 1
+        // 配餐 1：帶入選單值並觸發開關顯示/隱藏判定
         const side1 = document.getElementById('edit-combo-side1');
         side1.value = d.item1 || '';
-        document.getElementById('edit-combo-side1-cust').checked = (d.item1Cust === '1');
+        syncSideCustomizable(1, 'edit-combo', d.item1Cust === '1');
 
-        // 配餐 2
+        // 配餐 2：帶入選單值並觸發開關顯示/隱藏判定
         const side2 = document.getElementById('edit-combo-side2');
         side2.value = d.item2 || '';
-        document.getElementById('edit-combo-side2-cust').checked = (d.item2Cust === '1');
         document.getElementById('edit-combo-side2-group').style.display = d.item1 ? 'block' : 'none';
+        syncSideCustomizable(2, 'edit-combo', d.item2Cust === '1');
 
-        // 配餐 3
+        // 配餐 3：帶入選單值並觸發開關顯示/隱藏判定
         const side3 = document.getElementById('edit-combo-side3');
         side3.value = d.item3 || '';
-        document.getElementById('edit-combo-side3-cust').checked = (d.item3Cust === '1');
         document.getElementById('edit-combo-side3-group').style.display = d.item2 ? 'block' : 'none';
+        syncSideCustomizable(3, 'edit-combo', d.item3Cust === '1');
+
         // 帶入可否加購開關狀態
         document.getElementById('edit-combo-can-addon').checked = (d.canAddon !== '0');
 
@@ -2604,6 +2605,28 @@ function updateDiscountHint(prefix) {
         hintDiv.className = 'small mt-1 text-success';
         hintDiv.innerHTML = `<i class="bi bi-cash me-1"></i> 結帳整單現折：<strong>$${Math.round(val)} 元</strong>`;
         hintDiv.style.display = 'block';
+    }
+}
+function syncSideCustomizable(index, prefix = 'edit-combo', isCustomizable = null) {
+    const selectEl = document.getElementById(`${prefix}-side${index}`);
+    const checkbox = document.getElementById(`${prefix}-side${index}-cust`);
+    if (!selectEl || !checkbox) return;
+
+    // 取得開關外層的包裝容器
+    const switchBox = checkbox.closest('.form-check') || checkbox.parentElement;
+    const selectedOpt = selectEl.options[selectEl.selectedIndex];
+    const modifiers = selectedOpt ? (selectedOpt.dataset.modifiers || 'none') : 'none';
+
+    // 若未選擇配餐，或該餐點「無客製化選項（none）」
+    if (!selectEl.value || modifiers === 'none') {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+        if (switchBox) switchBox.style.display = 'none'; // 完全隱藏開關
+    } else {
+        if (switchBox) switchBox.style.display = 'block'; // 具備客製化選項時才顯示
+        checkbox.disabled = false;
+        // 若有傳入既有的勾選狀態則保留，否則預設為勾選
+        checkbox.checked = (isCustomizable !== null) ? Boolean(isCustomizable) : true;
     }
 }
 

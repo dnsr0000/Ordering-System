@@ -8,6 +8,12 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 class Config:
     BASE_DIR = BASE_DIR
+    _secret = os.getenv("SECRET_KEY")
+    if not _secret:
+        import sys
+        _secret = os.urandom(32).hex()
+        print("⚠️ 未在 .env 檢測到 SECRET_KEY，已自動生成臨時 Session 金鑰。建議在 .env 中設定！", file=sys.stderr)
+    SECRET_KEY = _secret
 
     SECRET_KEY = os.getenv("SECRET_KEY") or os.urandom(32).hex()
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
@@ -19,7 +25,8 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         "connect_args": {"timeout": 30, "check_same_thread": False},
-        "pool_pre_ping": True
+        "pool_pre_ping": True,
+        "pool_recycle": 1800
     }
 
     # 靜態檔案路徑

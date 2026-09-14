@@ -21,15 +21,16 @@ def register():
 
         filename = f"{phone}_{int(time.time())}.jpg"
         filepath = os.path.join(Config.UPLOAD_FOLDER_MEMBER, filename)
+        
         if not save_and_fix_image(photo, filepath):
-            return "<script>alert('❌ 上傳的相片損壞或格式不支援！'); window.history.back();</script>", 400
+            return "<script>alert('❌ 上傳的相片檔案已損壞或格式不支援，請上傳清晰的 JPG/PNG 圖片！'); window.history.back();</script>", 400
 
         feature = extract_feature(filepath)
         if feature is None:
             if os.path.exists(filepath):
                 try: os.remove(filepath)
                 except Exception: pass
-            return "<script>alert('⚠️ 照片未偵測到清晰人臉！'); window.history.back();</script>", 400
+            return "<script>alert('⚠️ 照片未偵測到清晰人臉！請正對鏡頭並重新拍攝。'); window.history.back();</script>", 400
 
         new_user = User(name=name, phone=phone, photo_path=filename, feature=feature, points=20, last_login_at=datetime.now())
         db.session.add(new_user)
@@ -58,7 +59,7 @@ def face_login():
             except Exception: pass
 
         if curr_feature is None:
-            return jsonify({'success': False, 'message': '未偵測到清晰人臉，請正對鏡頭！'})
+            return jsonify({'success': False, 'message': '未在畫面中偵測到清晰人臉，請正對鏡頭！'})
 
         users = User.query.all()
         best_score = 0.0
@@ -79,7 +80,8 @@ def face_login():
             session['user_points'] = matched_user.points
             start_customer_session('會員', f"{matched_user.name} ({matched_user.phone})")
             return jsonify({'success': True, 'user_name': matched_user.name, 'points': matched_user.points})
-        return jsonify({'success': False, 'message': '人臉比對未通過！'})
+        
+        return jsonify({'success': False, 'message': '人臉比對未通過，請先註冊或重新對準鏡頭！'})
 
     return render_template('register.html', login_mode=True)
 

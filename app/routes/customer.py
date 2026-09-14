@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from flask import Blueprint, render_template, request, session, jsonify
+from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
 from app.extensions import db, ORDER_CHECKOUT_LOCK
 from app.models.user import User, CustomerLog
 from app.models.menu import MenuItem, ComboOption
@@ -91,6 +91,7 @@ def api_user_available_coupons():
 
 @customer_bp.route('/api/verify_promo', methods=['POST'])
 def verify_promo():
+    """驗證促銷優惠代碼（嚴格檢查會員專屬持有與核銷狀態）"""
     data = request.get_json() or {}
     code = str(data.get('promo_code', '')).strip().upper()
     subtotal = float(data.get('subtotal', 0))
@@ -99,24 +100,32 @@ def verify_promo():
     if not code:
         return jsonify({'valid': False, 'discount': 0, 'message': '請輸入優惠代碼！'})
 
+    # 1. 優先檢查是否為當前會員已兌換且「未使用」的專屬優惠券
     coupon = None
     if user_id:
         user_coupon = UserCoupon.query.filter_by(user_id=user_id, code=code, is_used=False).first()
         if user_coupon:
             coupon = user_coupon.coupon
 
+    # 2. 若會員未持有，檢查是否為免點數之公開通用促銷碼
     if not coupon:
-        pub_cp = Coupon.query.filter_by(code=code).first()
-        if pub_cp and (pub_cp.reward_points == 0 and not pub_cp.is_reward):
-            coupon = pub_cp
-        elif pub_cp and pub_cp.is_reward:
-            return jsonify({'valid': False, 'discount': 0, 'message': '此為會員紅利專屬券，請先兌換或登入！'})
+        public_coupon = Coupon.query.filter_by(code=code).first()
+        if public_coupon and (public_coupon.reward_points == 0 and not public_coupon.is_reward):
+            coupon = public_coupon
+        elif public_coupon and public_coupon.is_reward:
+            #細分未登入與未持有的錯誤提示
+            if not user_id:
+                return jsonify({'valid': False, 'discount': 0, 'message': '此為會員紅利專屬券，請先登入會員！'})
+            else:
+                return jsonify({'valid': False, 'discount': 0, 'message': '您尚未在回饋商城兌換此券，或該券已被使用！'})
         else:
             return jsonify({'valid': False, 'discount': 0, 'message': '無效的優惠代碼！'})
 
+    # 3. 門檻檢查
     if subtotal < coupon.min_spend:
-        return jsonify({'valid': False, 'discount': 0, 'message': f'需消費滿 ${int(coupon.min_spend)} 元才可折抵。'})
+        return jsonify({'valid': False, 'discount': 0, 'message': f'未達使用門檻！需消費滿 ${int(coupon.min_spend)} 元才可折抵。'})
 
+    # 4. 計算折扣
     if coupon.discount_type == 'fixed':
         discount = min(coupon.discount_value, subtotal)
         msg = f'已折抵現金 ${int(discount)} 元！'
@@ -127,8 +136,10 @@ def verify_promo():
 
     return jsonify({'valid': True, 'discount': discount, 'message': msg})
 
+
 @customer_bp.route('/submit_order', methods=['POST'])
 def submit_order():
+    """原子扣減庫存、點數與優惠券，互斥鎖保護取餐號碼"""
     data = request.get_json() or {}
     raw_items = data.get('items', [])
     payment_method = data.get('payment_method', 'Cash')
@@ -142,6 +153,10 @@ def submit_order():
         return jsonify({'error': '購物車為空'}), 400
 
     user_id = session.get('user_id')
+
+    # ----------------------------------------------------
+    # 步驟 1：後端計價與品項合法性預檢驗
+    # ----------------------------------------------------
     verified_items = []
     item_demands = {}
 
@@ -151,35 +166,50 @@ def submit_order():
         quantity = max(1, int(client_item.get('quantity', 1)))
         is_add_on = bool(client_item.get('is_add_on', False))
         is_claimed_reward = ('[點數兌換]' in raw_name) or ('reward_' in str(client_item.get('id', '')))
+
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', raw_name).strip()
 
         menu_item = MenuItem.query.filter_by(name=clean_name).first()
         if not menu_item:
-            try: menu_item = db.session.get(MenuItem, int(client_item.get('id')))
-            except Exception: menu_item = None
+            try:
+                menu_item = db.session.get(MenuItem, int(client_item.get('id')))
+            except (ValueError, TypeError):
+                menu_item = None
 
         if not menu_item:
-            return jsonify({'error': f'餐點【{clean_name}】不存在！'}), 400
+            return jsonify({'error': f'餐點【{clean_name}】不存在於系統中！'}), 400
 
         item_demands[menu_item.id] = item_demands.get(menu_item.id, 0) + quantity
+
+        # 客製化加價
         extra_modifier_price = sum(int(m) for m in re.findall(r'\(\+(\d+)\)', raw_custom))
 
         if is_claimed_reward:
+            #紅利防呆
+            if not user_id:
+                return jsonify({'error': '非會員無法訂購紅利商城兌換餐點！'}), 403
+            if not menu_item.is_reward:
+                return jsonify({'error': f'餐點【{menu_item.name}】未開放紅利兌換！'}), 400
             unit_price = extra_modifier_price
         elif is_add_on:
+            #加購資格防呆
+            if not menu_item.can_be_add_on:
+                return jsonify({'error': f'餐點【{menu_item.name}】非合法加購品項！'}), 400
             unit_price = menu_item.add_on_price + extra_modifier_price
         else:
             base_price = menu_item.discount_price if (menu_item.is_discount and menu_item.discount_price > 0) else menu_item.price
             combo_extra_price = 0
             combo_match = re.search(r'\[套餐:\s*([^\]]+)\]', raw_custom)
             if combo_match:
-                combo_opt = ComboOption.query.filter_by(main_item_id=menu_item.id, name=combo_match.group(1).strip()).first()
+                combo_name = combo_match.group(1).strip()
+                combo_opt = ComboOption.query.filter_by(main_item_id=menu_item.id, name=combo_name).first()
                 if combo_opt:
                     combo_extra_price = combo_opt.additional_price
             unit_price = base_price + combo_extra_price + extra_modifier_price
 
         verified_items.append({
             'menu_item_id': menu_item.id,
+            'menu_item_name': menu_item.name,
             'display_name': raw_name,
             'price': int(unit_price),
             'quantity': quantity,

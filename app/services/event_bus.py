@@ -44,6 +44,7 @@ class OrderEventBus:
                 'pending_count': pending_count
             })
         except Exception as e:
+            print(f"[!] 取得訂單特徵簽章失敗: {e}")
             return json.dumps({'timestamp': time.time(), 'state_signature': '', 'pending_count': 0})
 
     def notify(self, app_instance=None):

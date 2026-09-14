@@ -37,7 +37,9 @@ def run_local_slm(prompt_text, max_tokens=100):
     if not local_llm:
         return None
     formatted_prompt = f"<|im_start|>system\n你是一位專業餐飲營運顧問，請嚴格使用台灣繁體中文給出 1~2 句具體營運建議（60字以內），禁止思考草稿。<|im_end|>\n<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
+    
     if not LLM_LOCK.acquire(timeout=3.0):
+        print("[!] 本地 SLM 忙碌中，立即啟動第三層動態辭庫進行熔斷備援。")
         return None
     try:
         local_llm.reset()
@@ -96,17 +98,28 @@ def _async_fetch_gemini_advice(analytics_data, signature):
             "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，繁體中文介紹，必須有完整句號收尾。\n" + prompt}]}],
             "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3}
         }
-        resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=payload, timeout=20)
+        resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, timeout=20)
         res_json = resp.json() if resp.status_code == 200 else {}
 
         if resp.status_code == 200:
             candidates = res_json.get('candidates', [])
+            
             if candidates and 'content' in candidates[0]:
-                clean_text = candidates[0]['content']['parts'][0]['text'].strip().replace('"', '').replace('「', '').replace('」', '').strip()
-                if not clean_text.endswith(('。', '！', '!')):
-                    clean_text += '。'
-                _AI_ADVICE_STATE['cached_advice'] = clean_text if len(clean_text) >= 12 else _resolve_offline_advice(analytics_data)
-                _AI_ADVICE_STATE['last_signature'] = signature
+                parts = candidates[0]['content'].get('parts', [])
+                if parts:
+                    text = parts[0].get('text', '').strip()
+                    clean_text = text.replace('"', '').replace('「', '').replace('」', '').strip()
+                    
+                    valid_endings = ('。', '！', '!', '；', ';')
+                    if len(clean_text) >= 12 and clean_text.endswith(valid_endings):
+                        _AI_ADVICE_STATE['cached_advice'] = clean_text
+                    elif len(clean_text) >= 12:
+                        _AI_ADVICE_STATE['cached_advice'] = clean_text + '。'
+                    else:
+                        _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
+                    
+                    _AI_ADVICE_STATE['last_signature'] = signature
+
         elif resp.status_code in [401, 403, 429]:
             _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
             _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)

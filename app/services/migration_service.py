@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 from app.extensions import db
 from app.models.order import Order
+from app.models.menu import ComboOption
 
 def run_database_migrations():
     """
@@ -158,6 +159,17 @@ def run_database_migrations():
         if needs_commit:
             db.session.commit()
             print("✅ 歷史訂單取餐流水號校正完成！")
+
+        # 自動校正無客製化品項卻被標記為可客製的套餐設定
+        combos = ComboOption.query.all()
+        for c in combos:
+            if c.item1 and (not c.item1.modifiers or c.item1.modifiers == 'none'):
+                c.item1_customizable = False
+            if c.item2 and (not c.item2.modifiers or c.item2.modifiers == 'none'):
+                c.item2_customizable = False
+            if c.item3 and (not c.item3.modifiers or c.item3.modifiers == 'none'):
+                c.item3_customizable = False
+        db.session.commit()
 
     except Exception as e:
         db.session.rollback()
