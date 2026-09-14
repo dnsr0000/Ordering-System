@@ -103,7 +103,7 @@
         let isFirstLoad = true;
         let audioCtx = null;
 
-        // 💡 取得或喚醒 AudioContext（突破瀏覽器 Autoplay 限制）
+        //  取得或喚醒 AudioContext（突破瀏覽器 Autoplay 限制）
         function getAudioContext() {
             if (!audioCtx) {
                 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -122,7 +122,7 @@
             getAudioContext();
         }, { once: true });
 
-        // 💡 Web Audio API 清脆雙音叮咚 (Ding-Dong) 提示音
+        //  Web Audio API 清脆雙音叮咚 (Ding-Dong) 提示音
         function playChime() {
             if (!isAudioEnabled) return;
             try {
@@ -204,7 +204,7 @@
             }
             noMsg.style.display = 'none';
 
-            // 💡 判斷是否為新進訂單
+            //  判斷是否為新進訂單
             let hasNewOrder = false;
             orders.forEach(o => {
                 if (!knownOrderIds.has(o.id)) {

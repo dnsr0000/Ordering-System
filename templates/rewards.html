@@ -227,7 +227,7 @@
                             {% endif %}
                         </div>
 
-                        <!-- 💡 售完防呆判斷 -->
+                        <!--  售完防呆判斷 -->
                         {% if item.is_sold_out %}
                         <button class="btn btn-secondary w-100 mt-auto py-2" disabled>
                             已售完 (缺貨中)
@@ -271,7 +271,7 @@
                     <h4 class="fw-bold mb-2" id="modalItemName">商品名稱</h4>
                     <p class="text-muted">將從您的帳戶扣除 <strong class="text-danger fs-5" id="modalItemPoints">0</strong> 點紅利點數。</p>
                     
-                    <!-- 💡 動態客製化選項區塊 -->
+                    <!--  動態客製化選項區塊 -->
                     <div id="modalModifierBox" class="text-start bg-light p-3 rounded mb-3 border border-secondary border-opacity-25" style="display: none;">
                         <h6 class="fw-bold text-dark mb-2"><i class="bi bi-sliders me-1"></i> 請選擇：</h6>
                         <div id="modalModifierContent"></div>
@@ -326,7 +326,7 @@
             promptRedeemCoupon(id, title, code, points); 
         }
 
-        // 💡 彈出餐點兌換確認（支援客製化選項渲染）
+        //  彈出餐點兌換確認（支援客製化選項渲染）
         function promptRedeemItem(id, name, points, modifiers = 'none') {
             selectedReward = { type: 'item', id, name, points, modifiers };
             document.getElementById('modalItemName').innerText = name;
@@ -402,7 +402,7 @@
             bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
         }
 
-        // 💡 執行兌換（收集客製化資訊與加料金額）
+        //  執行兌換（收集客製化資訊與加料金額）
         function executeRedeem() {
             if (!selectedReward) return;
 
@@ -472,6 +472,34 @@
         }
 
         updateRedeemButtons();
+
+        // ==============================================================================
+    // 顧客閒置 10 分鐘自動清空暫存並安全登出 (Kiosk Idle Auto-Logout)
+    // ==============================================================================
+    (function initIdleAutoLogout() {
+        const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 分鐘 (600,000 毫秒)
+        let idleTimer = null;
+
+        function resetIdleTimer() {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                // 1. 清空本地瀏覽器購物車暫存，避免下一位顧客看到舊餐點
+                localStorage.removeItem('kiosk_cart');
+                
+                // 2. 自動跳轉至後端登出路由清除 Session
+                window.location.href = '/logout';
+            }, IDLE_TIMEOUT_MS);
+        }
+
+        // 監聽點餐機常見互動事件 (觸控點擊、滑動、滑鼠移動、實體/虛擬鍵盤輸入)
+        const activityEvents = ['touchstart', 'click', 'mousemove', 'mousedown', 'keydown', 'scroll'];
+        activityEvents.forEach(evt => {
+            window.addEventListener(evt, resetIdleTimer, { passive: true });
+        });
+
+        // 頁面載入後立即啟動第一次倒數
+        resetIdleTimer();
+    })();
     </script>
 </body>
 </html>

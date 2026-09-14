@@ -19,10 +19,14 @@
 📂 專案架構圖 (Project Structure)
 Project Root/
 ├── app.py                                  # 核心 Backend 主程式 (含三層備援降級、排程與防呆驗證)
-├── menu.db                                 # SQLite 資料庫 (自動檢測欄位並遷移)
-├── face_detection_yunet_2023mar.onnx       # YuNet 人臉偵測模型
-├── face_recognition_sface_2021dec.onnx     # SFace 人臉特徵向量比對模型
-├── qwen2.5-1.5b-instruct-q4_k_m.gguf       # 本地邊緣語言模型 (Q4_K_M 量化權重，選配/備援)
+├── database/                               # 資料庫專屬資料夾
+│   ├── menu.db                             # 主資料庫
+│   ├── menu.db-wal                         # WAL 預寫日誌 (若存在)
+│   └── menu.db-shm                         # 共享記憶體索引 (若存在)
+├── models/                                 # AI 模型專屬資料夾
+│   ├── face_detection_yunet_2023mar.onnx   # 人臉偵測模型
+│   ├── face_recognition_sface_2021dec.onnx # 人臉特徵比對模型
+│   └── qwen2.5-1.5b-instruct-q4_k_m.gguf   # 本地 SLM 模型
 ├── static/                                 # 靜態資源與上傳檔案
 │   ├── menu/                               # 店家上傳之餐點圖檔
 │   └── member/                             # 會員註冊時擷取之人臉相片

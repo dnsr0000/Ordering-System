@@ -74,7 +74,7 @@
             <button class="btn btn-outline-light me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#cart-sidebar">
                 <i class="bi bi-cart3"></i> 購物車 <span id="cart-count" class="badge bg-danger">0</span>
             </button>
-            <a href="/logout" class="btn btn-danger">登出</a>
+            <a href="/logout" class="btn btn-danger" onclick="localStorage.removeItem('kiosk_cart');">登出</a>
         </div>
     </div>
 </header>
@@ -421,7 +421,7 @@
                         </div>
                         <p class="mb-2 text-white-50 small">{{ item.description or '無描述' }}</p>
                         
-                        <!-- 💡 2. 判斷是否售完以切換按鈕，直接帶入上方打包好的 combos -->
+                        <!--  2. 判斷是否售完以切換按鈕，直接帶入上方打包好的 combos -->
                         {% if is_item_sold_out %}
                         <button class="btn btn-secondary btn-sm" type="button" disabled>
                             <i class="bi bi-slash-circle"></i> 已售完
@@ -1636,7 +1636,7 @@
                     return null;
                 }
 
-                // 💡 2. 捕捉數量超過庫存（例如剩 2 份卻點了 5 份）
+                //  2. 捕捉數量超過庫存（例如剩 2 份卻點了 5 份）
                 if (data.insufficient_stock) {
                     const cfModal = bootstrap.Modal.getInstance(document.getElementById('confirmModal'));
                     if (cfModal) cfModal.hide();
@@ -1718,7 +1718,7 @@
             } else {
                 historyBody.innerHTML = orders.map(o => {
                     const promoDiscount = Math.max(0, (o.discount_amount || 0) - (o.points_used || 0));
-                    // 💡 調整這裡的中文狀態判斷與對應樣式
+                    //  調整這裡的中文狀態判斷與對應樣式
                     const badgeClass = o.status === '製作中' ? 'bg-warning text-dark' : (o.status === '已出餐' ? 'bg-success' : 'bg-danger');
                     
                     return `
@@ -1953,7 +1953,7 @@
             .catch(err => console.error("同步優惠券失敗:", err));
     }
 
-    // 💡 監聽購物車側邊欄開啟事件 (Offcanvas Shown)
+    //  監聽購物車側邊欄開啟事件 (Offcanvas Shown)
     document.addEventListener("DOMContentLoaded", function () {
         const cartSidebarEl = document.getElementById('cart-sidebar');
         if (cartSidebarEl) {
@@ -1981,6 +1981,34 @@
         }
     });
     updateCartUI();
+
+    // ==============================================================================
+    // 顧客閒置 10 分鐘自動清空暫存並安全登出 
+    // ==============================================================================
+    (function initIdleAutoLogout() {
+        const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 分鐘 (600,000 毫秒)
+        let idleTimer = null;
+
+        function resetIdleTimer() {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                // 1. 清空本地瀏覽器購物車暫存，避免下一位顧客看到舊餐點
+                localStorage.removeItem('kiosk_cart');
+                
+                // 2. 自動跳轉至後端登出路由清除 Session
+                window.location.href = '/logout';
+            }, IDLE_TIMEOUT_MS);
+        }
+
+        // 監聽點餐機常見互動事件 (觸控點擊、滑動、滑鼠移動、實體/虛擬鍵盤輸入)
+        const activityEvents = ['touchstart', 'click', 'mousemove', 'mousedown', 'keydown', 'scroll'];
+        activityEvents.forEach(evt => {
+            window.addEventListener(evt, resetIdleTimer, { passive: true });
+        });
+
+        // 頁面載入後立即啟動第一次倒數
+        resetIdleTimer();
+    })();
 </script>
 {% else %}
 
