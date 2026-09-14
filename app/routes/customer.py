@@ -2,16 +2,45 @@ import re
 from datetime import datetime
 from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
 from app.extensions import db, ORDER_CHECKOUT_LOCK
-from app.models.user import User, CustomerLog
+from app.models.user import User, CustomerLog, RewardRedemption
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
+from app.models.setting import SystemSetting
 from app.services.order_service import update_popular_items, sanitize_discount_value
 from app.services.event_bus import order_event_bus
 from app.services.ai_service import _AI_ADVICE_STATE
 from app.routes.common import clear_customer_session
 
 customer_bp = Blueprint('customer', __name__)
+
+
+def get_points_redemption_settings():
+    settings = {
+        setting.key: setting.value
+        for setting in SystemSetting.query.filter(
+            SystemSetting.key.in_([
+                'points_redemption_enabled',
+                'points_redemption_rate',
+                'points_redemption_cap',
+                'points_earn_threshold'
+            ])
+        ).all()
+    }
+    enabled = settings.get('points_redemption_enabled', '1') == '1'
+    try:
+        rate = max(1, int(settings.get('points_redemption_rate', '1')))
+    except (TypeError, ValueError):
+        rate = 1
+    try:
+        cap = max(0, int(settings.get('points_redemption_cap', '0')))
+    except (TypeError, ValueError):
+        cap = 0
+    try:
+        earn_threshold = max(1, int(settings.get('points_earn_threshold', '100')))
+    except (TypeError, ValueError):
+        earn_threshold = 100
+    return enabled, rate, cap, earn_threshold
 
 @customer_bp.route('/', endpoint='customer_index')
 def customer_index():
@@ -20,6 +49,7 @@ def customer_index():
     categories = sorted(list(set(item.category for item in items if item.category)))
     user_points = 0
     user_coupons = []
+    points_redemption_enabled, points_redemption_rate, points_redemption_cap, points_earn_threshold = get_points_redemption_settings()
     personalized_items = []
     is_guest = session.get('is_guest', False)
 
@@ -61,7 +91,11 @@ def customer_index():
         user_points=user_points,
         user_coupons=user_coupons,
         personalized_items=personalized_items,
-        is_guest=is_guest
+        is_guest=is_guest,
+        points_redemption_enabled=points_redemption_enabled,
+        points_redemption_rate=points_redemption_rate,
+        points_redemption_cap=points_redemption_cap,
+        points_earn_threshold=points_earn_threshold
     )
 
 @customer_bp.route('/api/user_available_coupons')
@@ -148,6 +182,7 @@ def submit_order():
     note = str(data.get('note', '')).strip()[:200]
     promo_code = str(data.get('promo_code', '')).strip().upper()
     use_points = int(data.get('use_points', 0))
+    points_redemption_enabled, points_redemption_rate, points_redemption_cap, points_earn_threshold = get_points_redemption_settings()
 
     if not raw_items:
         return jsonify({'error': '購物車為空'}), 400
@@ -213,7 +248,8 @@ def submit_order():
             'display_name': raw_name,
             'price': int(unit_price),
             'quantity': quantity,
-            'customization': raw_custom
+            'customization': raw_custom,
+            'reward_token': str(client_item.get('reward_token', '')).strip() if is_claimed_reward else ''
         })
 
     subtotal = sum(v['price'] * v['quantity'] for v in verified_items)
@@ -270,8 +306,15 @@ def submit_order():
 
             remaining_amount = max(0, subtotal - promo_discount)
             points_used = 0
-            if user and use_points > 0:
-                points_used = int(min(user.points, use_points, remaining_amount))
+            points_discount_amount = 0
+            if user and points_redemption_enabled and points_redemption_rate > 0 and use_points > 0:
+                max_discount_amount = remaining_amount
+                if points_redemption_cap > 0:
+                    max_discount_amount = min(max_discount_amount, points_redemption_cap)
+                max_redeemable_points = int(max_discount_amount * points_redemption_rate)
+                points_used = int(min(user.points, use_points, max_redeemable_points))
+                points_used -= points_used % points_redemption_rate
+                points_discount_amount = points_used // points_redemption_rate
                 if points_used > 0:
                     pts_update = db.session.execute(
                         db.text("UPDATE user SET points = points - :used WHERE id = :id AND points >= :used"),
@@ -281,9 +324,9 @@ def submit_order():
                         db.session.rollback()
                         return jsonify({'error': '紅利點數不足！'}), 400
 
-            final_price = max(0, remaining_amount - points_used)
-            total_discount = promo_discount + points_used
-            points_earned = int(final_price // 100) if user else 0
+            final_price = max(0, remaining_amount - points_discount_amount)
+            total_discount = promo_discount + points_discount_amount
+            points_earned = int(final_price // points_earn_threshold) if user else 0
 
             if user and points_earned > 0:
                 db.session.execute(db.text("UPDATE user SET points = points + :earned WHERE id = :id"), {"id": user.id, "earned": points_earned})
@@ -301,6 +344,7 @@ def submit_order():
                 points_used=points_used,
                 points_earned=points_earned,
                 discount_amount=int(total_discount),
+                points_discount_amount=points_discount_amount,
                 coupon_code=promo_code if promo_code else '',
                 pickup_number=next_pickup,
                 customer_log_id=session.get('customer_log_id')
@@ -310,6 +354,14 @@ def submit_order():
 
             receipt_items = []
             for v in verified_items:
+                if v['reward_token']:
+                    redemption = RewardRedemption.query.filter_by(
+                        token=v['reward_token'], user_id=user_id, status='reserved'
+                    ).with_for_update().first()
+                    if not redemption or redemption.menu_item_id != v['menu_item_id']:
+                        db.session.rollback()
+                        return jsonify({'error': '紅利兌換品已失效，請重新兌換！'}), 400
+                    redemption.status = 'consumed'
                 order_item = OrderItem(
                     order_id=new_order.id,
                     item_name=v['display_name'],
@@ -368,6 +420,7 @@ def submit_order():
         'subtotal': subtotal,
         'discount_amount': total_discount,
         'points_used': points_used,
+        'points_discount_amount': points_discount_amount,
         'points_earned': points_earned,
         'total_price': final_price,
         'payment_method': payment_method,
@@ -376,7 +429,11 @@ def submit_order():
         'note': note,
         'items': receipt_items,
         'current_user_points': session.get('user_points', 0),
-        'available_coupons': latest_user_coupons
+        'available_coupons': latest_user_coupons,
+        'points_redemption_enabled': points_redemption_enabled,
+        'points_redemption_rate': points_redemption_rate,
+        'points_redemption_cap': points_redemption_cap,
+        'points_earn_threshold': points_earn_threshold
     })
 
 @customer_bp.route('/my_orders', endpoint='my_orders')
@@ -412,6 +469,7 @@ def my_orders():
             'total_price': round(o.total_price),
             'discount_amount': round(o.discount_amount or 0),
             'points_used': round(o.points_used or 0),
+            'points_discount_amount': round(getattr(o, 'points_discount_amount', 0) or 0),
             'points_earned': o.points_earned or 0,
             'payment_method': o.payment_method,
             'order_type': o.order_type,

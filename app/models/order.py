@@ -14,6 +14,7 @@ class Order(db.Model):
     note = db.Column(db.String(200), default='')
     status = db.Column(db.String(50), default='Pending')
     points_used = db.Column(db.Integer, default=0)
+    points_discount_amount = db.Column(db.Integer, default=0)
     points_earned = db.Column(db.Integer, default=0)
     discount_amount = db.Column(db.Integer, default=0)
     coupon_code = db.Column(db.String(50), default='')

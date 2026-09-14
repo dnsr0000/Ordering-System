@@ -59,13 +59,6 @@
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
         }
-        .auto-expand-desc {
-            resize: none;
-            overflow-y: hidden;
-            min-height: 42px;
-            line-height: 1.5;
-            transition: height 0.15s ease;
-        }
     </style>
 </head>
 <body>
@@ -121,18 +114,18 @@
                 <button class="btn btn-outline-success btn-sm fw-bold ms-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#exportExcelModal">
                     <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出資料
                 </button>
-                <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#importModal">
-                    <i class="bi bi-cloud-upload me-1"></i> 匯入資料
-                </button>
-                <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db)、會員相片與餐點照片的完整備份嗎？');">
-                    <i class="bi bi-archive-fill me-1"></i> 備份系統與全相片
-                </a>
-                <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold ms-2">
-                    <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
+                <form action="/admin/import_smart" method="POST" enctype="multipart/form-data" class="d-inline m-0" id="smartImportForm">
+                    <input type="file" name="file" id="smartImportFile" accept=".xlsx, .xls" class="d-none" onchange="document.getElementById('smartImportForm').submit();">
+                    <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" onclick="document.getElementById('smartImportFile').click();">
+                        <i class="bi bi-cloud-upload me-1"></i> 匯入資料
+                    </button>
+                </form>
+                <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold">
+                <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
                 </a>
             </div>
             
-            <!-- 右側加入即時時鐘與操作按鈕 -->
+            <!-- 🕒 右側加入即時時鐘與操作按鈕 -->
             <div class="d-flex align-items-center gap-3">
                 <div class="text-white-50 small d-none d-md-block bg-dark px-3 py-1.5 rounded border border-secondary" style="font-family: monospace;">
                     <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">2026/00/00 00:00:00</span>
@@ -186,7 +179,7 @@
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">取餐 #{{ '%03d' % (order.pickup_number or order.id) }} <small class="text-white-50 fs-6">(單號 #{{ order.id }})</small></h5>
+                                <h5 class="fw-bold text-warning mb-0">#{{ order.id }}</h5>
                                 <div class="d-flex gap-1">
                                     <span class="badge bg-primary">{{ order.order_type }}</span>
                                     <span class="badge bg-secondary">{{ order.payment_method }}</span>
@@ -230,12 +223,10 @@
                                     <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ (order.discount_amount or 0)|round|int }}</small>
                                     <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
                                 </div>
-                                <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'PickedUp' %}border-secondary{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}"></div>
                                 <div style="min-width: 130px;">
                                     <select class="form-select form-select-sm" onchange="changeOrderStatus('{{ order.id }}', this.value, this)">
                                         <option value="Pending" {% if order.status == 'Pending' %}selected{% endif %}>⏳ 製作中</option>
                                         <option value="Completed" {% if order.status == 'Completed' %}selected{% endif %}>✅ 已出餐</option>
-                                        <option value="PickedUp" {% if order.status == 'PickedUp' %}selected{% endif %}>📦 已取餐</option>
                                         <option value="Cancelled" {% if order.status == 'Cancelled' %}selected{% endif %}>❌ 已取消</option>
                                     </select>
                                 </div>
@@ -335,7 +326,7 @@
                                     <h6 class="fw-bold text-white mb-3"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運簡報</h6>
                                     <div class="mb-3">
                                         <div class="text-white-50 small">平均每單 (排除純點數訂單)</div>
-                                        <div class="fw-bold fs-4 text-warning">$<span id="stat-avg-order-value">{{ analytics.avg_order_value|round(0)|int }}</span></div>
+                                        <div class="fw-bold fs-4 text-warning">${{ analytics.avg_order_value|round(0)|int }}</div>
                                     </div>
 
                                     <div class="mb-3">
@@ -349,9 +340,9 @@
                                     </div>
                                     <div>
                                         <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
-                                    <div id="stat-ai-advice" class="p-3 bg-dark bg-opacity-50 rounded border border-secondary text-white-50 small">
-                                        {{ analytics.ai_advice }}
-                                    </div>
+                                        <div class="text-white p-2 rounded bg-secondary bg-opacity-25 border border-secondary" style="font-size: 0.9rem; line-height: 1.5;">
+                                            {{ analytics.ai_advice }}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -386,7 +377,7 @@
                                     <th>標籤狀態</th>
                                     <th>商城狀態</th>
                                     <th>數量 (剩餘 / 總量)</th> 
-                                    <th class="text-end" style="min-width: 140px; white-space: nowrap;">操作</th>
+                                    <th class="text-end">操作</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -435,137 +426,38 @@
                                             </span>
                                         </div>
                                     </td>
-                                    <td class="text-end text-nowrap">
-                                        <div class="d-inline-flex justify-content-end align-items-center gap-2">
-                                            <button class="btn btn-outline-primary btn-sm" type="button"
-                                                    data-id="{{ item.id }}" 
-                                                    data-name="{{ item.name }}" 
-                                                    data-category="{{ item.category }}"
-                                                    data-modifiers="{{ item.modifiers or 'none' }}" 
-                                                    data-price="{{ item.price }}"
-                                                    data-stock="{{ item.stock or 0 }}"
-                                                    data-total-stock="{{ item.total_stock or 0 }}"
-                                                    data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
-                                                    data-is-discount="{{ 1 if item.is_discount else 0 }}"
-                                                    data-discount-price="{{ item.discount_price or 0 }}"
-                                                    data-description="{{ item.description or '' }}" 
-                                                    data-image="{{ item.image_path or '' }}"
-                                                    data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
-                                                    data-new="{{ 1 if item.is_new else 0 }}"
-                                                    data-is-reward="{{ 1 if item.is_reward else 0 }}"
-                                                    data-reward-points="{{ item.reward_points or 0 }}"
-                                                    data-reward-discount="{{ item.reward_discount_points or 0 }}"
-                                                    data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
-                                                    data-addon-price="{{ item.add_on_price or 0 }}"
-                                                    data-addon-trigger-type="{{ item.addon_trigger_type or 'any' }}"
-                                                    data-addon-trigger-target="{{ item.addon_trigger_target or '' }}"
-                                                    onclick="openEditModal(this)">
-                                                <i class="bi bi-pencil-square"></i> 編輯
-                                            </button>
-                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
-                                                <i class="bi bi-trash"></i> 刪除
-                                            </a>
-                                        </div>
+                                    <td class="text-end">
+                                    <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                            data-id="{{ item.id }}" 
+                                            data-name="{{ item.name }}" 
+                                            data-category="{{ item.category }}"
+                                            data-modifiers="{{ item.modifiers or 'none' }}" 
+                                            data-price="{{ item.price }}"
+                                            data-stock="{{ item.stock or 0 }}"
+                                            data-total-stock="{{ item.total_stock or 0 }}"
+                                            data-is-sold-out="{{ 1 if item.is_sold_out else 0 }}"
+                                            data-is-discount="{{ 1 if item.is_discount else 0 }}"
+                                            data-discount-price="{{ item.discount_price or 0 }}"
+                                            data-description="{{ item.description or '' }}" 
+                                            data-image="{{ item.image_path or '' }}"
+                                            data-recommended="{{ 1 if (item.is_manual_popular or item.is_recommended) else 0 }}"
+                                            data-new="{{ 1 if item.is_new else 0 }}"
+                                            data-is-reward="{{ 1 if item.is_reward else 0 }}"
+                                            data-reward-points="{{ item.reward_points or 0 }}"
+                                            data-reward-discount="{{ item.reward_discount_points or 0 }}"
+                                            data-can-addon="{{ 1 if item.can_be_add_on else 0 }}"
+                                            data-addon-price="{{ item.add_on_price or 0 }}"
+                                            data-addon-trigger-type="{{ item.addon_trigger_type or 'any' }}"
+                                            data-addon-trigger-target="{{ item.addon_trigger_target or '' }}"
+                                            onclick="openEditModal(this)">
+                                        <i class="bi bi-pencil-square"></i> 編輯
+                                    </button>
+                                        <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
+                                            <i class="bi bi-trash"></i> 刪除
+                                        </a>
                                     </td>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <!-- 套餐組合清單 (Combo List) -->
-                <div class="card card-custom p-4 mb-4 border-success">
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-box-seam text-success me-2"></i>套餐組合清單</h5>
-                        <div class="d-flex gap-2">
-                            <!-- 將新增按鈕移至此處的右上角 -->
-                            <button class="btn btn-success btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#addComboModal">
-                                <i class="bi bi-plus-lg me-1"></i> 新增套餐組合
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-dark-custom align-middle">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>關聯主餐</th>
-                                    <th>套餐名稱</th>
-                                    <th>升級加購價</th>
-                                    <th>配餐內容清單 (Sides)</th>
-                                    <th>標籤狀態</th>
-                                    <th class="text-end">操作</th>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                <!-- 撈出所有綁定的套餐 -->
-                                {% set all_combos = [] %}
-                                {% for item in items %}
-                                    {% for combo in item.combo_options %}
-                                        {% set _ = all_combos.append(combo) %}
-                                        <tr>
-                                            <td><span class="badge bg-secondary">{{ item.name }}</span></td>
-                                            <td class="fw-bold text-white">{{ combo.name }}</td>
-                                            <td class="fw-bold text-danger">+${{ combo.additional_price }}</td>
-                                            <td>
-                                            <ul class="mb-0 list-unstyled small text-white-50">
-                                                {% if combo.item1 %}<li>- {{ combo.item1.name }} {% if combo.item1_customizable and combo.item1.modifiers and combo.item1.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                                {% if combo.item2 %}<li>- {{ combo.item2.name }} {% if combo.item2_customizable and combo.item2.modifiers and combo.item2.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                                {% if combo.item3 %}<li>- {{ combo.item3.name }} {% if combo.item3_customizable and combo.item3.modifiers and combo.item3.modifiers != 'none' %}<span class="badge bg-info text-dark py-0" style="font-size: 0.65rem;">可客製</span>{% endif %}</li>{% endif %}
-                                            </ul>
-                                            </td>
-                                            <td>
-                                            {% set is_main_sold = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
-                                            {% set is_side1_sold = combo.item1 and (combo.item1.is_sold_out or (combo.item1.stock is not none and combo.item1.stock <= 0)) %}
-                                            {% set is_side2_sold = combo.item2 and (combo.item2.is_sold_out or (combo.item2.stock is not none and combo.item2.stock <= 0)) %}
-                                            {% set is_side3_sold = combo.item3 and (combo.item3.is_sold_out or (combo.item3.stock is not none and combo.item3.stock <= 0)) %}
-
-                                            {% if is_main_sold %}
-                                                <span class="badge bg-secondary me-1">主餐售完</span>
-                                            {% elif is_side1_sold or is_side2_sold or is_side3_sold %}
-                                                <span class="badge bg-warning text-dark me-1">配餐缺貨</span>
-                                            {% else %}
-                                                <span class="badge bg-success me-1">正常供應</span>
-                                            {% endif %}
-                                            
-                                            {% if combo.can_addon %}
-                                                <span class="badge bg-info text-dark me-1">可加購</span>
-                                            {% else %}
-                                                <span class="badge bg-secondary text-white-50 me-1">不可加購</span>
-                                            {% endif %}
-
-                                            {% set side_count = (1 if combo.item1 else 0) + (1 if combo.item2 else 0) + (1 if combo.item3 else 0) %}
-                                            <span class="badge bg-dark text-white-50 border border-secondary">{{ side_count }}樣附餐</span>
-                                            </td>
-                                            <td class="text-end">
-                                                <button class="btn btn-outline-primary btn-sm me-1" type="button"
-                                                        data-id="{{ combo.id }}"
-                                                        data-main-id="{{ combo.main_item_id }}"
-                                                        data-name="{{ combo.name }}"
-                                                        data-price="{{ combo.additional_price }}"
-                                                        data-desc="{{ combo.description or '' }}"
-                                                        data-item1="{{ combo.item1_id or '' }}"
-                                                        data-item1-cust="{{ 1 if combo.item1_customizable else 0 }}"
-                                                        data-item2="{{ combo.item2_id or '' }}"
-                                                        data-item2-cust="{{ 1 if combo.item2_customizable else 0 }}"
-                                                        data-item3="{{ combo.item3_id or '' }}"
-                                                        data-item3-cust="{{ 1 if combo.item3_customizable else 0 }}"
-                                                        data-can-addon="{{ 1 if combo.can_addon else 0 }}"
-                                                        onclick="openEditComboModal(this)">
-                                                    <i class="bi bi-pencil-square"></i> 編輯
-                                                </button>
-                                                <a href="/admin/delete_combo/{{ combo.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除套餐組合【{{ combo.name }}】嗎？')">
-                                                    <i class="bi bi-trash"></i> 刪除
-                                                </a>
-                                            </td>
-                                        </tr>
-                                    {% endfor %}
                                 {% endfor %}
-
-                                {% if all_combos | length == 0 %}
-                                <tr>
-                                    <td colspan="6" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td>
-                                </tr>
-                                {% endif %}
                             </tbody>
                         </table>
                     </div>
@@ -620,6 +512,11 @@
                                         {% else %}
                                             <span class="text-white-50 small">無特價</span>
                                         {% endif %}
+                                    </td>
+                                    <td class="text-end">
+                                        <a href="/admin/delete_coupon/{{ cp.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
+                                            <i class="bi bi-trash"></i> 刪除
+                                        </a>
                                     </td>
                                     <td class="text-end">
                                     <button class="btn btn-outline-primary btn-sm me-1" type="button"
@@ -728,6 +625,40 @@
 
 <!-- 4. 會員名冊與紅利 -->
             <div class="tab-pane fade" id="users-pane" role="tabpanel">
+                <div class="card card-custom p-4 mb-3">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-sliders text-warning me-2"></i>紅利折抵設定</h5>
+                        <span class="text-white-50 small">目前設定：{{ points_rate }} 點折抵 $1</span>
+                    </div>
+                    <form action="{{ url_for('admin.update_points_settings') }}" method="POST">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-12 col-md-3">
+                                <div class="form-check form-switch pt-2">
+                                <input class="form-check-input" type="checkbox" id="points-redemption-enabled" name="points_redemption_enabled" {% if points_enabled %}checked{% endif %}>
+                                <label class="form-check-label text-white fw-bold" for="points-redemption-enabled">啟用點數折抵</label>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-3">
+                                <label class="form-label text-white-50 small mb-1">每 $1 需要幾點</label>
+                                <input type="number" class="form-control" name="points_redemption_rate" min="1" step="1" value="{{ points_rate }}" required>
+                            </div>
+                            <div class="col-12 col-md-3">
+                                <label class="form-label text-white-50 small mb-1">單筆最多折抵金額</label>
+                                <input type="number" class="form-control" name="points_redemption_cap" min="0" step="1" value="{{ points_cap if points_cap > 0 else '' }}" placeholder="0 = 不限" required>
+                            </div>
+                            <div class="col-12 col-md-3">
+                                <label class="form-label text-white-50 small mb-1">消費滿幾元送 1 點</label>
+                                <input type="number" class="form-control" name="points_earn_threshold" min="1" step="1" value="{{ points_earn_threshold }}" required>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-12 col-md-3 ms-auto">
+                                <button type="submit" class="btn btn-warning fw-bold w-100"><i class="bi bi-check2-circle me-1"></i>儲存點數設定</button>
+                            </div>
+                        </div>
+                    </form>
+                    <div class="text-white-50 small mt-2">例如設定為 2，代表 2 點折抵 $1；折抵上限 50 代表單筆最多折 $50。停用後會員仍可累積點數，但結帳不能使用點數折抵。</div>
+                </div>
                 <div class="card card-custom p-4">
                     <h5 class="fw-bold mb-4 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券</h5>
                     <div class="table-responsive">
@@ -740,7 +671,6 @@
                                     <th>目前紅利點數</th>
                                     <th>持有專屬優惠券狀態</th>
                                     <th>人臉特徵</th>
-                                    <th>最後登入時間</th>
                                     <th class="text-end">操作</th>
                                 </tr>
                             </thead>
@@ -753,7 +683,7 @@
                                     <td class="fw-bold text-white">{{ u.name }}</td>
                                     <td>{{ u.phone }}</td>
                                     <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill text-danger me-1"></i>{{ u.points }} 點</span></td>
-                                    <td>
+<td>
                                         {% set coupons_list = [] %}
                                         {% for uc in u.user_coupons %}
                                             {% set _ = coupons_list.append({'id': uc.id, 'title': uc.coupon.title, 'code': uc.code, 'is_used': uc.is_used}) %}
@@ -770,13 +700,6 @@
                                         <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>已建檔</span>
                                         {% else %}
                                         <span class="badge bg-secondary">未建檔</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if u.last_login_at %}
-                                            <span class="text-info small fw-bold"><i class="bi bi-clock-history me-1"></i>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                                        {% else %}
-                                            <span class="text-white-50 small">尚未記錄</span>
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
@@ -831,7 +754,6 @@
                             <div class="col-6">
                                 <label class="form-label small fw-bold" id="disc-val-label">折抵金額 (NT$)</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="discount_value" id="coupon-disc-val" placeholder="50" required>
-                                <div id="coupon-disc-hint" class="small mt-1 text-warning fw-bold" style="display: none;"></div>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -907,7 +829,7 @@
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點名稱</label>
-                            <input type="text" class="form-control" name="name" id="add-name" placeholder="例如：招牌牛肉漢堡" required>
+                            <input type="text" class="form-control" name="name" placeholder="例如：招牌牛肉漢堡" required>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -946,7 +868,7 @@
                                 <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
                                 <div class="d-flex gap-2">
                                     <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="add-addon-type" onchange="toggleAddonTarget('add')">
-                                        <option value="any">購買任一餐點皆可</option>
+                                        <option value="any">購買任一主餐皆可</option>
                                         <option value="category">需購買特定分類</option>
                                         <option value="item">需購買特定餐點</option>
                                     </select>
@@ -964,13 +886,8 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <label class="form-label small fw-bold mb-0">商品描述</label>
-                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-add" onclick="generateAIDescription('add')" style="font-size: 0.75rem;">
-                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
-                                </button>
-                            </div>
-                            <textarea class="form-control auto-expand-desc" name="description" id="add-description" rows="1" placeholder="簡短餐點介紹，或輸入名稱後點擊上方按鈕自動生成" oninput="autoExpandTextarea(this)"></textarea>
+                            <label class="form-label small fw-bold">商品描述</label>
+                            <input type="text" class="form-control" name="description" placeholder="簡短餐點介紹">
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點照片</label>
@@ -1033,7 +950,7 @@
                                 <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
                                 <div class="d-flex gap-2">
                                     <select class="form-select form-select-sm w-50" name="addon_trigger_type" id="edit-addon-type" onchange="toggleAddonTarget('edit')">
-                                        <option value="any">購買任一餐點皆可</option>
+                                        <option value="any">購買任一主餐皆可</option>
                                         <option value="category">需購買特定分類</option>
                                         <option value="item">需購買特定餐點</option>
                                     </select>
@@ -1085,13 +1002,8 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <div class="d-flex justify-content-between align-items-center mb-1">
-                                <label class="form-label small fw-bold mb-0">商品描述</label>
-                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-edit" onclick="generateAIDescription('edit')" style="font-size: 0.75rem;">
-                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
-                                </button>
-                            </div>
-                            <textarea class="form-control auto-expand-desc" name="description" id="edit-description" rows="1" oninput="autoExpandTextarea(this)"></textarea>
+                            <label class="form-label small fw-bold">商品描述</label>
+                            <input type="text" class="form-control" name="description" id="edit-description">
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點照片 (更換)</label>
@@ -1114,210 +1026,6 @@
         </div>
     </div>
 
-<!-- 新增套餐組合 Modal -->
-    <div class="modal fade" id="addComboModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-box-seam me-2"></i>新增套餐組合設定</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form action="/admin/add_combo" method="POST">
-                    <div class="modal-body p-4">
-                        <div class="mb-3">
-                            <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
-                            <select class="form-select border-warning" name="main_item_id" required>
-                                <option value="" disabled selected>請選擇要綁定套餐的主餐...</option>
-                                {% for it in items if it.category not in ['飲料', '點心', '副餐', '配餐'] %}
-                                <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }} (${{ it.price }})</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        <div class="row g-2 mb-3">
-                            <div class="col-8">
-                                <label class="form-label small fw-bold">套餐名稱 (Combo Name)</label>
-                                <input type="text" class="form-control" name="name" placeholder="例如：超值A餐" required>
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small fw-bold">加購價 (NT$)</label>
-                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" placeholder="60" min="0" required>
-                            </div>
-                        </div>
-
-                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
-                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
-                            
-                            <!-- 配餐 1 -->
-                            <div class="mb-3" id="combo-side1-group">
-                                <select name="item1_id" id="add_combo_item1" class="form-select form-select-sm" onchange="syncComboCustomizable(1, 'add')">
-                                    <option value="">-- 請選擇第一項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }} data-modifiers="{{ it.modifiers or 'none' }}"">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="combo-side1-cust" checked>
-                                    <label class="form-check-label small text-warning" for="combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-
-                            <!-- 配餐 2 -->
-                            <div class="mb-3" id="combo-side2-group" style="display: none;">
-                                <select name="item1_id" id="add_combo_item2" class="form-select form-select-sm" onchange="syncComboCustomizable(2, 'add')">
-                                    <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="combo-side2-cust" checked>
-                                    <label class="form-check-label small text-warning" for="combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-
-                            <!-- 配餐 3 -->
-                            <div class="mb-3" id="combo-side3-group" style="display: none;">
-                                <select name="item1_id" id="add_combo_item3" class="form-select form-select-sm" onchange="syncComboCustomizable(3, 'add')">
-                                    <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="combo-side3-cust" checked>
-                                    <label class="form-check-label small text-warning" for="combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-                            <!-- 套餐標籤區 -->
-                            <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
-                                <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
-                                <div class="d-flex flex-wrap gap-3">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="combo-can-addon" checked>
-                                        <label class="form-check-label small fw-bold text-info" for="combo-can-addon">
-                                            <i class="bi bi-bag-plus"></i> 開放加購
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="mb-2">
-                                <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
-                                <textarea class="form-control" name="description" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary justify-content-between">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-success fw-bold text-dark px-4">儲存套餐設定</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!--編輯套餐組合 Modal -->
-    <div class="modal fade" id="editComboModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-pencil-square me-2"></i>編輯套餐組合設定</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form id="editComboForm" method="POST">
-                    <div class="modal-body p-4">
-                        <div class="mb-3">
-                            <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
-                            <select class="form-select border-warning" name="main_item_id" id="edit-combo-main" required>
-                                <option value="" disabled selected>請選擇要綁定套餐的主餐...</option>
-                                {% for it in items if it.category not in ['飲料', '點心', '副餐', '配餐'] %}
-                                <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }} (${{ it.price }})</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-
-                        <div class="row g-2 mb-3">
-                            <div class="col-8">
-                                <label class="form-label small fw-bold">套餐名稱 (Combo Name)</label>
-                                <input type="text" class="form-control" name="name" id="edit-combo-name" required>
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small fw-bold">加購價 (NT$)</label>
-                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="edit-combo-price" min="0" required>
-                            </div>
-                        </div>
-
-                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
-                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
-                            
-                            <!-- 配餐 1 -->
-                            <div class="mb-3" id="edit-combo-side1-group">
-                                <select class="form-select form-select-sm" name="item1_id" id="edit-combo-side1" onchange="checkComboSides(1, 'edit-combo'); syncSideCustomizable(1, 'edit-combo');">
-                                    <option value="">-- 請選擇第一項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1" style="display: none;">
-                                    <input class="form-check-input" type="checkbox" name="item1_customizable" value="1" id="edit-combo-side1-cust">
-                                    <label class="form-check-label small text-warning" for="edit-combo-side1-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-
-                            <!-- 配餐 2 -->
-                            <div class="mb-3" id="edit-combo-side2-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item2_id" id="edit-combo-side2" onchange="checkComboSides(2, 'edit-combo'); syncSideCustomizable(2, 'edit-combo');">
-                                    <option value="">-- ➕ 請選擇第二項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item2_customizable" value="1" id="edit-combo-side2-cust">
-                                    <label class="form-check-label small text-warning" for="edit-combo-side2-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-
-                            <!-- 配餐 3 -->
-                            <div class="mb-3" id="edit-combo-side3-group" style="display: none;">
-                                <select class="form-select form-select-sm" name="item3_id" id="edit-combo-side3" onchange="checkComboSides(3, 'edit-combo'); syncSideCustomizable(3, 'edit-combo');">
-                                    <option value="">-- ➕ 請選擇第三項配餐 (選填) --</option>
-                                    {% for it in items if it.category in ['飲料', '點心', '副餐', '配餐'] %}
-                                    <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-check form-switch mt-1">
-                                    <input class="form-check-input" type="checkbox" name="item3_customizable" value="1" id="edit-combo-side3-cust">
-                                    <label class="form-check-label small text-warning" for="edit-combo-side3-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- 套餐標籤區 -->
-                        <div class="p-3 mb-3 rounded border border-secondary" style="background: rgba(0,0,0,0.2);">
-                            <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
-                            <div class="d-flex flex-wrap gap-3">
-                                <div class="form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="edit-combo-can-addon" checked>
-                                    <label class="form-check-label small fw-bold text-info" for="edit-combo-can-addon">
-                                        <i class="bi bi-bag-plus"></i> 開放加購
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">自訂文字描述 (Description)</label>
-                            <textarea class="form-control" name="description" id="edit-combo-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary justify-content-between">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
     <!--  Excel 匯入 Modal -->
     <div class="modal fade" id="importExcelModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
@@ -1408,7 +1116,7 @@
         </div>
     </div>
 
-    <!--  編輯優惠券 Modal -->
+    <!-- 💡 編輯優惠券 Modal -->
     <div class="modal fade" id="editCouponModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -1437,7 +1145,6 @@
                             <div class="col-6">
                                 <label class="form-label small fw-bold" id="edit-coupon-disc-val-label">折抵金額 (NT$)</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="discount_value" id="edit-coupon-disc-val" required>
-                                <div id="edit-coupon-disc-hint" class="small mt-1 text-warning fw-bold" style="display: none;"></div>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -1463,7 +1170,7 @@
             </div>
         </div>
     </div>
-    <!-- 匯出資料 (Export Data) Modal -->
+    <!-- 新增：匯出資料 (Export Data) Modal -->
     <div class="modal fade" id="exportExcelModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content card-custom text-white shadow-lg">
@@ -1507,11 +1214,8 @@
                             <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Analytics" id="exp-analytics" checked>
                             <label class="form-check-label fw-bold text-info" for="exp-analytics">營運資訊與熱銷排行 (Analytics)</label>
                         </div>
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="AdminLog" id="exp-adminlog" checked>
-                            <label class="form-check-label fw-bold text-warning" for="exp-adminlog">管理員進出日誌 (AdminLog)</label>
-                        </div>
-                        <!-- 日期選擇區塊 (預設隱藏) -->
+
+                        <!-- 日期選擇區塊 (預設隱藏，由 JS 控制顯示) -->
                         <div class="row g-2 p-3 rounded bg-dark border border-secondary" id="export-date-range">
                             <div class="col-6">
                                 <label class="form-label small fw-bold text-warning">開始日期 (Start Date)</label>
@@ -1531,125 +1235,6 @@
             </div>
         </div>
     </div>
-
-    <!-- 整合式匯入資料 Modal (含備份 ZIP 篩選還原與 Excel 智慧匯入) -->
-    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered modal-lg">
-            <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary pb-2">
-                    <div class="d-flex align-items-center gap-2">
-                        <i class="bi bi-cloud-arrow-up-fill text-info fs-4"></i>
-                        <h5 class="modal-title fw-bold text-white mb-0">資料匯入與系統還原</h5>
-                    </div>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-
-                <div class="modal-body p-4">
-                    <!-- 模式切換頁籤 (Nav Tabs) -->
-                    <ul class="nav nav-pills mb-4 border-bottom border-secondary pb-3" id="importModalTab" role="tablist">
-                        <li class="nav-item me-2" role="presentation">
-                            <button class="nav-link active" id="tab-restore-zip" data-bs-toggle="pill" data-bs-target="#pane-restore-zip" type="button" role="tab">
-                                <i class="bi bi-archive-fill text-warning me-1"></i> 還原備份檔 (ZIP 壓縮檔)
-                            </button>
-                        </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="tab-import-excel" data-bs-toggle="pill" data-bs-target="#pane-import-excel" type="button" role="tab">
-                                <i class="bi bi-file-earmark-spreadsheet text-info me-1"></i> 智慧匯入 Excel 報表
-                            </button>
-                        </li>
-                    </ul>
-
-                    <div class="tab-content" id="importModalTabContent">
-                        <!-- ------------------------------------------------------------- -->
-                        <!-- 頁籤 1：系統備份 ZIP 還原 (含項目篩選機制) -->
-                        <!-- ------------------------------------------------------------- -->
-                        <div class="tab-pane fade show active" id="pane-restore-zip" role="tabpanel">
-                            <form action="/admin/restore_backup" method="POST" enctype="multipart/form-data" onsubmit="return confirm('⚠️ 警告：系統還原將依下方設定覆寫現有檔案與紀錄，確定要繼續執行嗎？');">
-                                <div class="mb-3">
-                                    <label class="form-label small fw-bold text-warning">選擇系統備份壓縮檔 (ZIP File)</label>
-                                    <input type="file" class="form-control" name="backup_zip" accept=".zip" required>
-                                    <small class="text-white-50">支援上傳「一鍵備份系統」產生之 <code>Kiosk_Backup_*.zip</code> 檔案。</small>
-                                </div>
-
-                                <div class="p-3 rounded bg-dark border border-secondary mb-3">
-                                    <p class="small fw-bold text-warning mb-2">
-                                        <i class="bi bi-funnel-fill me-1"></i> 還原項目篩選機制 (Filter Options)：
-                                    </p>
-
-                                    <!-- 篩選 1：資料庫 -->
-                                    <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="restore_db" value="1" id="filter-rst-db" checked>
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-db">
-                                            還原 SQLite 資料庫 (<code>menu.db</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">涵蓋所有菜單、會員資料、歷史訂單、日誌與優惠券。</div>
-                                    </div>
-
-                                    <!-- 篩選 2：會員相片 -->
-                                    <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="restore_photos" value="1" id="filter-rst-photos" checked onchange="document.getElementById('filter-photo-opt').style.display = this.checked ? 'block' : 'none';">
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-photos">
-                                            還原會員人臉特徵相片 (<code>static/member/</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">自動比對二進位安全路徑，匯入刷臉相片。</div>
-                                    </div>
-                                    <!-- 篩選 3：菜單餐點照片 -->
-                                    <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="restore_menu_photos" value="1" id="filter-rst-menu-photos" checked>
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-menu-photos">
-                                            還原菜單餐點照片 (<code>static/menu/</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">匯入所有菜單品項之展示縮圖與高清圖檔。</div>
-                                    </div>
-                                    <!-- 篩選 4：衝突覆寫開關 -->
-                                    <div class="ps-4 mb-1" id="filter-photo-opt">
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="overwrite_photos" value="1" id="filter-rst-overwrite" checked>
-                                            <label class="form-check-label small text-warning" for="filter-rst-overwrite">
-                                                遇到同名相片時強制覆寫
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
-                                    <button type="submit" class="btn btn-warning btn-sm fw-bold text-dark px-4">
-                                        <i class="bi bi-arrow-counterclockwise me-1"></i> 開始執行還原
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-
-                        <!-- ------------------------------------------------------------- -->
-                        <!-- 頁籤 2：Excel 智慧匯入 (原 import_smart 功能) -->
-                        <!-- ------------------------------------------------------------- -->
-                        <div class="tab-pane fade" id="pane-import-excel" role="tabpanel">
-                            <form action="/admin/import_smart" method="POST" enctype="multipart/form-data">
-                                <div class="mb-3">
-                                    <label class="form-label small fw-bold text-info">選擇 Excel 試算表檔案</label>
-                                    <input type="file" class="form-control" name="file" accept=".xlsx, .xls" required>
-                                    <small class="text-white-50">支援包含會員 (User)、菜單品項 (MenuItem)、優惠券 (Coupon) 之試算表。</small>
-                                </div>
-
-                                <div class="p-3 rounded bg-dark border border-secondary text-white-50 small mb-3">
-                                    <div class="fw-bold text-white mb-1"><i class="bi bi-info-circle text-info me-1"></i> 智慧辨識機制說明：</div>
-                                    系統會自動判斷工作表 (Sheet) 名稱與欄位特徵，進行現有資料比對更新或批次新增，無需嚴格限制 Sheet 順序。
-                                </div>
-
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
-                                    <button type="submit" class="btn btn-info btn-sm fw-bold text-dark px-4">
-                                        <i class="bi bi-file-earmark-arrow-up me-1"></i> 智慧解析並匯入
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 
@@ -1657,11 +1242,6 @@
 
 const menuCategories = [...new Set([{% for it in items if it.category %}'{{ it.category }}',{% endfor %}])];
 const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
-    function autoExpandTextarea(el) {
-        if (!el) return;
-        el.style.height = 'auto';
-        el.style.height = el.scrollHeight + 'px';
-    }
     // --- 即時時鐘更新邏輯 ---
     function updateAdminClock() {
         const clockEl = document.getElementById('live-clock');
@@ -1684,37 +1264,33 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         openUserCouponsModal(userName, coupons);
     }
     function toggleDiscInput(type) {
-    const label = document.getElementById('disc-val-label');
-    const input = document.getElementById('coupon-disc-val');
-    input.min = '0';
-    if (type === 'percent') {
-        label.innerText = '折扣折數 (支援 0.9、9 或 90)';
-        input.placeholder = '例如 0.9 或 90 (代表9折)';
-        input.max = '99';
-        input.step = '0.01';
-    } else {
-        label.innerText = '折抵金額 (NT$)';
-        input.placeholder = '50';
-        input.removeAttribute('max');
-        input.step = '1';
+        const label = document.getElementById('disc-val-label');
+        const input = document.getElementById('coupon-disc-val');
+        input.min = '0';
+        if (type === 'percent') {
+            label.innerText = '折扣折數 (例如 0.9 代表9折)';
+            input.placeholder = '0.9';
+            input.max = '0.99';
+        } else {
+            label.innerText = '折抵金額 (NT$)';
+            input.placeholder = '50';
+            input.removeAttribute('max');
+        }
     }
-    updateDiscountHint('coupon');
-}
 
     // 後台切換訂單狀態時更新
     function changeOrderStatus(orderId, newStatus, selectEl) {
         localStorage.setItem('adminActiveTab', 'orders');
-        // 1.  當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
+        // 1. 💡 當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
         if (selectEl) {
             selectEl.blur();
             
-            // 2.  立即原地切換卡片外框邊框顏色
+            // 2. 💡 立即原地切換卡片外框邊框顏色
             const card = selectEl.closest('.card-custom');
             if (card) {
                 card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
                 if (newStatus === 'Pending') card.classList.add('border-warning');
                 else if (newStatus === 'Completed') card.classList.add('border-success');
-                else if (newStatus === 'PickedUp') card.classList.add('border-secondary');
                 else if (newStatus === 'Cancelled') card.classList.add('border-danger');
                 else card.classList.add('border-info');
             }
@@ -1769,9 +1345,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
         document.getElementById('edit-can-addon').checked = d.canAddon === '1';
         document.getElementById('edit-addon-price').value = Math.round(Number(d.addonPrice || 0));
-        const editDescEl = document.getElementById('edit-description');
-        editDescEl.value = d.description || '';
-        setTimeout(() => autoExpandTextarea(editDescEl), 150);
+        document.getElementById('edit-description').value = d.description || '';
         document.getElementById('edit-recommended').checked = d.recommended === '1';
         document.getElementById('edit-new').checked = d.new === '1';
         document.getElementById('edit-is-reward').checked = d.isReward === '1';
@@ -1920,7 +1494,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                 // 1. 即時重繪彈窗內容
                 renderUserCouponsBody(userName, data.coupons);
                 
-                // 2. 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
+                // 2. 💡 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
                 const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
                 btns.forEach(b => {
                     b.dataset.coupons = JSON.stringify(data.coupons);
@@ -1934,101 +1508,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             alert('網路錯誤，請稍後再試');
         });
     }
-    
-//  檢查重複配餐並即時更新各選單的可用狀態 (Disabled)
-    function updateComboSideOptions(prefix) {
-        const selects = [
-            document.getElementById(`${prefix}-side1`),
-            document.getElementById(`${prefix}-side2`),
-            document.getElementById(`${prefix}-side3`)
-        ].filter(Boolean);
-
-        // 收集目前已選的所有配餐 ID
-        const chosenValues = selects.map(s => s.value).filter(Boolean);
-
-        selects.forEach(s => {
-            Array.from(s.options).forEach(opt => {
-                if (!opt.value) return;
-                // 若該品項已在其他選單被選取，直接將其停用 (disabled)
-                if (chosenValues.includes(opt.value) && s.value !== opt.value) {
-                    opt.disabled = true;
-                } else {
-                    opt.disabled = false;
-                }
-            });
-        });
-    }
-
-    //  支援新增與編輯彈窗的配餐欄位連動展開與防重複檢查
-    function checkComboSides(level, prefix = 'combo') {
-        const currentVal = document.getElementById(`${prefix}-side${level}`).value;
-        const nextGroup = document.getElementById(`${prefix}-side${level + 1}-group`);
-
-        // 1. 防呆檢查：若選到了其他欄位已選的品項，阻斷並清空
-        if (currentVal) {
-            for (let i = 1; i <= 3; i++) {
-                if (i !== level) {
-                    const otherSelect = document.getElementById(`${prefix}-side${i}`);
-                    if (otherSelect && otherSelect.value && otherSelect.value === currentVal) {
-                        alert('⚠️ 此配餐已在其他欄位選取，不可重複選擇！');
-                        document.getElementById(`${prefix}-side${level}`).value = '';
-                        updateComboSideOptions(prefix);
-                        return;
-                    }
-                }
-            }
-        }
-
-        // 2. 展開或收合下一層欄位
-        if (currentVal) {
-            if (nextGroup) nextGroup.style.display = 'block';
-        } else {
-            for (let i = level + 1; i <= 3; i++) {
-                const g = document.getElementById(`${prefix}-side${i}-group`);
-                const s = document.getElementById(`${prefix}-side${i}`);
-                if (g) g.style.display = 'none';
-                if (s) s.value = '';
-            }
-        }
-
-        // 3. 即時更新所有下拉選單的選項禁用狀態
-        updateComboSideOptions(prefix);
-    }
-
-    // 點擊編輯按鈕帶入資料並開啟彈窗
-    function openEditComboModal(btn) {
-        const d = btn.dataset;
-        document.getElementById('editComboForm').action = '/admin/edit_combo/' + d.id;
-        document.getElementById('edit-combo-main').value = d.mainId || '';
-        document.getElementById('edit-combo-name').value = d.name || '';
-        document.getElementById('edit-combo-price').value = d.price || 0;
-        document.getElementById('edit-combo-desc').value = d.desc || '';
-
-        // 配餐 1：帶入選單值並觸發開關顯示/隱藏判定
-        const side1 = document.getElementById('edit-combo-side1');
-        side1.value = d.item1 || '';
-        syncSideCustomizable(1, 'edit-combo', d.item1Cust === '1');
-
-        // 配餐 2：帶入選單值並觸發開關顯示/隱藏判定
-        const side2 = document.getElementById('edit-combo-side2');
-        side2.value = d.item2 || '';
-        document.getElementById('edit-combo-side2-group').style.display = d.item1 ? 'block' : 'none';
-        syncSideCustomizable(2, 'edit-combo', d.item2Cust === '1');
-
-        // 配餐 3：帶入選單值並觸發開關顯示/隱藏判定
-        const side3 = document.getElementById('edit-combo-side3');
-        side3.value = d.item3 || '';
-        document.getElementById('edit-combo-side3-group').style.display = d.item2 ? 'block' : 'none';
-        syncSideCustomizable(3, 'edit-combo', d.item3Cust === '1');
-
-        // 帶入可否加購開關狀態
-        document.getElementById('edit-combo-can-addon').checked = (d.canAddon !== '0');
-
-        // 帶入資料後立即更新選項禁用狀態
-        updateComboSideOptions('edit-combo');
-
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('editComboModal')).show();
-    }
+        
     // --- 原單價、特價與加購價防呆連動邏輯 ---
     function bindDiscountValidation(formId, priceId, inputId, toggleId, addonPriceId, addonToggleId) {
         const form = document.getElementById(formId);
@@ -2159,23 +1639,22 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
 
     //  切換編輯優惠券折抵模式的單位提示
     function toggleEditCouponDiscInput(type) {
-    const label = document.getElementById('edit-coupon-disc-val-label');
-    const input = document.getElementById('edit-coupon-disc-val');
-    if (!label || !input) return;
-    
-    if (type === 'percent') {
-        label.innerText = '折扣折數 (支援 0.9、9 或 90)';
-        input.placeholder = '例如 0.9 或 90 (代表9折)';
-        input.max = '99';
-        input.step = '0.01';
-    } else {
-        label.innerText = '折抵金額 (NT$)';
-        input.placeholder = '50';
-        input.removeAttribute('max');
-        input.step = '1';
+        const label = document.getElementById('edit-coupon-disc-val-label');
+        const input = document.getElementById('edit-coupon-disc-val');
+        if (!label || !input) return;
+        
+        if (type === 'percent') {
+            label.innerText = '折扣折數 (例如 0.95 代表95折)';
+            input.placeholder = '0.95';
+            input.max = '0.99';
+            input.step = '0.01';
+        } else {
+            label.innerText = '折抵金額 (NT$)';
+            input.placeholder = '50';
+            input.removeAttribute('max');
+            input.step = '1';
+        }
     }
-    updateDiscountHint('edit-coupon');
-}
 
     // 監聽數值輸入：輸入 0.x 時自動輔助切換為打折百分比
     document.getElementById('edit-coupon-disc-val')?.addEventListener('input', function() {
@@ -2203,8 +1682,6 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-coupon-reward-points').value = d.rewardPoints || 0;
         document.getElementById('edit-coupon-reward-discount').value = d.rewardDiscountPoints || 0;
 
-        updateDiscountHint('edit-coupon');
-
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editCouponModal')).show();
     }
     //  店家後台：即時同步今日訂單狀態與營運分析指標
@@ -2223,7 +1700,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             .then(data => {
                 if (!data || !data.success) return;
 
-                // 1.  即時同步「菜單品項」剩餘數量標籤、標籤狀態與編輯按鈕
+                // 1. 💡 即時同步「菜單品項」剩餘數量標籤、標籤狀態與編輯按鈕
                 if (data.menu_items) {
                     data.menu_items.forEach(it => {
                         // A. 更新雙格數量標籤中的剩餘數量及徽章顏色
@@ -2234,7 +1711,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                 ((it.stock <= 0 || it.is_sold_out) ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-success'));
                         }
 
-                        // B.  即時刷新「標籤狀態」中的「已售完」徽章
+                        // B. 💡 即時刷新「標籤狀態」中的「已售完」徽章
                         const tagCell = document.getElementById(`item-tags-${it.id}`);
                         if (tagCell) {
                             const existingSoldOutBadge = tagCell.querySelector('.sold-out-badge');
@@ -2268,27 +1745,21 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     const elRevenue = document.getElementById('stat-today-revenue');
                     const elEta = document.getElementById('stat-eta-minutes');
                     const elCompleted = document.getElementById('stat-completed-today');
-                    const elAvg = document.getElementById('stat-avg-order-value');
-                    const elAiAdvice = document.getElementById('stat-ai-advice') || document.querySelector('#analytics-pane .border.border-secondary');
 
                     if (elPending) elPending.innerText = data.analytics.pending_count;
                     if (elOrders) elOrders.innerText = data.analytics.today_orders;
                     if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
                     if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
                     if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
-                    if (elAvg && data.analytics.avg_order_value !== undefined) elAvg.innerText = Math.round(data.analytics.avg_order_value);
-                    if (elAiAdvice && data.analytics.ai_advice) {
-                        elAiAdvice.innerText = data.analytics.ai_advice;
-                    }
                 }
 
-                // 3. 實時訂單看板重新繪製
+                // 3. 略過訂單列表重繪判斷
+                if (document.activeElement && document.activeElement.tagName === 'SELECT') return;
+                const activeTab = localStorage.getItem('adminActiveTab') || 'orders';
+                if (activeTab !== 'orders') return;
+
                 const grid = document.getElementById('admin-orders-grid');
                 if (!grid) return;
-
-                if (document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA')) {
-                    return;
-                }
 
                 if (data.orders.length === 0) {
                     grid.innerHTML = `
@@ -2303,14 +1774,13 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     let borderClass = 'border-info';
                     if (order.status === 'Pending') borderClass = 'border-warning';
                     else if (order.status === 'Completed') borderClass = 'border-success';
-                    else if (order.status === 'PickedUp') borderClass = 'border-secondary';
                     else if (order.status === 'Cancelled') borderClass = 'border-danger';
 
                     return `
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${borderClass}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">取餐 #${String(order.pickup_number || order.id).padStart(3, '0')} <small class="text-white-50 fs-6">(單號 #${order.id})</small></h5>
+                                <h5 class="fw-bold text-warning mb-0">#${order.id}</h5>
                                 <div class="d-flex gap-1">
                                     <span class="badge bg-primary">${order.order_type}</span>
                                     <span class="badge bg-secondary">${order.payment_method}</span>
@@ -2350,12 +1820,11 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                     <span class="text-white fw-bold fs-5">$${Math.round(order.total_price)}</span>
                                 </div>
                                 <div style="min-width: 130px;">
-                                <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
-                                    <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
-                                    <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
-                                    <option value="PickedUp" ${order.status === 'PickedUp' ? 'selected' : ''}>📦 已取餐</option>
-                                    <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
-                                </select>
+                                    <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
+                                        <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
+                                        <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
+                                        <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
+                                    </select>
                                 </div>
                             </div>
                         </div>
@@ -2467,7 +1936,6 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
     // ==============================================================================
     let adminEventSource = null;
     let lastPendingCount = null;
-    let adminLastSignature = null;
 
     function initAdminSSE() {
         if (!window.EventSource) {
@@ -2480,9 +1948,8 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         adminEventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
-                // 狀態簽名有變更（如取餐核銷）或待製作數改變時，即時刷新後台訂單看板
-                if (adminLastSignature === null || adminLastSignature !== data.state_signature || lastPendingCount !== data.pending_count) {
-                    adminLastSignature = data.state_signature;
+                // 只要狀態或筆數有變化即時刷新後台看板與分析指標
+                if (lastPendingCount !== data.pending_count) {
                     lastPendingCount = data.pending_count;
                     syncAdminLiveOrders();
                 }
@@ -2504,139 +1971,6 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             }
         };
     }
-
-    // ==============================================================================
-// AI 菜單生成與智慧描述 (AI Copywriter)
-// ==============================================================================
-function generateAIDescription(mode = 'add') {
-    const nameInput = document.getElementById(`${mode}-name`);
-    const categoryInput = mode === 'add' 
-        ? document.querySelector('#addItemForm [name="category"]') 
-        : document.getElementById('edit-category');
-    const descInput = document.getElementById(`${mode}-description`);
-    const btn = document.getElementById(`btn-ai-${mode}`);
-
-    const name = (nameInput ? nameInput.value : '').trim();
-    const category = (categoryInput ? categoryInput.value : '').trim();
-
-    // 1. 防呆校驗：餐點名稱不得為空
-    if (!name) {
-        alert('⚠️ 請先輸入「餐點名稱」，AI 才能為您量身打造文案！');
-        if (nameInput) nameInput.focus();
-        return;
-    }
-
-    // 2. 切換為 Loading 狀態
-    const originalHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span> 生成中...';
-
-    // 3. 發送非同步請求至後端
-    fetch('/api/generate_item_description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name, category: category })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            if (descInput) {
-                descInput.value = data.description;
-                autoExpandTextarea(descInput);
-                // 聚焦並高亮提示
-                descInput.focus();
-            }
-        }else {
-            alert(`❌ ${data.message || '生成失敗，請稍後再試！'}`);
-        }
-    })
-    .catch(err => {
-        console.error('AI Copywriter 請求錯誤:', err);
-        alert('⚠️ 伺服器連線異常，請檢查網路或 API Key 設定！');
-    })
-    .finally(() => {
-        // 4. 復原按鈕狀態
-        btn.disabled = false;
-        btn.innerHTML = originalHtml;
-    });
-}
-
-// 即時換算並回顯折數提示
-function updateDiscountHint(prefix) {
-    const typeSelect = document.getElementById(`${prefix}-disc-type`);
-    const valInput = document.getElementById(`${prefix}-disc-val`);
-    const hintDiv = document.getElementById(`${prefix}-disc-hint`);
-
-    if (!typeSelect || !valInput || !hintDiv) return;
-
-    const valStr = valInput.value.trim();
-    if (!valStr || isNaN(valStr)) {
-        hintDiv.style.display = 'none';
-        return;
-    }
-
-    const val = parseFloat(valStr);
-    if (val <= 0) {
-        hintDiv.className = 'small mt-1 text-danger';
-        hintDiv.innerHTML = '<i class="bi bi-exclamation-circle me-1"></i> 請輸入大於 0 的數值';
-        hintDiv.style.display = 'block';
-        return;
-    }
-
-    if (typeSelect.value === 'percent') {
-        let safePercent = val;
-        // 自動換算邏輯：90 -> 0.9，9 -> 0.9
-        if (val > 10.0 && val <= 100.0) {
-            safePercent = val / 100.0;
-        } else if (val > 1.0 && val <= 10.0) {
-            safePercent = val / 10.0;
-        }
-
-        if (safePercent >= 1.0) {
-            hintDiv.className = 'small mt-1 text-danger';
-            hintDiv.innerHTML = '<i class="bi bi-x-circle me-1"></i> 折扣不可大於等於全額 (無折扣)';
-        } else {
-            const discountFold = (safePercent * 10).toFixed(1).replace(/\.0$/, '');
-            hintDiv.className = 'small mt-1 text-info fw-bold';
-            hintDiv.innerHTML = `<i class="bi bi-magic me-1"></i> 系統將辨識為：<strong>${discountFold} 折</strong> (乘數 ${safePercent.toFixed(2)})`;
-        }
-        hintDiv.style.display = 'block';
-    } else {
-        hintDiv.className = 'small mt-1 text-success';
-        hintDiv.innerHTML = `<i class="bi bi-cash me-1"></i> 結帳整單現折：<strong>$${Math.round(val)} 元</strong>`;
-        hintDiv.style.display = 'block';
-    }
-}
-function syncSideCustomizable(index, prefix = 'edit-combo', isCustomizable = null) {
-    const selectEl = document.getElementById(`${prefix}-side${index}`);
-    const checkbox = document.getElementById(`${prefix}-side${index}-cust`);
-    if (!selectEl || !checkbox) return;
-
-    // 取得開關外層的包裝容器
-    const switchBox = checkbox.closest('.form-check') || checkbox.parentElement;
-    const selectedOpt = selectEl.options[selectEl.selectedIndex];
-    const modifiers = selectedOpt ? (selectedOpt.dataset.modifiers || 'none') : 'none';
-
-    // 若未選擇配餐，或該餐點「無客製化選項（none）」
-    if (!selectEl.value || modifiers === 'none') {
-        checkbox.checked = false;
-        checkbox.disabled = true;
-        if (switchBox) switchBox.style.display = 'none'; // 完全隱藏開關
-    } else {
-        if (switchBox) switchBox.style.display = 'block'; // 具備客製化選項時才顯示
-        checkbox.disabled = false;
-        // 若有傳入既有的勾選狀態則保留，否則預設為勾選
-        checkbox.checked = (isCustomizable !== null) ? Boolean(isCustomizable) : true;
-    }
-}
-
-// 綁定輸入即時監聽事件
-['coupon', 'edit-coupon'].forEach(prefix => {
-    const valInput = document.getElementById(`${prefix}-disc-val`);
-    if (valInput) {
-        valInput.addEventListener('input', () => updateDiscountHint(prefix));
-    }
-});
 // ==============================================================================
 // 系統初始化與事件綁定
 // ==============================================================================
@@ -2763,21 +2097,6 @@ document.addEventListener("DOMContentLoaded", function () {
     // ---------------------------------------------------------
     if (typeof syncAdminLiveOrders === 'function') syncAdminLiveOrders();
     if (typeof initAdminSSE === 'function') initAdminSSE();
-
-    //  每 3 秒檢查一次是否有最新產生的 AI 營運建議，避免手動重整網頁
-    setInterval(() => {
-        fetch('/api/admin_live_orders')
-            .then(res => res.json())
-            .then(data => {
-                if (data.analytics && data.analytics.ai_advice) {
-                    const elAiAdvice = document.getElementById('stat-ai-advice') || document.querySelector('#analytics-pane .border.border-secondary');
-                    if (elAiAdvice && elAiAdvice.innerText !== data.analytics.ai_advice) {
-                        elAiAdvice.innerText = data.analytics.ai_advice;
-                    }
-                }
-            })
-            .catch(err => console.log('更新 AI 建議略過:', err));
-    }, 10000);
 
 });
     </script>

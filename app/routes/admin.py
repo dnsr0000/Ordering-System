@@ -17,6 +17,7 @@ from app.models.user import User, AdminLog, CustomerLog
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
+from app.models.setting import SystemSetting
 from app.services.cv_service import save_and_fix_image
 from app.services.order_service import (
     update_popular_items, sanitize_discount_value, 
@@ -54,6 +55,10 @@ def admin_dashboard():
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.all()
     users = User.query.all()
+    points_enabled = get_points_setting('points_redemption_enabled', '1') == '1'
+    points_rate = get_points_rate()
+    points_cap = get_points_cap()
+    points_earn_threshold = get_points_earn_threshold()
 
     analytics = build_order_analytics(all_orders, limit=limit)
     today = datetime.now().date()
@@ -68,8 +73,72 @@ def admin_dashboard():
         reward_coupons=reward_coupons,
         users=users,
         analytics=analytics,
-        current_limit=limit
+        current_limit=limit,
+        points_enabled=points_enabled,
+        points_rate=points_rate,
+        points_cap=points_cap,
+        points_earn_threshold=points_earn_threshold
     )
+
+
+def get_points_setting(key, default=''):
+    setting = SystemSetting.query.filter_by(key=key).first()
+    return setting.value if setting else default
+
+
+def get_points_rate():
+    try:
+        return max(1, int(get_points_setting('points_redemption_rate', '1')))
+    except (TypeError, ValueError):
+        return 1
+
+
+def get_points_cap():
+    try:
+        return max(0, int(get_points_setting('points_redemption_cap', '0')))
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_points_earn_threshold():
+    try:
+        return max(1, int(get_points_setting('points_earn_threshold', '100')))
+    except (TypeError, ValueError):
+        return 100
+
+
+@admin_bp.route('/admin/points_settings', methods=['POST'])
+def update_points_settings():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin.admin_dashboard'))
+
+    enabled = '1' if request.form.get('points_redemption_enabled') else '0'
+    try:
+        rate = max(1, int(request.form.get('points_redemption_rate') or 1))
+    except (TypeError, ValueError):
+        rate = 1
+    try:
+        cap = max(0, int(request.form.get('points_redemption_cap') or 0))
+    except (TypeError, ValueError):
+        cap = 0
+    try:
+        earn_threshold = max(1, int(request.form.get('points_earn_threshold') or 100))
+    except (TypeError, ValueError):
+        earn_threshold = 100
+
+    for key, value in [
+        ('points_redemption_enabled', enabled),
+        ('points_redemption_rate', str(rate)),
+        ('points_redemption_cap', str(cap)),
+        ('points_earn_threshold', str(earn_threshold))
+    ]:
+        setting = SystemSetting.query.filter_by(key=key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.session.add(SystemSetting(key=key, value=value))
+    db.session.commit()
+    return redirect(url_for('admin.admin_dashboard', tab='users'))
 
 @admin_bp.route('/admin/logout', endpoint='admin_logout')
 def admin_logout():

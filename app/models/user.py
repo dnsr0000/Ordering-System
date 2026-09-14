@@ -26,3 +26,12 @@ class CustomerLog(db.Model):
     logout_at = db.Column(db.DateTime, nullable=True)
     ordered_items = db.Column(db.Text, default='')
     ip_address = db.Column(db.String(50), default='')
+
+class RewardRedemption(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=False)
+    points = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), default='reserved', nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)

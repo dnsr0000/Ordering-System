@@ -101,6 +101,8 @@ def run_database_migrations():
             db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN customer_log_id INTEGER'))
         if 'coupon_code' not in order_cols:
             db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN coupon_code VARCHAR(50) DEFAULT ""'))
+        if 'points_discount_amount' not in order_cols:
+            db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN points_discount_amount INTEGER DEFAULT 0'))
 
         # ======================================================================
         # 4. 檢查 OrderItem 資料表

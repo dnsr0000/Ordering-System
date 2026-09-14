@@ -88,7 +88,7 @@
                     <p class="lead mb-0">請自由挑選喜愛的餐點，加入購物車後即可快速結帳！</p>
                 {% else %}
                     <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
-                    <p class="lead mb-0">消費每滿 $100 即贈送 1 點紅利（1 點 = $1），結帳直接折現！</p>
+                    <p class="lead mb-0">消費每滿 ${{ points_earn_threshold }} 即贈送 1 點紅利，會員可於結帳使用點數折抵！</p>
                 {% endif %}
             </div>
         </div>
@@ -506,19 +506,19 @@
                 </div>
 
                 <!-- 🌟 紅利點數折抵區塊 (僅會員顯示) -->
-                {% if not is_guest %}
+                {% if not is_guest and points_redemption_enabled %}
                 <div class="card bg-secondary bg-opacity-25 border-warning p-2 mb-2">
                     <div class="d-flex justify-content-between align-items-center">
                         <div class="form-check form-switch mb-0">
                             <input class="form-check-input" type="checkbox" id="usePointsToggle" onchange="togglePointsRedemption()">
-                            <label class="form-check-label text-white fw-bold" for="usePointsToggle" style="font-size: 0.78rem;">紅利折抵 (1點=$1)</label>
+                            <label class="form-check-label text-white fw-bold" for="usePointsToggle" style="font-size: 0.78rem;">紅利折抵 ({{ points_redemption_rate }}點=$1)</label>
                         </div>
                         <span class="badge bg-warning text-dark" style="font-size: 0.75rem;">現有 <span id="cart-user-points">{{ user_points }}</span> 點</span>
                     </div>
                     <div id="points-input-box" class="mt-1" style="display:none;">
                         <div class="input-group input-group-sm">
                             <span class="input-group-text py-0" style="font-size: 0.75rem;">使用點數</span>
-                            <input type="number" id="pointsToUse" class="form-control py-0" min="0" value="0" oninput="calculateTotal()" style="font-size: 0.8rem;">
+                            <input type="number" id="pointsToUse" class="form-control py-0" min="0" step="{{ points_redemption_rate }}" value="0" oninput="calculateTotal()" style="font-size: 0.8rem;">
                         </div>
                     </div>
                 </div>
@@ -528,7 +528,7 @@
                 <div class="px-1 mb-2">
                     <div class="d-flex justify-content-between small text-white-50" style="font-size: 0.78rem;"><span>小計</span><span>$<span id="cart-subtotal">0.00</span></span></div>
                     <div class="d-flex justify-content-between small text-info" style="font-size: 0.78rem;"><span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0.00</span></span></div>
-                    {% if not is_guest %}
+                    {% if not is_guest and points_redemption_enabled %}
                     <div class="d-flex justify-content-between small text-success" style="font-size: 0.78rem;"><span>紅利折抵</span><span>-$<span id="cart-points-discount">0.00</span></span></div>
                     {% endif %}
                     <div class="d-flex justify-content-between align-items-baseline border-top border-secondary pt-1 mt-1">
@@ -732,8 +732,13 @@
     let appliedPromoDiscount = 0;
     let activePromoCode = '';
     let pendingComboItem = null; // 暫存當前點選的主餐資訊
+    let activeAddonContext = null;
 
     const isGuest = '{{ "true" if is_guest else "false" }}' === 'true';
+    const pointsRedemptionEnabled = {{ 'true' if points_redemption_enabled else 'false' }};
+    const pointsRedemptionRate = {{ points_redemption_rate }};
+    const pointsRedemptionCap = {{ points_redemption_cap }};
+    const pointsEarnThreshold = {{ points_earn_threshold }};
     // 加購清單：支援庫存為 None 的品項，並自動去除條件字串前後空白
     const availableAddons = [
         {% for item in items if item.can_be_add_on and not item.is_sold_out and (item.stock is none or item.stock > 0) %}
@@ -873,6 +878,18 @@
 
     function saveCartToStorage() {
         localStorage.setItem('kiosk_cart', JSON.stringify(cart));
+    }
+
+    function getLatestRegularCartItem() {
+        for (let i = cart.length - 1; i >= 0; i--) {
+            if (!cart[i].is_add_on) return cart[i];
+        }
+        return null;
+    }
+
+    function isAddonForActiveContext(addonDef) {
+        const context = activeAddonContext || getLatestRegularCartItem();
+        return Boolean(context && isItemQualifyingForAddon(context, addonDef));
     }
 
     function handleAddToCart(button) {
@@ -1120,6 +1137,7 @@
                 can_addon: Boolean(can_addon)
             });
         }
+        if (!isAddonBool) activeAddonContext = cart[cart.length - 1];
         saveCartToStorage();
         updateCartUI();
     }
@@ -1167,6 +1185,10 @@
     }
     // 購物車數量變更控制 (+/-)
     function changeQty(index, delta) {
+        if (delta > 0 && cart[index].is_reward_item) {
+            alert('紅利兌換餐點不可增加數量，請重新兌換。');
+            return;
+        }
         if (delta > 0 && cart[index].is_add_on) {
             const addonDef = (typeof availableAddons !== 'undefined')
                 ? availableAddons.find(a => String(a.id) === String(cart[index].id))
@@ -1175,6 +1197,10 @@
                 alert('⚠️ 加購品數量已達上限！');
                 return;
             }
+        }
+        if (delta < 0 && cart[index].is_reward_item) {
+            refundRewardItem(index);
+            return;
         }
         cart[index].quantity += delta;
         if (cart[index].quantity <= 0) cart.splice(index, 1);
@@ -1276,6 +1302,7 @@
         cart.forEach(item => {
             item.category = getCartItemCategory(item);
         });
+        activeAddonContext = getLatestRegularCartItem();
 
         let hasRemoved = false;
 
@@ -1380,6 +1407,7 @@
         if (typeof availableAddons !== 'undefined' && addonContainer) {
             const eligibleAddons = availableAddons
                 .map(a => ({ ...a, remainingQuota: getRemainingQuotaForAddon(a) }))
+                .filter(a => isAddonForActiveContext(a))
                 .filter(a => a.remainingQuota > 0);
 
             if (eligibleAddons.length > 0) {
@@ -1413,9 +1441,39 @@
 
     // 新增：一鍵移除單一商品函式
     function removeCartItem(index) {
+        if (cart[index] && cart[index].is_reward_item) {
+            refundRewardItem(index);
+            return;
+        }
         cart.splice(index, 1);
         saveCartToStorage();
         updateCartUI();
+    }
+
+    function refundRewardItem(index) {
+        const rewardItem = cart[index];
+        if (!rewardItem || !rewardItem.reward_token) return;
+        fetch('/api/refund_reward', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ reward_token: rewardItem.reward_token })
+        })
+        .then(res => res.json().then(data => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+            if (!ok || !data.success) {
+                alert(data.message || '紅利返還失敗，請稍後再試。');
+                return;
+            }
+            cart.splice(index, 1);
+            currentUserPoints = data.remaining_points;
+            const navPts = document.getElementById('nav-user-points');
+            if (navPts) navPts.innerText = currentUserPoints;
+            const cartPts = document.getElementById('cart-user-points');
+            if (cartPts) cartPts.innerText = currentUserPoints;
+            saveCartToStorage();
+            updateCartUI();
+        })
+        .catch(() => alert('紅利返還連線失敗，請稍後再試。'));
     }
 
 
@@ -1496,14 +1554,26 @@
         
         if (toggle && toggle.checked) {
             if (box) box.style.display = 'block';
-            const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
-            const remaining = Math.max(0, subtotal - appliedPromoDiscount);
-            if (input) input.value = Math.min(currentUserPoints, remaining);
+            if (input) input.value = 0;
         } else {
             if (box) box.style.display = 'none';
             if (input) input.value = 0;
         }
         calculateTotal();
+    }
+
+    function calculatePointsDiscount(points, remainingAmount) {
+        if (pointsRedemptionRate <= 0) return { points: 0, discount: 0 };
+        const maxDiscount = pointsRedemptionCap > 0
+            ? Math.min(remainingAmount, pointsRedemptionCap)
+            : remainingAmount;
+        const maxPoints = Math.floor(maxDiscount * pointsRedemptionRate);
+        const usablePoints = Math.min(Math.max(0, Number(points) || 0), currentUserPoints, maxPoints);
+        const completePoints = Math.floor(usablePoints / pointsRedemptionRate) * pointsRedemptionRate;
+        return {
+            points: completePoints,
+            discount: Math.floor(completePoints / pointsRedemptionRate)
+        };
     }
 
     function calculateTotal() {
@@ -1516,20 +1586,20 @@
             const input = document.getElementById('pointsToUse');
             let val = Number(input.value || 0);
             if (val > currentUserPoints) val = currentUserPoints;
-            if (val > remainingAfterPromo) val = remainingAfterPromo;
-            if (val < 0) val = 0;
+            const pointResult = calculatePointsDiscount(val, remainingAfterPromo);
             input.value = val;
-            pointsUsed = val;
+            pointsUsed = pointResult.points;
         }
 
-        const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / 100);
+        const pointsDiscount = calculatePointsDiscount(pointsUsed, remainingAfterPromo).discount;
+        const finalPrice = Math.max(0, remainingAfterPromo - pointsDiscount);
+        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / pointsEarnThreshold);
 
         document.getElementById('cart-subtotal').innerText = Math.round(subtotal);
         document.getElementById('cart-promo-discount').innerText = Math.round(appliedPromoDiscount);
         
         const ptsDiscEl = document.getElementById('cart-points-discount');
-        if (ptsDiscEl) ptsDiscEl.innerText = Math.round(pointsUsed);
+        if (ptsDiscEl) ptsDiscEl.innerText = Math.round(pointsDiscount);
         
         document.getElementById('cart-final').innerText = Math.round(finalPrice);
         
@@ -1557,8 +1627,9 @@
         const pointsInput = document.getElementById('pointsToUse');
         const pointsToggle = document.getElementById('usePointsToggle');
         const pointsUsed = (!isGuest && pointsToggle && pointsToggle.checked) ? Number(pointsInput.value || 0) : 0;
-        const finalPrice = Math.max(0, remainingAfterPromo - pointsUsed);
-        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / 100);
+        const pointsDiscount = calculatePointsDiscount(pointsUsed, remainingAfterPromo).discount;
+        const finalPrice = Math.max(0, remainingAfterPromo - pointsDiscount);
+        const earnedPoints = isGuest ? 0 : Math.floor(finalPrice / pointsEarnThreshold);
         const orderType = document.getElementById('orderType').value;
         const needCutlery = orderType === '外帶' ? document.getElementById('needCutlery').checked : false;
         const note = orderType === '外帶' ? (document.getElementById('takeoutNote').value || '').trim() : '';
@@ -1740,7 +1811,7 @@
                             </table>
                             <div class="d-flex justify-content-between align-items-center pt-2 border-top">
                                 <small class="text-muted">
-                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_used)} | 獲得紅利: +${o.points_earned} 點
+                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_discount_amount ?? o.points_used)} | 獲得紅利: +${o.points_earned} 點
                                 </small>
                                 <div class="fw-bold text-danger fs-6">實付：$${Math.round(o.total_price)}</div>
                             </div>
@@ -1890,7 +1961,7 @@
                             </table>
                             <div class="d-flex justify-content-between align-items-center pt-2 border-top">
                                 <small class="text-muted">
-                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_used)} | 獲得紅利: +${o.points_earned} 點
+                                    優惠折抵: -$${Math.round(promoDiscount)} | 點數折抵: -$${Math.round(o.points_discount_amount ?? o.points_used)} | 獲得紅利: +${o.points_earned} 點
                                 </small>
                                 <div class="fw-bold text-danger fs-6">實付：$${Math.round(o.total_price)}</div>
                             </div>

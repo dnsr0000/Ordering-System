@@ -1,7 +1,8 @@
 import time
+import secrets
 from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify
 from app.extensions import db
-from app.models.user import User
+from app.models.user import User, RewardRedemption
 from app.models.menu import MenuItem
 from app.models.coupon import Coupon, UserCoupon
 
@@ -59,6 +60,15 @@ def redeem_reward():
     session['user_points'] = refreshed_user.points
     customization = str(data.get('customization', '')).strip()
     extra_price = int(data.get('extra_price', 0))
+    redemption_token = secrets.token_urlsafe(32)
+    db.session.add(RewardRedemption(
+        token=redemption_token,
+        user_id=user_id,
+        menu_item_id=item.id,
+        points=req_points,
+        status='reserved'
+    ))
+    db.session.commit()
 
     return jsonify({
         'success': True,
@@ -67,9 +77,36 @@ def redeem_reward():
         'remaining_points': refreshed_user.points,
         'redeemed_item': {
             'id': f'reward_{item.id}_{int(time.time())}',
+            'reward_token': redemption_token,
+            'is_reward_item': True,
             'name': f'🎁 [點數兌換] {item.name}',
             'price': extra_price,
             'customization': customization if customization else '紅利免費兌換',
             'quantity': 1
         }
+    })
+
+@rewards_bp.route('/api/refund_reward', methods=['POST'])
+def refund_reward():
+    user_id = session.get('user_id')
+    data = request.get_json() or {}
+    token = str(data.get('reward_token', '')).strip()
+    if not user_id or not token:
+        return jsonify({'success': False, 'message': '無效的兌換紀錄！'}), 400
+
+    redemption = RewardRedemption.query.filter_by(
+        token=token, user_id=user_id, status='reserved'
+    ).with_for_update().first()
+    if not redemption:
+        return jsonify({'success': False, 'message': '兌換品已使用或已返還。'}), 400
+
+    user = db.session.get(User, user_id)
+    user.points += redemption.points
+    redemption.status = 'refunded'
+    db.session.commit()
+    session['user_points'] = user.points
+    return jsonify({
+        'success': True,
+        'remaining_points': user.points,
+        'message': f'已返還 {redemption.points} 點紅利。'
     })
