@@ -53,8 +53,11 @@ def create_app(config_class=Config):
             return jsonify({'success': False, 'message': '上傳內容超出系統限制 (上限 50MB)！'}), 413
         return "<script>alert('❌ 上傳檔案過大，超出伺服器處理限制 (最大 50MB)！'); window.history.back();</script>", 413
     
-    # 初始化資料庫資料表
+    # 初始化資料庫資料表與執行自動遷移
     with app.app_context():
         db.create_all()
+        # 🌟 自動執行結構檢測與舊資料補齊
+        from app.services.migration_service import run_database_migrations
+        run_database_migrations()
 
     return app
