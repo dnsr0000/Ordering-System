@@ -27,12 +27,26 @@ def redeem_reward():
     user_id = session['user_id']
     data = request.get_json() or {}
 
+    # 1. 優惠券兌換邏輯
     if 'coupon_id' in data:
         coupon = db.session.get(Coupon, data.get('coupon_id'))
         if not coupon:
             return jsonify({'success': False, 'message': '無效的優惠券！'}), 400
+
+        # 檢核每位會員兌換上限
+        if coupon.per_user_limit and coupon.per_user_limit > 0:
+            redeemed_count = UserCoupon.query.filter_by(user_id=user_id, coupon_id=coupon.id).count()
+            if redeemed_count >= coupon.per_user_limit:
+                return jsonify({
+                    'success': False, 
+                    'message': f'❌ 您已達此優惠券的兌換上限（每位會員限兌換 {coupon.per_user_limit} 次）！'
+                }), 400
+
         req_points = coupon.reward_discount_points if coupon.reward_discount_points > 0 else coupon.reward_points
-        res = db.session.execute(db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), {"id": user_id, "pts": req_points})
+        res = db.session.execute(
+            db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), 
+            {"id": user_id, "pts": req_points}
+        )
         if res.rowcount == 0:
             db.session.rollback()
             return jsonify({'success': False, 'message': f'紅利不足！需要 {req_points} 點。'}), 400
@@ -42,14 +56,24 @@ def redeem_reward():
         db.session.commit()
         refreshed_user = db.session.get(User, user_id)
         session['user_points'] = refreshed_user.points
-        return jsonify({'success': True, 'is_coupon': True, 'promo_code': coupon.code, 'message': f'🎉 成功兌換【{coupon.title}】！', 'remaining_points': refreshed_user.points})
+        return jsonify({
+            'success': True, 
+            'is_coupon': True, 
+            'promo_code': coupon.code, 
+            'message': f'🎉 成功兌換【{coupon.title}】！', 
+            'remaining_points': refreshed_user.points
+        })
 
+    # 2. 餐點兌換邏輯
     item = db.session.get(MenuItem, data.get('item_id'))
     if not item or not item.is_reward or item.is_sold_out or (item.stock is not None and item.stock <= 0):
         return jsonify({'success': False, 'message': '商品不存在或已售罄！'}), 400
 
     req_points = item.reward_discount_points if item.reward_discount_points > 0 else item.reward_points
-    res = db.session.execute(db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), {"id": user_id, "pts": req_points})
+    res = db.session.execute(
+        db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), 
+        {"id": user_id, "pts": req_points}
+    )
     if res.rowcount == 0:
         db.session.rollback()
         return jsonify({'success': False, 'message': f'紅利不足！需要 {req_points} 點。'}), 400

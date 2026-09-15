@@ -416,10 +416,16 @@
                                     </td>
                                     <td>
                                         {% if item.is_reward %}
-                                            <span class="badge bg-warning text-dark"><i class="bi bi-gift-fill me-1"></i>{{ item.reward_points }}點</span>
-                                            {% if item.reward_discount_points and item.reward_discount_points > 0 %}
-                                            <span class="badge bg-danger ms-1">特價 {{ item.reward_discount_points }}點</span>
-                                            {% endif %}
+                                            <div class="d-inline-flex flex-column align-items-start gap-1">
+                                                <span class="badge bg-warning text-dark">
+                                                    <i class="bi bi-gift-fill me-1"></i>{{ item.reward_points }}點
+                                                </span>
+                                                {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                                                    <span class="badge bg-danger">
+                                                        特價 {{ item.reward_discount_points }}點
+                                                    </span>
+                                                {% endif %}
+                                            </div>
                                         {% else %}
                                             <span class="badge bg-dark text-white-50 border border-secondary">未上架</span>
                                         {% endif %}
@@ -622,18 +628,19 @@
                                         {% endif %}
                                     </td>
                                     <td class="text-end">
-                                    <button class="btn btn-outline-primary btn-sm me-1" type="button"
-                                            data-id="{{ cp.id }}"
-                                            data-title="{{ cp.title }}"
-                                            data-code="{{ cp.code }}"
-                                            data-discount-type="{{ cp.discount_type }}"
-                                            data-discount-value="{{ cp.discount_value }}"
-                                            data-min-spend="{{ cp.min_spend }}"
-                                            data-reward-points="{{ cp.reward_points }}"
-                                            data-reward-discount-points="{{ cp.reward_discount_points }}"
-                                            onclick="openEditCouponModal(this)">
-                                        <i class="bi bi-pencil-square"></i> 編輯
-                                    </button>
+                                        <button class="btn btn-outline-primary btn-sm me-1" type="button"
+                                                data-id="{{ cp.id }}"
+                                                data-title="{{ cp.title }}"
+                                                data-code="{{ cp.code }}"
+                                                data-discount-type="{{ cp.discount_type }}"
+                                                data-discount-value="{{ cp.discount_value }}"
+                                                data-min-spend="{{ cp.min_spend }}"
+                                                data-reward-points="{{ cp.reward_points }}"
+                                                data-reward-discount-points="{{ cp.reward_discount_points }}"
+                                                data-per-user-limit="{{ cp.per_user_limit or 0 }}"
+                                                onclick="openEditCouponModal(this)">
+                                            <i class="bi bi-pencil-square"></i> 編輯
+                                        </button>
                                     <a href="/admin/delete_coupon/{{ cp.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
                                         <i class="bi bi-trash"></i> 刪除
                                     </a>
@@ -884,6 +891,14 @@
                         <div class="mb-3">
                             <label class="form-label small fw-bold">最低消費門檻 (NT$)</label>
                             <input type="number" min="0" class="form-control" name="min_spend" placeholder="例如：滿 200 元可用" value="0">
+                        </div>
+                        <div class="mb-3 text-start">
+                            <label class="form-label small fw-bold text-white">每位會員可兌換次數上限</label>
+                            <input type="text" class="form-control bg-dark text-white border-secondary" 
+                                id="create-coupon-per-user-limit" name="per_user_limit" 
+                                value="無上限" placeholder="輸入次數或填無上限"
+                                onfocus="if(this.value==='無上限') this.select();">
+                            <small class="text-white-50" style="font-size: 0.72rem;">填寫「無上限」或 0 代表不限制；填寫數字（例如 1）代表每位會員限換 1 次。</small>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -1489,6 +1504,14 @@
                         <div class="mb-3">
                             <label class="form-label small fw-bold">最低消費門檻 (NT$)</label>
                             <input type="number" min="0" class="form-control" name="min_spend" id="edit-coupon-min-spend" value="0">
+                        </div>
+                        <div class="mb-3 text-start">
+                            <label class="form-label small fw-bold text-white">每位會員可兌換次數上限</label>
+                            <input type="text" class="form-control bg-dark text-white border-secondary" 
+                                id="edit-coupon-per-user-limit" name="per_user_limit" 
+                                value="無上限" placeholder="輸入次數或填無上限"
+                                onfocus="if(this.value==='無上限') this.select();">
+                            <small class="text-white-50" style="font-size: 0.72rem;">填寫「無上限」或 0 代表不限制；填寫數字（例如 1）代表每位會員限換 1 次。</small>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
@@ -2256,8 +2279,13 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         document.getElementById('edit-coupon-reward-points').value = d.rewardPoints || 0;
         document.getElementById('edit-coupon-reward-discount').value = d.rewardDiscountPoints || 0;
 
-        updateDiscountHint('edit-coupon');
+        const limitInput = document.getElementById('edit-coupon-per-user-limit');
+            if (limitInput) {
+                const lim = Number(d.perUserLimit || 0);
+                limitInput.value = (lim <= 0) ? '無上限' : lim;
+            }
 
+        updateDiscountHint('edit-coupon');
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editCouponModal')).show();
     }
     //  店家後台：即時同步今日訂單狀態與營運分析指標

@@ -150,6 +150,9 @@
             <!-- 1. 動態優惠券卡片列表 -->
             {% for cp in reward_coupons %}
             {% set actual_cp_points = cp.reward_discount_points if cp.reward_discount_points and cp.reward_discount_points > 0 else cp.reward_points %}
+            <!-- 計算當前會員已兌換此券的總張數 -->
+            {% set user_redeemed_count = (user.user_coupons | selectattr('coupon_id', 'equalto', cp.id) | list | length) if user.user_coupons else 0 %}
+            {% set is_limit_reached = (cp.per_user_limit and cp.per_user_limit > 0 and user_redeemed_count >= cp.per_user_limit) %}
             <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ actual_cp_points }}">
                 <div class="reward-card border-warning">
                     <div class="reward-img-container" style="background: linear-gradient(135deg, #b45309, #78350f); display:flex; align-items:center; justify-content:center;">
@@ -165,9 +168,25 @@
                         {% endif %}
                     </div>
                     <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-warning mb-1">{{ cp.title }}</h6>
+                        <h6 class="fw-bold text-white mb-1">{{ cp.title }}</h6>
+                        <div class="mb-1">
+                            {% if cp.discount_type == 'fixed' %}
+                                <span class="badge bg-success text-white fs-6 px-2 py-1">
+                                    <i class="bi bi-cash me-1"></i>現折 ${{ cp.discount_value|int }} 元
+                                </span>
+                            {% else %}
+                                <span class="badge bg-danger text-white fs-6 px-2 py-1">
+                                    <i class="bi bi-percent me-1"></i>享 {{ (cp.discount_value * 10)|round(1) }} 折
+                                </span>
+                            {% endif %}
+                        </div>
+                        {% if cp.per_user_limit and cp.per_user_limit > 0 %}
+                        <div class="small text-warning mb-1" style="font-size: 0.72rem;">
+                            <i class="bi bi-person-lock"></i> 每人限換 {{ cp.per_user_limit }} 次（已兌換 {{ user_redeemed_count }}/{{ cp.per_user_limit }}）
+                        </div>
+                        {% endif %}
                         <small class="text-white-50 mb-2">
-                            {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend|int }} 可用{% else %}無使用門檻{% endif %}
+                            {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend|int }} 可用{% else %}無消費門檻限制{% endif %}
                         </small>
                         
                         <div class="mb-3">
@@ -178,15 +197,23 @@
                             <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
                             {% endif %}
                         </div>
-
-                        <button class="btn btn-redeem w-100 mt-auto py-2" 
-                                data-id="{{ cp.id }}" 
-                                data-title="{{ cp.title }}" 
-                                data-code="{{ cp.code }}" 
-                                data-points="{{ actual_cp_points }}" 
-                                onclick="promptRedeemCouponFromData(this)">
-                            兌換優惠券
-                        </button>
+                        <!-- 傳遞 discount 資訊給彈窗 -->
+                        {% set discount_desc = ('現折 $' ~ (cp.discount_value|int) ~ ' 元') if cp.discount_type == 'fixed' else ('享 ' ~ ((cp.discount_value * 10)|round(1)) ~ ' 折優惠') %}
+                        {% if is_limit_reached %}
+                            <button class="btn btn-secondary w-100 mt-auto py-2" disabled>
+                                已達兌換上限
+                            </button>
+                        {% else %}
+                            <button class="btn btn-redeem w-100 mt-auto py-2" 
+                                    data-id="{{ cp.id }}" 
+                                    data-title="{{ cp.title }}" 
+                                    data-code="{{ cp.code }}" 
+                                    data-points="{{ actual_cp_points }}" 
+                                    data-discount="{{ discount_desc }}"
+                                    onclick="promptRedeemCouponFromData(this)">
+                                立即兌換
+                            </button>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -323,7 +350,8 @@
             const title = btn.dataset.title;
             const code = btn.dataset.code;
             const points = Number(btn.dataset.points);
-            promptRedeemCoupon(id, title, code, points); 
+            const discount = btn.dataset.discount || '';
+            promptRedeemCoupon(id, title, code, points, discount); 
         }
 
         //  彈出餐點兌換確認（支援客製化選項渲染）
@@ -331,7 +359,7 @@
             selectedReward = { type: 'item', id, name, points, modifiers };
             document.getElementById('modalItemName').innerText = name;
             document.getElementById('modalItemPoints').innerText = points;
-            document.getElementById('modalAlertText').innerText = '兌換成功後，此餐點將直接加入您的購物車中！';
+            document.getElementById('modalAlertText').innerText = '兌換成功後，此品項（$0 元）將直接加入您的購物車中！';
             
             const modBox = document.getElementById('modalModifierBox');
             const modContent = document.getElementById('modalModifierContent');
@@ -393,12 +421,15 @@
         }
 
         // 彈出優惠券兌換確認
-        function promptRedeemCoupon(id, title, code, points) {
+        function promptRedeemCoupon(id, title, code, points, discount = '') {
             selectedReward = { type: 'coupon', id, name: title, code, points };
             document.getElementById('modalItemName').innerText = title;
             document.getElementById('modalItemPoints').innerText = points;
             document.getElementById('modalModifierBox').style.display = 'none';
-            document.getElementById('modalAlertText').innerText = `兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！`;
+            document.getElementById('modalAlertText').innerHTML = `
+                ${discount ? `<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
+                兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！
+            `;
             bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
         }
 

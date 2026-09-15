@@ -26,8 +26,8 @@ def customer_index():
     reward_setting = RewardSetting.query.first()
     if not reward_setting:
         reward_setting = RewardSetting(is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
-    db.session.add(reward_setting)
-    db.session.commit()
+        db.session.add(reward_setting)
+        db.session.commit()
 
     if session.get('user_id'):
         user = db.session.get(User, session['user_id'])
@@ -73,7 +73,6 @@ def customer_index():
 
 @customer_bp.route('/api/user_available_coupons')
 def api_user_available_coupons():
-    """即時查詢當前登入會員最新可用優惠券清單與點數 (購物車側邊欄必備)"""
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'success': False, 'coupons': [], 'points': 0})
@@ -84,11 +83,16 @@ def api_user_available_coupons():
         return jsonify({'success': False, 'coupons': [], 'points': 0})
 
     avail_cps = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
-    coupons_list = [{
-        'code': uc.code,
-        'title': uc.coupon.title if uc.coupon else '優惠券',
-        'min_spend': uc.coupon.min_spend if uc.coupon else 0
-    } for uc in avail_cps]
+    coupons_list = []
+    for uc in avail_cps:
+        cp = uc.coupon
+        if cp:
+            d_desc = f"[折${int(cp.discount_value)}]" if cp.discount_type == 'fixed' else f"[{round(cp.discount_value * 10, 1)}折]"
+            coupons_list.append({
+                'code': uc.code,
+                'title': f"{d_desc} {cp.title}",
+                'min_spend': cp.min_spend
+            })
 
     return jsonify({
         'success': True,

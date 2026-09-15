@@ -11,7 +11,12 @@ class Coupon(db.Model):
     reward_points = db.Column(db.Integer, default=0)
     reward_discount_points = db.Column(db.Integer, default=0)
     is_reward = db.Column(db.Boolean, default=True)
-
+    per_user_limit = db.Column(db.Integer, default=0)
+    @property
+    def limit_display(self):
+        if not self.per_user_limit or self.per_user_limit <= 0:
+            return "無上限"
+        return f"{self.per_user_limit}次"
 class UserCoupon(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)

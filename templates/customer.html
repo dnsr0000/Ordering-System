@@ -490,8 +490,9 @@
                                 {% if user_coupons and user_coupons|length > 0 %}
                                     <option value="" selected>-- 選擇我的優惠券 --</option>
                                     {% for uc in user_coupons %}
+                                    {% set d_text = ('[折$' ~ (uc.coupon.discount_value|int) ~ ']') if uc.coupon.discount_type == 'fixed' else ('[' ~ ((uc.coupon.discount_value * 10)|round(1)) ~ '折]') %}
                                     <option value="{{ uc.code }}">
-                                        {{ uc.coupon.title }} (代碼: {{ uc.code }}){% if uc.coupon.min_spend > 0 %} - 滿${{ uc.coupon.min_spend|int }}可用{% endif %}
+                                        {{ d_text }} {{ uc.coupon.title }} (代碼: {{ uc.code }}){% if uc.coupon.min_spend > 0 %} - 滿${{ uc.coupon.min_spend|int }}可用{% endif %}
                                     </option>
                                     {% endfor %}
                                 {% else %}

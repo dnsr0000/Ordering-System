@@ -171,6 +171,15 @@ def run_database_migrations():
             if c.item3 and (not c.item3.modifiers or c.item3.modifiers == 'none'):
                 c.item3_customizable = False
         db.session.commit()
+
+        # ======================================================================
+        # 7. 檢查 Coupon 資料表
+        # ======================================================================
+        coupon_info = db.session.execute(db.text("PRAGMA table_info(coupon)")).fetchall()
+        coupon_cols = [col[1] for col in coupon_info]
+        if 'per_user_limit' not in coupon_cols:
+            db.session.execute(db.text("ALTER TABLE coupon ADD COLUMN per_user_limit INTEGER DEFAULT 0"))
+            db.session.commit()
     
     except Exception as e:
         db.session.rollback()

@@ -398,6 +398,17 @@ def remove_reward_item(id):
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
+def parse_per_user_limit(val):
+    if not val:
+        return 0
+    s = str(val).strip()
+    if s in ['無上限', '不限', '0', 'none', 'null']:
+        return 0
+    try:
+        return max(0, int(float(s)))
+    except (ValueError, TypeError):
+        return 0
+
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
 def add_coupon():
     if not session.get('admin_logged_in'):
@@ -406,6 +417,7 @@ def add_coupon():
     if Coupon.query.filter_by(code=code).first():
         return "<script>alert('❌ 代碼重複！'); window.history.back();</script>", 400
     dtype = request.form.get('discount_type', 'fixed')
+    
     new_c = Coupon(
         title=request.form.get('title'),
         code=code,
@@ -414,6 +426,7 @@ def add_coupon():
         min_spend=max(0.0, float(request.form.get('min_spend') or 0)),
         reward_points=max(0, int(request.form.get('reward_points') or 0)),
         reward_discount_points=max(0, int(request.form.get('reward_discount_points') or 0)),
+        per_user_limit=parse_per_user_limit(request.form.get('per_user_limit')),
         is_reward=True
     )
     db.session.add(new_c)
@@ -446,6 +459,7 @@ def edit_coupon(id):
     c.min_spend = max(0.0, float(request.form.get('min_spend') or 0))
     c.reward_points = max(0, int(request.form.get('reward_points') or 0))
     c.reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+    c.per_user_limit = parse_per_user_limit(request.form.get('per_user_limit'))
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
@@ -768,9 +782,15 @@ def export_excel():
 
         if 'Coupon' in selected_tables:
             coupon_data = [{
-                'ID': c.id, '代碼(Code)': c.code, '標題(Title)': c.title, '折抵類型(Discount Type)': c.discount_type,
-                '折抵值(Discount Value)': c.discount_value, '門檻(Min Spend)': c.min_spend,
-                '兌換所需點數(Reward Points)': c.reward_points, '限時特惠點數(Reward Discount Points)': c.reward_discount_points,
+                'ID': c.id, 
+                '代碼(Code)': c.code, 
+                '標題(Title)': c.title, 
+                '折抵類型(Discount Type)': c.discount_type,
+                '折抵值(Discount Value)': c.discount_value, 
+                '門檻(Min Spend)': c.min_spend,
+                '兌換所需點數(Reward Points)': c.reward_points, 
+                '限時特惠點數(Reward Discount Points)': c.reward_discount_points,
+                '每人兌換上限(Per User Limit)': c.limit_display,
                 '上架回饋商城(Is Reward)': '是' if c.is_reward else '否'
             } for c in Coupon.query.all()]
             pd.DataFrame(coupon_data if coupon_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='優惠券(Coupon)', index=False)
@@ -1187,7 +1207,11 @@ def import_smart():
                     '門檻(Min Spend)': 'min_spend', '門檻': 'min_spend', '最低消費門檻': 'min_spend', '使用門檻': 'min_spend', 'min_spend': 'min_spend',
                     '兌換所需點數(Reward Points)': 'reward_points', '兌換所需點數': 'reward_points', '兌換點數': 'reward_points', '點數': 'reward_points', 'reward_points': 'reward_points',
                     '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '限時特惠點數': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points',
-                    '上架回饋商城(Is Reward)': 'is_reward', '是否上架': 'is_reward', '上架商城': 'is_reward', 'is_reward': 'is_reward'
+                    '上架回饋商城(Is Reward)': 'is_reward', '是否上架': 'is_reward', '上架商城': 'is_reward', 'is_reward': 'is_reward',
+                    '每人兌換上限(Per User Limit)': 'per_user_limit',
+                    '每人兌換上限': 'per_user_limit',
+                    '兌換上限': 'per_user_limit',
+                    'per_user_limit': 'per_user_limit'
                 }
                 df_coupon = df.rename(columns=col_map)
                 
@@ -1209,7 +1233,9 @@ def import_smart():
                         except: reward_points = 0
                         try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
                         except: reward_discount_points = 0
-                        
+
+                        raw_limit = row.get('per_user_limit', 0)
+                        per_user_limit = parse_per_user_limit(raw_limit)
                         if 'is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward')):
                             is_reward = parse_bool(row.get('is_reward'))
                         else:
@@ -1225,6 +1251,7 @@ def import_smart():
                             existing.reward_points = reward_points
                             existing.reward_discount_points = reward_discount_points
                             existing.is_reward = is_reward
+                            existing.per_user_limit = per_user_limit
                         else:
                             new_coupon = Coupon(
                                 code=code,
@@ -1234,7 +1261,8 @@ def import_smart():
                                 min_spend=min_sp,
                                 reward_points=reward_points,
                                 reward_discount_points=reward_discount_points,
-                                is_reward=is_reward
+                                is_reward=is_reward,
+                                per_user_limit=per_user_limit
                             )
                             db.session.add(new_coupon)
                         imported_counts['Coupon'] += 1
