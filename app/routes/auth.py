@@ -5,7 +5,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, sessio
 from app.config import Config
 from app.extensions import db
 from app.models.user import User
-from app.services.cv_service import save_and_fix_image, extract_feature, compare_faces
+from app.services.cv_service import save_and_fix_image, extract_feature, find_best_match_vectorized
 from app.routes.common import start_customer_session, clear_customer_session, close_customer_session
 
 auth_bp = Blueprint('auth', __name__)
@@ -61,17 +61,11 @@ def face_login():
         if curr_feature is None:
             return jsonify({'success': False, 'message': '未在畫面中偵測到清晰人臉，請正對鏡頭！'})
 
-        users = User.query.all()
-        best_score = 0.0
-        matched_user = None
-        for u in users:
-            if u.feature is not None:
-                score = compare_faces(curr_feature, u.feature)
-                if score > best_score:
-                    best_score = score
-                    matched_user = u
+        # 只撈取具有特徵向量的會員資料，節省記憶體
+        users = User.query.filter(User.feature.isnot(None)).all()
+        matched_user, best_score = find_best_match_vectorized(curr_feature, users, threshold=0.363)
 
-        if best_score >= 0.363 and matched_user:
+        if matched_user:
             matched_user.last_login_at = datetime.now()
             matched_user.last_logout_at = None
             db.session.commit()
