@@ -6,6 +6,7 @@ from app.extensions import db
 from app.models.order import Order
 from app.services.order_service import cancel_order_and_rollback
 from app.services.event_bus import order_event_bus
+from app.services.ai_service import _AI_ADVICE_STATE
 
 kitchen_bp = Blueprint('kitchen', __name__)
 
@@ -63,13 +64,29 @@ def kitchen_update_status(id):
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])
 def kitchen_complete_all():
     today = datetime.now().date()
-    pending = Order.query.filter(Order.status == 'Pending', db.func.date(Order.created_at) == today).all()
-    if not pending:
-        return jsonify({'success': False, 'message': '目前沒有待製作的訂單！'})
     now = datetime.now()
-    for o in pending:
-        o.status = 'Completed'
-        o.completed_at = now
+
+    # 1. 透過單一條 SQL 批量更新當天所有 Pending 訂單，避免 Python 迴圈逐筆寫入
+    updated_count = Order.query.filter(
+        Order.status == 'Pending',
+        db.func.date(Order.created_at) == today
+    ).update(
+        {Order.status: 'Completed', Order.completed_at: now},
+        synchronize_session=False  # 跳過 Python 端 session 物件逐筆同步，速度提升數十倍
+    )
+
+    if updated_count == 0:
+        return jsonify({'success': False, 'message': '目前沒有待製作的訂單！'})
+
+    # 2. 提交事務
     db.session.commit()
+
+    # 3. 重置 AI 快取簽章並透過 EventBus 推播通知前端
+    _AI_ADVICE_STATE['last_signature'] = None
     order_event_bus.notify()
-    return jsonify({'success': True, 'message': f'✅ 已將 {len(pending)} 筆訂單出餐！', 'count': len(pending)})
+
+    return jsonify({
+        'success': True, 
+        'message': f'✅ 已將 {updated_count} 筆訂單出餐！', 
+        'count': updated_count
+    })

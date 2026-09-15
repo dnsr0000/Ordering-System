@@ -19,6 +19,9 @@ class Config:
     PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 上傳上限 50MB
 
+    # Redis 連線設定 (雲端環境透過環境變數注入，本機預設 localhost)
+    REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    
     # 資料庫路徑
     DATABASE_DIR = os.path.join(BASE_DIR, 'database')
     SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(DATABASE_DIR, 'menu.db')

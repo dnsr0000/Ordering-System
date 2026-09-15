@@ -79,14 +79,20 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let currentOrders = [];
+        let pickupLastSignature = null;
+        const processingIds = new Set(); // 正在核銷中的 ID 集合，防止重複點擊
 
         function fetchPickupOrders() {
             fetch('/api/admin_live_orders')
                 .then(res => res.json())
                 .then(data => {
                     if (!data.success || !data.orders) return;
+                    
                     // 僅抓取「已出餐 (Completed)」等待取餐的訂單
-                    currentOrders = data.orders.filter(o => o.status === 'Completed');
+                    const newOrders = data.orders.filter(o => o.status === 'Completed');
+                    
+                    // 排除目前正在前端進行樂觀核銷的項目
+                    currentOrders = newOrders.filter(o => !processingIds.has(o.id));
                     renderCards(currentOrders);
                 })
                 .catch(err => console.error("獲取訂單失敗:", err));
@@ -107,7 +113,7 @@
             noMsg.style.display = 'none';
 
             grid.innerHTML = orders.map(o => `
-                <div class="col-12 col-md-6 col-lg-4 col-xl-3">
+                <div class="col-12 col-md-6 col-lg-4 col-xl-3" id="order-card-col-${o.id}">
                     <div class="pickup-card p-3 h-100">
                         <div>
                             <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
@@ -130,7 +136,7 @@
                         </div>
 
                         <div class="pt-2 border-top border-secondary">
-                            <button class="btn btn-pickup-finish w-100" onclick="markAsPickedUp(${o.id})">
+                            <button class="btn btn-pickup-finish w-100" id="pickup-btn-${o.id}" onclick="markAsPickedUp(${o.id})">
                                 <i class="bi bi-check-circle-fill me-1"></i> 顧客已取餐
                             </button>
                         </div>
@@ -140,19 +146,49 @@
         }
 
         function markAsPickedUp(orderId) {
+            if (processingIds.has(orderId)) return; // 防連點重複觸發
+            processingIds.add(orderId);
+
+            //  1. 樂觀更新 (Optimistic UI)：直接在前端視覺上立即淡出或移除卡片
+            const cardCol = document.getElementById(`order-card-col-${orderId}`);
+            if (cardCol) {
+                cardCol.style.transition = 'all 0.15s ease';
+                cardCol.style.opacity = '0';
+                cardCol.style.transform = 'scale(0.95)';
+                setTimeout(() => {
+                    if (cardCol.parentNode) cardCol.remove();
+                }, 150);
+            }
+
+            // 更新待取餐計數徽章
+            currentOrders = currentOrders.filter(o => o.id !== orderId);
+            const countBadge = document.getElementById('readyCountBadge');
+            if (countBadge) countBadge.innerText = currentOrders.length;
+            if (currentOrders.length === 0) {
+                document.getElementById('noOrdersMessage').style.display = 'block';
+            }
+
+            //  2. 背景非同步向後端發送核銷請求
             fetch(`/api/mark_picked_up/${orderId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             })
             .then(res => res.json())
             .then(data => {
-                if (data.success) {
-                    fetchPickupOrders();
+                if (!data.success) {
+                    alert(data.message || '核銷失敗');
+                    processingIds.delete(orderId);
+                    fetchPickupOrders(); // 若失敗才強制回滾並刷新
                 } else {
-                    alert(data.message || '操作失敗');
+                    // 成功後延遲清理處理中標記
+                    setTimeout(() => processingIds.delete(orderId), 1000);
                 }
             })
-            .catch(err => alert('連線異常，請稍後再試！'));
+            .catch(err => {
+                alert('連線異常，請稍後再試！');
+                processingIds.delete(orderId);
+                fetchPickupOrders();
+            });
         }
 
         function quickPickupByNumber() {
@@ -169,9 +205,7 @@
             }
         }
 
-        // 使用 SSE 即時推播監聽
-        let pickupLastSignature = null;
-
+        //  3. SSE 推播加入簽章髒檢查，避免連點時反覆重刷頁面
         function initSSE() {
             if (!window.EventSource) {
                 setInterval(fetchPickupOrders, 3000);

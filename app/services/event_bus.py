@@ -4,14 +4,48 @@ import queue
 import threading
 from datetime import datetime
 from flask import current_app
-from app.extensions import db
+from app.extensions import db, redis_client
 from app.models.order import Order
 
+ORDER_CHANNEL = "channel:order_updates"
+
 class OrderEventBus:
-    def __init__(self, max_subscribers=150):
+    def __init__(self, max_subscribers=200):
         self._subscribers = set()
         self._lock = threading.Lock()
         self._max_subscribers = max_subscribers
+        self._pubsub_thread = None
+
+        # 如果有 Redis，啟動背景執行緒訂閱跨行程頻道
+        if redis_client:
+            self._start_redis_listener()
+
+    def _start_redis_listener(self):
+        def _listen():
+            pubsub = redis_client.pubsub()
+            pubsub.subscribe(ORDER_CHANNEL)
+            for message in pubsub.listen():
+                if message['type'] == 'message':
+                    payload = message['data']
+                    self._dispatch_to_local(payload)
+
+        t = threading.Thread(target=_listen, daemon=True)
+        t.start()
+
+    def _dispatch_to_local(self, payload):
+        dead_queues = []
+        with self._lock:
+            for q in list(self._subscribers):
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(payload)
+                    except Exception:
+                        dead_queues.append(q)
+            for dq in dead_queues:
+                self._subscribers.discard(dq)
 
     def subscribe(self):
         with self._lock:
@@ -53,21 +87,17 @@ class OrderEventBus:
             with app.app_context():
                 payload = self.get_current_payload()
         except Exception as e:
-            print(f"[!] SSE 廣播打包異常: {e}")
+            print(f"[!] 打包通知異常: {e}")
             return
 
-        dead_queues = []
-        with self._lock:
-            for q in list(self._subscribers):
-                try:
-                    q.put_nowait(payload)
-                except queue.Full:
-                    try:
-                        q.get_nowait()
-                        q.put_nowait(payload)
-                    except Exception:
-                        dead_queues.append(q)
-            for dq in dead_queues:
-                self._subscribers.discard(dq)
+        # 若有 Redis，發布至 Redis 頻道，讓所有行程的 Worker 都能收到
+        if redis_client:
+            try:
+                redis_client.publish(ORDER_CHANNEL, payload)
+            except Exception as e:
+                print(f"[!] Redis Publish 異常，改用本地分發: {e}")
+                self._dispatch_to_local(payload)
+        else:
+            self._dispatch_to_local(payload)
 
 order_event_bus = OrderEventBus()

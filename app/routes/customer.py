@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
-from app.extensions import db, ORDER_CHECKOUT_LOCK
+from app.extensions import db, acquire_distributed_lock
 from app.models.user import User, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
@@ -229,8 +229,11 @@ def submit_order():
 
     subtotal = sum(v['price'] * v['quantity'] for v in verified_items)
 
-    with ORDER_CHECKOUT_LOCK:
-        try:
+    # ----------------------------------------------------
+    # 步驟 2：分散式互斥鎖臨界區 (保護取餐號碼、庫存扣減、防超賣)
+    # ----------------------------------------------------
+    try:
+        with acquire_distributed_lock("lock:order_checkout", timeout=8, blocking_timeout=5):
             today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
             max_pickup = db.session.query(db.func.max(Order.pickup_number)).filter(
@@ -278,6 +281,7 @@ def submit_order():
                         promo_discount = min(pub_cp.discount_value, subtotal)
                     else:
                         promo_discount = round(subtotal * (1.0 - pub_cp.discount_value))
+
             # 讀取後台紅利折抵與回饋設定 (RewardSetting)
             setting = RewardSetting.query.first()
             ppd = setting.points_per_dollar if (setting and setting.points_per_dollar > 0) else 1
@@ -292,12 +296,10 @@ def submit_order():
             # 只有在後台開啟「啟用點數折抵」且會員有輸入使用點數時才折抵
             if user and use_points > 0 and is_points_enabled:
                 max_cash = remaining_amount
-                # 若設定單筆折抵上限 (0 代表不限)
                 if max_discount_limit > 0:
                     max_cash = min(max_cash, max_discount_limit)
 
                 actual_points = min(user.points, use_points)
-                # 依「每 $1 需要幾點」計算能折抵的現金與需扣除的點數
                 points_discount = min(actual_points // ppd, max_cash)
                 points_used = int(points_discount * ppd)
 
@@ -313,7 +315,6 @@ def submit_order():
             final_price = max(0, remaining_amount - points_discount)
             total_discount = promo_discount + points_discount
 
-            # 依後台設定的計算獲得點數
             points_earned = int(final_price // spend_threshold) if user else 0
 
             if user and points_earned > 0:
@@ -360,10 +361,14 @@ def submit_order():
                     'customization': v['customization']
                 })
             db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"[!] 下單交易異常: {e}")
-            return jsonify({'error': '系統繁忙，交易未完成！'}), 500
+
+    except TimeoutError:
+        # 當併發量過大、其他程序卡鎖超過 5 秒時觸發
+        return jsonify({'error': '下單人潮眾多，系統排隊逾時，請再次點擊結帳！'}), 503
+    except Exception as e:
+        db.session.rollback()
+        print(f"[!] 下單交易異常: {e}")
+        return jsonify({'error': '系統繁忙，交易未完成！'}), 500
 
     if user:
         refreshed_user = db.session.get(User, user_id)
