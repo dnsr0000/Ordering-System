@@ -872,7 +872,7 @@
     }
     // 計算特定加購品當前的剩餘配額 (Remaining Quota)
     function getRemainingQuotaForAddon(addonDef) {
-        // 1. 全域配額：所有正價餐點 - 已使用加購品
+        // 1. 全局總量防呆：購物車內所有加購品總數不得超過所有合格正價商品數
         const totalRegularDishes = cart
             .filter(i => !i.is_add_on && i.can_addon !== false)
             .reduce((sum, i) => sum + i.quantity, 0);
@@ -881,38 +881,47 @@
             .filter(i => i.is_add_on)
             .reduce((sum, i) => sum + i.quantity, 0);
 
-        const globalRemainingQuota = Math.max(0, totalRegularDishes - totalAddonsInCart);
-        if (globalRemainingQuota <= 0) return 0;
+        if (totalRegularDishes - totalAddonsInCart <= 0) return 0;
 
-        // 2. 符合該加購品條件的正價餐點數量
-        const qualifyingCount = cart
-            .filter(i => isItemQualifyingForAddon(i, addonDef))
-            .reduce((sum, i) => sum + i.quantity, 0);
-
+        // 2. 符合此加購品條件的正價餐點總數 (例如：購物車內的主餐總數)
+        const qualifyingCount = getQualifyingCountForAddon(addonDef);
         if (qualifyingCount <= 0) return 0;
 
-        // 3. 購物車中已消耗該資格母體的加購品總數
-        const targetKey = (addonDef.trigger_target || '').trim().toLowerCase();
-        const targetType = addonDef.trigger_type || 'any';
-
-        const usedCountForCondition = cart
+        // 3. 關鍵修正：計算購物車內「已經佔用這個母體類別」的加購品總數
+        // 不管加購品是限特定單品(a)還是通用主餐(b)，只要它消耗的是同一個母體類別，就共用配額池！
+        const usedCount = cart
             .filter(i => i.is_add_on)
             .filter(i => {
                 const def = (typeof availableAddons !== 'undefined')
                     ? availableAddons.find(a => String(a.id) === String(i.id))
                     : null;
                 if (!def) return false;
-                
-                const curType = def.trigger_type || 'any';
-                const curTarget = (def.trigger_target || '').trim().toLowerCase();
-                
-                return curType === targetType && curTarget === targetKey;
+
+                // 若此加購品本身也屬於相同觸發條件，或是兩者都消耗同一個母體分類（例如都是主餐解鎖）
+                const thisTargetCat = getAddonTargetCategory(addonDef);
+                const otherTargetCat = getAddonTargetCategory(def);
+
+                return thisTargetCat === otherTargetCat;
             })
             .reduce((sum, i) => sum + i.quantity, 0);
 
-        const conditionRemainingQuota = Math.max(0, qualifyingCount - usedCountForCondition);
+        return Math.max(0, qualifyingCount - usedCount);
+    }
 
-        return Math.min(globalRemainingQuota, conditionRemainingQuota);
+    // 輔助函式：取得加購品所依賴的母體類別群組 (主餐、飲料等)
+    function getAddonTargetCategory(addonDef) {
+        const triggerType = addonDef.trigger_type || 'any';
+        const target = (addonDef.trigger_target || '').trim().toLowerCase();
+
+        if (triggerType === 'category') {
+            return target || (addonDef.category || '').trim().toLowerCase();
+        }
+        if (triggerType === 'item') {
+            // 若限定特定餐點，取得該餐點所屬的分類 (例如主餐 x 屬於主餐類)
+            return (itemCategoryMap[target] || '主餐').trim().toLowerCase();
+        }
+        // 通用加購預設消耗主餐類別
+        return '主餐';
     }
     // 取得購物車中可提供加購資格的主餐總數 (排除飲料、點心、副餐、配餐)
     function getTotalMainDishesCount() {
@@ -1421,7 +1430,7 @@
 
        // 按觸發條件分類統計可用正價額度與加購品
         if (typeof availableAddons !== 'undefined') {
-            const conditionUsage = {}; 
+            const categoryPoolUsage = {}; 
 
             cart.forEach(item => {
                 if (!item.is_add_on) return;
@@ -1433,11 +1442,12 @@
                     return;
                 }
 
-                const condKey = `${addonDef.trigger_type || 'any'}_${(addonDef.trigger_target || '').trim().toLowerCase()}`;
+                // 取得此加購品依賴的母體類別 (如 '主餐' 或 '飲料')
+                const targetPool = getAddonTargetCategory(addonDef);
                 const qualifyingTotal = getQualifyingCountForAddon(addonDef);
-                const currentUsed = conditionUsage[condKey] || 0;
+                const currentUsed = categoryPoolUsage[targetPool] || 0;
 
-                // 該條件下的加購總數不可超過合格正價商品數
+                // 該母體類別下的加購總數不可超過合格正價商品數
                 if (currentUsed + item.quantity > qualifyingTotal) {
                     const allowedQty = Math.max(0, qualifyingTotal - currentUsed);
                     if (item.quantity !== allowedQty) {
@@ -1445,7 +1455,7 @@
                         hasRemoved = true;
                     }
                 }
-                conditionUsage[condKey] = currentUsed + item.quantity;
+                categoryPoolUsage[targetPool] = currentUsed + item.quantity;
             });
         }
 
