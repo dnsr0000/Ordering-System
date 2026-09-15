@@ -26,3 +26,13 @@ class CustomerLog(db.Model):
     logout_at = db.Column(db.DateTime, nullable=True)
     ordered_items = db.Column(db.Text, default='')
     ip_address = db.Column(db.String(50), default='')
+
+# app/models/user.py
+
+class RewardSetting(db.Model):
+    __tablename__ = 'reward_setting'
+    id = db.Column(db.Integer, primary_key=True)
+    is_enabled = db.Column(db.Boolean, default=True)               # 啟用點數折抵
+    points_per_dollar = db.Column(db.Integer, default=1)           # 每 $1 需要幾點
+    max_discount_per_order = db.Column(db.Integer, default=0)      # 單筆最多折抵金額 (0 = 不限)
+    spend_per_point = db.Column(db.Integer, default=100)           # 消費滿幾元送 1 點

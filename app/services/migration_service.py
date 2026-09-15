@@ -3,6 +3,7 @@ from datetime import datetime
 from app.extensions import db
 from app.models.order import Order
 from app.models.menu import ComboOption
+from app.models.user import RewardSetting
 
 def run_database_migrations():
     """
@@ -170,7 +171,18 @@ def run_database_migrations():
             if c.item3 and (not c.item3.modifiers or c.item3.modifiers == 'none'):
                 c.item3_customizable = False
         db.session.commit()
-
+    
     except Exception as e:
         db.session.rollback()
         print(f"[!] 資料庫自動遷移與校正過程發生異常: {e}")
+
+    setting = RewardSetting.query.first()
+    if not setting:
+        setting = RewardSetting(
+            is_enabled=True,
+            points_per_dollar=1,
+            max_discount_per_order=0,
+            spend_per_point=100
+        )
+        db.session.add(setting)
+        db.session.commit()

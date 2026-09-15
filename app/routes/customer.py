@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
 from app.extensions import db, ORDER_CHECKOUT_LOCK
-from app.models.user import User, CustomerLog
+from app.models.user import User, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
@@ -22,6 +22,12 @@ def customer_index():
     user_coupons = []
     personalized_items = []
     is_guest = session.get('is_guest', False)
+
+    reward_setting = RewardSetting.query.first()
+    if not reward_setting:
+        reward_setting = RewardSetting(is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
+    db.session.add(reward_setting)
+    db.session.commit()
 
     if session.get('user_id'):
         user = db.session.get(User, session['user_id'])
@@ -61,7 +67,8 @@ def customer_index():
         user_points=user_points,
         user_coupons=user_coupons,
         personalized_items=personalized_items,
-        is_guest=is_guest
+        is_guest=is_guest,
+        reward_setting=reward_setting
     )
 
 @customer_bp.route('/api/user_available_coupons')
@@ -267,11 +274,29 @@ def submit_order():
                         promo_discount = min(pub_cp.discount_value, subtotal)
                     else:
                         promo_discount = round(subtotal * (1.0 - pub_cp.discount_value))
+            # 讀取後台紅利折抵與回饋設定 (RewardSetting)
+            setting = RewardSetting.query.first()
+            ppd = setting.points_per_dollar if (setting and setting.points_per_dollar > 0) else 1
+            max_discount_limit = setting.max_discount_per_order if setting else 0
+            spend_threshold = setting.spend_per_point if (setting and setting.spend_per_point > 0) else 100
+            is_points_enabled = setting.is_enabled if setting else True
 
             remaining_amount = max(0, subtotal - promo_discount)
             points_used = 0
-            if user and use_points > 0:
-                points_used = int(min(user.points, use_points, remaining_amount))
+            points_discount = 0
+
+            # 只有在後台開啟「啟用點數折抵」且會員有輸入使用點數時才折抵
+            if user and use_points > 0 and is_points_enabled:
+                max_cash = remaining_amount
+                # 若設定單筆折抵上限 (0 代表不限)
+                if max_discount_limit > 0:
+                    max_cash = min(max_cash, max_discount_limit)
+
+                actual_points = min(user.points, use_points)
+                # 依「每 $1 需要幾點」計算能折抵的現金與需扣除的點數
+                points_discount = min(actual_points // ppd, max_cash)
+                points_used = int(points_discount * ppd)
+
                 if points_used > 0:
                     pts_update = db.session.execute(
                         db.text("UPDATE user SET points = points - :used WHERE id = :id AND points >= :used"),
@@ -281,12 +306,17 @@ def submit_order():
                         db.session.rollback()
                         return jsonify({'error': '紅利點數不足！'}), 400
 
-            final_price = max(0, remaining_amount - points_used)
-            total_discount = promo_discount + points_used
-            points_earned = int(final_price // 100) if user else 0
+            final_price = max(0, remaining_amount - points_discount)
+            total_discount = promo_discount + points_discount
+
+            # 依後台設定的計算獲得點數
+            points_earned = int(final_price // spend_threshold) if user else 0
 
             if user and points_earned > 0:
-                db.session.execute(db.text("UPDATE user SET points = points + :earned WHERE id = :id"), {"id": user.id, "earned": points_earned})
+                db.session.execute(
+                    db.text("UPDATE user SET points = points + :earned WHERE id = :id"),
+                    {"id": user.id, "earned": points_earned}
+                )
 
             user_name = session.get('user_name', '訪客')
             new_order = Order(

@@ -13,7 +13,7 @@ from openpyxl.styles import Font
 
 from app.config import Config
 from app.extensions import db
-from app.models.user import User, AdminLog, CustomerLog
+from app.models.user import User, AdminLog, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
@@ -58,6 +58,12 @@ def admin_dashboard():
     analytics = build_order_analytics(all_orders, limit=limit)
     today = datetime.now().date()
     today_orders = [o for o in all_orders if o.created_at and o.created_at.date() == today]
+    # 讀取當前紅利設定 (若無則自動產生預設值)
+    reward_setting = RewardSetting.query.first()
+    if not reward_setting:
+        reward_setting = RewardSetting(is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
+        db.session.add(reward_setting)
+        db.session.commit()
 
     return render_template(
         'admin.html',
@@ -68,7 +74,8 @@ def admin_dashboard():
         reward_coupons=reward_coupons,
         users=users,
         analytics=analytics,
-        current_limit=limit
+        current_limit=limit,
+        reward_setting=reward_setting
     )
 
 @admin_bp.route('/admin/logout', endpoint='admin_logout')
@@ -486,6 +493,23 @@ def toggle_user_coupon(uc_id):
         'coupons': [{'id': c.id, 'title': c.coupon.title if c.coupon else '優惠券', 'code': c.code, 'is_used': bool(c.is_used)} for c in all_user_coupons]
     })
 
+@admin_bp.route('/admin/update_reward_setting', methods=['POST'])
+def update_reward_setting():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('admin.admin_dashboard'))
+
+    setting = RewardSetting.query.first()
+    if not setting:
+        setting = RewardSetting()
+        db.session.add(setting)
+
+    setting.is_enabled = bool(request.form.get('is_enabled'))
+    setting.points_per_dollar = max(1, int(request.form.get('points_per_dollar') or 1))
+    setting.max_discount_per_order = max(0, int(request.form.get('max_discount_per_order') or 0))
+    setting.spend_per_point = max(1, int(request.form.get('spend_per_point') or 100))
+
+    db.session.commit()
+    return redirect(url_for('admin.admin_dashboard', tab='users'))
 # ==============================================================================
 # 訂單狀態更新
 # ==============================================================================

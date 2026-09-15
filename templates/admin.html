@@ -728,6 +728,53 @@
 
 <!-- 4. 會員名冊與紅利 -->
             <div class="tab-pane fade" id="users-pane" role="tabpanel">
+                <div class="card card-custom p-4 mb-4" style="background: #182234; border: 1px solid rgba(255,255,255,0.08);">
+                    <form action="/admin/update_reward_setting" method="POST">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-sliders text-warning fs-5"></i>
+                                <h5 class="fw-bold text-white mb-0">紅利折抵設定</h5>
+                            </div>
+                            <div class="text-white-50 small">
+                                目前設定：{{ reward_setting.points_per_dollar }} 點折抵 $1
+                            </div>
+                        </div>
+
+                        <div class="row g-3 align-items-end mb-3">
+                            <div class="col-12 col-md-2 d-flex align-items-center mb-2 mb-md-0">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input" type="checkbox" name="is_enabled" id="enablePointsSwitch" value="1" {% if reward_setting.is_enabled %}checked{% endif %} style="cursor: pointer; transform: scale(1.15);">
+                                    <label class="form-check-label text-white fw-bold ms-2" for="enablePointsSwitch" style="cursor: pointer;">啟用點數折抵</label>
+                                </div>
+                            </div>
+
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-white-50 small mb-1">每 $1 需要幾點</label>
+                                <input type="number" class="form-control bg-dark text-white border-secondary" name="points_per_dollar" min="1" value="{{ reward_setting.points_per_dollar }}" required>
+                            </div>
+
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-white-50 small mb-1">單筆最多折抵金額</label>
+                                <input type="number" class="form-control bg-dark text-white border-secondary" name="max_discount_per_order" min="0" value="{{ reward_setting.max_discount_per_order }}" placeholder="0 = 不限">
+                            </div>
+
+                            <div class="col-6 col-md-2">
+                                <label class="form-label text-white-50 small mb-1">消費滿幾元送 1 點</label>
+                                <input type="number" class="form-control bg-dark text-white border-secondary" name="spend_per_point" min="1" value="{{ reward_setting.spend_per_point }}" required>
+                            </div>
+
+                            <div class="col-6 col-md-2">
+                                <button type="submit" class="btn btn-warning w-100 fw-bold text-dark py-2 shadow-sm">
+                                    <i class="bi bi-check-circle me-1"></i> 儲存點數設定
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="text-white-50 small">
+                            例如設定為 2，代表 2 點折抵 $1；折抵上限 50 代表單筆最多折 $50。停用後會員仍可累積點數，但結帳不能使用點數折抵。
+                        </div>
+                    </form>
+                </div>
                 <div class="card card-custom p-4">
                     <h5 class="fw-bold mb-4 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券</h5>
                     <div class="table-responsive">
@@ -2783,7 +2830,16 @@ document.addEventListener("DOMContentLoaded", function () {
             })
             .catch(err => console.log('更新 AI 建議略過:', err));
     }, 10000);
-
+    document.addEventListener("DOMContentLoaded", function () {
+    const urlParams = new URLSearchParams(window.location.search);
+    const activeTab = urlParams.get('tab');
+    if (activeTab) {
+        const targetTabBtn = document.getElementById(`${activeTab}-tab`);
+        if (targetTabBtn) {
+            bootstrap.Tab.getOrCreateInstance(targetTabBtn).show();
+        }
+    }
+});
 });
     </script>
 {% endif %}
