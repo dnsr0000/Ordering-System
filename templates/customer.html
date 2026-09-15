@@ -43,6 +43,21 @@
             border: 2px solid #1a1a1a;
             box-shadow: 0 2px 4px rgba(0,0,0,0.5);
         }
+        .card-sold-out {
+            opacity: 0.55 !important;
+            cursor: not-allowed !important;
+            filter: grayscale(80%) !important;
+        }
+        .card-available {
+            cursor: pointer;
+        }
+        .menu-card-sold-out {
+            opacity: 0.65 !important;
+            border-color: rgba(255, 255, 255, 0.04) !important;
+        }
+        .img-sold-out {
+            filter: grayscale(80%) !important;
+        }
     </style>
 </head>
 <body>
@@ -156,8 +171,8 @@
         {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
         {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
         <div class="col-sm-6 col-md-4">
-            <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
-                style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); {% if is_item_sold_out %}opacity: 0.55; cursor: not-allowed; filter: grayscale(80%);{% else %}cursor: pointer;{% endif %} transition: all 0.2s ease;"
+            <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm {{ 'card-sold-out' if is_item_sold_out else 'card-available' }}"
+                style="background: #181f2c; border: 1px solid rgba(255,255,255,0.1); transition: all 0.2s ease;"
                 data-item-id="{{ item.id }}"
                 data-item-name="{{ item.name }}"
                 data-item-price="{{ actual_price }}"
@@ -259,8 +274,8 @@
                 {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
                 {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
                 <div class="col-sm-6 col-md-4">
-                    <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm"
-                        style="background: #141f33; border: 1px solid rgba(245, 183, 56, 0.4); {% if is_item_sold_out %}opacity: 0.55; cursor: not-allowed; filter: grayscale(80%);{% else %}cursor: pointer;{% endif %} transition: all 0.2s ease;"
+                    <div class="p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm {{ 'card-sold-out' if is_item_sold_out else 'card-available' }}"
+                        style="background: #141f33; border: 1px solid rgba(245, 183, 56, 0.4); transition: all 0.2s ease;"
                         data-item-id="{{ item.id }}"
                         data-item-name="{{ item.name }}"
                         data-item-price="{{ actual_price }}"
@@ -398,10 +413,10 @@
         {% endfor %}
 
         <div class="col-md-6 menu-row" data-category="{{ item.category or '未分類' }}" data-price="{{ actual_price }}" data-recommended="{{ 1 if item.is_recommended else 0 }}" data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ is_disc }}">
-            <div class="menu-card p-3" style="{% if is_item_sold_out %}opacity: 0.65; border-color: rgba(255,255,255,0.04);{% endif %}">
+            <div class="menu-card p-3 {{ 'menu-card-sold-out' if is_item_sold_out else '' }}">
                 <div class="d-flex align-items-start gap-3">
                     {% if item.image_path %}
-                    <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img" alt="{{ item.name }}" style="{% if is_item_sold_out %}filter: grayscale(80%);{% endif %}">
+                    <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="menu-img {{ 'img-sold-out' if is_item_sold_out else '' }}" alt="{{ item.name }}">
                     {% else %}
                     <div class="menu-img d-flex align-items-center justify-content-center bg-secondary text-white">無圖</div>
                     {% endif %}
@@ -749,6 +764,42 @@
   </div>
 </div>
 
+<script id="reward-config-data" type="application/json">
+{{ {
+    "isEnabled": (reward_setting.is_enabled if reward_setting else True),
+    "pointsPerDollar": (reward_setting.points_per_dollar if reward_setting else 1),
+    "maxDiscount": (reward_setting.max_discount_per_order if reward_setting else 0),
+    "spendPerPoint": (reward_setting.spend_per_point if reward_setting else 100)
+} | tojson | safe }}
+</script>
+<!-- 加購品清單資料容器 -->
+<script id="available-addons-data" type="application/json">
+[
+    {% for item in items if item.can_be_add_on and not item.is_sold_out and (item.stock is none or item.stock > 0) %}
+    {
+        "id": {{ item.id }},
+        "name": {{ item.name | tojson }},
+        "category": {{ (item.category or "未分類") | trim | tojson }},
+        "price": {{ item.add_on_price }},
+        "original_price": {{ (item.discount_price if (item.is_discount and item.discount_price > 0) else item.price) }},
+        "modifiers": {{ (item.modifiers or "none") | tojson }},
+        "trigger_type": {{ (item.addon_trigger_type or "any") | tojson }},
+        "trigger_target": {{ (item.addon_trigger_target or "") | trim | tojson }}
+    }{{ "," if not loop.last else "" }}
+    {% endfor %}
+]
+</script>
+
+<!-- 分類對照表資料容器 -->
+<script id="item-category-map-data" type="application/json">
+{
+    {% for it in items %}
+    {{ it.id | string | tojson }}: {{ (it.category or "未分類") | trim | tojson }},
+    {{ it.name | tojson }}: {{ (it.category or "未分類") | trim | tojson }}{{ "," if not loop.last else "" }}
+    {% endfor %}
+}
+</script>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     let cart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
@@ -759,36 +810,11 @@
     let activePromoCode = '';
     let pendingComboItem = null; // 暫存當前點選的主餐資訊
 
-    const rewardConfig = {
-    isEnabled: {{ 'true' if reward_setting.is_enabled else 'false' }},
-    pointsPerDollar: {{ reward_setting.points_per_dollar }},
-    maxDiscount: {{ reward_setting.max_discount_per_order }},
-    spendPerPoint: {{ reward_setting.spend_per_point }}
-    };
+    const rewardConfig = JSON.parse(document.getElementById('reward-config-data').textContent || '{}');
     const isGuest = '{{ "true" if is_guest else "false" }}' === 'true';
     // 加購清單：支援庫存為 None 的品項，並自動去除條件字串前後空白
-    const availableAddons = [
-        {% for item in items if item.can_be_add_on and not item.is_sold_out and (item.stock is none or item.stock > 0) %}
-        { 
-            id: {{ item.id }}, 
-            name: '{{ item.name }}', 
-            category: '{{ (item.category or "未分類") | trim }}',
-            price: {{ item.add_on_price }}, 
-            original_price: {{ item.price if not item.is_discount else item.discount_price }}, 
-            modifiers: '{{ item.modifiers or "none" }}',
-            trigger_type: '{{ item.addon_trigger_type or "any" }}',
-            trigger_target: '{{ (item.addon_trigger_target or "") | trim }}'
-        },
-        {% endfor %}
-    ];
-
-    // 建立菜單全域分類對照字典（以 ID 與品名為 Key）
-    const itemCategoryMap = {
-        {% for it in items %}
-        '{{ it.id }}': '{{ (it.category or "未分類") | trim }}',
-        '{{ it.name }}': '{{ (it.category or "未分類") | trim }}',
-        {% endfor %}
-    };
+    const availableAddons = JSON.parse(document.getElementById('available-addons-data').textContent || '[]');
+    const itemCategoryMap = JSON.parse(document.getElementById('item-category-map-data').textContent || '{}');
 
     // 1. 取得購物車品項所屬分類
     function getCartItemCategory(item) {

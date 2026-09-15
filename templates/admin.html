@@ -1724,8 +1724,8 @@
 
 <script>
 
-const menuCategories = [...new Set([{% for it in items if it.category %}'{{ it.category }}',{% endfor %}])];
-const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
+const menuCategories = [...new Set(JSON.parse('{{ items | map(attribute="category") | reject("none") | list | tojson | safe }}'))];
+const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojson | safe }}');
     function autoExpandTextarea(el) {
         if (!el) return;
         el.style.height = 'auto';
