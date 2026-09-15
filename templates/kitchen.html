@@ -309,7 +309,7 @@
     // 新增：廚房看板 SSE 即時推播監聽器
     // ==============================================================================
         let kitchenEventSource = null;
-        let kitchenLastPendingCount = null;
+        let kitchenLastSignature = null;
 
         function initKitchenSSE() {
             if (!window.EventSource) {
@@ -323,9 +323,9 @@
             kitchenEventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
-                    // 待製作筆數變更時即時呼叫 fetchKitchenOrders 更新畫面與觸發叮咚聲
-                    if (kitchenLastPendingCount === null || kitchenLastPendingCount !== data.pending_count) {
-                        kitchenLastPendingCount = data.pending_count;
+                    // 只要完整訂單狀態簽名變更就更新，涵蓋新增、完成、取餐與取消
+                    if (kitchenLastSignature === null || kitchenLastSignature !== data.state_signature) {
+                        kitchenLastSignature = data.state_signature;
                         fetchKitchenOrders();
                     }
                 } catch (e) {

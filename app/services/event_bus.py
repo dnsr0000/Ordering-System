@@ -36,16 +36,14 @@ class OrderEventBus:
             ).order_by(Order.id.asc()).all()
             
             state_signature = ",".join(f"{oid}:{status}" for oid, status in orders_status)
-            pending_count = sum(1 for _, s in orders_status if s == 'Pending')
             
             return json.dumps({
                 'timestamp': time.time(),
-                'state_signature': state_signature,
-                'pending_count': pending_count
+                'state_signature': state_signature
             })
         except Exception as e:
             print(f"[!] 取得訂單特徵簽章失敗: {e}")
-            return json.dumps({'timestamp': time.time(), 'state_signature': '', 'pending_count': 0})
+            return json.dumps({'timestamp': time.time(), 'state_signature': ''})
 
     def notify(self, app_instance=None):
         app = app_instance or current_app._get_current_object()

@@ -59,6 +59,10 @@
             border-radius: 20px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.5);
         }
+        #addItemModal .modal-dialog {
+            position: relative;
+            z-index: 1060;
+        }
     </style>
 </head>
 <body>
@@ -204,16 +208,11 @@
 
                             <hr class="border-secondary my-2">
 
-                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
+                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 140px; overflow-y: auto;">
                                 {% for item in order.items %}
-                                <div class="d-flex justify-content-between align-items-start mb-2">
-                                    <div>
-                                        <div class="text-white small fw-bold">{{ item.item_name }} x {{ item.quantity }}</div>
-                                        {% if item.customization %}
-                                        <small class="text-danger d-block" style="font-size: 0.75rem;">{{ item.customization }}</small>
-                                        {% endif %}
-                                    </div>
-                                    <div class="text-white-50 small">${{ (item.price * item.quantity)|round|int }}</div>
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="text-white small fw-bold">{{ item.item_name }}</span>
+                                    <span class="badge bg-light text-dark">x {{ item.quantity }}</span>
                                 </div>
                                 {% endfor %}
                             </div>
@@ -340,7 +339,7 @@
                                     </div>
                                     <div>
                                         <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
-                                        <div class="text-white p-2 rounded bg-secondary bg-opacity-25 border border-secondary" style="font-size: 0.9rem; line-height: 1.5;">
+                                        <div id="ai-advice" class="text-white p-2 rounded bg-secondary bg-opacity-25 border border-secondary" style="font-size: 0.9rem; line-height: 1.5;">
                                             {{ analytics.ai_advice }}
                                         </div>
                                     </div>
@@ -829,12 +828,12 @@
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點名稱</label>
-                            <input type="text" class="form-control" name="name" placeholder="例如：招牌牛肉漢堡" required>
+                            <input type="text" class="form-control" name="name" id="add-name" placeholder="例如：招牌牛肉漢堡" required>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold">分類</label>
-                                <input type="text" class="form-control" name="category" required></div>
+                                <input type="text" class="form-control" name="category" id="add-category" required></div>
                                 <div class="col-6">
                                     <label class="form-label small fw-bold">原單價 (NT$)</label>
                                     <input type="number" min="0" class="form-control" name="price" id="add-price" required></div>
@@ -886,7 +885,12 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small fw-bold">商品描述</label>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-add" onclick="generateAIDescription('add')" style="font-size: 0.75rem;">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成描述
+                                </button>
+                            </div>
                             <input type="text" class="form-control" name="description" placeholder="簡短餐點介紹">
                         </div>
                         <div class="mb-3">
@@ -1002,7 +1006,12 @@
                             </select>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small fw-bold">商品描述</label>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold" id="btn-ai-edit" onclick="generateAIDescription('edit')" style="font-size: 0.75rem;">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成描述
+                                </button>
+                            </div>
                             <input type="text" class="form-control" name="description" id="edit-description">
                         </div>
                         <div class="mb-3">
@@ -1685,6 +1694,8 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editCouponModal')).show();
     }
     //  店家後台：即時同步今日訂單狀態與營運分析指標
+    let aiAdvicePollingTimer = null;
+
     function syncAdminLiveOrders() {
         fetch('/api/admin_live_orders')
             .then(res => {
@@ -1751,6 +1762,10 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
                     if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
                     if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
+                    const elAiAdvice = document.getElementById('ai-advice');
+                    if (elAiAdvice && data.analytics.ai_advice) {
+                        elAiAdvice.innerText = data.analytics.ai_advice;
+                    }
                 }
 
                 // 3. 略過訂單列表重繪判斷
@@ -1774,6 +1789,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                     let borderClass = 'border-info';
                     if (order.status === 'Pending') borderClass = 'border-warning';
                     else if (order.status === 'Completed') borderClass = 'border-success';
+                    else if (order.status === 'PickedUp') borderClass = 'border-secondary';
                     else if (order.status === 'Cancelled') borderClass = 'border-danger';
 
                     return `
@@ -1802,14 +1818,11 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
 
                             <hr class="border-secondary my-2">
 
-                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 180px; overflow-y: auto;">
+                            <div class="order-items-list mb-3 flex-grow-1" style="max-height: 140px; overflow-y: auto;">
                                 ${order.items.map(item => `
-                                    <div class="d-flex justify-content-between align-items-start mb-2">
-                                        <div>
-                                            <div class="text-white small fw-bold">${item.item_name} x ${item.quantity}</div>
-                                            ${item.customization ? `<small class="text-danger d-block" style="font-size: 0.75rem;">${item.customization}</small>` : ''}
-                                        </div>
-                                        <div class="text-white-50 small">$${Math.round(item.price * item.quantity)}</div>
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="text-white small fw-bold">${item.item_name}</span>
+                                        <span class="badge bg-light text-dark">x ${item.quantity}</span>
                                     </div>
                                 `).join('')}
                             </div>
@@ -1823,6 +1836,7 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                                     <select class="form-select form-select-sm" onchange="changeOrderStatus('${order.id}', this.value, this)">
                                         <option value="Pending" ${order.status === 'Pending' ? 'selected' : ''}>⏳ 製作中</option>
                                         <option value="Completed" ${order.status === 'Completed' ? 'selected' : ''}>✅ 已出餐</option>
+                                        <option value="PickedUp" ${order.status === 'PickedUp' ? 'selected' : ''}>📦 已取餐</option>
                                         <option value="Cancelled" ${order.status === 'Cancelled' ? 'selected' : ''}>❌ 已取消</option>
                                     </select>
                                 </div>
@@ -1931,11 +1945,56 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
             if (rules) rules.style.display = toggle.checked ? 'block' : 'none';
         });
     }
+
+    function generateAIDescription(mode) {
+        const nameInput = document.getElementById(`${mode}-name`);
+        const categoryInput = mode === 'add'
+            ? document.getElementById('add-category')
+            : document.getElementById('edit-category');
+        const descriptionInput = mode === 'add'
+            ? document.querySelector('#addItemForm [name="description"]')
+            : document.getElementById('edit-description');
+        const button = document.getElementById(`btn-ai-${mode}`);
+        const name = nameInput ? nameInput.value.trim() : '';
+        const category = categoryInput ? categoryInput.value.trim() : '';
+
+        if (!name) {
+            alert('請先輸入餐點名稱，再生成商品描述。');
+            if (nameInput) nameInput.focus();
+            return;
+        }
+
+        const originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>生成中...';
+
+        fetch('/api/generate_item_description', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name, category: category})
+        })
+        .then(response => response.json().then(data => ({ok: response.ok, data})))
+        .then(({ok, data}) => {
+            if (!ok || !data.success) {
+                throw new Error(data.message || 'AI 商品描述生成失敗。');
+            }
+            descriptionInput.value = data.description || '';
+            descriptionInput.focus();
+        })
+        .catch(error => {
+            console.error('AI 商品描述生成失敗:', error);
+            alert(error.message || 'AI 商品描述生成失敗，請稍後再試。');
+        })
+        .finally(() => {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        });
+    }
     // ==============================================================================
     // 店家後台 SSE 即時推播監聽器 (搭配 Fallback 備援機制)
     // ==============================================================================
     let adminEventSource = null;
-    let lastPendingCount = null;
+    let adminLastSignature = null;
 
     function initAdminSSE() {
         if (!window.EventSource) {
@@ -1948,9 +2007,9 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
         adminEventSource.onmessage = function(event) {
             try {
                 const data = JSON.parse(event.data);
-                // 只要狀態或筆數有變化即時刷新後台看板與分析指標
-                if (lastPendingCount !== data.pending_count) {
-                    lastPendingCount = data.pending_count;
+                // 只要完整訂單狀態簽名變更就刷新，涵蓋新增、完成、取餐與取消
+                if (adminLastSignature === null || adminLastSignature !== data.state_signature) {
+                    adminLastSignature = data.state_signature;
                     syncAdminLiveOrders();
                 }
             } catch (e) {
@@ -1970,6 +2029,11 @@ const menuItemsList = [{% for it in items %}'{{ it.name }}',{% endfor %}];
                 window.adminPollingFallback = null;
             }
         };
+    }
+
+    function initAiAdvicePolling() {
+        if (aiAdvicePollingTimer) clearInterval(aiAdvicePollingTimer);
+        aiAdvicePollingTimer = setInterval(syncAdminLiveOrders, 30000);
     }
 // ==============================================================================
 // 系統初始化與事件綁定
@@ -2092,11 +2156,30 @@ document.addEventListener("DOMContentLoaded", function () {
         bindRewardValidation();
     }
 
+    const addItemModal = document.getElementById('addItemModal');
+    if (addItemModal) {
+        addItemModal.addEventListener('show.bs.modal', function () {
+            if (!document.querySelector('.modal.show')) {
+                document.querySelectorAll('.modal-backdrop').forEach(backdrop => backdrop.remove());
+                document.body.classList.remove('modal-open');
+            }
+            document.querySelectorAll('#addItemForm input, #addItemForm select, #addItemForm textarea').forEach(field => {
+                field.disabled = false;
+                field.readOnly = false;
+            });
+        });
+        addItemModal.addEventListener('shown.bs.modal', function () {
+            const nameInput = document.getElementById('add-name');
+            if (nameInput) nameInput.focus();
+        });
+    }
+
     // ---------------------------------------------------------
     // 6. 啟動訂單即時推播與同步 (SSE)
     // ---------------------------------------------------------
     if (typeof syncAdminLiveOrders === 'function') syncAdminLiveOrders();
     if (typeof initAdminSSE === 'function') initAdminSSE();
+    if (typeof initAiAdvicePolling === 'function') initAiAdvicePolling();
 
 });
     </script>
