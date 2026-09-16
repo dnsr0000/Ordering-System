@@ -3,7 +3,7 @@ from datetime import datetime
 from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
 from app.extensions import db, acquire_distributed_lock
 from app.models.user import User, CustomerLog, RewardSetting
-from app.models.menu import MenuItem, ComboOption
+from app.models.menu import MenuItem, ComboOption, ModifierOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
 from app.services.order_service import update_popular_items, sanitize_discount_value
@@ -22,6 +22,7 @@ def customer_index():
     user_coupons = []
     personalized_items = []
     is_guest = session.get('is_guest', False)
+    modifier_options = ModifierOption.query.filter_by(is_active=True).all()
 
     reward_setting = RewardSetting.query.first()
     if not reward_setting:
@@ -68,7 +69,8 @@ def customer_index():
         user_coupons=user_coupons,
         personalized_items=personalized_items,
         is_guest=is_guest,
-        reward_setting=reward_setting
+        reward_setting=reward_setting,
+        modifier_options=modifier_options
     )
 
 @customer_bp.route('/api/user_available_coupons')
@@ -165,6 +167,11 @@ def submit_order():
 
     user_id = session.get('user_id')
 
+    # 效能優化：在迴圈外一次性拉取所有啟用的加料選項
+    all_active_modifiers = ModifierOption.query.filter_by(is_active=True).all()
+    modifier_db_map = {mod.id: mod for mod in all_active_modifiers}
+    modifier_names_set = {mod.name for mod in all_active_modifiers}
+
     # ----------------------------------------------------
     # 步驟 1：後端計價與品項合法性預檢驗
     # ----------------------------------------------------
@@ -177,9 +184,7 @@ def submit_order():
         quantity = max(1, int(client_item.get('quantity', 1)))
         is_add_on = bool(client_item.get('is_add_on', False))
         is_claimed_reward = ('[點數兌換]' in raw_name) or ('reward_' in str(client_item.get('id', '')))
-
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', raw_name).strip()
-
         menu_item = MenuItem.query.filter_by(name=clean_name).first()
         if not menu_item:
             try:
@@ -192,18 +197,56 @@ def submit_order():
 
         item_demands[menu_item.id] = item_demands.get(menu_item.id, 0) + quantity
 
-        # 客製化加價
-        extra_modifier_price = sum(int(m) for m in re.findall(r'\(\+(\d+)\)', raw_custom))
+        # ====================================================
+        # 結構化查表計算加料費用與型別防禦
+        # ====================================================
+        extra_modifier_price = 0
+        verified_modifier_labels = []
+        
+        # 嚴格檢查前端傳來的 modifier_ids 型別
+        raw_modifier_ids = client_item.get('modifier_ids')
+        if not isinstance(raw_modifier_ids, list):
+            raw_modifier_ids = []
+            
+        clean_modifier_ids = [int(mid) for mid in raw_modifier_ids if str(mid).isdigit()]
 
+        if clean_modifier_ids:
+            # 確認主餐、配餐或通用加購旗標是否允許客製化
+            is_combo = bool(re.search(r'\[套餐:\s*([^\]]+)\]', raw_custom))
+            if menu_item.modifiers != 'addons' and not is_combo and not menu_item.can_be_add_on:
+                return jsonify({'error': f'餐點【{menu_item.name}】不支援客製化加料！'}), 400
+
+            for mid in clean_modifier_ids:
+                if mid in modifier_db_map:
+                    mod = modifier_db_map[mid]
+                    extra_modifier_price += mod.price
+                    verified_modifier_labels.append(f"{mod.name}(+{mod.price})")
+                else:
+                    return jsonify({'error': '包含無效或已停用的加料品項！'}), 400
+
+        # 自由文字防偽清洗
+        safe_custom_parts = []
+        for part in [p.strip() for p in raw_custom.split('、') if p.strip()]:
+            # 1. 濾掉已知加料名稱
+            if any(name in part for name in modifier_names_set):
+                continue
+            # 2. 濾掉所有惡意偽造的 (+數字) 標籤
+            cleaned_part = re.sub(r'\(\+\d+\)', '', part).strip()
+            if cleaned_part:
+                safe_custom_parts.append(cleaned_part)
+
+        safe_custom_parts.extend(verified_modifier_labels)
+        safe_customization = "、".join(safe_custom_parts) if safe_custom_parts else ""
+        # ====================================================
+        # 單價計算
+        # ====================================================
         if is_claimed_reward:
-            #紅利防呆
             if not user_id:
                 return jsonify({'error': '非會員無法訂購紅利商城兌換餐點！'}), 403
             if not menu_item.is_reward:
                 return jsonify({'error': f'餐點【{menu_item.name}】未開放紅利兌換！'}), 400
             unit_price = extra_modifier_price
         elif is_add_on:
-            #加購資格防呆
             if not menu_item.can_be_add_on:
                 return jsonify({'error': f'餐點【{menu_item.name}】非合法加購品項！'}), 400
             unit_price = menu_item.add_on_price + extra_modifier_price
@@ -224,7 +267,8 @@ def submit_order():
             'display_name': raw_name,
             'price': int(unit_price),
             'quantity': quantity,
-            'customization': raw_custom
+            'customization': safe_customization,
+            'modifier_ids': clean_modifier_ids 
         })
 
     subtotal = sum(v['price'] * v['quantity'] for v in verified_items)

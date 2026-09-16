@@ -2,7 +2,7 @@ from collections import defaultdict
 from datetime import datetime
 from app.extensions import db
 from app.models.order import Order
-from app.models.menu import ComboOption
+from app.models.menu import ComboOption, ModifierOption
 from app.models.user import RewardSetting
 
 def run_database_migrations():
@@ -180,7 +180,29 @@ def run_database_migrations():
         if 'per_user_limit' not in coupon_cols:
             db.session.execute(db.text("ALTER TABLE coupon ADD COLUMN per_user_limit INTEGER DEFAULT 0"))
             db.session.commit()
-    
+
+        # ======================================================================
+        # 8. 檢查並初始化 ModifierOption 資料表
+        # ======================================================================
+        db.session.execute(db.text("""
+            CREATE TABLE IF NOT EXISTS modifier_option (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category VARCHAR(50) DEFAULT 'addons',
+                name VARCHAR(50) NOT NULL,
+                price INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN DEFAULT 1
+            );
+        """))
+        db.session.commit()
+
+        if ModifierOption.query.count() == 0:
+            default_addons = [
+                ModifierOption(category='addons', name='加荷包蛋', price=10, is_active=True),
+                ModifierOption(category='addons', name='加起司片', price=15, is_active=True),
+            ]
+            db.session.add_all(default_addons)
+            db.session.commit()
+            
     except Exception as e:
         db.session.rollback()
         print(f"[!] 資料庫自動遷移與校正過程發生異常: {e}")

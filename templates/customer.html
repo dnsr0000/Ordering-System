@@ -789,7 +789,19 @@
     {% endfor %}
 ]
 </script>
-
+<!-- 客製化加料選項資料容器 -->
+<script id="modifier-options-data" type="application/json">
+[
+    {% for m in modifier_options %}
+    {
+        "id": {{ m.id }},
+        "category": {{ m.category | tojson }},
+        "name": {{ m.name | tojson }},
+        "price": {{ m.price }}
+    }{{ "," if not loop.last else "" }}
+    {% endfor %}
+]
+</script>
 <!-- 分類對照表資料容器 -->
 <script id="item-category-map-data" type="application/json">
 {
@@ -815,7 +827,7 @@
     // 加購清單：支援庫存為 None 的品項，並自動去除條件字串前後空白
     const availableAddons = JSON.parse(document.getElementById('available-addons-data').textContent || '[]');
     const itemCategoryMap = JSON.parse(document.getElementById('item-category-map-data').textContent || '{}');
-
+    const modifierOptions = JSON.parse(document.getElementById('modifier-options-data').textContent || '[]');
     // 1. 取得購物車品項所屬分類
     function getCartItemCategory(item) {
         if (item.category && item.category !== '未分類') return item.category.trim();
@@ -1123,7 +1135,7 @@
     function generateModifierSectionHtml(prefix, title, modifiers) {
         let html = `<div class="p-3 mb-3 rounded border border-secondary bg-dark shadow-sm">
             <h6 class="fw-bold text-warning mb-2 border-bottom border-secondary pb-1">${title}</h6>`;
-        
+
         if (modifiers === 'ice_sugar') {
             html += `
                 <div class="row g-2">
@@ -1158,25 +1170,27 @@
                     </select>
                 </div>`;
         } else if (modifiers === 'addons') {
+            const addons = modifierOptions.filter(m => m.category === 'addons');
             html += `
                 <div>
                     <label class="form-label small text-white-50 mb-1">加料升級</label>
-                    <div class="d-flex gap-3">
-                        <div class="form-check">
-                            <input class="form-check-input mod-addon-${prefix}" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="addon1-${prefix}">
-                            <label class="form-check-label small text-white" for="addon1-${prefix}">加荷包蛋 (+10)</label>
-                        </div>
-                        <div class="form-check">
-                            <input class="form-check-input mod-addon-${prefix}" type="checkbox" data-extra="15" value="加起司片(+15)" id="addon2-${prefix}">
-                            <label class="form-check-label small text-white" for="addon2-${prefix}">加起司片 (+15)</label>
-                        </div>
+                    <div class="d-flex flex-wrap gap-3">
+                        ${addons.map(m => `
+                            <div class="form-check">
+                                <input class="form-check-input mod-addon-${prefix}" type="checkbox"
+                                    data-id="${m.id}" data-name="${m.name}" data-price="${m.price}"
+                                    id="addon-${m.id}-${prefix}">
+                                <label class="form-check-label small text-white" for="addon-${m.id}-${prefix}">
+                                    ${m.name} (+${m.price})
+                                </label>
+                            </div>
+                        `).join('')}
                     </div>
                 </div>`;
         }
         html += `</div>`;
         return html;
     }
-
     // 導引至客製化 Modifiers 或直接進購物車
     function dispatchToModifiersOrCart(mainName, finalPrice, comboPrefix, sides = [], canAddon = true) {
         const mainMods = pendingComboItem.modifiers;
@@ -1227,11 +1241,17 @@
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modifierModal')).show();
     }
 
-    function addToCart(id, name, price, customization = '', is_add_on = false, category = '', can_addon = true) {
+    function addToCart(id, name, price, customization = '', is_add_on = false, category = '', can_addon = true, modifier_ids = []) {
         const actualCategory = (category && category !== '未分類') ? category : (itemCategoryMap[String(id)] || '未分類');
         const isAddonBool = (is_add_on === true || is_add_on === 'true');
         
-        const item = cart.find(i => String(i.id) === String(id) && i.customization === customization && Boolean(i.is_add_on) === isAddonBool);
+        // 比對購物車品項時，納入 modifier_ids 比較
+        const item = cart.find(i => 
+            String(i.id) === String(id) && 
+            i.customization === customization && 
+            Boolean(i.is_add_on) === isAddonBool &&
+            JSON.stringify(i.modifier_ids || []) === JSON.stringify(modifier_ids || [])
+        );
         
         if (item) {
             item.quantity += 1;
@@ -1245,7 +1265,8 @@
                 customization: customization,
                 is_add_on: isAddonBool,
                 category: actualCategory,
-                can_addon: Boolean(can_addon)
+                can_addon: Boolean(can_addon),
+                modifier_ids: modifier_ids 
             });
         }
         saveCartToStorage();
@@ -1335,6 +1356,7 @@
         if (!currentSelectedItem) return;
         const customTextArr = [];
         let extraPrice = 0;
+        const selectedModifierIds = [];
 
         // 套餐前綴置於最前方 (例如: [套餐: 超值A餐])
         if (currentSelectedItem.comboPrefix) {
@@ -1359,8 +1381,9 @@
             } else if (mainMods === 'addons') {
                 const addons = document.querySelectorAll('.mod-addon-main:checked');
                 addons.forEach(cb => {
-                    mainTextArr.push(cb.value);
-                    extraPrice += Number(cb.getAttribute('data-extra') || 0);
+                    const mId = Number(cb.dataset.id);
+                    selectedModifierIds.push(mId);
+                    extraPrice += Number(cb.dataset.price || 0);
                 });
             }
             if (mainTextArr.length > 0) {
@@ -1386,13 +1409,12 @@
                 } else if (side.modifiers === 'addons') {
                     const addons = document.querySelectorAll(`.mod-addon-${side.key}:checked`);
                     addons.forEach(cb => {
-                        sideTextArr.push(cb.value);
-                        extraPrice += Number(cb.getAttribute('data-extra') || 0);
+                        const mId = Number(cb.dataset.id);
+                        selectedModifierIds.push(mId);
+                        extraPrice += Number(cb.dataset.price || 0);
                     });
                 }
-                if (sideTextArr.length > 0) {
-                    customTextArr.push(`${side.name}(${sideTextArr.join('、')})`);
-                }
+               if (sideTextArr.length > 0) sideTextArr.push(`${side.name}(${sideTextArr.join('、')})`);
             });
         }
 
@@ -1407,7 +1429,8 @@
             customization,
             currentAddonFlag,
             currentSelectedItem.category,
-            canAddonVal
+            canAddonVal,
+            selectedModifierIds
         );
 
         // 重置狀態並關閉彈窗

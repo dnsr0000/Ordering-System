@@ -3,7 +3,7 @@ import re
 from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify
 from app.extensions import db
 from app.models.user import User
-from app.models.menu import MenuItem
+from app.models.menu import MenuItem, ModifierOption
 from app.models.coupon import Coupon, UserCoupon
 
 rewards_bp = Blueprint('rewards', __name__)
@@ -18,8 +18,9 @@ def rewards_store():
         return redirect(url_for('auth.logout'))
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.filter_by(is_reward=True).all()
+    modifier_options = ModifierOption.query.filter_by(is_active=True).all()
     session['user_points'] = user.points
-    return render_template('rewards.html', user=user, reward_items=reward_items, reward_coupons=reward_coupons)
+    return render_template('rewards.html', user=user, reward_items=reward_items, reward_coupons=reward_coupons,modifier_options=modifier_options)
 
 @rewards_bp.route('/api/redeem_reward', methods=['POST'])
 def redeem_reward():
@@ -79,11 +80,33 @@ def redeem_reward():
         db.session.rollback()
         return jsonify({'success': False, 'message': f'紅利不足！需要 {req_points} 點。'}), 400
 
+    # 提交交易並同步 Session點數
     db.session.commit()
     refreshed_user = db.session.get(User, user_id)
     session['user_points'] = refreshed_user.points
+
+    # 處理 modifier_ids 查表計價
+    raw_modifier_ids = data.get('modifier_ids')
+    if not isinstance(raw_modifier_ids, list):
+        raw_modifier_ids = []
+    clean_modifier_ids = [int(m) for m in raw_modifier_ids if str(m).isdigit()]
+    
+    extra_price = 0
+    verified_labels = []
+    if clean_modifier_ids:
+        mods = ModifierOption.query.filter(
+            ModifierOption.id.in_(clean_modifier_ids),
+            ModifierOption.is_active == True
+        ).all()
+        for mod in mods:
+            extra_price += mod.price
+            verified_labels.append(f"{mod.name}(+{mod.price})")
+
+    # 清洗客製化文字
     customization = str(data.get('customization', '')).strip()
-    extra_price = int(data.get('extra_price', 0))
+    safe_parts = [re.sub(r'\(\+\d+\)', '', p.strip()) for p in customization.split('、') if p.strip()]
+    safe_parts = [p for p in safe_parts if p] + verified_labels
+    final_custom = "、".join(safe_parts) if safe_parts else '紅利免費兌換'
 
     return jsonify({
         'success': True,
@@ -97,8 +120,9 @@ def redeem_reward():
             'price': extra_price,
             'points_cost': req_points,
             'is_reward': True,
-            'customization': customization if customization else '紅利免費兌換',
-            'quantity': 1
+            'customization': final_custom,
+            'quantity': 1,
+            'modifier_ids': clean_modifier_ids
         }
     })
 

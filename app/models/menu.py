@@ -44,3 +44,11 @@ class ComboOption(db.Model):
     item1 = db.relationship('MenuItem', foreign_keys=[item1_id])
     item2 = db.relationship('MenuItem', foreign_keys=[item2_id])
     item3 = db.relationship('MenuItem', foreign_keys=[item3_id])
+
+class ModifierOption(db.Model):
+    __tablename__ = 'modifier_option'
+    id = db.Column(db.Integer, primary_key=True)
+    category = db.Column(db.String(50), default='addons')   # 對應 MenuItem.modifiers 群組名稱
+    name = db.Column(db.String(50), nullable=False)          # 選項名稱
+    price = db.Column(db.Integer, nullable=False, default=0) # 加價金額 (NTD)
+    is_active = db.Column(db.Boolean, default=True)          # 啟用狀態

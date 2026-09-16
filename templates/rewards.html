@@ -315,222 +315,236 @@
             </div>
         </div>
     </div>
+<script id="modifier-options-data" type="application/json">
+[
+    {% for m in modifier_options %}
+    {
+        "id": {{ m.id }},
+        "category": {{ m.category | tojson }},
+        "name": {{ m.name | tojson }},
+        "price": {{ m.price }}
+    }{{ "," if not loop.last else "" }}
+    {% endfor %}
+]
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    let currentPoints = Number('{{ user.points }}');
+    let selectedReward = null;
+    const modifierOptions = JSON.parse(document.getElementById('modifier-options-data').textContent || '[]');
+    function updateRedeemButtons() {
+        document.querySelectorAll('.reward-item').forEach(item => {
+            const reqPoints = Number(item.dataset.points);
+            const btn = item.querySelector('button.btn-redeem'); 
+            if (!btn) return; 
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        let currentPoints = Number('{{ user.points }}');
-        let selectedReward = null;
-
-        function updateRedeemButtons() {
-            document.querySelectorAll('.reward-item').forEach(item => {
-                const reqPoints = Number(item.dataset.points);
-                const btn = item.querySelector('button.btn-redeem'); 
-                if (!btn) return; 
-
-                if (currentPoints < reqPoints) {
-                    btn.disabled = true;
-                    btn.innerText = '點數不足';
-                } else {
-                    btn.disabled = false;
-                    btn.innerText = item.dataset.code ? '兌換優惠券' : '立即兌換';
-                }
-            });
-        }
-
-        function promptRedeemItemFromData(btn) {
-            const id = btn.dataset.id;
-            const name = btn.dataset.name;
-            const points = Number(btn.dataset.points);
-            const modifiers = btn.dataset.modifiers || 'none';
-            promptRedeemItem(id, name, points, modifiers); 
-        }
-
-        function promptRedeemCouponFromData(btn) {
-            const id = btn.dataset.id;
-            const title = btn.dataset.title;
-            const code = btn.dataset.code;
-            const points = Number(btn.dataset.points);
-            const discount = btn.dataset.discount || '';
-            promptRedeemCoupon(id, title, code, points, discount); 
-        }
-
-        //  彈出餐點兌換確認（支援客製化選項渲染）
-        function promptRedeemItem(id, name, points, modifiers = 'none') {
-            selectedReward = { type: 'item', id, name, points, modifiers };
-            document.getElementById('modalItemName').innerText = name;
-            document.getElementById('modalItemPoints').innerText = points;
-            document.getElementById('modalAlertText').innerText = '兌換成功後，此品項（$0 元）將直接加入您的購物車中！';
-            
-            const modBox = document.getElementById('modalModifierBox');
-            const modContent = document.getElementById('modalModifierContent');
-            
-            if (modifiers === 'ice_sugar') {
-                modBox.style.display = 'block';
-                modContent.innerHTML = `
-                    <div class="mb-2">
-                        <label class="form-label small fw-bold text-secondary mb-1">冰塊量</label>
-                        <select id="reward-mod-ice" class="form-select form-select-sm">
-                            <option value="正常冰">正常冰</option>
-                            <option value="少冰">少冰</option>
-                            <option value="去冰">去冰</option>
-                            <option value="熱飲">熱飲</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="form-label small fw-bold text-secondary mb-1">甜度</label>
-                        <select id="reward-mod-sugar" class="form-select form-select-sm">
-                            <option value="全糖">全糖</option>
-                            <option value="半糖">半糖</option>
-                            <option value="微糖">微糖</option>
-                            <option value="無糖">無糖</option>
-                        </select>
-                    </div>
-                `;
-            } else if (modifiers === 'spicy') {
-                modBox.style.display = 'block';
-                modContent.innerHTML = `
-                    <div>
-                        <label class="form-label small fw-bold text-secondary mb-1">辣度調整</label>
-                        <select id="reward-mod-spicy" class="form-select form-select-sm">
-                            <option value="不辣">不辣</option>
-                            <option value="微辣">微辣</option>
-                            <option value="中辣">中辣</option>
-                            <option value="大辣">大辣</option>
-                        </select>
-                    </div>
-                `;
-            } else if (modifiers === 'addons') {
-                modBox.style.display = 'block';
-                modContent.innerHTML = `
-                    <label class="form-label small fw-bold text-secondary mb-1">加料選項</label>
-                    <div class="form-check mb-1">
-                        <input class="form-check-input reward-mod-addon" type="checkbox" data-extra="10" value="加荷包蛋(+10)" id="rewAddon1">
-                        <label class="form-check-label small" for="rewAddon1">加荷包蛋 (+10)</label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input reward-mod-addon" type="checkbox" data-extra="15" value="加起司片(+15)" id="rewAddon2">
-                        <label class="form-check-label small" for="rewAddon2">加起司片 (+15)</label>
-                    </div>
-                `;
+            if (currentPoints < reqPoints) {
+                btn.disabled = true;
+                btn.innerText = '點數不足';
             } else {
-                modBox.style.display = 'none';
-                modContent.innerHTML = '';
-            }
-
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
-        }
-
-        // 彈出優惠券兌換確認
-        function promptRedeemCoupon(id, title, code, points, discount = '') {
-            selectedReward = { type: 'coupon', id, name: title, code, points };
-            document.getElementById('modalItemName').innerText = title;
-            document.getElementById('modalItemPoints').innerText = points;
-            document.getElementById('modalModifierBox').style.display = 'none';
-            document.getElementById('modalAlertText').innerHTML = `
-                ${discount ? `<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
-                兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！
-            `;
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
-        }
-
-        //  執行兌換（收集客製化資訊與加料金額）
-        function executeRedeem() {
-            if (!selectedReward) return;
-
-            let customization = '';
-            let extraPrice = 0;
-
-            if (selectedReward.type === 'item') {
-                const customTextArr = [];
-                const ice = document.getElementById('reward-mod-ice');
-                const sugar = document.getElementById('reward-mod-sugar');
-                const spicy = document.getElementById('reward-mod-spicy');
-                const addons = document.querySelectorAll('.reward-mod-addon:checked');
-
-                if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
-                if (spicy) customTextArr.push(spicy.value);
-                if (addons.length > 0) {
-                    addons.forEach(cb => {
-                        customTextArr.push(cb.value);
-                        extraPrice += Number(cb.getAttribute('data-extra') || 0);
-                    });
-                }
-                customization = customTextArr.join('、');
-            }
-
-            const btn = document.getElementById('confirmRedeemBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>兌換中...';
-
-            const payload = selectedReward.type === 'coupon' 
-                ? { coupon_id: selectedReward.id } 
-                : { item_id: selectedReward.id, customization: customization, extra_price: extraPrice };
-
-            fetch('/api/redeem_reward', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
-            })
-            .then(r => r.json())
-            .then(data => {
                 btn.disabled = false;
-                btn.innerHTML = '確認兌換';
-
-                if (data.success) {
-                    currentPoints = data.remaining_points;
-                    document.getElementById('currentPoints').innerText = currentPoints;
-                    bootstrap.Modal.getInstance(document.getElementById('redeemModal')).hide();
-
-                    if (data.is_coupon) {
-                        alert(data.message);
-                        window.location.reload();
-                    } else {
-                        let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
-                        currentCart.push(data.redeemed_item);
-                        localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
-                        alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
-                        window.location.reload();
-                    }
-                } else {
-                    alert(data.message);
-                }
-            })
-            .catch(err => {
-                console.error(err);
-                btn.disabled = false;
-                alert("伺服器連線失敗，請稍後再試！");
-            });
-        }
-
-        updateRedeemButtons();
-
-        // ==============================================================================
-    // 顧客閒置 10 分鐘自動清空暫存並安全登出 (Kiosk Idle Auto-Logout)
-    // ==============================================================================
-    (function initIdleAutoLogout() {
-        const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 分鐘 (600,000 毫秒)
-        let idleTimer = null;
-
-        function resetIdleTimer() {
-            if (idleTimer) clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => {
-                // 1. 清空本地瀏覽器購物車暫存，避免下一位顧客看到舊餐點
-                localStorage.removeItem('kiosk_cart');
-                
-                // 2. 自動跳轉至後端登出路由清除 Session
-                window.location.href = '/logout';
-            }, IDLE_TIMEOUT_MS);
-        }
-
-        // 監聽點餐機常見互動事件 (觸控點擊、滑動、滑鼠移動、實體/虛擬鍵盤輸入)
-        const activityEvents = ['touchstart', 'click', 'mousemove', 'mousedown', 'keydown', 'scroll'];
-        activityEvents.forEach(evt => {
-            window.addEventListener(evt, resetIdleTimer, { passive: true });
+                btn.innerText = item.dataset.code ? '兌換優惠券' : '立即兌換';
+            }
         });
+    }
 
-        // 頁面載入後立即啟動第一次倒數
-        resetIdleTimer();
-    })();
-    </script>
+    function promptRedeemItemFromData(btn) {
+        const id = btn.dataset.id;
+        const name = btn.dataset.name;
+        const points = Number(btn.dataset.points);
+        const modifiers = btn.dataset.modifiers || 'none';
+        promptRedeemItem(id, name, points, modifiers); 
+    }
+
+    function promptRedeemCouponFromData(btn) {
+        const id = btn.dataset.id;
+        const title = btn.dataset.title;
+        const code = btn.dataset.code;
+        const points = Number(btn.dataset.points);
+        const discount = btn.dataset.discount || '';
+        promptRedeemCoupon(id, title, code, points, discount); 
+    }
+
+    //  彈出餐點兌換確認（支援客製化選項渲染）
+    function promptRedeemItem(id, name, points, modifiers = 'none') {
+        selectedReward = { type: 'item', id, name, points, modifiers };
+        document.getElementById('modalItemName').innerText = name;
+        document.getElementById('modalItemPoints').innerText = points;
+        document.getElementById('modalAlertText').innerText = '兌換成功後，此品項（$0 元）將直接加入您的購物車中！';
+        
+        const modBox = document.getElementById('modalModifierBox');
+        const modContent = document.getElementById('modalModifierContent');
+        
+        if (modifiers === 'ice_sugar') {
+            modBox.style.display = 'block';
+            modContent.innerHTML = `
+                <div class="mb-2">
+                    <label class="form-label small fw-bold text-secondary mb-1">冰塊量</label>
+                    <select id="reward-mod-ice" class="form-select form-select-sm">
+                        <option value="正常冰">正常冰</option>
+                        <option value="少冰">少冰</option>
+                        <option value="去冰">去冰</option>
+                        <option value="熱飲">熱飲</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label small fw-bold text-secondary mb-1">甜度</label>
+                    <select id="reward-mod-sugar" class="form-select form-select-sm">
+                        <option value="全糖">全糖</option>
+                        <option value="半糖">半糖</option>
+                        <option value="微糖">微糖</option>
+                        <option value="無糖">無糖</option>
+                    </select>
+                </div>
+            `;
+        } else if (modifiers === 'spicy') {
+            modBox.style.display = 'block';
+            modContent.innerHTML = `
+                <div>
+                    <label class="form-label small fw-bold text-secondary mb-1">辣度調整</label>
+                    <select id="reward-mod-spicy" class="form-select form-select-sm">
+                        <option value="不辣">不辣</option>
+                        <option value="微辣">微辣</option>
+                        <option value="中辣">中辣</option>
+                        <option value="大辣">大辣</option>
+                    </select>
+                </div>
+            `;
+        }else if (modifiers === 'addons') {
+            const addons = modifierOptions.filter(m => m.category === 'addons');
+            modBox.style.display = 'block';
+            modContent.innerHTML = `
+                <label class="form-label small fw-bold text-secondary mb-1">加料選項</label>
+                <div class="d-flex flex-wrap gap-3">
+                    ${addons.map(m => `
+                        <div class="form-check">
+                            <input class="form-check-input reward-mod-addon" type="checkbox" 
+                                data-id="${m.id}" data-name="${m.name}" data-price="${m.price}" 
+                                id="rewAddon-${m.id}">
+                            <label class="form-check-label small text-dark" for="rewAddon-${m.id}">
+                                ${m.name} (+${m.price})
+                            </label>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        } else {
+            modBox.style.display = 'none';
+            modContent.innerHTML = '';
+        }
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
+    }
+
+    // 彈出優惠券兌換確認
+    function promptRedeemCoupon(id, title, code, points, discount = '') {
+        selectedReward = { type: 'coupon', id, name: title, code, points };
+        document.getElementById('modalItemName').innerText = title;
+        document.getElementById('modalItemPoints').innerText = points;
+        document.getElementById('modalModifierBox').style.display = 'none';
+        document.getElementById('modalAlertText').innerHTML = `
+            ${discount ? `<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
+            兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！
+        `;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
+    }
+
+    //  執行兌換（收集客製化資訊與加料金額）
+    function executeRedeem() {
+        if (!selectedReward) return;
+        let customization = '';
+        const selectedModifierIds = [];
+
+        if (selectedReward.type === 'item') {
+            const customTextArr = [];
+            const ice = document.getElementById('reward-mod-ice');
+            const sugar = document.getElementById('reward-mod-sugar');
+            const spicy = document.getElementById('reward-mod-spicy');
+            const addons = document.querySelectorAll('.reward-mod-addon:checked');
+
+            if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
+            if (spicy) customTextArr.push(spicy.value);
+            if (addons.length > 0) {
+                addons.forEach(cb => {
+                    selectedModifierIds.push(Number(cb.dataset.id));
+                });
+            }
+            customization = customTextArr.join('、');
+        }
+
+        const btn = document.getElementById('confirmRedeemBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>兌換中...';
+
+        const payload = selectedReward.type === 'coupon' 
+            ? { coupon_id: selectedReward.id } 
+            : { item_id: selectedReward.id, customization: customization,modifier_ids: selectedModifierIds };
+
+        fetch('/api/redeem_reward', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        })
+        .then(r => r.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = '確認兌換';
+
+            if (data.success) {
+                currentPoints = data.remaining_points;
+                document.getElementById('currentPoints').innerText = currentPoints;
+                bootstrap.Modal.getInstance(document.getElementById('redeemModal')).hide();
+
+                if (data.is_coupon) {
+                    alert(data.message);
+                    window.location.reload();
+                } else {
+                    let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
+                    currentCart.push(data.redeemed_item);
+                    localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
+                    alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
+                    window.location.reload();
+                }
+            } else {
+                alert(data.message);
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            btn.disabled = false;
+            alert("伺服器連線失敗，請稍後再試！");
+        });
+    }
+
+    updateRedeemButtons();
+
+    // ==============================================================================
+// 顧客閒置 10 分鐘自動清空暫存並安全登出 (Kiosk Idle Auto-Logout)
+// ==============================================================================
+(function initIdleAutoLogout() {
+    const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 分鐘 (600,000 毫秒)
+    let idleTimer = null;
+
+    function resetIdleTimer() {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+            // 1. 清空本地瀏覽器購物車暫存，避免下一位顧客看到舊餐點
+            localStorage.removeItem('kiosk_cart');
+            
+            // 2. 自動跳轉至後端登出路由清除 Session
+            window.location.href = '/logout';
+        }, IDLE_TIMEOUT_MS);
+    }
+
+    // 監聽點餐機常見互動事件 (觸控點擊、滑動、滑鼠移動、實體/虛擬鍵盤輸入)
+    const activityEvents = ['touchstart', 'click', 'mousemove', 'mousedown', 'keydown', 'scroll'];
+    activityEvents.forEach(evt => {
+        window.addEventListener(evt, resetIdleTimer, { passive: true });
+    });
+
+    // 頁面載入後立即啟動第一次倒數
+    resetIdleTimer();
+})();
+</script>
 </body>
 </html>
