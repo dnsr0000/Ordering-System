@@ -35,11 +35,12 @@ def register():
         new_user = User(name=name, phone=phone, photo_path=filename, feature=feature, points=20, last_login_at=datetime.now())
         db.session.add(new_user)
         db.session.commit()
+        start_customer_session('會員', f"{new_user.name} ({new_user.phone})")
 
         session['user_id'] = new_user.id
         session['user_name'] = new_user.name
         session['user_points'] = new_user.points
-        start_customer_session('會員', f"{new_user.name} ({new_user.phone})")
+        session['is_guest'] = False
         return redirect(url_for('customer.customer_index'))
 
     return render_template('register.html', login_mode=False)
@@ -61,7 +62,6 @@ def face_login():
         if curr_feature is None:
             return jsonify({'success': False, 'message': '未在畫面中偵測到清晰人臉，請正對鏡頭！'})
 
-        # 只撈取具有特徵向量的會員資料，節省記憶體
         users = User.query.filter(User.feature.isnot(None)).all()
         matched_user, best_score = find_best_match_vectorized(curr_feature, users, threshold=0.363)
 
@@ -69,10 +69,13 @@ def face_login():
             matched_user.last_login_at = datetime.now()
             matched_user.last_logout_at = None
             db.session.commit()
+            
+            start_customer_session('會員', f"{matched_user.name} ({matched_user.phone})")
+
             session['user_id'] = matched_user.id
             session['user_name'] = matched_user.name
             session['user_points'] = matched_user.points
-            start_customer_session('會員', f"{matched_user.name} ({matched_user.phone})")
+            session['is_guest'] = False
             return jsonify({'success': True, 'user_name': matched_user.name, 'points': matched_user.points})
         
         return jsonify({'success': False, 'message': '人臉比對未通過，請先註冊或重新對準鏡頭！'})
@@ -91,23 +94,25 @@ def phone_login():
         user.last_login_at = datetime.now()
         user.last_logout_at = None
         db.session.commit()
+
+        start_customer_session('會員', f"{user.name} ({user.phone})")
+        
         session['user_id'] = user.id
         session['user_name'] = user.name
         session['user_points'] = user.points
-        start_customer_session('會員', f"{user.name} ({user.phone})")
+        session['is_guest'] = False
         return jsonify({'success': True, 'user_name': user.name, 'points': user.points})
     return jsonify({'success': False, 'message': '查無此號碼！'})
 
 @auth_bp.route('/guest_login', endpoint='guest_login')
 def guest_login():
     import random
-    clear_customer_session()
     random_guest_id = f"訪客-{random.randint(1000, 9999)}"
+    start_customer_session('訪客', random_guest_id)
     session['user_id'] = None
     session['user_name'] = random_guest_id
     session['is_guest'] = True
     session['user_points'] = 0
-    start_customer_session('訪客', random_guest_id)
     return redirect(url_for('customer.customer_index'))
 
 @auth_bp.route('/logout', endpoint='logout')

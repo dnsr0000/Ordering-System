@@ -22,6 +22,16 @@ def sanitize_discount_value(discount_type, discount_value):
     else:
         return max(0.0, round(val, 2))
 
+def calc_promo_discount(coupon, subtotal):
+    """計算優惠券的實際折扣金額（內建防呆與上下限夾擠）"""
+    if not coupon or subtotal <= 0:
+        return 0
+    if coupon.discount_type == 'fixed':
+        return min(coupon.discount_value, subtotal)
+    else:
+        safe_percent = sanitize_discount_value('percent', coupon.discount_value)
+        return min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
+
 def update_popular_items():
     try:
         db.session.query(MenuItem).update({MenuItem.is_recommended: False})

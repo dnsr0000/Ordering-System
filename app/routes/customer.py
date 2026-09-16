@@ -6,7 +6,7 @@ from app.models.user import User, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption, ModifierOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
-from app.services.order_service import update_popular_items, sanitize_discount_value
+from app.services.order_service import update_popular_items, sanitize_discount_value, calc_promo_discount
 from app.services.event_bus import order_event_bus
 from app.services.ai_service import _AI_ADVICE_STATE
 from app.routes.common import clear_customer_session
@@ -139,16 +139,15 @@ def verify_promo():
         return jsonify({'valid': False, 'discount': 0, 'message': f'未達使用門檻！需消費滿 ${int(coupon.min_spend)} 元才可折抵。'})
 
     # 4. 計算折扣
+    discount = calc_promo_discount(coupon, subtotal)
+    
     if coupon.discount_type == 'fixed':
-        discount = min(coupon.discount_value, subtotal)
         msg = f'已折抵現金 ${int(discount)} 元！'
     else:
         safe_percent = sanitize_discount_value('percent', coupon.discount_value)
-        discount = min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
         msg = f'已套用 {round(safe_percent * 10, 1)} 折優惠，折抵 ${int(discount)} 元！'
 
     return jsonify({'valid': True, 'discount': discount, 'message': msg})
-
 
 @customer_bp.route('/submit_order', methods=['POST'])
 def submit_order():
@@ -304,11 +303,9 @@ def submit_order():
                 target_user_coupon = UserCoupon.query.filter_by(user_id=user.id, code=promo_code, is_used=False).first()
                 if target_user_coupon and subtotal >= target_user_coupon.coupon.min_spend:
                     cp = target_user_coupon.coupon
-                    if cp.discount_type == 'fixed':
-                        promo_discount = min(cp.discount_value, subtotal)
-                    else:
-                        safe_percent = sanitize_discount_value('percent', cp.discount_value)
-                        promo_discount = min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
+                    
+                    # 使用共用函式計算專屬優惠券折扣
+                    promo_discount = calc_promo_discount(cp, subtotal)
 
                     coupon_update = db.session.execute(
                         db.text("UPDATE user_coupon SET is_used = 1, used_at = :now WHERE id = :id AND is_used = 0"),
@@ -321,10 +318,7 @@ def submit_order():
             if promo_code and not target_user_coupon:
                 pub_cp = Coupon.query.filter_by(code=promo_code, is_reward=False, reward_points=0).first()
                 if pub_cp and subtotal >= pub_cp.min_spend:
-                    if pub_cp.discount_type == 'fixed':
-                        promo_discount = min(pub_cp.discount_value, subtotal)
-                    else:
-                        promo_discount = round(subtotal * (1.0 - pub_cp.discount_value))
+                    promo_discount = calc_promo_discount(pub_cp, subtotal)
 
             # 讀取後台紅利折抵與回饋設定 (RewardSetting)
             setting = RewardSetting.query.first()
