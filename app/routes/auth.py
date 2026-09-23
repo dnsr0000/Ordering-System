@@ -7,6 +7,7 @@ from app.extensions import db
 from app.models.user import User
 from app.services.cv_service import save_and_fix_image, extract_feature, find_best_match_vectorized
 from app.routes.common import start_customer_session, clear_customer_session, close_customer_session
+from app.utils import admin_required
 
 auth_bp = Blueprint('auth', __name__)
 

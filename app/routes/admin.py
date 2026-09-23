@@ -24,6 +24,10 @@ from app.services.order_service import (
 )
 from app.services.ai_service import generate_ai_business_advice, _AI_ADVICE_STATE, run_local_slm, fallback_menu_description
 from app.services.event_bus import order_event_bus
+from app.utils import admin_required
+
+
+ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -94,9 +98,10 @@ def admin_logout():
 # 菜單品項與加購品 CRUD
 # ==============================================================================
 @admin_bp.route('/admin/add', methods=['POST'])
+@admin_required
 def add_item():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+#    if not session.get('admin_logged_in'):
+#        return redirect(url_for('admin.admin_dashboard'))
     name = request.form.get('name')
     price = request.form.get('price')
     if name and price:
@@ -112,10 +117,16 @@ def add_item():
 
         image = request.files.get('image')
         image_filename = ''
+
         if image and image.filename != '':
+            _, ext = os.path.splitext(image.filename.lower())
+            if ext not in ALLOWED_IMAGE_EXTS:
+                return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
+
             image_filename = f"menu_{int(time.time())}.jpg"
             filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, image_filename)
             save_and_fix_image(image, filepath)
+
 
         is_sold_out = request.form.get('is_sold_out') == '1'
         is_rec = request.form.get('is_recommended') == '1'
@@ -150,9 +161,10 @@ def add_item():
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
+@admin_required
 def edit_item(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+#    if not session.get('admin_logged_in'):
+#        return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     name = request.form.get('name')
     price = request.form.get('price')
@@ -202,9 +214,16 @@ def edit_item(id):
 
         image = request.files.get('image')
         if image and image.filename != '':
+            # 👈 2. 加入副檔名白名單驗證
+            _, ext = os.path.splitext(image.filename.lower())
+            if ext not in ALLOWED_IMAGE_EXTS:
+                return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
+
             image_filename = f"menu_{int(time.time())}.jpg"
             filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, image_filename)
             save_and_fix_image(image, filepath)
+            
+            # 刪除舊圖片以節省磁碟空間
             if item.image_path:
                 old_path = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
                 if os.path.exists(old_path):
@@ -216,9 +235,10 @@ def edit_item(id):
     return redirect(url_for('admin.admin_dashboard', tab=from_tab))
 
 @admin_bp.route('/admin/delete/<int:id>')
+@admin_required
 def delete_item(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     if item.image_path:
         filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
@@ -247,9 +267,10 @@ def check_side_customizable(item_id, is_checked):
     return True
 
 @admin_bp.route('/admin/add_combo', methods=['POST'])
+@admin_required
 def add_combo():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     
     main_item_id = int(request.form.get('main_item_id'))
     name = str(request.form.get('name', '')).strip()
@@ -366,9 +387,10 @@ def edit_combo(id):
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
 @admin_bp.route('/admin/delete_combo/<int:id>')
+@admin_required
 def delete_combo(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     combo = ComboOption.query.get_or_404(id)
     db.session.delete(combo)
     db.session.commit()
@@ -378,9 +400,10 @@ def delete_combo(id):
 # 回饋商城上下架與優惠券管理
 # ==============================================================================
 @admin_bp.route('/admin/add_reward', methods=['POST'])
+@admin_required
 def add_reward():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+     #   return redirect(url_for('admin.admin_dashboard'))
     item_id = request.form.get('item_id')
     item = MenuItem.query.get_or_404(item_id)
     item.is_reward = True
@@ -390,9 +413,10 @@ def add_reward():
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
 @admin_bp.route('/admin/remove_reward/<int:id>')
+@admin_required
 def remove_reward_item(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+   # if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     item.is_reward = False
     db.session.commit()
@@ -411,8 +435,8 @@ def parse_per_user_limit(val):
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
 def add_coupon():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     code = request.form.get('code', '').strip().upper()
     if Coupon.query.filter_by(code=code).first():
         return "<script>alert('❌ 代碼重複！'); window.history.back();</script>", 400
@@ -434,18 +458,20 @@ def add_coupon():
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
 @admin_bp.route('/admin/delete_coupon/<int:id>')
+@admin_required
 def delete_coupon(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+   # if not session.get('admin_logged_in'):
+   #     return redirect(url_for('admin.admin_dashboard'))
     c = Coupon.query.get_or_404(id)
     db.session.delete(c)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
 @admin_bp.route('/admin/edit_coupon/<int:id>', methods=['POST'])
+@admin_required
 def edit_coupon(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     c = Coupon.query.get_or_404(id)
     code = request.form.get('code', '').strip().upper()
     if Coupon.query.filter(Coupon.code == code, Coupon.id != id).first():
@@ -467,9 +493,10 @@ def edit_coupon(id):
 # 會員資料維護
 # ==============================================================================
 @admin_bp.route('/admin/delete_user/<int:id>')
+@admin_required
 def delete_user(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+  #  if not session.get('admin_logged_in'):
+  #      return redirect(url_for('admin.admin_dashboard'))
     user = User.query.get_or_404(id)
     if user.photo_path:
         f = os.path.join(Config.UPLOAD_FOLDER_MEMBER, user.photo_path)
@@ -482,9 +509,10 @@ def delete_user(id):
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
 @admin_bp.route('/admin/edit_user/<int:id>', methods=['POST'])
+@admin_required
 def edit_user(id):
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+   # if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
     user = User.query.get_or_404(id)
     user.name = request.form.get('name', user.name)
     user.phone = request.form.get('phone', user.phone)
@@ -493,9 +521,10 @@ def edit_user(id):
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
 @admin_bp.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
+@admin_required
 def toggle_user_coupon(uc_id):
-    if not session.get('admin_logged_in'):
-        return jsonify({'success': False, 'message': '未授權'}), 401
+  #  if not session.get('admin_logged_in'):
+   #     return jsonify({'success': False, 'message': '未授權'}), 401
     uc = UserCoupon.query.get_or_404(uc_id)
     uc.is_used = not bool(uc.is_used)
     uc.used_at = datetime.now() if uc.is_used else None
@@ -508,9 +537,10 @@ def toggle_user_coupon(uc_id):
     })
 
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])
+@admin_required
 def update_reward_setting():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+  #  if not session.get('admin_logged_in'):
+  #     return redirect(url_for('admin.admin_dashboard'))
 
     setting = RewardSetting.query.first()
     if not setting:
@@ -528,9 +558,10 @@ def update_reward_setting():
 # 訂單狀態更新
 # ==============================================================================
 @admin_bp.route('/admin/update_order_status/<int:id>', methods=['POST'])
+@admin_required
 def update_order_status(id):
-    if not session.get('admin_logged_in'):
-        return jsonify({'error': '未授權'}), 401
+   # if not session.get('admin_logged_in'):
+   #    return jsonify({'error': '未授權'}), 401
     order = Order.query.get_or_404(id)
     new_status = (request.get_json() or {}).get('status')
     if new_status == 'Cancelled':
@@ -550,9 +581,10 @@ def update_order_status(id):
 # 系統備份與還原
 # ==============================================================================
 @admin_bp.route('/admin/backup_system')
+@admin_required
 def backup_system():
-    if not session.get('admin_logged_in'):
-        return "<script>alert('❌ 權限不足，拒絕存取！'); window.location.href='/admin';</script>", 403
+    # if not session.get('admin_logged_in'):
+    #     return "<script>alert('❌ 權限不足，拒絕存取！'); window.location.href='/admin';</script>", 403
     try:
         db.session.execute(db.text("PRAGMA wal_checkpoint(TRUNCATE);"))
         db.session.commit()
@@ -579,10 +611,11 @@ def backup_system():
 
 
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
+@admin_required
 def restore_backup():
     # 1. 權限檢驗
-    if not session.get('admin_logged_in'):
-        return "<script>alert('❌ 權限不足：未授權操作！'); window.location.href='/admin';</script>", 403
+    # if not session.get('admin_logged_in'):
+    #     return "<script>alert('❌ 權限不足：未授權操作！'); window.location.href='/admin';</script>", 403
 
     file = request.files.get('backup_zip')
     if not file or file.filename == '':
@@ -733,9 +766,10 @@ def restore_backup():
 # Excel 匯出 (包含全部 8 個工作表與格式自適應)
 # ==============================================================================
 @admin_bp.route('/admin/export_excel', methods=['POST'])
+@admin_required
 def export_excel():
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    # if not session.get('admin_logged_in'):
+    #     return redirect(url_for('admin.admin_dashboard'))
     selected_tables = request.form.getlist('tables')
     if not selected_tables:
         return "<script>alert('❌ 請至少勾選一個資料表！'); window.history.back();</script>", 400
@@ -1032,10 +1066,11 @@ def import_menu_excel():
         return f"<script>alert('匯入解析失敗：{e}'); window.history.back();</script>", 500
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
+@admin_required
 def import_smart():
     """智慧匯入功能：自動辨識 Excel 中的工作表與純英文/中文欄位，並匯入/更新對應資料表"""
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
+    #if not session.get('admin_logged_in'):
+    #    return redirect(url_for('admin.admin_dashboard'))
 
     file = request.files.get('file')
     if not file or file.filename == '':
@@ -1312,10 +1347,11 @@ def api_admin_live_orders():
     return jsonify({'success': True, 'orders': orders_data, 'menu_items': menu_items_data, 'analytics': analytics})
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])
+@admin_required
 def api_generate_item_description():
     """AI 智慧菜單文案生成路由 (AI Copywriter - 具備三層自動降級機制)"""
-    if not session.get('admin_logged_in'):
-        return jsonify({'success': False, 'message': '未授權管理者'}), 401
+    #if not session.get('admin_logged_in'):
+    #    return jsonify({'success': False, 'message': '未授權管理者'}), 401
 
     data = request.get_json() or {}
     name = str(data.get('name', '')).strip()

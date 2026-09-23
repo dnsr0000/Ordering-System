@@ -2,6 +2,7 @@ from datetime import datetime
 from flask import session, request
 from app.extensions import db
 from app.models.user import CustomerLog, User
+from app.utils import admin_required
 
 def start_customer_session(user_type, identifier):
     close_customer_session()

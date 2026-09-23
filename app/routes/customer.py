@@ -10,6 +10,7 @@ from app.services.order_service import update_popular_items, sanitize_discount_v
 from app.services.event_bus import order_event_bus
 from app.services.ai_service import _AI_ADVICE_STATE
 from app.routes.common import clear_customer_session
+from app.utils import admin_required
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -159,8 +160,8 @@ def submit_order():
     need_cutlery = bool(data.get('need_cutlery', True)) if order_type == '外帶' else False
     note = str(data.get('note', '')).strip()[:200]
     promo_code = str(data.get('promo_code', '')).strip().upper()
-    use_points = int(data.get('use_points', 0))
-
+    use_points = max(0, int(data.get('use_points', 0)))
+    
     if not raw_items:
         return jsonify({'error': '購物車為空'}), 400
 

@@ -4,6 +4,7 @@ import redis
 from contextlib import contextmanager
 from flask_sqlalchemy import SQLAlchemy
 from app.config import Config
+from app.utils import admin_required
 
 db = SQLAlchemy()
 
