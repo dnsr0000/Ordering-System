@@ -7,6 +7,7 @@ from app.models.order import Order
 from app.services.order_service import cancel_order_and_rollback
 from app.services.event_bus import order_event_bus
 from app.services.ai_service import _AI_ADVICE_STATE
+from app.utils import admin_required
 
 kitchen_bp = Blueprint('kitchen', __name__)
 

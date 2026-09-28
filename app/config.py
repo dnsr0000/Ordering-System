@@ -2,6 +2,7 @@ import os
 from datetime import timedelta
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash
+from app.utils import admin_required
 
 load_dotenv()
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -50,3 +51,12 @@ class Config:
     # 備份與還原安全限制
     MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
     MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024
+
+    # 1. 禁止 JavaScript 存取 Session Cookie，防止 XSS 攻擊偷取管理員憑證
+    SESSION_COOKIE_HTTPONLY = True
+
+    # 2. 防止跨站請求偽造（CSRF）
+    SESSION_COOKIE_SAMESITE = 'Lax'
+
+    # 3. 管理員閒置 30 分鐘自動過期登出（避免點餐機無人看管時後台一直開著）
+    PERMANENT_SESSION_LIFETIME = 1800

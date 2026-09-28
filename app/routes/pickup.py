@@ -3,6 +3,7 @@ from app.extensions import db
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
 from flask import Blueprint, render_template, Response, jsonify, current_app
+from app.utils import admin_required
 
 pickup_bp = Blueprint('pickup', __name__)
 

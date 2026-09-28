@@ -5,6 +5,8 @@ from app.extensions import db
 from app.models.user import User
 from app.models.menu import MenuItem, ModifierOption
 from app.models.coupon import Coupon, UserCoupon
+from app.utils import admin_required
+
 
 rewards_bp = Blueprint('rewards', __name__)
 
