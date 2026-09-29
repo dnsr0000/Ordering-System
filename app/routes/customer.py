@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for
+from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for, g
 from app.extensions import db, acquire_distributed_lock
 from app.models.user import User, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption, ModifierOption
@@ -11,8 +11,57 @@ from app.services.event_bus import order_event_bus
 from app.services.ai_service import _AI_ADVICE_STATE
 from app.routes.common import clear_customer_session
 from app.utils import admin_required
+from app.models.tenant import Tenant  
+
 
 customer_bp = Blueprint('customer', __name__)
+
+# ==============================================================================
+# 租戶身分解析中介層 (解析 ?shop=xxx 或 /shop/xxx 或 Session)
+# ==============================================================================
+@customer_bp.before_request
+def resolve_tenant_context():
+    # 靜態資源或 API 可直接略過或正常掛載
+    shop_slug = request.args.get('shop')
+
+    # 從路徑抓取 /shop/<slug>
+    if not shop_slug:
+        parts = request.path.strip('/').split('/')
+        if len(parts) >= 2 and parts[0] == 'shop':
+            shop_slug = parts[1]
+
+    # 若網址有明確指定店家，強制切換
+    if shop_slug:
+        tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=shop_slug, is_active=True).first()
+        if tenant:
+            session['tenant_id'] = tenant.id
+            g.tenant = tenant
+            g.tenant_id = tenant.id
+            return None
+
+    # 從 Session 讀取既有店家
+    tenant_id = session.get('tenant_id')
+    if tenant_id:
+        tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(id=tenant_id, is_active=True).first()
+        if tenant:
+            g.tenant = tenant
+            g.tenant_id = tenant.id
+            return None
+
+    # 若都沒有，自動降級指向 default 店家
+    default_tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug='default').first()
+    if default_tenant:
+        session['tenant_id'] = default_tenant.id
+        g.tenant = default_tenant
+        g.tenant_id = default_tenant.id
+    else:
+        g.tenant = None
+        g.tenant_id = None
+    return None
+
+
+
+
 
 @customer_bp.route('/', endpoint='customer_index')
 def customer_index():
@@ -62,6 +111,9 @@ def customer_index():
                 sorted_fav_names = sorted(user_item_counts.keys(), key=lambda k: user_item_counts[k], reverse=True)[:3]
                 personalized_items = [item_dict[name] for name in sorted_fav_names if name in item_dict]
 
+    current_tenant_id = session.get('tenant_id')
+    current_tenant = Tenant.query.execution_options(skip_tenant_filter=True).get(current_tenant_id) if current_tenant_id else None
+
     return render_template(
         'customer.html',
         items=items,
@@ -71,9 +123,9 @@ def customer_index():
         personalized_items=personalized_items,
         is_guest=is_guest,
         reward_setting=reward_setting,
-        modifier_options=modifier_options
+        modifier_options=modifier_options,
+        tenant=current_tenant  # 👈 加上這行，店名才會出來
     )
-
 @customer_bp.route('/api/user_available_coupons')
 def api_user_available_coupons():
     user_id = session.get('user_id')
@@ -149,6 +201,13 @@ def verify_promo():
         msg = f'已套用 {round(safe_percent * 10, 1)} 折優惠，折抵 ${int(discount)} 元！'
 
     return jsonify({'valid': True, 'discount': discount, 'message': msg})
+
+@customer_bp.route('/shop/<tenant_slug>', endpoint='tenant_storefront')
+def tenant_storefront(tenant_slug):
+    tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=tenant_slug, is_active=True).first()
+    if tenant:
+        session['tenant_id'] = tenant.id
+    return redirect(url_for('customer.customer_index'))
 
 @customer_bp.route('/submit_order', methods=['POST'])
 def submit_order():
@@ -287,8 +346,8 @@ def submit_order():
 
             for item_id, demanded_qty in item_demands.items():
                 result = db.session.execute(
-                    db.text("UPDATE menu_item SET stock = stock - :qty, is_sold_out = CASE WHEN stock - :qty <= 0 THEN 1 ELSE is_sold_out END WHERE id = :id AND stock >= :qty"),
-                    {"id": item_id, "qty": demanded_qty}
+                    db.text("UPDATE menu_item SET stock = stock - :qty, is_sold_out = CASE WHEN stock - :qty <= 0 THEN 1 ELSE is_sold_out END WHERE id = :id AND tenant_id = :tenant_id AND stock >= :qty"),
+                    {"id": item_id, "qty": demanded_qty, "tenant_id": g.tenant_id}
                 )
                 if result.rowcount == 0:
                     db.session.rollback()
@@ -309,8 +368,8 @@ def submit_order():
                     promo_discount = calc_promo_discount(cp, subtotal)
 
                     coupon_update = db.session.execute(
-                        db.text("UPDATE user_coupon SET is_used = 1, used_at = :now WHERE id = :id AND is_used = 0"),
-                        {"id": target_user_coupon.id, "now": datetime.now()}
+                        db.text("UPDATE user_coupon SET is_used = 1, used_at = :now WHERE id = :id AND tenant_id = :tenant_id AND is_used = 0"),
+                        {"id": target_user_coupon.id, "now": datetime.now(), "tenant_id": g.tenant_id}
                     )
                     if coupon_update.rowcount == 0:
                         db.session.rollback()
@@ -344,8 +403,8 @@ def submit_order():
 
                 if points_used > 0:
                     pts_update = db.session.execute(
-                        db.text("UPDATE user SET points = points - :used WHERE id = :id AND points >= :used"),
-                        {"id": user.id, "used": points_used}
+                        db.text("UPDATE user SET points = points - :used WHERE id = :id AND tenant_id = :tenant_id AND points >= :used"),
+                        {"id": user.id, "used": points_used, "tenant_id": g.tenant_id}
                     )
                     if pts_update.rowcount == 0:
                         db.session.rollback()
@@ -358,8 +417,8 @@ def submit_order():
 
             if user and points_earned > 0:
                 db.session.execute(
-                    db.text("UPDATE user SET points = points + :earned WHERE id = :id"),
-                    {"id": user.id, "earned": points_earned}
+                    db.text("UPDATE user SET points = points + :earned WHERE id = :id AND tenant_id = :tenant_id"),
+                    {"id": user.id, "earned": points_earned, "tenant_id": g.tenant_id}
                 )
 
             user_name = session.get('user_name', '訪客')

@@ -2,12 +2,13 @@ import queue
 from app.extensions import db
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
-from flask import Blueprint, render_template, Response, jsonify, current_app
+from flask import Blueprint, render_template, Response, jsonify, current_app, g
 from app.utils import admin_required
 
 pickup_bp = Blueprint('pickup', __name__)
 
 @pickup_bp.route('/pickup', endpoint='pickup_management')
+@admin_required
 def pickup_management():
     return render_template('pickup.html')
 
@@ -16,6 +17,7 @@ def counter_display():
     return render_template('counter.html')
 
 @pickup_bp.route('/api/mark_picked_up/<int:id>', methods=['POST'])
+@admin_required
 def api_mark_picked_up(id):
     order = Order.query.get_or_404(id)
     order.status = 'PickedUp'
@@ -24,18 +26,20 @@ def api_mark_picked_up(id):
     return jsonify({'success': True, 'message': f'取餐編號 #{order.pickup_number} 已完成取餐！'})
 
 @pickup_bp.route('/api/orders_stream')
+@admin_required
 def orders_stream():
     """向前端推播訂單狀態變更 (加入 Broken Pipe 與網路中斷防護)"""
 
     app = current_app._get_current_object()
+    tenant_id = getattr(g, 'tenant_id', None)
     try:
-        initial_payload = order_event_bus.get_current_payload()
+        initial_payload = order_event_bus.get_current_payload(tenant_id)
     except Exception as e:
         print(f"[!] 取得初始 Payload 異常: {e}")
         initial_payload = "{}"
 
     def event_stream():
-        client_queue = order_event_bus.subscribe()
+        client_queue = order_event_bus.subscribe(tenant_id)
         try:
             yield f"data: {initial_payload}\n\n"
 

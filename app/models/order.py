@@ -1,8 +1,9 @@
 from datetime import datetime
 from app.extensions import db
 from app.models.user import User
+from app.models.tenant import TenantScoped
 
-class Order(db.Model):
+class Order(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)
     table_number = db.Column(db.String(50), default='訪客')
@@ -28,7 +29,7 @@ class Order(db.Model):
             return db.session.get(User, self.user_id)
         return None
 
-class OrderItem(db.Model):
+class OrderItem(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
     item_name = db.Column(db.String(100), nullable=False)

@@ -4,6 +4,8 @@ from app.extensions import db
 from app.models.order import Order
 from app.models.menu import ComboOption, ModifierOption
 from app.models.user import RewardSetting
+from app.models.tenant import Tenant, StaffAccount
+from app.config import Config
 
 def run_database_migrations():
     """
@@ -12,6 +14,52 @@ def run_database_migrations():
     2. 自動校正歷史訂單每日循環取餐流水號 (1~999)
     """
     try:
+        # ======================================================================
+        # 0. 建立預設店家並回填舊單店資料
+        # ======================================================================
+        default_tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug='default').first()
+        if not default_tenant:
+            default_tenant = Tenant(name='預設店家', slug='default', is_active=True)
+            db.session.add(default_tenant)
+            db.session.commit()
+
+        tenant_tables = (
+            'user', 'admin_log', 'customer_log', 'reward_setting', 'menu_item',
+            'combo_option', 'modifier_option', 'order', 'order_item', 'coupon',
+            'user_coupon'
+        )
+        for table_name in tenant_tables:
+            columns = db.session.execute(db.text(f'PRAGMA table_info("{table_name}")')).fetchall()
+            if not columns:
+                continue
+            column_names = {column[1] for column in columns}
+            if 'tenant_id' not in column_names:
+                db.session.execute(db.text(f'ALTER TABLE "{table_name}" ADD COLUMN tenant_id INTEGER'))
+            db.session.execute(
+                db.text(f'UPDATE "{table_name}" SET tenant_id = :tenant_id WHERE tenant_id IS NULL'),
+                {'tenant_id': default_tenant.id}
+            )
+            safe_table_name = table_name.replace('"', '')
+            db.session.execute(db.text(
+                f'CREATE INDEX IF NOT EXISTS "ix_{safe_table_name}_tenant_id" '
+                f'ON "{safe_table_name}" (tenant_id)'
+            ))
+        db.session.commit()
+
+        # Convert the legacy environment-based admin credential into a tenant owner.
+        bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+            username=Config.ADMIN_USERNAME
+        ).first()
+        if not bootstrap_account:
+            db.session.add(StaffAccount(
+                tenant_id=default_tenant.id,
+                username=Config.ADMIN_USERNAME,
+                password_hash=Config.ADMIN_PASSWORD_HASH,
+                role='owner',
+                is_active=True
+            ))
+            db.session.commit()
+
         # ======================================================================
         # 1. 檢查 User 資料表
         # ======================================================================
@@ -197,8 +245,8 @@ def run_database_migrations():
 
         if ModifierOption.query.count() == 0:
             default_addons = [
-                ModifierOption(category='addons', name='加荷包蛋', price=10, is_active=True),
-                ModifierOption(category='addons', name='加起司片', price=15, is_active=True),
+                ModifierOption(tenant_id=default_tenant.id, category='addons', name='加荷包蛋', price=10, is_active=True),
+                ModifierOption(tenant_id=default_tenant.id, category='addons', name='加起司片', price=15, is_active=True),
             ]
             db.session.add_all(default_addons)
             db.session.commit()
@@ -210,6 +258,7 @@ def run_database_migrations():
     setting = RewardSetting.query.first()
     if not setting:
         setting = RewardSetting(
+            tenant_id=default_tenant.id,
             is_enabled=True,
             points_per_dollar=1,
             max_discount_per_order=0,

@@ -102,6 +102,8 @@
                 </button>
             </form>
 
+            <a href="{{ url_for('admin.tenant_register') }}" class="btn btn-outline-warning w-100 mb-3">建立新店家帳號</a>
+
             <div>
                 <a href="/" class="text-secondary text-decoration-none small">
                     <i class="bi bi-arrow-left"></i> 返回點餐前台
@@ -138,7 +140,10 @@
                     <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">2026/00/00 00:00:00</span>
                 </div>
                 <div class="d-flex align-items-center gap-2">
-                    <a href="/" class="btn btn-outline-light btn-sm fw-bold">
+                    {% if session.get('admin_role') == 'owner' %}
+                    <a href="{{ url_for('admin.staff_accounts') }}" class="btn btn-outline-warning btn-sm fw-bold"><i class="bi bi-people me-1"></i>員工帳號</a>
+                    {% endif %}
+                    <a href="{{ url_for('customer.tenant_storefront', tenant_slug=tenant.slug) }}" class="btn btn-outline-light btn-sm fw-bold">
                         <i class="bi bi-shop me-1"></i> 前往點餐前台
                     </a>
                     <a href="/admin/logout" class="btn btn-outline-danger btn-sm fw-bold">

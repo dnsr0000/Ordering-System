@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>建立店家帳號</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #f8fafc; font-family: "Microsoft JhengHei", sans-serif; }
+        .card { width: min(100% - 2rem, 520px); background: #1e293b; border: 1px solid #334155; border-radius: 18px; }
+        .form-control { background: #0f172a; border-color: #475569; color: #fff; }
+        .form-control:focus { background: #0f172a; color: #fff; }
+    </style>
+</head>
+<body>
+    <main class="card p-4 p-md-5 shadow">
+        <h1 class="h3 fw-bold text-warning mb-2">建立店家雲端帳號</h1>
+        <p class="text-white-50 mb-4">建立後會自動建立專屬店家資料空間及負責人帳號。</p>
+        <form method="POST" action="{{ url_for('admin.tenant_register') }}">
+            <div class="mb-3">
+                <label for="shop-name" class="form-label">店家名稱</label>
+                <input id="shop-name" class="form-control" name="shop_name" maxlength="120" required>
+            </div>
+            <div class="mb-3">
+                <label for="shop-slug" class="form-label">店家網址代號</label>
+                <input id="shop-slug" class="form-control" name="slug" pattern="[A-Za-z0-9-]+" placeholder="例如：sunny-cafe" required>
+                <div class="form-text text-white-50">顧客入口：/shop/網址代號</div>
+            </div>
+            <div class="mb-3">
+                <label for="owner-username" class="form-label">負責人帳號</label>
+                <input id="owner-username" class="form-control" name="username" autocomplete="username" required>
+            </div>
+            <div class="mb-4">
+                <label for="owner-password" class="form-label">密碼（至少 10 個字元）</label>
+                <input id="owner-password" class="form-control" type="password" name="password" minlength="10" autocomplete="new-password" required>
+            </div>
+            <button class="btn btn-warning fw-bold w-100" type="submit">建立店家並登入</button>
+        </form>
+        <a class="text-center text-white-50 mt-3" href="{{ url_for('admin.admin_dashboard') }}">返回員工登入</a>
+    </main>
+</body>
+</html>
