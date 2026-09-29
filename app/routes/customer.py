@@ -19,18 +19,20 @@ customer_bp = Blueprint('customer', __name__)
 # ==============================================================================
 # 租戶身分解析中介層 (解析 ?shop=xxx 或 /shop/xxx 或 Session)
 # ==============================================================================
+customer_bp = Blueprint('customer', __name__)
+
 @customer_bp.before_request
 def resolve_tenant_context():
-    # 靜態資源或 API 可直接略過或正常掛載
+    # 1. 優先檢查 Query String: ?shop=xxx
     shop_slug = request.args.get('shop')
 
-    # 從路徑抓取 /shop/<slug>
+    # 2. 次之解析路徑: /shop/<slug>
     if not shop_slug:
         parts = request.path.strip('/').split('/')
         if len(parts) >= 2 and parts[0] == 'shop':
             shop_slug = parts[1]
 
-    # 若網址有明確指定店家，強制切換
+    # 3. 若有指定 slug，查詢並強制寫入 session
     if shop_slug:
         tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=shop_slug, is_active=True).first()
         if tenant:
@@ -39,7 +41,7 @@ def resolve_tenant_context():
             g.tenant_id = tenant.id
             return None
 
-    # 從 Session 讀取既有店家
+    # 4. 若無網址參數，讀取 Session
     tenant_id = session.get('tenant_id')
     if tenant_id:
         tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(id=tenant_id, is_active=True).first()
@@ -48,7 +50,7 @@ def resolve_tenant_context():
             g.tenant_id = tenant.id
             return None
 
-    # 若都沒有，自動降級指向 default 店家
+    # 5. 都沒有則降級至預設店家 default
     default_tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug='default').first()
     if default_tenant:
         session['tenant_id'] = default_tenant.id
@@ -58,6 +60,8 @@ def resolve_tenant_context():
         g.tenant = None
         g.tenant_id = None
     return None
+
+
 
 
 
@@ -124,7 +128,7 @@ def customer_index():
         is_guest=is_guest,
         reward_setting=reward_setting,
         modifier_options=modifier_options,
-        tenant=current_tenant  # 👈 加上這行，店名才會出來
+        tenant=g.tenant  # 👈 補上這行
     )
 @customer_bp.route('/api/user_available_coupons')
 def api_user_available_coupons():
@@ -204,9 +208,7 @@ def verify_promo():
 
 @customer_bp.route('/shop/<tenant_slug>', endpoint='tenant_storefront')
 def tenant_storefront(tenant_slug):
-    tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=tenant_slug, is_active=True).first()
-    if tenant:
-        session['tenant_id'] = tenant.id
+    # before_request 已經完成店家解析與 session 寫入，直接跳轉至首頁
     return redirect(url_for('customer.customer_index'))
 
 @customer_bp.route('/submit_order', methods=['POST'])
@@ -340,7 +342,9 @@ def submit_order():
             today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
             max_pickup = db.session.query(db.func.max(Order.pickup_number)).filter(
-                Order.created_at >= today_start, Order.created_at <= today_end
+                Order.tenant_id == g.tenant_id,
+                Order.created_at >= today_start,
+                Order.created_at <= today_end
             ).scalar()
             next_pickup = (max_pickup % 999) + 1 if (max_pickup and max_pickup > 0) else 1
 
@@ -423,6 +427,7 @@ def submit_order():
 
             user_name = session.get('user_name', '訪客')
             new_order = Order(
+                tenant_id=g.tenant_id,
                 user_id=user_id,
                 table_number=user_name,
                 total_price=int(final_price),
