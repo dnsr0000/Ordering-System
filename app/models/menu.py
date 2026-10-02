@@ -1,6 +1,7 @@
 from app.extensions import db
+from app.models.tenant import TenantScoped
 
-class MenuItem(db.Model):
+class MenuItem(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     category = db.Column(db.String(50), default='主餐')
@@ -24,7 +25,7 @@ class MenuItem(db.Model):
     addon_trigger_type = db.Column(db.String(20), default='any')
     addon_trigger_target = db.Column(db.String(100), default='')
 
-class ComboOption(db.Model):
+class ComboOption(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     main_item_id = db.Column(db.Integer, db.ForeignKey('menu_item.id'), nullable=False)
     name = db.Column(db.String(100), nullable=False)
@@ -45,7 +46,7 @@ class ComboOption(db.Model):
     item2 = db.relationship('MenuItem', foreign_keys=[item2_id])
     item3 = db.relationship('MenuItem', foreign_keys=[item3_id])
 
-class ModifierOption(db.Model):
+class ModifierOption(TenantScoped, db.Model):
     __tablename__ = 'modifier_option'
     id = db.Column(db.Integer, primary_key=True)
     category = db.Column(db.String(50), default='addons')   # 對應 MenuItem.modifiers 群組名稱

@@ -1,6 +1,6 @@
 import time
 import re
-from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, g
 from app.extensions import db
 from app.models.user import User
 from app.models.menu import MenuItem, ModifierOption
@@ -48,8 +48,8 @@ def redeem_reward():
 
         req_points = coupon.reward_discount_points if coupon.reward_discount_points > 0 else coupon.reward_points
         res = db.session.execute(
-            db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), 
-            {"id": user_id, "pts": req_points}
+            db.text("UPDATE user SET points = points - :pts WHERE id = :id AND tenant_id = :tenant_id AND points >= :pts"),
+            {"id": user_id, "pts": req_points, "tenant_id": g.tenant_id}
         )
         if res.rowcount == 0:
             db.session.rollback()
@@ -75,8 +75,8 @@ def redeem_reward():
 
     req_points = item.reward_discount_points if item.reward_discount_points > 0 else item.reward_points
     res = db.session.execute(
-        db.text("UPDATE user SET points = points - :pts WHERE id = :id AND points >= :pts"), 
-        {"id": user_id, "pts": req_points}
+        db.text("UPDATE user SET points = points - :pts WHERE id = :id AND tenant_id = :tenant_id AND points >= :pts"),
+        {"id": user_id, "pts": req_points, "tenant_id": g.tenant_id}
     )
     if res.rowcount == 0:
         db.session.rollback()

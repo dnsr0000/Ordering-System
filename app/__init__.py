@@ -47,6 +47,9 @@ def create_app(config_class=Config):
     app.register_blueprint(pickup_bp)
     app.register_blueprint(admin_bp)
 
+    from app.tenant_context import install_tenant_context
+    install_tenant_context(app)
+
     # 全域 413 上傳過大例外攔截
     @app.errorhandler(413)
     def request_entity_too_large(error):
@@ -56,6 +59,8 @@ def create_app(config_class=Config):
     
     # 初始化資料庫資料表與執行自動遷移
     with app.app_context():
+        # 確保 Tenant / StaffAccount metadata 在 create_all 前已註冊。
+        from app.models.tenant import Tenant, StaffAccount
         db.create_all()
         #  自動執行結構檢測與舊資料補齊
         from app.services.migration_service import run_database_migrations

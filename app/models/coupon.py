@@ -1,7 +1,8 @@
 from datetime import datetime
 from app.extensions import db
+from app.models.tenant import TenantScoped
 
-class Coupon(db.Model):
+class Coupon(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(50), unique=True, nullable=False)
     title = db.Column(db.String(100), nullable=False)
@@ -17,7 +18,7 @@ class Coupon(db.Model):
         if not self.per_user_limit or self.per_user_limit <= 0:
             return "無上限"
         return f"{self.per_user_limit}次"
-class UserCoupon(db.Model):
+class UserCoupon(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     coupon_id = db.Column(db.Integer, db.ForeignKey('coupon.id'), nullable=False)

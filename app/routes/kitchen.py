@@ -12,10 +12,12 @@ from app.utils import admin_required
 kitchen_bp = Blueprint('kitchen', __name__)
 
 @kitchen_bp.route('/kitchen', endpoint='kitchen_display')
+@admin_required
 def kitchen_display():
     return render_template('kitchen.html')
 
 @kitchen_bp.route('/api/kitchen_orders')
+@admin_required
 def api_kitchen_orders():
     today = datetime.now().date()
     pending_orders = Order.query.filter(Order.status == 'Pending', db.func.date(Order.created_at) == today).order_by(Order.created_at.asc()).all()
@@ -44,6 +46,7 @@ def api_kitchen_orders():
     return jsonify({'success': True, 'orders': orders_data})
 
 @kitchen_bp.route('/api/kitchen_update_status/<int:id>', methods=['POST'])
+@admin_required
 def kitchen_update_status(id):
     order = Order.query.get_or_404(id)
     data = request.get_json() or {}
@@ -63,6 +66,7 @@ def kitchen_update_status(id):
     return jsonify({'success': False, 'message': '無效狀態'}), 400
 
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])
+@admin_required
 def kitchen_complete_all():
     today = datetime.now().date()
     now = datetime.now()

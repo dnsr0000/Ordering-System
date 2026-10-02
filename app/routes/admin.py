@@ -6,8 +6,7 @@ import re
 import unicodedata
 import pandas as pd
 from datetime import datetime, timedelta
-from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, send_file
-from werkzeug.security import check_password_hash
+from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, send_file, g
 from werkzeug.utils import secure_filename
 from openpyxl.styles import Font
 
@@ -17,6 +16,7 @@ from app.models.user import User, AdminLog, CustomerLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
+from app.models.tenant import Tenant, StaffAccount
 from app.services.cv_service import save_and_fix_image
 from app.services.order_service import (
     update_popular_items, sanitize_discount_value, 
@@ -31,25 +31,46 @@ ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 
 admin_bp = Blueprint('admin', __name__)
 
+
+@admin_bp.before_request
+def require_staff_for_admin_routes():
+    public_endpoints = {'admin.admin_dashboard', 'admin.admin_logout', 'admin.tenant_register'}
+    if request.endpoint in public_endpoints:
+        return None
+    if not session.get('staff_account_id') or not session.get('tenant_id') or not getattr(g, 'staff_account', None):
+        if request.is_json or request.path.startswith('/api/'):
+            return jsonify({'success': False, 'message': '請先登入店家員工帳號。'}), 401
+        return redirect(url_for('admin.admin_dashboard'))
+    return None
+
 # ==============================================================================
 # 後台登入與主儀表板
 # ==============================================================================
 @admin_bp.route('/admin', methods=['GET', 'POST'], endpoint='admin_dashboard')
 def admin_dashboard():
     if request.method == 'POST' and 'username' in request.form:
-        username = request.form.get('username')
+        username = request.form.get('username', '').strip()
         password = request.form.get('password')
-        if username == Config.ADMIN_USERNAME and check_password_hash(Config.ADMIN_PASSWORD_HASH, password):
+        staff = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first()
+        tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(id=staff.tenant_id).first() if staff else None
+        if staff and staff.is_active and tenant and tenant.is_active and staff.check_password(password or ''):
             session.permanent = True
             session['admin_logged_in'] = True
-            log = AdminLog(username=username, login_at=datetime.now(), ip_address=request.remote_addr or '')
+            session['staff_account_id'] = staff.id
+            session['tenant_id'] = tenant.id
+            session['admin_role'] = staff.role
+            session['admin_username'] = staff.username
+            g.staff_account = staff
+            g.tenant = tenant
+            g.tenant_id = tenant.id
+            log = AdminLog(tenant_id=tenant.id, username=username, login_at=datetime.now(), ip_address=request.remote_addr or '')
             db.session.add(log)
             db.session.commit()
             session['admin_log_id'] = log.id
             return redirect(url_for('admin.admin_dashboard'))
         return "<script>alert('❌ 帳號或密碼錯誤！'); window.history.back();</script>", 401
 
-    if not session.get('admin_logged_in'):
+    if not session.get('staff_account_id'):
         return render_template('admin.html', is_admin=False)
 
     limit = max(1, request.args.get('limit', 3, type=int))
@@ -79,7 +100,8 @@ def admin_dashboard():
         users=users,
         analytics=analytics,
         current_limit=limit,
-        reward_setting=reward_setting
+        reward_setting=reward_setting,
+        tenant=g.tenant
     )
 
 @admin_bp.route('/admin/logout', endpoint='admin_logout')
@@ -90,9 +112,73 @@ def admin_logout():
         if log and not log.logout_at:
             log.logout_at = datetime.now()
             db.session.commit()
-    session.pop('admin_logged_in', None)
-    session.pop('admin_log_id', None)
+    for key in ('admin_logged_in', 'admin_log_id', 'staff_account_id', 'admin_role', 'admin_username'):
+        session.pop(key, None)
     return redirect(url_for('admin.admin_dashboard'))
+
+
+@admin_bp.route('/tenant/register', methods=['GET', 'POST'], endpoint='tenant_register')
+def tenant_register():
+    if request.method == 'GET':
+        return render_template('tenant_register.html')
+
+    shop_name = request.form.get('shop_name', '').strip()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    slug = request.form.get('slug', '').strip().lower()
+    slug = re.sub(r'[^a-z0-9-]+', '-', slug).strip('-')
+
+    if not shop_name or not username or len(password) < 10 or not slug:
+        return "<script>alert('請填妥資料；密碼至少 10 個字元。'); window.history.back();</script>", 400
+    if Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=slug).first():
+        return "<script>alert('店家網址代號已被使用。'); window.history.back();</script>", 409
+    if StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first():
+        return "<script>alert('員工帳號已被使用。'); window.history.back();</script>", 409
+
+    try:
+        tenant = Tenant(name=shop_name, slug=slug, is_active=True)
+        db.session.add(tenant)
+        db.session.flush()
+        owner = StaffAccount(tenant_id=tenant.id, username=username, role='owner', is_active=True)
+        owner.set_password(password)
+        db.session.add(owner)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return "<script>alert('建立店家失敗，請檢查資料後重試。'); window.history.back();</script>", 500
+
+    session.clear()
+    session.permanent = True
+    session['staff_account_id'] = owner.id
+    session['tenant_id'] = tenant.id
+    session['admin_logged_in'] = True
+    session['admin_role'] = owner.role
+    session['admin_username'] = owner.username
+    return redirect(url_for('admin.admin_dashboard'))
+
+
+@admin_bp.route('/admin/staff', methods=['GET', 'POST'], endpoint='staff_accounts')
+@admin_required
+def staff_accounts():
+    if getattr(g.staff_account, 'role', '') != 'owner':
+        return jsonify({'success': False, 'message': '只有店家負責人可管理員工帳號。'}), 403
+
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        role = request.form.get('role', 'staff')
+        if role not in {'manager', 'staff', 'kitchen'} or not username or len(password) < 10:
+            return jsonify({'success': False, 'message': '帳號必填，密碼至少 10 個字元，角色無效。'}), 400
+        if StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first():
+            return jsonify({'success': False, 'message': '員工帳號已被使用。'}), 409
+        account = StaffAccount(tenant_id=g.tenant_id, username=username, role=role, is_active=True)
+        account.set_password(password)
+        db.session.add(account)
+        db.session.commit()
+        return redirect(url_for('admin.staff_accounts'))
+
+    accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id).order_by(StaffAccount.id.asc()).all()
+    return render_template('staff_accounts.html', accounts=accounts, tenant=g.tenant)
 
 # ==============================================================================
 # 菜單品項與加購品 CRUD
@@ -100,8 +186,6 @@ def admin_logout():
 @admin_bp.route('/admin/add', methods=['POST'])
 @admin_required
 def add_item():
-#    if not session.get('admin_logged_in'):
-#        return redirect(url_for('admin.admin_dashboard'))
     name = request.form.get('name')
     price = request.form.get('price')
     if name and price:
@@ -116,17 +200,23 @@ def add_item():
                 return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${final_price})！'); window.history.back();</script>", 400
 
         image = request.files.get('image')
-        image_filename = ''
+        db_image_path = ''
 
         if image and image.filename != '':
             _, ext = os.path.splitext(image.filename.lower())
             if ext not in ALLOWED_IMAGE_EXTS:
                 return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
 
-            image_filename = f"menu_{int(time.time())}.jpg"
-            filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, image_filename)
+            image_filename = f"menu_{int(time.time())}{ext}"
+            tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id')
+            store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
+            os.makedirs(store_upload_dir, exist_ok=True)
+            
+            filepath = os.path.join(store_upload_dir, image_filename)
             save_and_fix_image(image, filepath)
 
+            # 存進資料庫的相對路徑：例如 "1/menu_1720000000.jpg"
+            db_image_path = f"{tenant_id}/{image_filename}"
 
         is_sold_out = request.form.get('is_sold_out') == '1'
         is_rec = request.form.get('is_recommended') == '1'
@@ -137,6 +227,7 @@ def add_item():
         total_stock_val = max(stock_val, int(request.form.get('total_stock') or stock_val))
 
         new_item = MenuItem(
+            tenant_id=g.tenant_id,
             name=name,
             category=request.form.get('category', '主餐'),
             modifiers=request.form.get('modifiers', 'none'),
@@ -144,7 +235,7 @@ def add_item():
             stock=stock_val,
             total_stock=total_stock_val,
             description=request.form.get('description', ''),
-            image_path=image_filename,
+            image_path=db_image_path,
             is_sold_out=is_sold_out,
             is_recommended=is_rec,
             is_manual_popular=is_rec,
@@ -160,11 +251,10 @@ def add_item():
         db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
+
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
 @admin_required
 def edit_item(id):
-#    if not session.get('admin_logged_in'):
-#        return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     name = request.form.get('name')
     price = request.form.get('price')
@@ -214,22 +304,29 @@ def edit_item(id):
 
         image = request.files.get('image')
         if image and image.filename != '':
-            # 👈 2. 加入副檔名白名單驗證
             _, ext = os.path.splitext(image.filename.lower())
             if ext not in ALLOWED_IMAGE_EXTS:
                 return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
 
-            image_filename = f"menu_{int(time.time())}.jpg"
-            filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, image_filename)
-            save_and_fix_image(image, filepath)
-            
+            image_filename = f"menu_{int(time.time())}{ext}"
+            tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id')
+            store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
+            os.makedirs(store_upload_dir, exist_ok=True)
+
             # 刪除舊圖片以節省磁碟空間
             if item.image_path:
                 old_path = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
                 if os.path.exists(old_path):
-                    try: os.remove(old_path)
-                    except Exception: pass
-            item.image_path = image_filename
+                    try:
+                        os.remove(old_path)
+                    except Exception:
+                        pass
+
+            filepath = os.path.join(store_upload_dir, image_filename)
+            save_and_fix_image(image, filepath)
+
+            # 資料庫存入相對路徑：例如 "1/menu_1720000000.jpg"
+            item.image_path = f"{tenant_id}/{image_filename}"
 
         db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab=from_tab))
@@ -583,6 +680,10 @@ def update_order_status(id):
 @admin_bp.route('/admin/backup_system')
 @admin_required
 def backup_system():
+    return jsonify({
+        'success': False,
+        'message': '目前資料庫由多家店共用；整庫備份會包含其他店家資料，租戶隔離版備份尚未提供。'
+    }), 403
     # if not session.get('admin_logged_in'):
     #     return "<script>alert('❌ 權限不足，拒絕存取！'); window.location.href='/admin';</script>", 403
     try:
@@ -613,6 +714,10 @@ def backup_system():
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
 @admin_required
 def restore_backup():
+    return jsonify({
+        'success': False,
+        'message': '整庫還原會覆蓋所有店家資料；租戶隔離版還原尚未提供。'
+    }), 403
     # 1. 權限檢驗
     # if not session.get('admin_logged_in'):
     #     return "<script>alert('❌ 權限不足：未授權操作！'); window.location.href='/admin';</script>", 403

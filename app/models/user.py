@@ -1,7 +1,8 @@
 from datetime import datetime
 from app.extensions import db
+from app.models.tenant import TenantScoped
 
-class User(db.Model):
+class User(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     phone = db.Column(db.String(50), nullable=False)
@@ -11,14 +12,14 @@ class User(db.Model):
     last_login_at = db.Column(db.DateTime, nullable=True)
     last_logout_at = db.Column(db.DateTime, nullable=True)
 
-class AdminLog(db.Model):
+class AdminLog(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(50), nullable=False)
     login_at = db.Column(db.DateTime, default=datetime.now)
     logout_at = db.Column(db.DateTime, nullable=True)
     ip_address = db.Column(db.String(50), default='')
 
-class CustomerLog(db.Model):
+class CustomerLog(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_type = db.Column(db.String(20), nullable=False)
     identifier = db.Column(db.String(100), nullable=False)
@@ -29,7 +30,7 @@ class CustomerLog(db.Model):
 
 # app/models/user.py
 
-class RewardSetting(db.Model):
+class RewardSetting(TenantScoped, db.Model):
     __tablename__ = 'reward_setting'
     id = db.Column(db.Integer, primary_key=True)
     is_enabled = db.Column(db.Boolean, default=True)               # 啟用點數折抵
