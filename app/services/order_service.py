@@ -65,29 +65,66 @@ def cancel_order_and_rollback(order):
     if order.status == 'Cancelled':
         return False, "該訂單早已取消，不重複執行回滾！"
 
+    tenant_id = getattr(order, 'tenant_id', None)
+    reward_points_to_refund = 0
+
+    # 1. 庫存回補與計算需退還的紅利兌換點數
     for oi in order.items:
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', oi.item_name).strip()
-        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        
+        # 加上 tenant_id 限制，防止跨店抓錯商品
+        query = MenuItem.query.filter_by(name=clean_name)
+        if tenant_id:
+            query = query.filter_by(tenant_id=tenant_id)
+        menu_item = query.first()
+
         if menu_item:
+            # 回補庫存
             menu_item.stock = (menu_item.stock or 0) + (oi.quantity or 1)
             if menu_item.stock > 0 and menu_item.is_sold_out:
                 menu_item.is_sold_out = False
 
+            # 若該品項為點數兌換餐點，計算應退回的點數
+            is_reward_item = getattr(oi, 'is_reward', False) or ('[點數兌換]' in (oi.item_name or ''))
+            if is_reward_item and menu_item.is_reward:
+                unit_pts = menu_item.reward_discount_points if (
+                    menu_item.reward_discount_points and menu_item.reward_discount_points > 0
+                ) else menu_item.reward_points
+                
+                if unit_pts and unit_pts > 0:
+                    reward_points_to_refund += unit_pts * (oi.quantity or 1)
+
+    # 2. 會員點數、優惠券回補
     if order.user_id:
         user = db.session.get(User, order.user_id)
         if user:
-            if order.points_used > 0:
+            # 回補「結帳折抵金額」所用的點數
+            if getattr(order, 'points_used', 0) and order.points_used > 0:
                 user.points = (user.points or 0) + order.points_used
-            if order.points_earned > 0:
+            
+            # 回補「兌換商品本身」所扣除的紅利點數
+            if reward_points_to_refund > 0:
+                user.points = (user.points or 0) + reward_points_to_refund
+
+            # 扣回該筆訂單所贈送/獲得的點數
+            if getattr(order, 'points_earned', 0) and order.points_earned > 0:
                 user.points = max(0, (user.points or 0) - order.points_earned)
+
+            # 復原已使用的優惠券狀態
             if getattr(order, 'coupon_code', None):
-                used_coupon = UserCoupon.query.filter_by(
+                coupon_query = UserCoupon.query.filter_by(
                     user_id=user.id, code=order.coupon_code, is_used=True
-                ).first()
+                )
+                if tenant_id:
+                    coupon_query = coupon_query.filter_by(tenant_id=tenant_id)
+                used_coupon = coupon_query.first()
                 if used_coupon:
                     used_coupon.is_used = False
                     used_coupon.used_at = None
 
+    order.status = 'Cancelled'
+    db.session.commit()
+    return True, "訂單已成功取消，庫存、折抵點數及兌換點數均已全額復原！"
     order.status = 'Cancelled'
     db.session.commit()
     update_popular_items()

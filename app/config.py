@@ -46,7 +46,13 @@ class Config:
     # API Keys 與管理者資訊
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "1234")
-    ADMIN_PASSWORD_HASH = generate_password_hash(os.getenv("ADMIN_PASSWORD", "1234"))
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
+    
+    if not ADMIN_PASSWORD:
+    # 若未在 .env 設定，使用警告並生成一組較安全的隨機初始密碼（或直接報錯）
+      import secrets
+      ADMIN_PASSWORD = secrets.token_urlsafe(12)
+      print(f"\n⚠️  [安全警告] 未在 .env 設定 ADMIN_PASSWORD，已自動生成初始密碼: {ADMIN_PASSWORD}\n")
 
     # 備份與還原安全限制
     MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024

@@ -130,7 +130,7 @@ def redeem_reward():
 
 @rewards_bp.route('/api/refund_reward_item', methods=['POST'])
 def refund_reward_item():
-    """購物車刪除商城兌換品項時，全額返還已扣除之點數 (支援 ID 與品名雙重反查)"""
+    """購物車刪除商城兌換品項時，全額返還已扣除之點數"""
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'success': False, 'message': '請先登入會員！'}), 401
@@ -138,46 +138,43 @@ def refund_reward_item():
     data = request.get_json() or {}
     item_id = data.get('item_id')
     raw_name = str(data.get('name', '')).strip()
-    fallback_points = int(data.get('points', 0))
     quantity = max(1, int(data.get('quantity', 1)))
 
     menu_item = None
-    # 1. 優先透過 ID 查詢
+    
+    # 1. 優先透過 ID 查詢（必須綁定目前店家 tenant_id）
     if item_id:
         try:
-            menu_item = db.session.get(MenuItem, int(item_id))
+            menu_item = MenuItem.query.filter_by(id=int(item_id), tenant_id=g.tenant_id).first()
         except (ValueError, TypeError):
             menu_item = None
 
-    # 2. 兜底保障：若 ID 遺失或查無，剔除前綴後以品名反查
+    # 2. 備用方案：品名反查（同樣限制在目前店家）
     if not menu_item and raw_name:
         clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', raw_name).strip()
-        menu_item = MenuItem.query.filter_by(name=clean_name).first()
+        menu_item = MenuItem.query.filter_by(name=clean_name, tenant_id=g.tenant_id).first()
 
-    pts_to_refund = 0
-    if menu_item:
-        unit_pts = menu_item.reward_discount_points if (menu_item.reward_discount_points and menu_item.reward_discount_points > 0) else menu_item.reward_points
-        pts_to_refund = unit_pts * quantity
+    # 3. 查無此商品或非兌換品項，直接拒絕，絕不採信前端傳來的 fallback_points
+    if not menu_item or not menu_item.is_reward:
+        return jsonify({'success': False, 'message': '查無此兌換商品或非有效兌換品項！'}), 400
 
-    # 3. 前端攜帶點數兜底
-    if pts_to_refund <= 0 and fallback_points > 0:
-        pts_to_refund = fallback_points * quantity
+    # 4. 以後端資料庫的設定為準，計算應退點數
+    unit_pts = menu_item.reward_discount_points if (menu_item.reward_discount_points and menu_item.reward_discount_points > 0) else menu_item.reward_points
+    pts_to_refund = unit_pts * quantity
 
     if pts_to_refund <= 0:
-        return jsonify({'success': False, 'message': '無法核對此兌換商品的退點額度！'}), 400
+        return jsonify({'success': False, 'message': '該商品無有效點數設定！'}), 400
 
     user = db.session.get(User, user_id)
     if not user:
         return jsonify({'success': False, 'message': '查無此會員！'}), 404
 
-    # 直接使用 ORM 物件更新點數，防止快取不同步
+    # 5. 返還點數並寫入資料庫
     user.points = (user.points or 0) + pts_to_refund
     db.session.commit()
 
-    session['user_points'] = user.points
-
     return jsonify({
         'success': True,
-        'message': f'已成功退還 {pts_to_refund} 點紅利點數！',
+        'message': f'已退還 {pts_to_refund} 點數',
         'current_points': user.points
     })
