@@ -299,13 +299,34 @@ def submit_order():
         safe_custom_parts.extend(verified_modifier_labels)
         safe_customization = "、".join(safe_custom_parts) if safe_custom_parts else ""
         # ====================================================
-        # 單價計算
+        # 單價計算與紅利扣點驗證
         # ====================================================
         if is_claimed_reward:
             if not user_id:
                 return jsonify({'error': '非會員無法訂購紅利商城兌換餐點！'}), 403
             if not menu_item.is_reward:
                 return jsonify({'error': f'餐點【{menu_item.name}】未開放紅利兌換！'}), 400
+
+            # 1. 以後端設定計算單品所需點數（優先取特惠點數）
+            unit_pts = menu_item.reward_discount_points if (
+                menu_item.reward_discount_points and menu_item.reward_discount_points > 0
+            ) else menu_item.reward_points
+
+            if not unit_pts or unit_pts <= 0:
+                return jsonify({'error': f'餐點【{menu_item.name}】未設定有效兌換點數！'}), 400
+
+            item_required_points = unit_pts * quantity
+
+            # 2. 檢查會員當前點數是否足夠扣除
+            user = db.session.get(User, user_id)
+            if not user or (user.points or 0) < item_required_points:
+                db.session.rollback()
+                return jsonify({'error': f'會員紅利點數不足，無法兌換【{menu_item.name}】！'}), 400
+
+            # 3. 實質扣減會員點數（在同一個交易中執行）
+            user.points -= item_required_points
+
+            # 4. 餐點基本單價設為 0 元（僅加料部分可能計費）
             unit_price = extra_modifier_price
         elif is_add_on:
             if not menu_item.can_be_add_on:
