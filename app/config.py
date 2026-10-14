@@ -66,3 +66,4 @@ class Config:
 
     # 3. 管理員閒置 30 分鐘自動過期登出（避免點餐機無人看管時後台一直開著）
     PERMANENT_SESSION_LIFETIME = 1800
+    ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
