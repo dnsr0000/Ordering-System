@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash
 from app.utils import admin_required
 
-load_dotenv()
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+load_dotenv(os.path.join(BASE_DIR, '.env'), override=True)
 
 class Config:
     BASE_DIR = BASE_DIR

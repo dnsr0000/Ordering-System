@@ -40,6 +40,69 @@
             background-color: #16a34a;
             color: #fff;
         }
+    
+        /* === 配色與對比度修正 (防止背景與文字顏色融合) === */
+        .card:not(.text-dark):not(.light-card),
+        .card-custom,
+        .login-card,
+        .pos-panel,
+        .kds-card,
+        .pickup-card,
+        .number-card,
+        .reward-card,
+        .vip-card,
+        .modal-content:not(.text-dark) {
+            --bs-card-color: #f8fafc;
+            --bs-modal-color: #f8fafc;
+            color: #f8fafc;
+        }
+        .form-label,
+        .form-check-label,
+        .col-form-label {
+            color: #f1f5f9;
+        }
+        .text-dark .form-label,
+        .text-dark .form-check-label,
+        .bg-light .form-label,
+        .bg-light .form-check-label {
+            color: #1e293b !important;
+        }
+        .form-control:disabled,
+        .form-select:disabled,
+        .form-control[readonly] {
+            background-color: #1e293b !important;
+            color: #94a3b8 !important;
+            border-color: #334155 !important;
+            opacity: 0.85;
+        }
+        .form-select option,
+        select.form-select option,
+        select option {
+            background-color: #0f172a !important;
+            color: #f8fafc !important;
+        }
+        .form-select option:disabled,
+        select option:disabled {
+            background-color: #0f172a !important;
+            color: #64748b !important;
+        }
+        .text-muted {
+            color: #94a3b8 !important;
+        }
+        .text-secondary {
+            color: #94a3b8 !important;
+        }
+        .text-dark .text-muted,
+        .bg-light .text-muted,
+        .bg-white .text-muted,
+        .thermal-receipt .text-muted {
+            color: #475569 !important;
+        }
+        .text-dark .text-secondary,
+        .bg-light .text-secondary,
+        .bg-white .text-secondary {
+            color: #475569 !important;
+        }
     </style>
 </head>
 <body>

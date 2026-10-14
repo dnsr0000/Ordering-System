@@ -58,6 +58,107 @@
         .img-sold-out {
             filter: grayscale(80%) !important;
         }
+    
+        /* === 配色與對比度修正 (防止背景與文字顏色融合) === */
+        .card:not(.text-dark):not(.light-card),
+        .card-custom,
+        .login-card,
+        .pos-panel,
+        .kds-card,
+        .pickup-card,
+        .number-card,
+        .reward-card,
+        .vip-card,
+        .modal-content:not(.text-dark) {
+            --bs-card-color: #f8fafc;
+            --bs-modal-color: #f8fafc;
+            color: #f8fafc;
+        }
+        .form-label,
+        .form-check-label,
+        .col-form-label {
+            color: #f1f5f9;
+        }
+        .text-dark .form-label,
+        .text-dark .form-check-label,
+        .bg-light .form-label,
+        .bg-light .form-check-label {
+            color: #1e293b !important;
+        }
+        .form-control:disabled,
+        .form-select:disabled,
+        .form-control[readonly] {
+            background-color: #1e293b !important;
+            color: #94a3b8 !important;
+            border-color: #334155 !important;
+            opacity: 0.85;
+        }
+        .form-select option,
+        select.form-select option,
+        select option {
+            background-color: #0f172a !important;
+            color: #f8fafc !important;
+        }
+        .form-select option:disabled,
+        select option:disabled {
+            background-color: #0f172a !important;
+            color: #64748b !important;
+        }
+        .text-muted {
+            color: #94a3b8 !important;
+        }
+        .text-secondary {
+            color: #94a3b8 !important;
+        }
+        .text-dark .text-muted,
+        .bg-light .text-muted,
+        .bg-white .text-muted,
+        .thermal-receipt .text-muted {
+            color: #475569 !important;
+        }
+        .text-dark .text-secondary,
+        .bg-light .text-secondary,
+        .bg-white .text-secondary {
+            color: #475569 !important;
+        }
+
+        .sort-btn, #priceSortBtn {
+            background-color: #242b38;
+            color: #f1f5f9;
+            border: 1px solid #3b465c;
+        }
+        .sort-btn:hover, #priceSortBtn:hover {
+            background-color: #313b4d;
+            color: #ffffff;
+            border-color: #f5a500;
+        }
+        /* 收據與歷史訂單彈窗 (白底黑字表格防融合保護) */
+        #receiptModal .modal-content,
+        #historyModal .modal-content {
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+            --bs-modal-color: #0f172a !important;
+        }
+        #receiptModal .table,
+        #receiptModal th,
+        #receiptModal td,
+        #historyModal .table,
+        #historyModal th,
+        #historyModal td {
+            color: #0f172a !important;
+            --bs-table-color: #0f172a !important;
+            --bs-table-bg: transparent !important;
+        }
+        #historyModal .card {
+            background-color: #ffffff !important;
+            color: #0f172a !important;
+            --bs-card-color: #0f172a !important;
+        }
+        #receiptModal .bg-light,
+        #historyModal .bg-light {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
     </style>
 </head>
 <body>
@@ -477,7 +578,7 @@
         
         <!-- 🛒 餐點品項列表 -->
         <div id="cart-items" class="overflow-y-auto mb-2 pe-1" style="min-height: 140px; max-height: 28vh; border-bottom: 1px solid rgba(255,255,255,0.12);">
-            <div class="text-center text-muted py-4">購物車目前空空如也</div>
+            <div class="text-center text-white-50 py-4">購物車目前空空如也</div>
         </div>
         <div id="addon-recommend-container"></div>
 
@@ -733,7 +834,7 @@
                 <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
             </div>
             {% if not is_guest %}
-            <div class="d-flex justify-content-between small text-warning mt-2 pt-2 border-top">
+            <div class="d-flex justify-content-between small fw-bold mt-2 pt-2 border-top" style="color: #b45309;">
                 <span>🌟 本次獲得紅利點數：</span>
                 <strong id="receipt-earned-points">+0 點</strong>
             </div>
@@ -1514,7 +1615,7 @@
         const addonContainer = document.getElementById('addon-recommend-container');
 
         if (!cart.length) {
-            if (container) container.innerHTML = '<div class="text-center text-muted py-4">購物車目前空空如也</div>';
+            if (container) container.innerHTML = '<div class="text-center text-white-50 py-4">購物車目前空空如也</div>';
             if (addonContainer) addonContainer.innerHTML = '';
             calculateTotal();
             return;
@@ -2211,7 +2312,7 @@
             </a>
         </div>
     </div>
-    <div class="text-center text-muted">點擊後台管理可進入店家管理</div>
+    <div class="text-center text-white-50">點擊後台管理可進入店家管理</div>
     <div class="text-center mt-3"><a class="text-white" href="/admin">後台管理</a></div>
 </div>
 
