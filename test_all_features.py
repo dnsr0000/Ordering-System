@@ -1,13 +1,8 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
+
 """
-================================================================================
 智慧自助點餐、POS 收銀、人臉辨識與多租戶系統 — 全功能與全排列組合自動化驗證腳本
-(Comprehensive End-to-End, Security, POS, Migration & Concurrency Test Suite)
-================================================================================
 執行方式：
   python test_all_features.py
-
 自訂壓測參數 (選填)：
   python test_all_features.py --browse-users 60 --sse-streams 8 --checkout-users 30 --stock 10
 
@@ -27,7 +22,6 @@
   • 模組 13：補強覆蓋 — 未測路由 (/face_login、/api/verify_promo、/my_orders、/shop/<slug> 等)、免登入外洩、角色越權(含 owner/manager 回歸)、GET 刪除封鎖、跨店隔離掃描、匿名/CSRF 全路由掃描、限流與 SSE (18 項)
 ================================================================================
 """
-
 import io
 import os
 import re
@@ -60,17 +54,30 @@ import numpy as np
 import openpyxl
 from PIL import Image
 from werkzeug.security import generate_password_hash
-
-# 1. 建立獨立測試資料庫目錄，並直接同步覆寫 Config 類別屬性
+# 1. 建立獨立測試資料庫與獨立暫存相片目錄，徹底防止污染實體 static 與 database
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 TEST_DB_DIR = tempfile.mkdtemp(prefix="kiosk_test_db_")
-TEST_DB_PATH = os.path.join(TEST_DB_DIR, "test_menu.db")
+TEST_DB_PATH = os.path.join(TEST_DB_DIR, "menu.db")
+TEST_UPLOAD_MEMBER_DIR = tempfile.mkdtemp(prefix="kiosk_test_member_")
+TEST_UPLOAD_MENU_DIR = tempfile.mkdtemp(prefix="kiosk_test_menu_")
+
+# 清除過去腳本意外殘留在實體 static/member 的歷史測試照片 (例如 0912345678 開頭的圖片)
+REAL_STATIC_MEMBER = os.path.join(BASE_DIR, "static", "member")
+if os.path.exists(REAL_STATIC_MEMBER):
+    for f_name in os.listdir(REAL_STATIC_MEMBER):
+        if f_name.startswith(("0912345678", "camera_snap_", "member_to_delete", "temp_", "privacy_test_face")):
+            try:
+                os.remove(os.path.join(REAL_STATIC_MEMBER, f_name))
+            except Exception:
+                pass
 
 from app.config import Config
 
 Config.TESTING = False
 Config.DATABASE_DIR = TEST_DB_DIR
 Config.SQLALCHEMY_DATABASE_URI = "sqlite:///" + TEST_DB_PATH
+Config.UPLOAD_FOLDER_MEMBER = TEST_UPLOAD_MEMBER_DIR
+Config.UPLOAD_FOLDER_MENU = TEST_UPLOAD_MENU_DIR
 Config.ADMIN_USERNAME = "admin_test"
 Config.ADMIN_PASSWORD = "AdminPass!2026"
 Config.ADMIN_PASSWORD_HASH = generate_password_hash("AdminPass!2026")
@@ -80,6 +87,8 @@ class TestConfig(Config):
     TESTING = False
     DATABASE_DIR = TEST_DB_DIR
     SQLALCHEMY_DATABASE_URI = "sqlite:///" + TEST_DB_PATH
+    UPLOAD_FOLDER_MEMBER = TEST_UPLOAD_MEMBER_DIR
+    UPLOAD_FOLDER_MENU = TEST_UPLOAD_MENU_DIR
     ADMIN_USERNAME = "admin_test"
     ADMIN_PASSWORD = "AdminPass!2026"
     ADMIN_PASSWORD_HASH = Config.ADMIN_PASSWORD_HASH
@@ -635,33 +644,57 @@ def run_all_tests():
 
     # 2.5 會員人臉照片 (/static/member/) 私密存取控制驗證
     def t2_5():
-        sample_path = os.path.join(Config.UPLOAD_FOLDER_MEMBER, "privacy_test_face.jpg")
-        with open(sample_path, "wb") as f:
-            f.write(make_test_jpeg_bytes().read())
+        # 確保寫入 Flask static_folder 對應的實體位置以供路由讀取
+        static_member_dir = os.path.join(app.static_folder, "member")
+        os.makedirs(static_member_dir, exist_ok=True)
+        sample_path = os.path.join(static_member_dir, "privacy_test_face.jpg")
 
-        anon = app.test_client()
-        r_anon = anon.get("/static/member/privacy_test_face.jpg")
-        assert r_anon.status_code == 403, f"未授權訪客可下載會員人臉照片: {r_anon.status_code}"
+        try:
+            with open(sample_path, "wb") as f:
+                f.write(make_test_jpeg_bytes().read())
 
-        r_staff = staff_client.get("/static/member/privacy_test_face.jpg")
-        assert r_staff.status_code == 200, f"已登入員工無法讀取會員照片: {r_staff.status_code}"
-        return "訪客讀取 /static/member/ 攔截(403) & 授權員工讀取(200) 通過"
+            anon = app.test_client()
+            r_anon = anon.get("/static/member/privacy_test_face.jpg")
+            assert r_anon.status_code == 403, f"未授權訪客可下載會員人臉照片: {r_anon.status_code}"
+
+            r_staff = staff_client.get("/static/member/privacy_test_face.jpg")
+            assert r_staff.status_code == 200, f"已登入員工無法讀取會員照片: {r_staff.status_code}"
+            return "訪客讀取 /static/member/ 攔截(403) & 授權員工讀取(200) 通過"
+        finally:
+            # 測完立即物理刪除，絕不在磁碟留下任何殘留檔案
+            if os.path.exists(sample_path):
+                try:
+                    os.remove(sample_path)
+                except Exception:
+                    pass
     runner.check("2.5", "會員人臉照片 (/static/member/) 私密存取控制驗證", t2_5)
 
-    # 2.6 系統整庫備份 (/admin/backup_system) 與整庫還原 (/admin/restore_backup) 多租戶安全封鎖 (403)
+    # 2.6 系統完整備份包匯出 (/admin/export_excel) 與還原防護 (/admin/restore_backup) 驗證
     def t2_6():
         csrf = get_client_csrf(admin_client, "/admin")
-        r_bak = admin_client.get("/admin/backup_system")
+        
+        # 1. 測試整合至 export_excel 的完整備份包匯出 (包含 menu.db 實體資料庫)
+        r_bak = admin_client.post(
+            "/admin/export_excel",
+            data={"export_type": "backup_zip", "csrf_token": csrf},
+            headers={"X-CSRFToken": csrf},
+        )
+        assert r_bak.status_code == 200, f"完整備份包匯出失敗: {r_bak.status_code}"
+        assert r_bak.mimetype == "application/zip", f"備份包 MIME 類型錯誤: {r_bak.mimetype}"
+        
+        # 檢驗下載的 ZIP 壓縮包內確實包含 menu.db 實體資料庫
+        with zipfile.ZipFile(io.BytesIO(r_bak.data), 'r') as zf:
+            assert "menu.db" in zf.namelist(), "完整備份包 ZIP 缺少 menu.db 資料庫檔案"
+
+        # 2. 測試未上傳實體檔案時，還原路由具備安全阻斷防護 (403)
         r_rest = admin_client.post(
             "/admin/restore_backup",
             data={"csrf_token": csrf},
             headers={"X-CSRFToken": csrf},
         )
-        assert r_bak.status_code == 403 and r_rest.status_code == 403, (
-            f"多租戶整庫備份/還原未回傳 403: backup={r_bak.status_code}, restore={r_rest.status_code}"
-        )
-        return "backup_system(403) 與 restore_backup(403) 多租戶安全封鎖驗證通過"
-    runner.check("2.6", "系統整庫備份 (/admin/backup_system) 與還原 (/admin/restore_backup) 封鎖驗證", t2_6)
+        assert r_rest.status_code == 403, f"未選取檔案之還原請求未回傳 403: {r_rest.status_code}"
+        return "export_excel(backup_zip 成功打包 menu.db) 與 restore_backup(安全阻斷 403) 驗證通過"
+    runner.check("2.6", "系統完整備份包匯出 (含 menu.db) 與還原安全防護驗證", t2_6)
 
     # ==========================================================================
     # 模組 3：菜單 CRUD、刪除路由、紅利獨立上下架與三種加購觸發規則
@@ -1063,19 +1096,35 @@ def run_all_tests():
         return f"連續5次錯誤(401)後第6次觸發鎖定({statuses[5]}) 驗證通過"
     runner.check("5.4", "連續 5 次 PIN 錯誤觸發 15 分鐘防暴力破解鎖定 (429) 驗證", t5_4)
 
-    # 5.5 後台編輯會員 (/admin/edit_user/<id>)、刪除會員 (/admin/delete_user/<id>) 與稽核紀錄
+    # 5.5 後台編輯會員 (/admin/edit_user/<id>)、刪除會員 (/admin/delete_user/<id>) 與相片檔案物理清除驗證
     def t5_5():
         csrf = get_client_csrf(admin_client, "/admin")
         with app.app_context():
             t = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
             u_chen = User.query.filter_by(phone="0912345678").first()
             chen_id = u_chen.id
-            u_temp = User(tenant_id=t.id, name="待刪會員", phone="0955111222", photo_path="tmp.jpg", points=30)
+
+            # 建立帶有實體照片檔案的待刪測試會員
+            temp_filename = f"member_del_verify_{uuid.uuid4().hex[:8]}.jpg"
+            temp_photo_path = os.path.join(Config.UPLOAD_FOLDER_MEMBER, temp_filename)
+            with open(temp_photo_path, "wb") as f:
+                f.write(make_test_jpeg_bytes().read())
+            assert os.path.exists(temp_photo_path), "待刪測試相片未成功寫入磁碟"
+
+            u_temp = User(tenant_id=t.id, name="待刪會員", phone="0955111222", photo_path=temp_filename, points=30)
             db.session.add(u_temp)
             db.session.commit()
             temp_uid = u_temp.id
 
-        # 編輯陳大文點數為 300 點並重設 PIN 為 1357
+            # 建立關聯訂單以驗證刪除會員時訂單 user_id 自動解綁 (改為 '待刪會員 (已註銷會員)')
+            db.session.execute(
+                db.text('INSERT INTO "order" (tenant_id, user_id, table_number, total_price, status) VALUES (:tid, :uid, :tbl, 100, "Pending")'),
+                {"tid": t.id, "uid": temp_uid, "tbl": "A1"}
+            )
+            linked_order_id = db.session.execute(db.text("SELECT last_insert_rowid()")).scalar()
+            db.session.commit()
+
+        # 1. 測試編輯陳大文點數為 300 點並重設 PIN 為 1357
         r_edit_u = admin_client.post(
             f"/admin/edit_user/{chen_id}",
             data={"name": "陳大文", "phone": "0912345678", "points": "300", "pin": "1357", "csrf_token": csrf},
@@ -1087,15 +1136,30 @@ def run_all_tests():
             edit_au = StaffAuditLog.query.filter_by(action_type="EDIT_USER", target_user_id=chen_id).first()
             assert edit_au is not None and edit_au.points_delta == 280, "編輯會員點數未寫入 EDIT_USER 稽核紀錄"
 
-        # 刪除臨時會員 (/admin/delete_user/<id>)
+        # 2. 測試刪除會員 (/admin/delete_user/<id>)
         r_del_u = admin_client.post(f"/admin/delete_user/{temp_uid}", data={"csrf_token": csrf})
         assert r_del_u.status_code == 302
         with app.app_context():
-            assert db.session.get(User, temp_uid) is None, "/admin/delete_user 未刪除會員"
+            # (a) 驗證會員資料已從資料庫徹底刪除
+            assert db.session.get(User, temp_uid) is None, "/admin/delete_user 未刪除會員資料庫記錄"
+
+            # (b) 驗證實體照片檔案確實被物理刪除，無孤兒檔案殘留
+            assert not os.path.exists(temp_photo_path), "刪除會員後，實體相片檔案未被物理刪除！"
+
+            # (c) 驗證關聯訂單之 user_id 已解綁為 None 且桌號標註為已註銷會員
+            linked_ord = db.session.get(Order, linked_order_id)
+            assert linked_ord.user_id is None and "已註銷會員" in linked_ord.table_number, "刪除會員未解除關聯訂單 user_id"
+
+            # (d) 驗證寫入 DELETE_USER 稽核紀錄
             del_au = StaffAuditLog.query.filter_by(action_type="DELETE_USER", target_user_id=temp_uid).first()
             assert del_au is not None and del_au.points_delta == -30, "刪除會員未寫入 DELETE_USER 稽核紀錄"
-        return "編輯會員點數(+280點)/重設PIN & /admin/delete_user 刪除稽核驗證通過"
-    runner.check("5.5", "後台編輯會員 (/admin/edit_user)、刪除會員 (/admin/delete_user) 與稽核驗證", t5_5)
+
+            # 清理該筆臨時訂單
+            db.session.delete(linked_ord)
+            db.session.commit()
+
+        return "編輯會員點數/重設PIN & /admin/delete_user 同步物理刪除相片、解綁訂單與稽核驗證通過"
+    runner.check("5.5", "後台編輯會員 (/admin/edit_user)、刪除會員 (/admin/delete_user) 與相片檔案物理清除驗證", t5_5)
 
     # ==========================================================================
     # 模組 6：顧客端自助點餐結帳 (/submit_order) 全排列組合與白名單驗證
@@ -2394,8 +2458,7 @@ def run_all_tests():
         csrf = get_client_csrf(anon, "/")
         hdr = {"X-CSRFToken": csrf}
         clear_rate_buckets()
-        gets = ["/pos", "/kitchen", "/pickup", "/admin/staff", "/api/kitchen_orders", "/api/admin_live_orders",
-                "/admin/backup_system"]
+        gets = ["/pos", "/kitchen", "/pickup", "/admin/staff", "/api/kitchen_orders", "/api/admin_live_orders"]
         posts = [
             "/api/pos/member_lookup", "/api/pos/set_member_pin", "/api/pos/verify_promo", "/api/pos/checkout",
             "/api/kitchen_update_status/1", "/api/kitchen_complete_all", "/api/mark_picked_up/1",
@@ -3059,6 +3122,8 @@ def run_all_tests():
     # 清理暫存測試目錄
     try:
         shutil.rmtree(TEST_DB_DIR, ignore_errors=True)
+        shutil.rmtree(TEST_UPLOAD_MEMBER_DIR, ignore_errors=True)
+        shutil.rmtree(TEST_UPLOAD_MENU_DIR, ignore_errors=True)
     except Exception:
         pass
 

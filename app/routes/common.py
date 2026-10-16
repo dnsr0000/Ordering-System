@@ -1,8 +1,7 @@
 from datetime import datetime
 from flask import session, request, g
 from app.extensions import db
-from app.models.user import CustomerLog, User, StaffAuditLog
-
+from app.models.user import CustomerLog, User, StaffAuditLog, RewardRedemption
 
 def start_customer_session(user_type, identifier):
     close_customer_session()
@@ -22,6 +21,26 @@ def clear_customer_session():
     for key in ['user_id', 'user_name', 'user_points', 'is_guest', 'customer_log_id']:
         session.pop(key, None)
 
+def refund_orphaned_redemptions(user):
+    """
+    檢查並自動退還尚未送單結帳 (order_id is None) 的紅利商品點數，防止吃點數
+    """
+    if not user:
+        return 0
+    orphans = RewardRedemption.query.filter_by(
+        user_id=user.id,
+        is_used=False,
+        is_refunded=False,
+        order_id=None
+    ).all()
+    if orphans:
+        total_refund = sum(r.points_cost for r in orphans)
+        user.points = (user.points or 0) + total_refund
+        for r in orphans:
+            r.is_refunded = True
+        db.session.commit()
+        return total_refund
+    return 0
 
 def close_customer_session():
     log_id = session.get('customer_log_id')
@@ -34,6 +53,7 @@ def close_customer_session():
         user = db.session.get(User, user_id)
         if user:
             user.last_logout_at = datetime.now()
+            refund_orphaned_redemptions(user)
     db.session.commit()
     session.pop('customer_log_id', None)
 

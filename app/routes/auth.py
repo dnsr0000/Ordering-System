@@ -9,7 +9,10 @@ from app.config import Config
 from app.extensions import db
 from app.models.user import User
 from app.services.cv_service import save_and_fix_image, extract_feature, find_best_match_vectorized
-from app.routes.common import start_customer_session, clear_customer_session, close_customer_session
+from app.routes.common import (
+    start_customer_session, clear_customer_session, 
+    close_customer_session, refund_orphaned_redemptions
+)
 from app.utils import rate_limit, js_alert_redirect
 
 auth_bp = Blueprint('auth', __name__)
@@ -115,6 +118,7 @@ def face_login():
         matched_user, best_score = find_best_match_vectorized(curr_feature, users, threshold=0.363)
 
         if matched_user:
+            refund_orphaned_redemptions(matched_user)
             matched_user.last_login_at = datetime.now()
             matched_user.last_logout_at = None
             db.session.commit()
@@ -174,7 +178,8 @@ def phone_login():
 
     with _PIN_LOCK_MUTEX:
         _PIN_FAIL_STATE.pop(lock_key, None)
-
+    
+    refund_orphaned_redemptions(user)
     user.last_login_at = datetime.now()
     user.last_logout_at = None
     db.session.commit()

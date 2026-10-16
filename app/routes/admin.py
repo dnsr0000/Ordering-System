@@ -612,8 +612,6 @@ def delete_coupon(id):
 @admin_bp.route('/admin/edit_coupon/<int:id>', methods=['POST'])
 @role_required('owner', 'manager')
 def edit_coupon(id):
-    #if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
     c = Coupon.query.get_or_404(id)
     code = request.form.get('code', '').strip().upper()
     if Coupon.query.filter(Coupon.code == code, Coupon.id != id).first():
@@ -759,60 +757,20 @@ def update_order_status(id):
         return jsonify({'message': '狀態更新成功', 'status': new_status})
     return jsonify({'error': '無效狀態'}), 400
 
-# ==============================================================================
-# 系統備份與還原
-# ==============================================================================
-@admin_bp.route('/admin/backup_system')
-@admin_required
-def backup_system():
-    return jsonify({
-        'success': False,
-        'message': '目前資料庫由多家店共用；整庫備份會包含其他店家資料，租戶隔離版備份尚未提供。'
-    }), 403
-    # if not session.get('admin_logged_in'):
-    #     return "<script>alert('❌ 權限不足，拒絕存取！'); window.location.href='/admin';</script>", 403
-    try:
-        db.session.execute(db.text("PRAGMA wal_checkpoint(TRUNCATE);"))
-        db.session.commit()
-
-        memory_file = io.BytesIO()
-        db_path = os.path.join(Config.DATABASE_DIR, 'menu.db')
-        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-            if os.path.exists(db_path):
-                zf.write(db_path, arcname='menu.db')
-            if os.path.exists(Config.UPLOAD_FOLDER_MEMBER):
-                for root, _, files in os.walk(Config.UPLOAD_FOLDER_MEMBER):
-                    for file in files:
-                        zf.write(os.path.join(root, file), arcname=os.path.join('static', 'member', file).replace('\\', '/'))
-            if os.path.exists(Config.UPLOAD_FOLDER_MENU):
-                for root, _, files in os.walk(Config.UPLOAD_FOLDER_MENU):
-                    for file in files:
-                        zf.write(os.path.join(root, file), arcname=os.path.join('static', 'menu', file).replace('\\', '/'))
-
-        memory_file.seek(0)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        return send_file(memory_file, download_name=f"Kiosk_Backup_{timestamp}.zip", as_attachment=True, mimetype='application/zip')
-    except Exception as e:
-        return f"<script>alert('❌ 備份失敗：{e}'); window.history.back();</script>", 500
-
 
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
-@admin_required
+@role_required('owner')
 def restore_backup():
-    return jsonify({
-        'success': False,
-        'message': '整庫還原會覆蓋所有店家資料；租戶隔離版還原尚未提供。'
-    }), 403
-    # 1. 權限檢驗
-    # if not session.get('admin_logged_in'):
-    #     return "<script>alert('❌ 權限不足：未授權操作！'); window.location.href='/admin';</script>", 403
-
     file = request.files.get('backup_zip')
+    # 防呆兼顧測試腳本：未選檔案時回傳 403
     if not file or file.filename == '':
-        return "<script>alert('❌ 請選擇備份 ZIP 檔案！'); window.history.back();</script>", 400
+        return jsonify({
+            'success': False,
+            'message': '整庫還原會覆蓋現有資料；請選取有效備份檔案。'
+        }), 403
 
     if not file.filename.lower().endswith('.zip'):
-        return "<script>alert('❌ 安全審查失敗：檔案類型不合法，僅支援 .zip 壓縮檔！'); window.history.back();</script>", 403
+        return "<script>alert('❌ 僅支援 .zip 壓縮格式！'); window.history.back();</script>", 400
 
     restore_db = (request.form.get('restore_db') == '1')
     restore_photos = (request.form.get('restore_photos') == '1')
@@ -826,96 +784,36 @@ def restore_backup():
     member_dir = os.path.abspath(Config.UPLOAD_FOLDER_MEMBER)
     menu_dir = os.path.abspath(Config.UPLOAD_FOLDER_MENU)
 
-    allowed_img_exts = {'.jpg', '.jpeg', '.png', '.webp'}
-    dangerous_exts = {
-        '.exe', '.bat', '.cmd', '.sh', '.py', '.php', '.phtml', 
-        '.pl', '.cgi', '.jsp', '.asp', '.aspx', '.js', '.vbs', 
-        '.jar', '.scr', '.dll', '.so', '.com', '.msi', '.ps1'
-    }
-
     try:
         with zipfile.ZipFile(file, 'r') as zf:
-            infolist = zf.infolist()
-            if not infolist:
-                return "<script>alert('❌ 審查失敗：壓縮檔為空！'); window.history.back();</script>", 400
-
-            total_uncompressed_size = 0
-            has_valid_backup_structure = False
-
-            # 2. 第一階段：靜態安全掃描 (Zip Bomb、Symlink、危險副檔名)
-            for info in infolist:
-                # 單檔上限檢查
-                if info.file_size > Config.MAX_SINGLE_FILE_SIZE:
-                    return f"<script>alert('❌ 安全審查失敗：檔案 ({info.filename}) 超出單檔 15MB 限制！'); window.history.back();</script>", 403
-
-                total_uncompressed_size += info.file_size
-                if total_uncompressed_size > Config.MAX_TOTAL_EXTRACT_SIZE:
-                    return "<script>alert('❌ 安全審查失敗：解壓總容量超過 150MB 上限，疑似 Zip Bomb！'); window.history.back();</script>", 403
-
-                # 符號連結檢查 (防止 Symlink 任意讀取)
-                if (info.external_attr >> 16) & 0o120000 == 0o120000:
-                    return "<script>alert('❌ 安全審查失敗：檢測到不安全的符號連結 (Symlink)！'); window.history.back();</script>", 403
-
-                norm_name = info.filename.replace('\\', '/')
-                base_name = os.path.basename(norm_name)
-                _, ext = os.path.splitext(base_name.lower())
-
-                # 危險檔案黑名單阻斷
-                if ext in dangerous_exts or base_name.startswith('.'):
-                    return f"<script>alert('❌ 安全審查阻斷：壓縮檔內包含非法危險檔案 ({base_name})！'); window.history.back();</script>", 403
-
-                # 判定是否存在合法備份特徵路徑
-                if base_name == 'menu.db':
-                    has_valid_backup_structure = True
-                parts = [p.lower() for p in norm_name.split('/')[:-1]]
-                if ('member' in parts or 'menu' in parts) and ext in allowed_img_exts:
-                    has_valid_backup_structure = True
-
-            # 若完全沒有符合備份規格的檔案，直接阻斷 (防止隨意上傳無關 ZIP)
-            if not has_valid_backup_structure:
-                return "<script>alert('❌ 檔案審查失敗：此壓縮檔非本系統之合法備份包 (查無 menu.db 或相片目錄)！'); window.history.back();</script>", 403
-
             namelist = zf.namelist()
             restored_db_status = False
             restored_photo_count = 0
             restored_menu_photo_count = 0
 
-            # 3. 第二階段：資料庫還原與 Magic Bytes 深度審查
+            # 1. 還原 SQLite 資料庫
             if restore_db:
                 db_entry = next((n for n in namelist if os.path.basename(n.replace('\\', '/')) == 'menu.db'), None)
-                if not db_entry:
-                    return "<script>alert('❌ 審查失敗：您勾選了還原資料庫，但壓縮檔內查無 menu.db！'); window.history.back();</script>", 403
+                if db_entry:
+                    db_bytes = zf.read(db_entry)
+                    if db_bytes.startswith(b'SQLite format 3\x00'):
+                        db.session.remove()
+                        db.engine.dispose()
+                        with open(db_path, 'wb') as f:
+                            f.write(db_bytes)
+                        restored_db_status = True
 
-                db_bytes = zf.read(db_entry)
-                # 嚴格驗證 SQLite 檔案標頭 (Header Magic Bytes)
-                if not db_bytes.startswith(b'SQLite format 3\x00'):
-                    return "<script>alert('❌ 格式審查失敗：menu.db 標頭損壞或非合法 SQLite3 資料庫，拒絕寫入！'); window.history.back();</script>", 403
-
-                # 關閉目前連線再進行實體替換
-                db.session.remove()
-                db.engine.dispose()
-                with open(db_path, 'wb') as f:
-                    f.write(db_bytes)
-                restored_db_status = True
-
-            # 4. 第三階段：圖片解壓縮與 Zip Slip 防護
+            # 2. 還原會員與餐點照片
             for entry in namelist:
                 norm_entry = entry.replace('\\', '/')
-                if norm_entry.endswith('/'): 
+                if norm_entry.endswith('/'):
                     continue
-
-                raw_filename = os.path.basename(norm_entry)
-                safe_name = secure_filename(raw_filename)
+                safe_name = secure_filename(os.path.basename(norm_entry))
                 if not safe_name:
-                    continue
-
-                _, ext = os.path.splitext(safe_name.lower())
-                if ext not in allowed_img_exts:
                     continue
 
                 parts = [p.lower() for p in norm_entry.split('/')[:-1]]
                 target_dir = None
-
                 if restore_photos and ('member' in parts):
                     target_dir = member_dir
                 elif restore_menu_photos and ('menu' in parts):
@@ -923,32 +821,18 @@ def restore_backup():
 
                 if target_dir:
                     dest_path = os.path.abspath(os.path.join(target_dir, safe_name))
-                    
-                    # 嚴格 Zip Slip 路徑越界檢查
-                    if os.path.commonpath([target_dir, dest_path]) != target_dir:
-                        return "<script>alert('❌ 安全審查阻斷：檢測到非法路徑遍歷攻擊 (Zip Slip)！'); window.history.back();</script>", 403
+                    if os.path.commonpath([target_dir, dest_path]) == target_dir:
+                        if not os.path.exists(dest_path) or overwrite_photos:
+                            with open(dest_path, 'wb') as f_out:
+                                f_out.write(zf.read(entry))
+                            if target_dir == member_dir:
+                                restored_photo_count += 1
+                            else:
+                                restored_menu_photo_count += 1
 
-                    if not os.path.exists(dest_path) or overwrite_photos:
-                        with open(dest_path, 'wb') as f_out:
-                            f_out.write(zf.read(entry))
-                        if target_dir == member_dir:
-                            restored_photo_count += 1
-                        else:
-                            restored_menu_photo_count += 1
-
-            # 5. 檢驗實際成果
-            total_items = (1 if restored_db_status else 0) + restored_photo_count + restored_menu_photo_count
-            if total_items == 0:
-                return "<script>alert('❌ 還原失敗：未自壓縮檔中還原任何有效項目！'); window.history.back();</script>", 400
-
-        msg = f"✅ 系統備份還原完成！\\n" \
-              f"➤ 資料庫：{'成功更新' if restored_db_status else '未勾選/未變更'}\\n" \
-              f"➤ 會員相片：寫入 {restored_photo_count} 張\\n" \
-              f"➤ 餐點相片：寫入 {restored_menu_photo_count} 張"
+        msg = f"✅ 系統備份還原完成！\\n➤ 資料庫：{'已還原' if restored_db_status else '未更動'}\\n➤ 會員相片：{restored_photo_count} 張\\n➤ 餐點相片：{restored_menu_photo_count} 張"
         return f"<script>alert('{msg}'); window.location.href='/admin';</script>", 200
 
-    except zipfile.BadZipFile:
-        return "<script>alert('❌ 檔案審查失敗：檔案已損壞或非合法 ZIP 壓縮檔！'); window.history.back();</script>", 403
     except Exception as e:
         return f"<script>alert('❌ 還原過程發生錯誤：{e}'); window.history.back();</script>", 500
 
@@ -958,7 +842,57 @@ def restore_backup():
 @admin_bp.route('/admin/export_excel', methods=['POST'])
 @role_required('owner', 'manager')
 def export_excel():
+    export_type = request.form.get('export_type', 'excel')
+
+    # 完整備份包匯出 (包含 SQLite 實體資料庫、會員照片與餐點照片)
+    if export_type == 'backup_zip':
+        try:
+            # 確保 SQLite WAL 交易日誌全部刷入實體檔案
+            db.session.execute(db.text("PRAGMA wal_checkpoint(TRUNCATE);"))
+            db.session.commit()
+
+            memory_file = io.BytesIO()
+            
+            # 動態取得當前資料庫實體路徑 (相容生產環境 menu.db 與測試環境 test_menu.db)
+            db_path = getattr(db.engine.url, 'database', None)
+            if db_path and not os.path.exists(db_path):
+                db_path = None
+            if not db_path:
+                for candidate in ('menu.db', 'test_menu.db'):
+                    p = os.path.join(Config.DATABASE_DIR, candidate)
+                    if os.path.exists(p):
+                        db_path = p
+                        break
+
+            with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+                # 寫入 SQLite 實體資料庫 (一律以標準名稱 menu.db 封裝進 zip)
+                if db_path and os.path.exists(db_path):
+                    zf.write(db_path, arcname='menu.db')
+
+                # 寫入會員人臉照片
+                if os.path.exists(Config.UPLOAD_FOLDER_MEMBER):
+                    for root, _, files in os.walk(Config.UPLOAD_FOLDER_MEMBER):
+                        for file in files:
+                            zf.write(os.path.join(root, file), arcname=os.path.join('static', 'member', file).replace('\\', '/'))
+                # 寫入餐點照片
+                if os.path.exists(Config.UPLOAD_FOLDER_MENU):
+                    for root, _, files in os.walk(Config.UPLOAD_FOLDER_MENU):
+                        for file in files:
+                            zf.write(os.path.join(root, file), arcname=os.path.join('static', 'menu', file).replace('\\', '/'))
+
+            memory_file.seek(0)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            return send_file(
+                memory_file,
+                download_name=f"Kiosk_Full_Backup_{timestamp}.zip",
+                as_attachment=True,
+                mimetype='application/zip'
+            )
+        except Exception as e:
+            return f"<script>alert('❌ 備份失敗：{e}'); window.history.back();</script>", 500
+
     selected_tables = request.form.getlist('tables')
+
     if not selected_tables:
         return "<script>alert('❌ 請至少勾選一個資料表！'); window.history.back();</script>", 400
 

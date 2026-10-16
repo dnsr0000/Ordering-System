@@ -215,15 +215,14 @@
             <div class="d-flex align-items-center gap-2">
                 <i class="bi bi-speedometer2 text-warning fs-3"></i>
                 <h4 class="mb-0 fw-bold text-white">自助點餐後台管理系統</h4>
-                <button class="btn btn-outline-success btn-sm fw-bold ms-3 shadow-sm" data-bs-toggle="modal" data-bs-target="#exportExcelModal">
-                    <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出資料
-                </button>
-                <button type="button" class="btn btn-outline-info btn-sm fw-bold ms-2 shadow-sm" data-bs-toggle="modal" data-bs-target="#importModal">
-                    <i class="bi bi-cloud-upload me-1"></i> 匯入資料
-                </button>
-                <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db)、會員相片與餐點照片的完整備份嗎？');">
-                    <i class="bi bi-archive-fill me-1"></i> 備份系統與全相片
-                </a>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-warning fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
+                        <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
+                    </button>
+                    <button type="button" class="btn btn-outline-info fw-bold" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
+                        <i class="bi bi-box-arrow-in-down me-1"></i> 匯入資料
+                    </button>
+                </div>
                 <a href="/pos" target="_blank" class="btn btn-warning btn-sm fw-bold text-dark ms-2"><i class="bi bi-pc-display-horizontal me-1"></i> 櫃檯 POS</a>
                 <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold ms-2">
                     <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
@@ -1784,189 +1783,158 @@
             </div>
         </div>
     </div>
-    <!-- 匯出資料 (Export Data) Modal -->
-    <div class="modal fade" id="exportExcelModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-file-earmark-spreadsheet me-2"></i>匯出資料庫至 Excel</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form action="/admin/export_excel" method="POST">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="modal-body p-4">
-                        <p class="small text-white-50">請勾選欲匯出的資料表 (每個選中的 Table 將產生獨立的 Excel 工作表)：</p>
-                        
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" name="tables" value="User" id="exp-user" checked>
-                            <label class="form-check-label fw-bold" for="exp-user">會員資料 (User)</label>
-                        </div>
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" name="tables" value="MenuItem" id="exp-menu" checked>
-                            <label class="form-check-label fw-bold" for="exp-menu">菜單品項 (MenuItem)</label>
-                        </div>
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" name="tables" value="Coupon" id="exp-coupon">
-                            <label class="form-check-label fw-bold" for="exp-coupon">優惠券模板 (Coupon)</label>
-                        </div>
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" name="tables" value="UserCoupon" id="exp-usercoupon">
-                            <label class="form-check-label fw-bold" for="exp-usercoupon">會員持有優惠券 (UserCoupon)</label>
-                        </div>
 
-                        <hr class="border-secondary my-3">
-                        <p class="small text-warning mb-2"><i class="bi bi-info-circle"></i> 以下選項需指定日期範圍：</p>
-
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Order" id="exp-order" checked>
-                            <label class="form-check-label fw-bold" for="exp-order">訂單總覽 (Order)</label>
-                        </div>
-                        <div class="form-check form-switch mb-2">
-                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="OrderItem" id="exp-orderitem" checked>
-                            <label class="form-check-label fw-bold" for="exp-orderitem">訂單明細 (OrderItem)</label>
-                        </div>
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="Analytics" id="exp-analytics" checked>
-                            <label class="form-check-label fw-bold text-info" for="exp-analytics">營運資訊與熱銷排行 (Analytics)</label>
-                        </div>
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input exp-date-trigger" type="checkbox" name="tables" value="AdminLog" id="exp-adminlog" checked>
-                            <label class="form-check-label fw-bold text-warning" for="exp-adminlog">管理員進出日誌 (AdminLog)</label>
-                        </div>
-                        <!-- 日期選擇區塊 (預設隱藏) -->
-                        <div class="row g-2 p-3 rounded bg-dark border border-secondary" id="export-date-range">
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-warning">開始日期 (Start Date)</label>
-                                <input type="date" class="form-control form-control-sm" name="start_date" id="exp-start-date">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-bold text-warning">結束日期 (End Date)</label>
-                                <input type="date" class="form-control form-control-sm" name="end_date" id="exp-end-date">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer border-secondary justify-content-between">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-success fw-bold px-4 text-white"><i class="bi bi-download me-1"></i> 確認匯出</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- 整合式匯入資料 Modal (含備份 ZIP 篩選還原與 Excel 智慧匯入) -->
-    <div class="modal fade" id="importModal" tabindex="-1" aria-hidden="true">
+    <!-- ========================================================================= -->
+    <!-- 1. 匯出資料彈窗 (Excel 報表 / 完整系統備份包 ZIP) -->
+    <!-- ========================================================================= -->
+    <div class="modal fade" id="unifiedExportModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary pb-2">
-                    <div class="d-flex align-items-center gap-2">
-                        <i class="bi bi-cloud-arrow-up-fill text-info fs-4"></i>
-                        <h5 class="modal-title fw-bold text-white mb-0">資料匯入與系統還原</h5>
-                    </div>
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning">
+                        <i class="bi bi-cloud-arrow-down-fill me-2"></i>資料匯出與備份中心
+                    </h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-
                 <div class="modal-body p-4">
-                    <!-- 模式切換頁籤 (Nav Tabs) -->
-                    <ul class="nav nav-pills mb-4 border-bottom border-secondary pb-3" id="importModalTab" role="tablist">
-                        <li class="nav-item me-2" role="presentation">
-                            <button class="nav-link active" id="tab-restore-zip" data-bs-toggle="pill" data-bs-target="#pane-restore-zip" type="button" role="tab">
-                                <i class="bi bi-archive-fill text-warning me-1"></i> 還原備份檔 (ZIP 壓縮檔)
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-export-excel-btn" data-bs-toggle="pill" data-bs-target="#pane-export-excel">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出 Excel 營業報表 (.xlsx)
                             </button>
                         </li>
-                        <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="tab-import-excel" data-bs-toggle="pill" data-bs-target="#pane-import-excel" type="button" role="tab">
-                                <i class="bi bi-file-earmark-spreadsheet text-info me-1"></i> 智慧匯入 Excel 報表
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-export-zip-btn" data-bs-toggle="pill" data-bs-target="#pane-export-zip">
+                                <i class="bi bi-archive-fill me-1"></i> 匯出系統完整備份包 (.zip)
                             </button>
                         </li>
                     </ul>
 
-                    <div class="tab-content" id="importModalTabContent">
-                        <!-- ------------------------------------------------------------- -->
-                        <!-- 頁籤 1：系統備份 ZIP 還原 (含項目篩選機制) -->
-                        <!-- ------------------------------------------------------------- -->
-                        <div class="tab-pane fade show active" id="pane-restore-zip" role="tabpanel">
-                            <form action="/admin/restore_backup" method="POST" enctype="multipart/form-data" onsubmit="return confirm('⚠️ 警告：系統還原將依下方設定覆寫現有檔案與紀錄，確定要繼續執行嗎？');">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="mb-3">
-                                    <label class="form-label small fw-bold text-warning">選擇系統備份壓縮檔 (ZIP File)</label>
-                                    <input type="file" class="form-control" name="backup_zip" accept=".zip" required>
-                                    <small class="text-white-50">支援上傳「一鍵備份系統」產生之 <code>Kiosk_Backup_*.zip</code> 檔案。</small>
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel 報表匯出 -->
+                        <div class="tab-pane fade show active" id="pane-export-excel">
+                            <form action="/admin/export_excel" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="export_type" value="excel">
+                                
+                                <h6 class="fw-bold text-white-50 mb-2">勾選欲匯出的資料表：</h6>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="MenuItem" id="ex_m" checked><label class="form-check-label" for="ex_m">菜單品項</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="User" id="ex_u" checked><label class="form-check-label" for="ex_u">會員資料</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="Order" id="ex_o" checked><label class="form-check-label" for="ex_o">訂單總覽</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="OrderItem" id="ex_oi" checked><label class="form-check-label" for="ex_oi">訂單明細</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="Coupon" id="ex_c" checked><label class="form-check-label" for="ex_c">優惠券</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="UserCoupon" id="ex_uc" checked><label class="form-check-label" for="ex_uc">會員持券</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="Analytics" id="ex_a" checked><label class="form-check-label" for="ex_a">營運分析</label></div></div>
+                                    <div class="col-6 col-md-3"><div class="form-check"><input class="form-check-input" type="checkbox" name="tables" value="AdminLog" id="ex_l" checked><label class="form-check-label" for="ex_l">進出與稽核</label></div></div>
                                 </div>
 
-                                <div class="p-3 rounded bg-dark border border-secondary mb-3">
-                                    <p class="small fw-bold text-warning mb-2">
-                                        <i class="bi bi-funnel-fill me-1"></i> 還原項目篩選機制 (Filter Options)：
-                                    </p>
-
-                                    <!-- 篩選 1：資料庫 -->
-                                    <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="restore_db" value="1" id="filter-rst-db" checked>
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-db">
-                                            還原 SQLite 資料庫 (<code>menu.db</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">涵蓋所有菜單、會員資料、歷史訂單、日誌與優惠券。</div>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50">開始日期 (留空為不限)</label>
+                                        <input type="date" name="start_date" class="form-control form-control-sm bg-dark text-white border-secondary">
                                     </div>
-
-                                    <!-- 篩選 2：會員相片 -->
-                                    <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="restore_photos" value="1" id="filter-rst-photos" checked onchange="document.getElementById('filter-photo-opt').style.display = this.checked ? 'block' : 'none';">
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-photos">
-                                            還原會員人臉特徵相片 (<code>static/member/</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">自動比對二進位安全路徑，匯入刷臉相片。</div>
-                                    </div>
-                                    <!-- 篩選 3：菜單餐點照片 -->
-                                    <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="restore_menu_photos" value="1" id="filter-rst-menu-photos" checked>
-                                        <label class="form-check-label fw-bold text-white" for="filter-rst-menu-photos">
-                                            還原菜單餐點照片 (<code>static/menu/</code>)
-                                        </label>
-                                        <div class="text-white-50 small ps-1">匯入所有菜單品項之展示縮圖與高清圖檔。</div>
-                                    </div>
-                                    <!-- 篩選 4：衝突覆寫開關 -->
-                                    <div class="ps-4 mb-1" id="filter-photo-opt">
-                                        <div class="form-check">
-                                            <input class="form-check-input" type="checkbox" name="overwrite_photos" value="1" id="filter-rst-overwrite" checked>
-                                            <label class="form-check-label small text-warning" for="filter-rst-overwrite">
-                                                遇到同名相片時強制覆寫
-                                            </label>
-                                        </div>
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50">結束日期 (留空為不限)</label>
+                                        <input type="date" name="end_date" class="form-control form-control-sm bg-dark text-white border-secondary">
                                     </div>
                                 </div>
 
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
-                                    <button type="submit" class="btn btn-warning btn-sm fw-bold text-dark px-4">
-                                        <i class="bi bi-arrow-counterclockwise me-1"></i> 開始執行還原
-                                    </button>
-                                </div>
+                                <button type="submit" class="btn btn-warning fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-download me-1"></i> 下載 Excel 營業報表 (.xlsx)
+                                </button>
                             </form>
                         </div>
 
-                        <!-- ------------------------------------------------------------- -->
-                        <!-- 頁籤 2：Excel 智慧匯入 (原 import_smart 功能) -->
-                        <!-- ------------------------------------------------------------- -->
-                        <div class="tab-pane fade" id="pane-import-excel" role="tabpanel">
+                        <!-- 分頁 B：完整備份包 ZIP (包含 menu.db 與照片) -->
+                        <div class="tab-pane fade" id="pane-export-zip">
+                            <div class="p-3 rounded bg-black bg-opacity-25 border border-secondary mb-3">
+                                <h6 class="fw-bold text-warning mb-2"><i class="bi bi-info-circle me-1"></i>備份包收錄內容：</h6>
+                                <ul class="small text-white-50 mb-0 ps-3">
+                                    <li><strong>SQLite 資料庫檔案 (<code>menu.db</code>)</strong>：完整包含所有菜單、會員、點數、訂單與優惠券紀錄。</li>
+                                    <li><strong>會員註冊人臉照片 (<code>static/member/</code>)</strong>：會員人臉辨識用照片。</li>
+                                    <li><strong>餐點商品相片 (<code>static/menu/</code>)</strong>：菜單展示圖檔。</li>
+                                </ul>
+                            </div>
+                            <form action="/admin/export_excel" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="export_type" value="backup_zip">
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
+                                    <i class="bi bi-file-zip-fill me-1"></i> 下載完整備份包 (.zip)
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- 2. 匯入資料彈窗 (Excel 智慧同步 / ZIP 系統還原) -->
+    <!-- ========================================================================= -->
+    <div class="modal fade" id="unifiedImportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-info">
+                        <i class="bi bi-cloud-arrow-up-fill me-2"></i>資料匯入與系統還原
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-import-excel-btn" data-bs-toggle="pill" data-bs-target="#pane-import-excel">
+                                <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel / CSV 資料同步
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-restore-zip-btn" data-bs-toggle="pill" data-bs-target="#pane-restore-zip">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> 還原 ZIP 備份包 (覆蓋還原)
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel/CSV 智慧匯入 -->
+                        <div class="tab-pane fade show active" id="pane-import-excel">
+                            <p class="small text-white-50 mb-3">
+                                支援上傳先前後台匯出的 <code>Kiosk_Export_*.xlsx</code> 報表或自訂菜單 <code>.csv</code> 檔案，系統將自動比對並更新現有品項與資料。
+                            </p>
                             <form action="/admin/import_smart" method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <div class="mb-3">
-                                    <label class="form-label small fw-bold text-info">選擇 Excel 試算表檔案</label>
-                                    <input type="file" class="form-control" name="file" accept=".xlsx, .xls" required>
-                                    <small class="text-white-50">支援包含會員 (User)、菜單品項 (MenuItem)、優惠券 (Coupon) 之試算表。</small>
+                                    <label class="form-label small text-white-50">選擇 Excel / CSV 檔案</label>
+                                    <input type="file" name="file" class="form-control bg-dark text-white border-secondary" accept=".xlsx,.xls,.csv" required>
                                 </div>
+                                <button type="submit" class="btn btn-info fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-upload me-1"></i> 開始智慧辨識並匯入
+                                </button>
+                            </form>
+                        </div>
 
-                                <div class="p-3 rounded bg-dark border border-secondary text-white-50 small mb-3">
-                                    <div class="fw-bold text-white mb-1"><i class="bi bi-info-circle text-info me-1"></i> 智慧辨識機制說明：</div>
-                                    系統會自動判斷工作表 (Sheet) 名稱與欄位特徵，進行現有資料比對更新或批次新增，無需嚴格限制 Sheet 順序。
+                        <!-- 分頁 B：ZIP 完整還原 (覆蓋 menu.db 與相片) -->
+                        <div class="tab-pane fade" id="pane-restore-zip">
+                            <div class="alert alert-danger py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                <strong>注意</strong>：此操作將還原 SQLite 資料庫檔案與相片，請確保備份來源正確無誤。
+                            </div>
+                            <form action="/admin/restore_backup" method="POST" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="mb-3">
+                                    <label class="form-label small text-white-50">選取先前下載的 <code>Kiosk_Full_Backup_*.zip</code> 備份檔</label>
+                                    <input type="file" name="backup_zip" class="form-control bg-dark text-white border-secondary" accept=".zip" required>
                                 </div>
-
-                                <div class="d-flex justify-content-end gap-2">
-                                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">取消</button>
-                                    <button type="submit" class="btn btn-info btn-sm fw-bold text-dark px-4">
-                                        <i class="bi bi-file-earmark-arrow-up me-1"></i> 智慧解析並匯入
-                                    </button>
+                                <div class="row g-2 mb-3 small text-white-50">
+                                    <div class="col-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="restore_db" value="1" id="r_db" checked><label class="form-check-label text-white" for="r_db">還原資料庫 (menu.db)</label></div></div>
+                                    <div class="col-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="restore_photos" value="1" id="r_pts" checked><label class="form-check-label text-white" for="r_pts">還原會員照片</label></div></div>
+                                    <div class="col-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="restore_menu_photos" value="1" id="r_mpts" checked><label class="form-check-label text-white" for="r_mpts">還原餐點照片</label></div></div>
+                                    <div class="col-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="overwrite_photos" value="1" id="r_ovw" checked><label class="form-check-label text-white" for="r_ovw">覆蓋同名照片</label></div></div>
                                 </div>
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2" onclick="return confirm('⚠️ 警告：還原將覆蓋現有資料庫與相片，確定要繼續嗎？');">
+                                    <i class="bi bi-arrow-repeat me-1"></i> 確認上傳並執行系統還原
+                                </button>
                             </form>
                         </div>
                     </div>
