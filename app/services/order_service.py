@@ -1,12 +1,18 @@
 import re
+import time
 from datetime import datetime
+from flask import g, has_request_context
 from app.extensions import db
-from app.models.menu import MenuItem
+from app.models.menu import MenuItem, ComboOption
 from app.models.order import Order, OrderItem
-from app.models.user import User
+from app.models.user import User, RewardRedemption
 from app.models.coupon import UserCoupon
 from app.services.event_bus import order_event_bus
-from app.services.ai_service import _AI_ADVICE_STATE, fallback_advice 
+from app.services.ai_service import _AI_ADVICE_STATE, fallback_advice, invalidate_ai_advice
+from app.extensions import db, acquire_distributed_lock
+
+_LAST_POPULAR_UPDATE_TS = {}
+
 
 def sanitize_discount_value(discount_type, discount_value):
     try:
@@ -22,8 +28,8 @@ def sanitize_discount_value(discount_type, discount_value):
     else:
         return max(0.0, round(val, 2))
 
+
 def calc_promo_discount(coupon, subtotal):
-    """計算優惠券的實際折扣金額（內建防呆與上下限夾擠）"""
     if not coupon or subtotal <= 0:
         return 0
     if coupon.discount_type == 'fixed':
@@ -32,7 +38,12 @@ def calc_promo_discount(coupon, subtotal):
         safe_percent = sanitize_discount_value('percent', coupon.discount_value)
         return min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent))))
 
-def update_popular_items():
+
+def update_popular_items(force=False):
+    tid = getattr(g, 'tenant_id', None) if has_request_context() else 1
+    now_ts = time.time()
+    if not force and (now_ts - _LAST_POPULAR_UPDATE_TS.get(tid, 0)) < 45:
+        return
     try:
         db.session.query(MenuItem).update({MenuItem.is_recommended: False})
         db.session.flush()
@@ -57,6 +68,7 @@ def update_popular_items():
             {MenuItem.is_recommended: True}, synchronize_session=False
         )
         db.session.commit()
+        _LAST_POPULAR_UPDATE_TS[tid] = now_ts
     except Exception as e:
         db.session.rollback()
         print(f"自動更新熱門失敗: {e}")
@@ -65,72 +77,100 @@ def cancel_order_and_rollback(order):
     if order.status == 'Cancelled':
         return False, "該訂單早已取消，不重複執行回滾！"
 
-    tenant_id = getattr(order, 'tenant_id', None)
+    tenant_id = getattr(order, 'tenant_id', None) or (getattr(g, 'tenant_id', None) if has_request_context() else 1) or 1
     reward_points_to_refund = 0
 
-    # 1. 庫存回補與計算需退還的紅利兌換點數
-    for oi in order.items:
-        clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', oi.item_name).strip()
-        
-        # 加上 tenant_id 限制，防止跨店抓錯商品
-        query = MenuItem.query.filter_by(name=clean_name)
-        if tenant_id:
-            query = query.filter_by(tenant_id=tenant_id)
-        menu_item = query.first()
+    # 取得結帳與取消排他互斥鎖，避免高併發下庫存競爭與 Lost Update
+    with acquire_distributed_lock(f"lock:order_checkout:{tenant_id}", timeout=8, blocking_timeout=5):
+        if order.status == 'Cancelled':
+            return False, "該訂單早已取消，不重複執行回滾！"
 
-        if menu_item:
-            # 回補庫存
-            menu_item.stock = (menu_item.stock or 0) + (oi.quantity or 1)
-            if menu_item.stock > 0 and menu_item.is_sold_out:
-                menu_item.is_sold_out = False
+        # 1. 以原子 SQL 回補主餐與套餐配餐庫存，並計算需退還的紅利兌換點數
+        for oi in order.items:
+            qty = oi.quantity or 1
+            clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', oi.item_name or '').strip()
 
-            # 若該品項為點數兌換餐點，計算應退回的點數
-            is_reward_item = getattr(oi, 'is_reward', False) or ('[點數兌換]' in (oi.item_name or ''))
-            if is_reward_item and menu_item.is_reward:
-                unit_pts = menu_item.reward_discount_points if (
-                    menu_item.reward_discount_points and menu_item.reward_discount_points > 0
-                ) else menu_item.reward_points
-                
-                if unit_pts and unit_pts > 0:
-                    reward_points_to_refund += unit_pts * (oi.quantity or 1)
-
-    # 2. 會員點數、優惠券回補
-    if order.user_id:
-        user = db.session.get(User, order.user_id)
-        if user:
-            # 回補「結帳折抵金額」所用的點數
-            if getattr(order, 'points_used', 0) and order.points_used > 0:
-                user.points = (user.points or 0) + order.points_used
-            
-            # 回補「兌換商品本身」所扣除的紅利點數
-            if reward_points_to_refund > 0:
-                user.points = (user.points or 0) + reward_points_to_refund
-
-            # 扣回該筆訂單所贈送/獲得的點數
-            if getattr(order, 'points_earned', 0) and order.points_earned > 0:
-                user.points = max(0, (user.points or 0) - order.points_earned)
-
-            # 復原已使用的優惠券狀態
-            if getattr(order, 'coupon_code', None):
-                coupon_query = UserCoupon.query.filter_by(
-                    user_id=user.id, code=order.coupon_code, is_used=True
-                )
+            menu_item = None
+            if getattr(oi, 'menu_item_id', None):
+                menu_item = db.session.get(MenuItem, oi.menu_item_id)
+            if not menu_item:
+                query = MenuItem.query.execution_options(skip_tenant_filter=True).filter_by(name=clean_name)
                 if tenant_id:
-                    coupon_query = coupon_query.filter_by(tenant_id=tenant_id)
-                used_coupon = coupon_query.first()
-                if used_coupon:
-                    used_coupon.is_used = False
-                    used_coupon.used_at = None
+                    query = query.filter_by(tenant_id=tenant_id)
+                menu_item = query.first()
 
-    order.status = 'Cancelled'
-    db.session.commit()
-    return True, "訂單已成功取消，庫存、折抵點數及兌換點數均已全額復原！"
-    order.status = 'Cancelled'
-    db.session.commit()
-    update_popular_items()
-    _AI_ADVICE_STATE['last_signature'] = None  # 🌟 補回：訂單取消時即時重置 AI 建議快取簽章
-    order_event_bus.notify()
-    return True, f"訂單 #{order.id} 已成功取消，庫存、點數與優惠券已全數回滾返還！"
+            if menu_item:
+                # 原子更新主餐庫存，避免 ORM 記憶體覆蓋
+                db.session.execute(
+                    db.text("UPDATE menu_item SET stock = stock + :qty, is_sold_out = CASE WHEN stock + :qty > 0 THEN 0 ELSE is_sold_out END WHERE id = :id"),
+                    {"qty": qty, "id": menu_item.id}
+                )
+
+                # 回補套餐配餐庫存
+                combo_opt = None
+                if getattr(oi, 'combo_option_id', None):
+                    combo_opt = db.session.get(ComboOption, oi.combo_option_id)
+                if not combo_opt and oi.customization:
+                    m_combo = re.search(r'\[套餐:\s*([^\]]+)\]', oi.customization)
+                    if m_combo:
+                        combo_name = m_combo.group(1).strip()
+                        combo_opt = ComboOption.query.execution_options(skip_tenant_filter=True).filter_by(
+                            main_item_id=menu_item.id, name=combo_name
+                        ).first()
+                if combo_opt:
+                    for side_id in (combo_opt.item1_id, combo_opt.item2_id, combo_opt.item3_id):
+                        if side_id:
+                            db.session.execute(
+                                db.text("UPDATE menu_item SET stock = stock + :qty, is_sold_out = CASE WHEN stock + :qty > 0 THEN 0 ELSE is_sold_out END WHERE id = :id"),
+                                {"qty": qty, "id": side_id}
+                            )
+
+                is_reward_item = ('[點數兌換]' in (oi.item_name or '')) or (oi.customization == '紅利免費兌換')
+                if is_reward_item and menu_item.is_reward:
+                    unit_pts = menu_item.reward_discount_points if (
+                        menu_item.reward_discount_points and menu_item.reward_discount_points > 0
+                    ) else menu_item.reward_points
+                    if unit_pts and unit_pts > 0:
+                        reward_points_to_refund += unit_pts * qty
+
+        # 標記關聯之 RewardRedemption 為已退還
+        redemptions = RewardRedemption.query.execution_options(skip_tenant_filter=True).filter_by(
+            order_id=order.id, is_refunded=False
+        ).all()
+        for r_obj in redemptions:
+            r_obj.is_refunded = True
+
+        # 2. 會員點數、優惠券回補
+        if order.user_id:
+            user = db.session.get(User, order.user_id)
+            if user:
+                if getattr(order, 'points_used', 0) and order.points_used > 0:
+                    user.points = (user.points or 0) + order.points_used
+                if reward_points_to_refund > 0:
+                    user.points = (user.points or 0) + reward_points_to_refund
+                if getattr(order, 'points_earned', 0) and order.points_earned > 0:
+                    user.points = max(0, (user.points or 0) - order.points_earned)
+
+                if getattr(order, 'coupon_code', None):
+                    coupon_query = UserCoupon.query.execution_options(skip_tenant_filter=True).filter_by(
+                        user_id=user.id, code=order.coupon_code, is_used=True
+                    )
+                    if tenant_id:
+                        coupon_query = coupon_query.filter_by(tenant_id=tenant_id)
+                    used_coupon = coupon_query.first()
+                    if used_coupon:
+                        used_coupon.is_used = False
+                        used_coupon.used_at = None
+
+        order.status = 'Cancelled'
+        db.session.commit()
+        db.session.expire_all()
+
+    update_popular_items(force=True)
+    invalidate_ai_advice(tenant_id)
+    order_event_bus.notify(tenant_id=tenant_id)
+    return True, f"訂單 #{order.id} 已成功取消，庫存、配餐庫存、點數與優惠券已全數回滾返還！"
+
 
 def build_order_analytics(orders, limit=1):
     today = datetime.now().date()

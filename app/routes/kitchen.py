@@ -1,23 +1,26 @@
 import re
 import time
 from datetime import datetime
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, g
 from app.extensions import db
 from app.models.order import Order
 from app.services.order_service import cancel_order_and_rollback
 from app.services.event_bus import order_event_bus
-from app.services.ai_service import _AI_ADVICE_STATE
-from app.utils import admin_required
+from app.services.ai_service import invalidate_ai_advice
+from app.routes.common import record_staff_audit
+from app.utils import role_required
 
 kitchen_bp = Blueprint('kitchen', __name__)
 
+
 @kitchen_bp.route('/kitchen', endpoint='kitchen_display')
-@admin_required
+@role_required('owner', 'manager', 'kitchen')
 def kitchen_display():
     return render_template('kitchen.html')
 
+
 @kitchen_bp.route('/api/kitchen_orders')
-@admin_required
+@role_required('owner', 'manager', 'kitchen')
 def api_kitchen_orders():
     today = datetime.now().date()
     pending_orders = Order.query.filter(Order.status == 'Pending', db.func.date(Order.created_at) == today).order_by(Order.created_at.asc()).all()
@@ -45,53 +48,64 @@ def api_kitchen_orders():
         })
     return jsonify({'success': True, 'orders': orders_data})
 
+
 @kitchen_bp.route('/api/kitchen_update_status/<int:id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager', 'kitchen')
 def kitchen_update_status(id):
     order = Order.query.get_or_404(id)
     data = request.get_json() or {}
     new_status = data.get('status', 'Completed')
 
     if new_status == 'Cancelled':
+        pts_before = order.user.points if order.user else 0
         success, msg = cancel_order_and_rollback(order)
+        if not success:
+            return jsonify({'success': False, 'message': msg}), 400
+        pts_after = order.user.points if order.user else 0
+        record_staff_audit(
+            action_type='CANCEL_ORDER',
+            target_order_id=order.id,
+            target_user_id=order.user_id,
+            points_delta=(pts_after - pts_before),
+            details=f"取消訂單 #{order.id} (取餐 #{order.pickup_number}) 並回滾庫存與點數"
+        )
+        db.session.commit()
         return jsonify({'success': True, 'message': msg})
+
+    if order.status == 'Cancelled':
+        return jsonify({'success': False, 'message': '已取消的訂單無法變更狀態！'}), 400
 
     if new_status in ['Pending', 'Completed']:
         order.status = new_status
         if new_status == 'Completed':
             order.completed_at = datetime.now()
         db.session.commit()
+        invalidate_ai_advice(g.tenant_id)
         order_event_bus.notify()
         return jsonify({'success': True, 'message': f'訂單 #{order.id} 狀態更新為 {new_status}'})
     return jsonify({'success': False, 'message': '無效狀態'}), 400
 
+
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager', 'kitchen')
 def kitchen_complete_all():
     today = datetime.now().date()
     now = datetime.now()
 
-    # 1. 透過單一條 SQL 批量更新當天所有 Pending 訂單，避免 Python 迴圈逐筆寫入
     updated_count = Order.query.filter(
         Order.status == 'Pending',
         db.func.date(Order.created_at) == today
     ).update(
         {Order.status: 'Completed', Order.completed_at: now},
-        synchronize_session=False  # 跳過 Python 端 session 物件逐筆同步，速度提升數十倍
+        synchronize_session=False
     )
 
-    if updated_count == 0:
-        return jsonify({'success': False, 'message': '目前沒有待製作的訂單！'})
-
-    # 2. 提交事務
     db.session.commit()
-
-    # 3. 重置 AI 快取簽章並透過 EventBus 推播通知前端
-    _AI_ADVICE_STATE['last_signature'] = None
+    invalidate_ai_advice(g.tenant_id)
     order_event_bus.notify()
 
     return jsonify({
-        'success': True, 
-        'message': f'✅ 已將 {updated_count} 筆訂單出餐！', 
+        'success': True,
+        'message': f'✅ 已將 {updated_count} 筆訂單出餐！',
         'count': updated_count
     })

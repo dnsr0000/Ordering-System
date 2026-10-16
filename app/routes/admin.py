@@ -12,8 +12,8 @@ from openpyxl.styles import Font
 
 from app.config import Config
 from app.extensions import db
-from app.models.user import User, AdminLog, CustomerLog, RewardSetting
-from app.models.menu import MenuItem, ComboOption
+from app.models.user import User, AdminLog, StaffAuditLog, CustomerLog, RewardSetting
+from app.models.menu import MenuItem, ComboOption, ModifierOption
 from app.models.order import Order, OrderItem
 from app.models.coupon import Coupon, UserCoupon
 from app.models.tenant import Tenant, StaffAccount
@@ -24,7 +24,9 @@ from app.services.order_service import (
 )
 from app.services.ai_service import generate_ai_business_advice, _AI_ADVICE_STATE, run_local_slm, fallback_menu_description
 from app.services.event_bus import order_event_bus
-from app.utils import admin_required
+from app.routes.common import record_staff_audit
+from app.routes.auth import clear_pin_lockout
+from app.utils import admin_required, role_required, rate_limit, js_alert_redirect, safe_int
 
 
 ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
@@ -47,6 +49,7 @@ def require_staff_for_admin_routes():
 # 後台登入與主儀表板
 # ==============================================================================
 @admin_bp.route('/admin', methods=['GET', 'POST'], endpoint='admin_dashboard')
+@rate_limit(max_requests=10, window_seconds=60, key_prefix="admin_login", methods=('POST',))
 def admin_dashboard():
     if request.method == 'POST' and 'username' in request.form:
         username = request.form.get('username', '').strip()
@@ -59,6 +62,7 @@ def admin_dashboard():
             session['staff_account_id'] = staff.id
             session['tenant_id'] = tenant.id
             session['admin_role'] = staff.role
+            session['staff_role'] = staff.role
             session['admin_username'] = staff.username
             g.staff_account = staff
             g.tenant = tenant
@@ -90,6 +94,23 @@ def admin_dashboard():
         db.session.add(reward_setting)
         db.session.commit()
 
+    try:
+        audit_logs = StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all()
+    except Exception:
+        db.session.rollback()
+        from app.services.migration_service import run_database_migrations
+        run_database_migrations()
+        try:
+            audit_logs = StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all()
+        except Exception:
+            db.session.rollback()
+            audit_logs = []
+    try:
+        admin_logs = AdminLog.query.order_by(AdminLog.id.desc()).limit(100).all()
+    except Exception:
+        db.session.rollback()
+        admin_logs = []
+
     return render_template(
         'admin.html',
         is_admin=True,
@@ -101,7 +122,9 @@ def admin_dashboard():
         analytics=analytics,
         current_limit=limit,
         reward_setting=reward_setting,
-        tenant=g.tenant
+        tenant=g.tenant,
+        audit_logs=audit_logs,
+        admin_logs=admin_logs
     )
 
 @admin_bp.route('/admin/logout', endpoint='admin_logout')
@@ -139,9 +162,16 @@ def tenant_register():
         tenant = Tenant(name=shop_name, slug=slug, is_active=True)
         db.session.add(tenant)
         db.session.flush()
+        g.tenant = tenant
+        g.tenant_id = tenant.id
         owner = StaffAccount(tenant_id=tenant.id, username=username, role='owner', is_active=True)
         owner.set_password(password)
         db.session.add(owner)
+        db.session.add_all([
+            ModifierOption(tenant_id=tenant.id, category='addons', name='加荷包蛋', price=10, is_active=True),
+            ModifierOption(tenant_id=tenant.id, category='addons', name='加起司片', price=15, is_active=True),
+            RewardSetting(tenant_id=tenant.id, is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
+        ])
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -158,22 +188,42 @@ def tenant_register():
 
 
 @admin_bp.route('/admin/staff', methods=['GET', 'POST'], endpoint='staff_accounts')
-@admin_required
+@role_required('owner')
 def staff_accounts():
-    if getattr(g.staff_account, 'role', '') != 'owner':
-        return jsonify({'success': False, 'message': '只有店家負責人可管理員工帳號。'}), 403
-
     if request.method == 'POST':
+        action = request.form.get('action', 'create')
+        if action == 'toggle_active':
+            target_id = safe_int(request.form.get('account_id'), 0)
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            if acc.id == g.staff_account.id:
+                return js_alert_redirect('❌ 無法停用您目前登入的負責人帳號！', url_for('admin.staff_accounts'), 400)
+            acc.is_active = not bool(acc.is_active)
+            record_staff_audit('STAFF_TOGGLE_ACTIVE', details=f"{'啟用' if acc.is_active else '停用'}員工帳號：{acc.username} ({acc.role})")
+            db.session.commit()
+            return redirect(url_for('admin.staff_accounts'))
+
+        if action == 'reset_password':
+            target_id = safe_int(request.form.get('account_id'), 0)
+            new_pwd = request.form.get('new_password', '')
+            if len(new_pwd) < 10:
+                return js_alert_redirect('❌ 新密碼長度至少需 10 個字元！', url_for('admin.staff_accounts'), 400)
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            acc.set_password(new_pwd)
+            record_staff_audit('STAFF_RESET_PASSWORD', details=f"重設員工帳號密碼：{acc.username}")
+            db.session.commit()
+            return js_alert_redirect(f'✅ 已成功重設員工【{acc.username}】的密碼！', url_for('admin.staff_accounts'), 200)
+
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         role = request.form.get('role', 'staff')
         if role not in {'manager', 'staff', 'kitchen'} or not username or len(password) < 10:
-            return jsonify({'success': False, 'message': '帳號必填，密碼至少 10 個字元，角色無效。'}), 400
+            return js_alert_redirect('❌ 帳號必填，密碼至少 10 個字元，且角色需合法！', url_for('admin.staff_accounts'), 400)
         if StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first():
-            return jsonify({'success': False, 'message': '員工帳號已被使用。'}), 409
+            return js_alert_redirect('❌ 該員工帳號名稱已被使用！', url_for('admin.staff_accounts'), 409)
         account = StaffAccount(tenant_id=g.tenant_id, username=username, role=role, is_active=True)
         account.set_password(password)
         db.session.add(account)
+        record_staff_audit('STAFF_CREATE', details=f"新增員工帳號：{username} (角色:{role})")
         db.session.commit()
         return redirect(url_for('admin.staff_accounts'))
 
@@ -184,7 +234,7 @@ def staff_accounts():
 # 菜單品項與加購品 CRUD
 # ==============================================================================
 @admin_bp.route('/admin/add', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def add_item():
     name = request.form.get('name')
     price = request.form.get('price')
@@ -253,7 +303,7 @@ def add_item():
 
 
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def edit_item(id):
     item = MenuItem.query.get_or_404(id)
     name = request.form.get('name')
@@ -331,11 +381,9 @@ def edit_item(id):
         db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab=from_tab))
 
-@admin_bp.route('/admin/delete/<int:id>')
-@admin_required
+@admin_bp.route('/admin/delete/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def delete_item(id):
-    #if not session.get('admin_logged_in'):
-    #return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     if item.image_path:
         filepath = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
@@ -346,6 +394,7 @@ def delete_item(id):
     ComboOption.query.filter_by(item1_id=id).update({ComboOption.item1_id: None})
     ComboOption.query.filter_by(item2_id=id).update({ComboOption.item2_id: None})
     ComboOption.query.filter_by(item3_id=id).update({ComboOption.item3_id: None})
+    record_staff_audit('DELETE_MENU_ITEM', details=f'刪除菜單品項：{item.name} (${item.price})')
     db.session.delete(item)
     db.session.commit()
     update_popular_items()
@@ -364,7 +413,7 @@ def check_side_customizable(item_id, is_checked):
     return True
 
 @admin_bp.route('/admin/add_combo', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def add_combo():
     #if not session.get('admin_logged_in'):
     #    return redirect(url_for('admin.admin_dashboard'))
@@ -425,6 +474,7 @@ def add_combo():
     return f"<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def edit_combo(id):
     """編輯現有套餐組合設定"""
     if not session.get('admin_logged_in'):
@@ -483,11 +533,9 @@ def edit_combo(id):
     db.session.expire_all()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
-@admin_bp.route('/admin/delete_combo/<int:id>')
-@admin_required
+@admin_bp.route('/admin/delete_combo/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def delete_combo(id):
-    #if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
     combo = ComboOption.query.get_or_404(id)
     db.session.delete(combo)
     db.session.commit()
@@ -497,7 +545,7 @@ def delete_combo(id):
 # 回饋商城上下架與優惠券管理
 # ==============================================================================
 @admin_bp.route('/admin/add_reward', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def add_reward():
     #if not session.get('admin_logged_in'):
      #   return redirect(url_for('admin.admin_dashboard'))
@@ -509,13 +557,13 @@ def add_reward():
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
-@admin_bp.route('/admin/remove_reward/<int:id>')
-@admin_required
+@admin_bp.route('/admin/remove_reward/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def remove_reward_item(id):
-   # if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
     item = MenuItem.query.get_or_404(id)
     item.is_reward = False
+    item.reward_points = 0
+    item.reward_discount_points = 0
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
@@ -531,41 +579,38 @@ def parse_per_user_limit(val):
         return 0
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
+@role_required('owner', 'manager')
 def add_coupon():
-    #if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
     code = request.form.get('code', '').strip().upper()
     if Coupon.query.filter_by(code=code).first():
         return "<script>alert('❌ 代碼重複！'); window.history.back();</script>", 400
     dtype = request.form.get('discount_type', 'fixed')
-    
+    req_pts = max(0, safe_int(request.form.get('reward_points'), 0))
     new_c = Coupon(
         title=request.form.get('title'),
         code=code,
         discount_type=dtype,
         discount_value=sanitize_discount_value(dtype, request.form.get('discount_value') or 0),
         min_spend=max(0.0, float(request.form.get('min_spend') or 0)),
-        reward_points=max(0, int(request.form.get('reward_points') or 0)),
-        reward_discount_points=max(0, int(request.form.get('reward_discount_points') or 0)),
+        reward_points=req_pts,
+        reward_discount_points=max(0, safe_int(request.form.get('reward_discount_points'), 0)) if req_pts > 0 else 0,
         per_user_limit=parse_per_user_limit(request.form.get('per_user_limit')),
-        is_reward=True
+        is_reward=(req_pts > 0)
     )
     db.session.add(new_c)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
-@admin_bp.route('/admin/delete_coupon/<int:id>')
-@admin_required
+@admin_bp.route('/admin/delete_coupon/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def delete_coupon(id):
-   # if not session.get('admin_logged_in'):
-   #     return redirect(url_for('admin.admin_dashboard'))
     c = Coupon.query.get_or_404(id)
     db.session.delete(c)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
 @admin_bp.route('/admin/edit_coupon/<int:id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def edit_coupon(id):
     #if not session.get('admin_logged_in'):
     #    return redirect(url_for('admin.admin_dashboard'))
@@ -580,8 +625,9 @@ def edit_coupon(id):
     c.discount_type = request.form.get('discount_type', 'fixed')
     c.discount_value = sanitize_discount_value(c.discount_type, request.form.get('discount_value') or 0)
     c.min_spend = max(0.0, float(request.form.get('min_spend') or 0))
-    c.reward_points = max(0, int(request.form.get('reward_points') or 0))
-    c.reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+    c.reward_points = max(0, safe_int(request.form.get('reward_points'), 0))
+    c.reward_discount_points = max(0, safe_int(request.form.get('reward_discount_points'), 0)) if c.reward_points > 0 else 0
+    c.is_reward = (c.reward_points > 0)
     c.per_user_limit = parse_per_user_limit(request.form.get('per_user_limit'))
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
@@ -589,39 +635,58 @@ def edit_coupon(id):
 # ==============================================================================
 # 會員資料維護
 # ==============================================================================
-@admin_bp.route('/admin/delete_user/<int:id>')
-@admin_required
+@admin_bp.route('/admin/delete_user/<int:id>', methods=['POST'])
+@role_required('owner', 'manager')
 def delete_user(id):
-  #  if not session.get('admin_logged_in'):
-  #      return redirect(url_for('admin.admin_dashboard'))
     user = User.query.get_or_404(id)
     if user.photo_path:
         f = os.path.join(Config.UPLOAD_FOLDER_MEMBER, user.photo_path)
         if os.path.exists(f):
-            try: os.remove(f)
-            except Exception: pass
+            try:
+                os.remove(f)
+            except Exception:
+                pass
     Order.query.filter_by(user_id=id).update({Order.user_id: None, Order.table_number: f"{user.name} (已註銷會員)"}, synchronize_session=False)
+    record_staff_audit('DELETE_USER', target_user_id=user.id, points_delta=-(user.points or 0), details=f"刪除會員：{user.name} ({user.phone}, 原點數:{user.points})")
     db.session.delete(user)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
+
 @admin_bp.route('/admin/edit_user/<int:id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def edit_user(id):
-   # if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
     user = User.query.get_or_404(id)
-    user.name = request.form.get('name', user.name)
-    user.phone = request.form.get('phone', user.phone)
-    user.points = int(request.form.get('points') or 0)
+    old_points = int(user.points or 0)
+    new_name = (request.form.get('name') or user.name).strip()
+    new_phone = (request.form.get('phone') or user.phone).strip()
+    if not re.match(r'^09\d{8}$', new_phone):
+        return js_alert_redirect('❌ 手機號碼格式不正確！請輸入 09 開頭的 10 碼數字。', status=400)
+    dup_user = User.query.filter(User.phone == new_phone, User.id != user.id).first()
+    if dup_user:
+        return js_alert_redirect(f'❌ 手機號碼 {new_phone} 已被其他會員【{dup_user.name}】使用！', status=409)
+    user.name = new_name
+    user.phone = new_phone
+    user.points = max(0, safe_int(request.form.get('points'), 0))
+    new_pin = (request.form.get('pin') or '').strip()
+    if new_pin:
+        if not re.match(r'^\d{4,6}$', new_pin):
+            return js_alert_redirect('❌ 重設之安全 PIN 碼必須為 4 至 6 位數字！', status=400)
+        user.set_pin(new_pin)
+        clear_pin_lockout(g.tenant_id, user.phone)
+    pts_diff = int(user.points) - old_points
+    record_staff_audit(
+        action_type='EDIT_USER',
+        target_user_id=user.id,
+        points_delta=pts_diff,
+        details=f"編輯會員 {user.name} ({user.phone})：點數 {old_points} -> {user.points}{'，並重設安全PIN碼' if new_pin else ''}"
+    )
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
 @admin_bp.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def toggle_user_coupon(uc_id):
-  #  if not session.get('admin_logged_in'):
-   #     return jsonify({'success': False, 'message': '未授權'}), 401
     uc = UserCoupon.query.get_or_404(uc_id)
     uc.is_used = not bool(uc.is_used)
     uc.used_at = datetime.now() if uc.is_used else None
@@ -634,20 +699,17 @@ def toggle_user_coupon(uc_id):
     })
 
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def update_reward_setting():
-  #  if not session.get('admin_logged_in'):
-  #     return redirect(url_for('admin.admin_dashboard'))
-
     setting = RewardSetting.query.first()
     if not setting:
-        setting = RewardSetting()
+        setting = RewardSetting(tenant_id=g.tenant_id)
         db.session.add(setting)
 
     setting.is_enabled = bool(request.form.get('is_enabled'))
-    setting.points_per_dollar = max(1, int(request.form.get('points_per_dollar') or 1))
-    setting.max_discount_per_order = max(0, int(request.form.get('max_discount_per_order') or 0))
-    setting.spend_per_point = max(1, int(request.form.get('spend_per_point') or 100))
+    setting.points_per_dollar = max(1, safe_int(request.form.get('points_per_dollar'), 1))
+    setting.max_discount_per_order = max(0, safe_int(request.form.get('max_discount_per_order'), 0))
+    setting.spend_per_point = max(1, safe_int(request.form.get('spend_per_point'), 1))
 
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
@@ -655,19 +717,42 @@ def update_reward_setting():
 # 訂單狀態更新
 # ==============================================================================
 @admin_bp.route('/admin/update_order_status/<int:id>', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager', 'staff')
 def update_order_status(id):
-   # if not session.get('admin_logged_in'):
-   #    return jsonify({'error': '未授權'}), 401
     order = Order.query.get_or_404(id)
-    new_status = (request.get_json() or {}).get('status')
+    payload = request.get_json(silent=True) or {}
+    new_status = payload.get('status') or request.form.get('status')
+
     if new_status == 'Cancelled':
+        pts_before = order.user.points if order.user else 0
         success, msg = cancel_order_and_rollback(order)
+        if not success:
+            return jsonify({'error': msg, 'message': msg}), 400
+        pts_after = order.user.points if order.user else 0
+        record_staff_audit(
+            action_type='CANCEL_ORDER',
+            target_order_id=order.id,
+            target_user_id=order.user_id,
+            points_delta=(pts_after - pts_before),
+            details=f"後台取消訂單 #{order.id} (取餐 #{order.pickup_number}) 並回滾庫存與點數"
+        )
+        db.session.commit()
         return jsonify({'message': msg, 'status': 'Cancelled'})
+
+    if order.status == 'Cancelled':
+        return jsonify({'error': '已取消的訂單無法變更狀態！', 'message': '已取消的訂單無法變更狀態！'}), 400
+
     if new_status in ['Pending', 'Completed', 'PickedUp']:
         order.status = new_status
         if new_status == 'Completed' and not order.completed_at:
             order.completed_at = datetime.now()
+        if new_status == 'PickedUp':
+            record_staff_audit(
+                action_type='MARK_PICKED_UP',
+                target_order_id=order.id,
+                target_user_id=order.user_id,
+                details=f"後台核銷取餐：單號 #{order.id}"
+            )
         db.session.commit()
         _AI_ADVICE_STATE['last_signature'] = None
         order_event_bus.notify()
@@ -871,10 +956,8 @@ def restore_backup():
 # Excel 匯出 (包含全部 8 個工作表與格式自適應)
 # ==============================================================================
 @admin_bp.route('/admin/export_excel', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def export_excel():
-    # if not session.get('admin_logged_in'):
-    #     return redirect(url_for('admin.admin_dashboard'))
     selected_tables = request.form.getlist('tables')
     if not selected_tables:
         return "<script>alert('❌ 請至少勾選一個資料表！'); window.history.back();</script>", 400
@@ -959,10 +1042,15 @@ def export_excel():
 
                 order_data.append({
                     'ID': o.id, '取餐編號(Pickup No)': f"#{o.pickup_number:03d}" if o.pickup_number else f"#{o.id}",
+                    '訂單來源(Source)': getattr(o, 'order_source', 'Kiosk') or 'Kiosk',
+                    '收銀員(Cashier)': getattr(o, 'cashier_username', '') or '-',
                     '身分/會員ID(Customer ID)': cust_identifier, '進場時間(Login At)': login_str, '點餐耗時(Duration)': duration_str,
                     '下單時間(Order Created)': o.created_at.strftime('%Y-%m-%d %H:%M:%S') if o.created_at else '',
                     '出餐時間(Completed At)': o.completed_at.strftime('%Y-%m-%d %H:%M:%S') if o.completed_at else '未出餐',
-                    '總金額(Total)': o.total_price, '付款方式(Payment)': o.payment_method, '狀態(Status)': o.status, '使用紅利': o.points_used
+                    '應付總額(Total)': o.total_price,
+                    '實收金額(Received)': getattr(o, 'cash_received', None) if getattr(o, 'cash_received', None) is not None else o.total_price,
+                    '找零金額(Change)': getattr(o, 'cash_change', 0) or 0,
+                    '付款方式(Payment)': o.payment_method, '狀態(Status)': o.status, '使用紅利': o.points_used
                 })
             pd.DataFrame(order_data if order_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='訂單總覽(Order)', index=False, startrow=1)
 
@@ -1017,6 +1105,25 @@ def export_excel():
             } for lg in logs_query.order_by(AdminLog.id.desc()).all()]
             pd.DataFrame(log_data if log_data else [{'資料': '目前無紀錄'}]).to_excel(writer, sheet_name='管理員進出日誌(AdminLog)', index=False, startrow=1)
 
+            audit_query = StaffAuditLog.query
+            if start_date:
+                audit_query = audit_query.filter(StaffAuditLog.created_at >= start_date)
+            if end_date:
+                audit_query = audit_query.filter(StaffAuditLog.created_at <= end_date)
+            audit_data = [{
+                'ID': au.id,
+                '員工帳號(Staff)': au.staff_username,
+                '角色(Role)': au.staff_role,
+                '操作類型(Action)': au.action_type,
+                '關聯訂單ID(Order ID)': au.target_order_id or '',
+                '關聯會員ID(User ID)': au.target_user_id or '',
+                '點數異動(Points Delta)': au.points_delta or 0,
+                '詳細內容(Details)': au.details or '',
+                'IP 位址': au.ip_address or '',
+                '發生時間(Created At)': au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else ''
+            } for au in audit_query.order_by(StaffAuditLog.id.desc()).all()]
+            pd.DataFrame(audit_data if audit_data else [{'資料': '目前無稽核紀錄'}]).to_excel(writer, sheet_name='員工操作稽核(StaffAuditLog)', index=False, startrow=1)
+
         # 日期區間標題與欄寬自適應格式化 (中文全形字元加權計算，避免欄位過窄)
         display_start = start_date_str if start_date_str else '全部區間 (All)'
         display_end = end_date_str if end_date_str else '全部區間 (All)'
@@ -1025,7 +1132,7 @@ def export_excel():
         date_dependent_sheets = {
             '訂單總覽(Order)', '訂單明細(OrderItem)',
             '區間營運總覽(Analytics)', '區間熱銷排行(ItemSales)',
-            '管理員進出日誌(AdminLog)'
+            '管理員進出日誌(AdminLog)', '員工操作稽核(StaffAuditLog)'
         }
 
         def calculate_display_width(val):
@@ -1066,11 +1173,9 @@ def export_excel():
 # Excel 匯入 (菜單匯入與多工作表智慧匯入)
 # ==============================================================================
 @admin_bp.route('/admin/import_excel', methods=['POST'])
+@role_required('owner', 'manager')
 def import_menu_excel():
     """Excel 批量匯入菜單 (支援自身匯出的檔案與自訂格式)"""
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin.admin_dashboard'))
-        
     file = request.files.get('file')
     if not file or file.filename == '':
         return "<script>alert('請選擇 Excel/CSV 檔案！'); window.history.back();</script>", 400
@@ -1171,12 +1276,9 @@ def import_menu_excel():
         return f"<script>alert('匯入解析失敗：{e}'); window.history.back();</script>", 500
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def import_smart():
     """智慧匯入功能：自動辨識 Excel 中的工作表與純英文/中文欄位，並匯入/更新對應資料表"""
-    #if not session.get('admin_logged_in'):
-    #    return redirect(url_for('admin.admin_dashboard'))
-
     file = request.files.get('file')
     if not file or file.filename == '':
         return "<script>alert('❌ 請選擇 Excel 檔案！'); window.history.back();</script>", 400
@@ -1433,7 +1535,12 @@ def api_admin_live_orders():
 
     orders_data = [{
         'id': o.id, 'pickup_number': o.pickup_number if getattr(o, 'pickup_number', None) else o.id,
-        'user_name': o.user.name if o.user else '非會員', 'order_type': o.order_type,
+        'user_name': o.user.name if o.user else (o.table_number or '非會員'),
+        'order_type': o.order_type,
+        'order_source': getattr(o, 'order_source', 'Kiosk') or 'Kiosk',
+        'cashier_username': getattr(o, 'cashier_username', '') or '',
+        'cash_received': getattr(o, 'cash_received', None) if getattr(o, 'cash_received', None) is not None else o.total_price,
+        'cash_change': getattr(o, 'cash_change', 0) or 0,
         'payment_method': o.payment_method, 'need_cutlery': bool(o.need_cutlery) if getattr(o, 'need_cutlery', None) is not None else True,
         'note': o.note or '', 'created_at': o.created_at.strftime('%m-%d %H:%M') if o.created_at else '',
         'status': o.status, 'discount_amount': o.discount_amount or 0, 'total_price': o.total_price,
@@ -1452,11 +1559,9 @@ def api_admin_live_orders():
     return jsonify({'success': True, 'orders': orders_data, 'menu_items': menu_items_data, 'analytics': analytics})
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])
-@admin_required
+@role_required('owner', 'manager')
 def api_generate_item_description():
     """AI 智慧菜單文案生成路由 (AI Copywriter - 具備三層自動降級機制)"""
-    #if not session.get('admin_logged_in'):
-    #    return jsonify({'success': False, 'message': '未授權管理者'}), 401
 
     data = request.get_json() or {}
     name = str(data.get('name', '')).strip()

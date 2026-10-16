@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>建立店家帳號</title>
@@ -73,13 +74,35 @@
         .bg-white .text-secondary {
             color: #475569 !important;
         }
-    </style>
+    
+        /* === 輸入框提示文字 / 下拉選單 / 自動填入 對比度修正 (防止文字與輸入框背景融合) === */
+        .form-control, .form-select { color-scheme: dark; }
+        .form-control::placeholder,
+        .form-control::-webkit-input-placeholder { color: #94a3b8 !important; opacity: 1; }
+        .form-select { --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
+        .form-select option { background-color: #0f172a; color: #f8fafc; }
+        .form-select option:disabled { color: #8b98ad; }
+        .form-control:-webkit-autofill,
+        .form-control:-webkit-autofill:hover,
+        .form-control:-webkit-autofill:focus {
+            -webkit-text-fill-color: #f8fafc;
+            caret-color: #f8fafc;
+            -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
+            box-shadow: 0 0 0 1000px #0f172a inset !important;
+            transition: background-color 9999s ease-in-out 0s;
+        }
+        .form-control.bg-dark:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 1000px #212529 inset !important;
+            box-shadow: 0 0 0 1000px #212529 inset !important;
+        }
+</style>
 </head>
 <body>
     <main class="card p-4 p-md-5 shadow">
         <h1 class="h3 fw-bold text-warning mb-2">建立店家雲端帳號</h1>
         <p class="text-white-50 mb-4">建立後會自動建立專屬店家資料空間及負責人帳號。</p>
         <form method="POST" action="{{ url_for('admin.tenant_register') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
                 <label for="shop-name" class="form-label">店家名稱</label>
                 <input id="shop-name" class="form-control" name="shop_name" maxlength="120" required>

@@ -4,22 +4,50 @@ import queue
 import threading
 from datetime import datetime
 from flask import current_app, g, has_request_context
-from app.extensions import db
+from app.extensions import db, redis_client
 from app.models.order import Order
 
-class OrderEventBus:
-    def __init__(self, max_subscribers=150):
-        self._subscribers = {}
-        self._lock = threading.Lock()
-        self._max_subscribers = max_subscribers
 
-    def subscribe(self, tenant_id):
+class OrderEventBus:
+    def __init__(self, max_public_subscribers=25, max_per_ip=10, max_staff_subscribers=60):
+        self._subscribers = {}  # q -> {'tenant_id': int, 'ip': str, 'is_staff': bool}
+        self._lock = threading.Lock()
+        self._max_public_subscribers = max_public_subscribers
+        self._max_per_ip = max_per_ip
+        self._max_staff_subscribers = max_staff_subscribers
+        self._max_subscribers = max_public_subscribers + max_staff_subscribers
+
+    def subscribe(self, tenant_id, client_ip="", is_staff=False):
+        ip_str = str(client_ip or "127.0.0.1").strip()
+        staff_flag = bool(is_staff)
         with self._lock:
-            if len(self._subscribers) >= self._max_subscribers:
-                oldest_q = next(iter(self._subscribers))
-                self._subscribers.pop(oldest_q, None)
+            if staff_flag:
+                staff_qs = [q for q, meta in self._subscribers.items() if isinstance(meta, dict) and meta.get('is_staff')]
+                while len(staff_qs) >= self._max_staff_subscribers:
+                    oldest_q = staff_qs.pop(0)
+                    self._subscribers.pop(oldest_q, None)
+            else:
+                # 1. 單一 IP 公開看板連線上限 (預設 10 條)
+                same_ip_qs = [
+                    q for q, meta in self._subscribers.items()
+                    if isinstance(meta, dict) and not meta.get('is_staff') and meta.get('ip') == ip_str
+                ]
+                while len(same_ip_qs) >= self._max_per_ip:
+                    oldest_ip_q = same_ip_qs.pop(0)
+                    self._subscribers.pop(oldest_ip_q, None)
+
+                # 2. 公開看板總連線上限 (預設 25 條)
+                pub_qs = [q for q, meta in self._subscribers.items() if not isinstance(meta, dict) or not meta.get('is_staff')]
+                while len(pub_qs) >= self._max_public_subscribers:
+                    oldest_pub_q = pub_qs.pop(0)
+                    self._subscribers.pop(oldest_pub_q, None)
+
             q = queue.Queue(maxsize=10)
-            self._subscribers[q] = tenant_id
+            self._subscribers[q] = {
+                'tenant_id': tenant_id,
+                'ip': ip_str,
+                'is_staff': staff_flag,
+            }
             return q
 
     def unsubscribe(self, q):
@@ -39,9 +67,8 @@ class OrderEventBus:
                 Order.created_at >= today_start,
                 Order.created_at <= today_end
             ).order_by(Order.id.asc()).all()
-            
+
             state_signature = ",".join(f"{oid}:{status}" for oid, status in orders_status)
-            
             return json.dumps({
                 'timestamp': time.time(),
                 'state_signature': state_signature
@@ -50,20 +77,31 @@ class OrderEventBus:
             print(f"[!] 取得訂單特徵簽章失敗: {e}")
             return json.dumps({'timestamp': time.time(), 'state_signature': ''})
 
-    def notify(self, app_instance=None):
-        app = app_instance or current_app._get_current_object()
-        tenant_id = getattr(g, 'tenant_id', None) if has_request_context() else None
+    def notify(self, app_instance=None, tenant_id=None):
         try:
-            with app.app_context():
-                payload = self.get_current_payload(tenant_id)
-        except Exception as e:
-            print(f"[!] SSE 廣播打包異常: {e}")
-            return
+            app = app_instance or current_app._get_current_object()
+        except Exception:
+            app = None
+        resolved_tid = tenant_id if tenant_id is not None else (getattr(g, 'tenant_id', None) if has_request_context() else None)
+        payload = json.dumps({'timestamp': time.time(), 'state_signature': ''})
+        if app is not None:
+            try:
+                with app.app_context():
+                    payload = self.get_current_payload(resolved_tid)
+            except Exception as e:
+                print(f"[!] SSE 廣播打包異常: {e}")
+
+        if redis_client and resolved_tid is not None:
+            try:
+                redis_client.publish(f"kiosk:orders_stream:{resolved_tid}", payload)
+            except Exception:
+                pass
 
         dead_queues = []
         with self._lock:
-            for q, subscriber_tenant_id in list(self._subscribers.items()):
-                if subscriber_tenant_id != tenant_id:
+            for q, meta in list(self._subscribers.items()):
+                sub_tid = meta.get('tenant_id') if isinstance(meta, dict) else meta
+                if resolved_tid is not None and sub_tid != resolved_tid:
                     continue
                 try:
                     q.put_nowait(payload)
@@ -75,5 +113,6 @@ class OrderEventBus:
                         dead_queues.append(q)
             for dq in dead_queues:
                 self._subscribers.pop(dq, None)
+
 
 order_event_bus = OrderEventBus()

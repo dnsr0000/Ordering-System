@@ -5,11 +5,11 @@ import random
 import threading
 import requests
 from datetime import datetime
+from flask import g, has_request_context
 from app.config import Config
 from app.extensions import db, LLM_LOCK
 from app.models.order import Order
 
-# 本地 SLM 初始化
 local_llm = None
 try:
     from llama_cpp import Llama
@@ -32,24 +32,44 @@ _AI_ADVICE_STATE = {
     'cooldown_until': 0,
     'last_request_time': 0
 }
+_TENANT_AI_STATES = {}
+
+
+def _get_tenant_ai_state(tenant_id=None):
+    tid = tenant_id or (getattr(g, 'tenant_id', None) if has_request_context() else None) or 1
+    if tid not in _TENANT_AI_STATES:
+        _TENANT_AI_STATES[tid] = {
+            'last_signature': None,
+            'cached_advice': None,
+            'is_fetching': False,
+            'cooldown_until': 0,
+            'last_request_time': 0
+        }
+    return _TENANT_AI_STATES[tid]
+
+
+def invalidate_ai_advice(tenant_id=None):
+    st = _get_tenant_ai_state(tenant_id)
+    st['last_signature'] = None
+    _AI_ADVICE_STATE['last_signature'] = None
+
 
 def run_local_slm(prompt_text, max_tokens=100):
     if not local_llm:
         return None
     formatted_prompt = f"<|im_start|>system\n你是一位專業餐飲營運顧問，請嚴格使用台灣繁體中文給出 1~2 句具體營運建議（60字以內），禁止思考草稿。<|im_end|>\n<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n"
-    
+
     if not LLM_LOCK.acquire(timeout=3.0):
-        print("[!] 本地 SLM 忙碌中，立即啟動第三層動態辭庫進行熔斷備援。")
         return None
     try:
         local_llm.reset()
         res = local_llm(formatted_prompt, max_tokens=max_tokens, temperature=0.3, stop=["<|im_end|>", "\n\n"])
         return res["choices"][0]["text"].strip().replace('"', '').replace("'", '').replace('「', '').replace('」', '').strip()
-    except Exception as e:
-        print(f"[!] 本地 SLM 推論異常: {e}")
+    except Exception:
         return None
     finally:
         LLM_LOCK.release()
+
 
 def fallback_advice(analytics_data):
     pending = analytics_data.get('pending_count', 0)
@@ -66,10 +86,12 @@ def fallback_advice(analytics_data):
         return "✅ 目前出餐流程順暢無積單，可安排前台進行備料盤點與清潔。"
     return "🌟 今日營業剛起步，請確認廚房出單機與各項食材庫存是否充足。"
 
+
 def fallback_menu_description(name, category):
     intros = ["嚴選優質新鮮食材現點現做", "特選產地直送原料慢火細熬", "黃金比例獨門秘方精準調配", "主廚匠心工藝悉心烹調", "保留食材純粹原汁原味"]
     traits = ["香氣四溢且口感層次鮮明", "風味醇厚濃郁且回味無窮", "外酥內嫩且肉汁豐盈飽滿", "口感清爽甘醇且韻味悠長", "每一口都帶來無與倫比的美味體驗"]
     return f"{random.choice(intros)}，【{name}】{random.choice(traits)}。"
+
 
 def _resolve_offline_advice(analytics_data):
     if local_llm:
@@ -82,13 +104,14 @@ def _resolve_offline_advice(analytics_data):
             return local_res
     return fallback_advice(analytics_data)
 
-def _async_fetch_gemini_advice(analytics_data, signature):
-    global _AI_ADVICE_STATE
+
+def _async_fetch_gemini_advice(analytics_data, signature, tenant_id=1):
+    state = _get_tenant_ai_state(tenant_id)
     try:
         api_key = (Config.GEMINI_API_KEY or "").strip().strip("'").strip('"')
-        if not api_key or api_key in ["YOUR_API_KEY", "1234", "none"] or time.time() < _AI_ADVICE_STATE.get('cooldown_until', 0):
-            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
-            _AI_ADVICE_STATE['last_signature'] = signature
+        if not api_key or api_key in ["YOUR_API_KEY", "1234", "none"] or "你的" in api_key or time.time() < state.get('cooldown_until', 0):
+            state['cached_advice'] = _resolve_offline_advice(analytics_data)
+            state['last_signature'] = signature
             return
 
         top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
@@ -96,57 +119,59 @@ def _async_fetch_gemini_advice(analytics_data, signature):
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
         payload = {
             "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，繁體中文介紹，必須有完整句號收尾。\n" + prompt}]}],
-            "generationConfig": {"maxOutputTokens": 800, "temperature": 0.3}
+            "generationConfig": {"maxOutputTokens": 800}
         }
-        resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, timeout=20)
+        resp = requests.post(url, headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=payload, timeout=15)
         res_json = resp.json() if resp.status_code == 200 else {}
 
         if resp.status_code == 200:
             candidates = res_json.get('candidates', [])
-            
             if candidates and 'content' in candidates[0]:
                 parts = candidates[0]['content'].get('parts', [])
                 if parts:
                     text = parts[0].get('text', '').strip()
                     clean_text = text.replace('"', '').replace('「', '').replace('」', '').strip()
-                    
                     valid_endings = ('。', '！', '!', '；', ';')
                     if len(clean_text) >= 12 and clean_text.endswith(valid_endings):
-                        _AI_ADVICE_STATE['cached_advice'] = clean_text
+                        state['cached_advice'] = clean_text
                     elif len(clean_text) >= 12:
-                        _AI_ADVICE_STATE['cached_advice'] = clean_text + '。'
+                        state['cached_advice'] = clean_text + '。'
                     else:
-                        _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
-                    
-                    _AI_ADVICE_STATE['last_signature'] = signature
-
-        elif resp.status_code in [401, 403, 429]:
-            _AI_ADVICE_STATE['cooldown_until'] = time.time() + 60
-            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
-            _AI_ADVICE_STATE['last_signature'] = signature
-    except Exception as e:
-        _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
-        _AI_ADVICE_STATE['last_signature'] = signature
+                        state['cached_advice'] = _resolve_offline_advice(analytics_data)
+                    state['last_signature'] = signature
+        else:
+            state['cooldown_until'] = time.time() + 60
+            state['cached_advice'] = _resolve_offline_advice(analytics_data)
+            state['last_signature'] = signature
+    except Exception:
+        state['cached_advice'] = _resolve_offline_advice(analytics_data)
+        state['last_signature'] = signature
     finally:
-        _AI_ADVICE_STATE['is_fetching'] = False
+        state['is_fetching'] = False
 
-def generate_ai_business_advice(analytics_data):
+
+def generate_ai_business_advice(analytics_data, tenant_id=None):
+    tid = tenant_id or (getattr(g, 'tenant_id', None) if has_request_context() else None) or 1
+    state = _get_tenant_ai_state(tid)
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-    orders = db.session.query(Order.id, Order.status).filter(Order.created_at >= today_start, Order.created_at <= today_end).order_by(Order.id.asc()).all()
+    orders = db.session.query(Order.id, Order.status).filter(
+        Order.created_at >= today_start, Order.created_at <= today_end
+    ).order_by(Order.id.asc()).all()
     current_signature = ",".join(f"{oid}:{status}" for oid, status in orders)
 
     now_ts = time.time()
-    if _AI_ADVICE_STATE['last_signature'] != current_signature:
-        if now_ts < _AI_ADVICE_STATE.get('cooldown_until', 0) or (now_ts - _AI_ADVICE_STATE.get('last_request_time', 0)) < 15:
-            _AI_ADVICE_STATE['cached_advice'] = _resolve_offline_advice(analytics_data)
-            _AI_ADVICE_STATE['last_signature'] = current_signature
-            return _AI_ADVICE_STATE['cached_advice']
+    if state['last_signature'] != current_signature or _AI_ADVICE_STATE.get('last_signature') is None:
+        _AI_ADVICE_STATE['last_signature'] = current_signature
+        if now_ts < state.get('cooldown_until', 0) or (now_ts - state.get('last_request_time', 0)) < 15:
+            state['cached_advice'] = _resolve_offline_advice(analytics_data)
+            state['last_signature'] = current_signature
+            return state['cached_advice']
 
-        if not _AI_ADVICE_STATE['is_fetching']:
-            _AI_ADVICE_STATE['is_fetching'] = True
-            _AI_ADVICE_STATE['last_request_time'] = now_ts
-            t = threading.Thread(target=_async_fetch_gemini_advice, args=(analytics_data, current_signature), daemon=True)
+        if not state['is_fetching']:
+            state['is_fetching'] = True
+            state['last_request_time'] = now_ts
+            t = threading.Thread(target=_async_fetch_gemini_advice, args=(analytics_data, current_signature, tid), daemon=True)
             t.start()
 
-    return _AI_ADVICE_STATE['cached_advice'] or fallback_advice(analytics_data)
+    return state['cached_advice'] or fallback_advice(analytics_data)

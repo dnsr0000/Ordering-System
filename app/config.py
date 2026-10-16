@@ -1,69 +1,55 @@
 import os
+import sys
+import secrets
 from datetime import timedelta
 from dotenv import load_dotenv
 from werkzeug.security import generate_password_hash
-from app.utils import admin_required
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-load_dotenv(os.path.join(BASE_DIR, '.env'), override=True)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+
 
 class Config:
     BASE_DIR = BASE_DIR
-    _secret = os.getenv("SECRET_KEY")
+    _secret = (os.getenv("SECRET_KEY") or "").strip().strip('"').strip("'")
     if not _secret:
-        import sys
-        _secret = os.urandom(32).hex()
-        print("⚠️ 未在 .env 檢測到 SECRET_KEY，已自動生成臨時 Session 金鑰。建議在 .env 中設定！", file=sys.stderr)
+        _secret = "kiosk-fallback-secret-key-please-set-in-env-2026"
+        print("⚠️ 未在 .env 檢測到 SECRET_KEY，已使用預設固定金鑰。建議在 .env 中設定！", file=sys.stderr)
     SECRET_KEY = _secret
 
-    SECRET_KEY = os.getenv("SECRET_KEY") or os.urandom(32).hex()
-    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 上傳上限 50MB
-
-    # Redis 連線設定 (雲端環境透過環境變數注入，本機預設 localhost)
     REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
-    
-    # 資料庫路徑
-    DATABASE_DIR = os.path.join(BASE_DIR, 'database')
-    SQLALCHEMY_DATABASE_URI = 'sqlite:///' + os.path.join(DATABASE_DIR, 'menu.db')
+
+    DATABASE_DIR = os.path.join(BASE_DIR, "database")
+    SQLALCHEMY_DATABASE_URI = "sqlite:///" + os.path.join(DATABASE_DIR, "menu.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {
         "connect_args": {"timeout": 30, "check_same_thread": False},
         "pool_pre_ping": True,
-        "pool_recycle": 1800
+        "pool_recycle": 1800,
     }
 
-    # 靜態檔案路徑
-    UPLOAD_FOLDER_MEMBER = os.path.join(BASE_DIR, 'static', 'member')
-    UPLOAD_FOLDER_MENU = os.path.join(BASE_DIR, 'static', 'menu')
+    UPLOAD_FOLDER_MEMBER = os.path.join(BASE_DIR, "static", "member")
+    UPLOAD_FOLDER_MENU = os.path.join(BASE_DIR, "static", "menu")
 
-    # AI 模型路徑
-    MODELS_DIR = os.path.join(BASE_DIR, 'models')
+    MODELS_DIR = os.path.join(BASE_DIR, "models")
     YUNET_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
     SFACE_MODEL = os.path.join(MODELS_DIR, "face_recognition_sface_2021dec.onnx")
     LOCAL_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 
-    # API Keys 與管理者資訊
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "1234")
-    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
-    
-    if not ADMIN_PASSWORD:
-    # 若未在 .env 設定，使用警告並生成一組較安全的隨機初始密碼（或直接報錯）
-      import secrets
-      ADMIN_PASSWORD = secrets.token_urlsafe(12)
-      print(f"\n⚠️  [安全警告] 未在 .env 設定 ADMIN_PASSWORD，已自動生成初始密碼: {ADMIN_PASSWORD}\n")
+    ADMIN_USERNAME = (os.getenv("ADMIN_USERNAME") or "admin").strip().strip('"').strip("'")
+    ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or "").strip().strip('"').strip("'")
 
-    # 備份與還原安全限制
+    if not ADMIN_PASSWORD:
+        ADMIN_PASSWORD = secrets.token_urlsafe(12)
+        print(f"\n⚠️  [安全警告] 未在 .env 設定 ADMIN_PASSWORD，已自動生成初始密碼: {ADMIN_PASSWORD}\n")
+
+    ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
+
     MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
     MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024
 
-    # 1. 禁止 JavaScript 存取 Session Cookie，防止 XSS 攻擊偷取管理員憑證
     SESSION_COOKIE_HTTPONLY = True
-
-    # 2. 防止跨站請求偽造（CSRF）
-    SESSION_COOKIE_SAMESITE = 'Lax'
-
-    # 3. 管理員閒置 30 分鐘自動過期登出（避免點餐機無人看管時後台一直開著）
-    PERMANENT_SESSION_LIFETIME = 1800
-    ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
+    SESSION_COOKIE_SAMESITE = "Lax"
+    PERMANENT_SESSION_LIFETIME = timedelta(seconds=1800)

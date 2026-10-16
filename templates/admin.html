@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>店家管理後台 - 自助點餐系統</title>
@@ -61,7 +62,7 @@
             color: #fff;
             box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
         }
-        .form-control::placeholder { color: #64748b; }
+        .form-control::placeholder { color: #94a3b8; opacity: 1; }
         .login-card {
             max-width: 420px;
             width: 100%;
@@ -140,7 +141,26 @@
         .bg-white .text-secondary {
             color: #475569 !important;
         }
-    </style>
+    
+        /* === 輸入框提示文字 / 下拉選單 / 自動填入 對比度修正 (防止文字與輸入框背景融合) === */
+        .form-control, .form-select { color-scheme: dark; }
+        .form-select { --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
+        .form-select option { background-color: #0f172a; color: #f8fafc; }
+        .form-select option:disabled { color: #8b98ad; }
+        .form-control:-webkit-autofill,
+        .form-control:-webkit-autofill:hover,
+        .form-control:-webkit-autofill:focus {
+            -webkit-text-fill-color: #f8fafc;
+            caret-color: #f8fafc;
+            -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
+            box-shadow: 0 0 0 1000px #0f172a inset !important;
+            transition: background-color 9999s ease-in-out 0s;
+        }
+        .form-control.bg-dark:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 1000px #212529 inset !important;
+            box-shadow: 0 0 0 1000px #212529 inset !important;
+        }
+</style>
 </head>
 <body>
 
@@ -155,6 +175,7 @@
             <p class="text-white-50 small mb-4">請輸入後台管理帳號與密碼</p>
 
             <form action="/admin" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3 text-start">
                     <label class="form-label small fw-bold text-white">管理員帳號</label>
                     <div class="input-group">
@@ -203,6 +224,7 @@
                 <a href="/admin/backup_system" class="btn btn-outline-warning btn-sm fw-bold ms-2 shadow-sm" onclick="return confirm('確定要下載資料庫 (menu.db)、會員相片與餐點照片的完整備份嗎？');">
                     <i class="bi bi-archive-fill me-1"></i> 備份系統與全相片
                 </a>
+                <a href="/pos" target="_blank" class="btn btn-warning btn-sm fw-bold text-dark ms-2"><i class="bi bi-pc-display-horizontal me-1"></i> 櫃檯 POS</a>
                 <a href="/kitchen" target="_blank" class="btn btn-outline-warning btn-sm fw-bold ms-2">
                     <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
                 </a>
@@ -250,9 +272,14 @@
                     <i class="bi bi-gift-fill me-1"></i> 回饋商城管理
                 </button>
             </li>
-            <li class="nav-item" role="presentation">
+            <li class="nav-item me-2" role="presentation">
                 <button class="nav-link" id="users-tab" data-bs-toggle="tab" data-bs-target="#users-pane" type="button" role="tab">
                     <i class="bi bi-people-fill me-1"></i> 會員名冊與紅利
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="audit-tab" data-bs-toggle="tab" data-bs-target="#audit-pane" type="button" role="tab">
+                    <i class="bi bi-shield-check me-1"></i> 操作稽核日誌
                 </button>
             </li>
         </ul>
@@ -266,7 +293,12 @@
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <h5 class="fw-bold text-warning mb-0">取餐 #{{ '%03d' % (order.pickup_number or order.id) }} <small class="text-white-50 fs-6">(單號 #{{ order.id }})</small></h5>
-                                <div class="d-flex gap-1">
+                                <div class="d-flex flex-wrap justify-content-end gap-1">
+                                    {% if order.order_source == 'POS' %}
+                                    <span class="badge bg-warning text-dark"><i class="bi bi-pc-display-horizontal me-1"></i>POS ({{ order.cashier_username or '櫃檯' }})</span>
+                                    {% else %}
+                                    <span class="badge bg-info text-dark"><i class="bi bi-phone me-1"></i>自助機</span>
+                                    {% endif %}
                                     <span class="badge bg-primary">{{ order.order_type }}</span>
                                     <span class="badge bg-secondary">{{ order.payment_method }}</span>
                                 </div>
@@ -306,7 +338,12 @@
 
                             <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
                                 <div>
-                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: ${{ (order.discount_amount or 0)|round|int }}</small>
+                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">
+                                        折抵: ${{ (order.discount_amount or 0)|round|int }}
+                                        {% if order.payment_method == 'Cash' and order.cash_received and order.cash_received > order.total_price %}
+                                        • 實收 ${{ order.cash_received }} / 找零 ${{ order.cash_change or 0 }}
+                                        {% endif %}
+                                    </small>
                                     <span class="text-white fw-bold fs-5">${{ order.total_price|round|int }}</span>
                                 </div>
                                 <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 {% if order.status == 'Pending' %}border-warning{% elif order.status == 'Completed' %}border-success{% elif order.status == 'PickedUp' %}border-secondary{% elif order.status == 'Cancelled' %}border-danger{% else %}border-info{% endif %}"></div>
@@ -547,9 +584,10 @@
                                                     onclick="openEditModal(this)">
                                                 <i class="bi bi-pencil-square"></i> 編輯
                                             </button>
-                                            <a href="/admin/delete/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
-                                                <i class="bi bi-trash"></i> 刪除
-                                            </a>
+                                            <form action="/admin/delete/{{ item.id }}" method="POST" class="d-inline" onsubmit="return confirm('確定要刪除品項【{{ item.name }}】嗎？')">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                            </form>
                                         </div>
                                     </td>
                                 {% endfor %}
@@ -638,9 +676,10 @@
                                                         onclick="openEditComboModal(this)">
                                                     <i class="bi bi-pencil-square"></i> 編輯
                                                 </button>
-                                                <a href="/admin/delete_combo/{{ combo.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除套餐組合【{{ combo.name }}】嗎？')">
-                                                    <i class="bi bi-trash"></i> 刪除
-                                                </a>
+                                                <form action="/admin/delete_combo/{{ combo.id }}" method="POST" class="d-inline" onsubmit="return confirm('確定要刪除套餐組合【{{ combo.name }}】嗎？')">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                                </form>
                                             </td>
                                         </tr>
                                     {% endfor %}
@@ -720,9 +759,10 @@
                                                 onclick="openEditCouponModal(this)">
                                             <i class="bi bi-pencil-square"></i> 編輯
                                         </button>
-                                    <a href="/admin/delete_coupon/{{ cp.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
-                                        <i class="bi bi-trash"></i> 刪除
-                                    </a>
+                                    <form action="/admin/delete_coupon/{{ cp.id }}" method="POST" class="d-inline" onsubmit="return confirm('確定要刪除優惠券【{{ cp.title }}】嗎？')">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                    </form>
                                 </td>
                                 </tr>
                                 {% endfor %}
@@ -800,9 +840,10 @@
                                                 onclick="openEditModal(this)">
                                             <i class="bi bi-gear-fill"></i> 修改點數
                                         </button>
-                                        <a href="/admin/remove_reward/{{ item.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要將【{{ item.name }}】從回饋商城下架嗎？')">
-                                            <i class="bi bi-x-circle"></i> 下架
-                                        </a>
+                                        <form action="/admin/remove_reward/{{ item.id }}" method="POST" class="d-inline" onsubmit="return confirm('確定要將【{{ item.name }}】從回饋商城下架嗎？')">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-x-circle"></i> 下架</button>
+                                        </form>
                                     </td>
                                 </tr>
                                 {% endfor %}
@@ -816,6 +857,7 @@
             <div class="tab-pane fade" id="users-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4" style="background: #182234; border: 1px solid rgba(255,255,255,0.08);">
                     <form action="/admin/update_reward_setting" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <div class="d-flex justify-content-between align-items-center mb-3">
                             <div class="d-flex align-items-center gap-2">
                                 <i class="bi bi-sliders text-warning fs-5"></i>
@@ -921,10 +963,128 @@
                                                 onclick="openEditUserModal(this)">
                                             <i class="bi bi-pencil-square"></i> 編輯
                                         </button>
-                                        <a href="/admin/delete_user/{{ u.id }}" class="btn btn-outline-danger btn-sm" onclick="return confirm('確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？')">
-                                            <i class="bi bi-trash"></i> 刪除
-                                        </a>
+                                        <form action="/admin/delete_user/{{ u.id }}" method="POST" class="d-inline" onsubmit="return confirm('確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？')">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                        </form>
                                     </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. 操作稽核日誌 (StaffAuditLog & AdminLog) -->
+            <div class="tab-pane fade" id="audit-pane" role="tabpanel">
+                <div class="card card-custom p-4 mb-4">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1 text-warning"><i class="bi bi-shield-check me-2"></i>員工關鍵操作與點數異動稽核日誌</h5>
+                            <small class="text-white-50">自動記錄 POS 收銀建單、會員點數代扣/補發、取消訂單回滾、重設 PIN 碼與刪除資料等操作</small>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <input type="text" id="auditSearchInput" class="form-control form-control-sm" style="width: 220px;" placeholder="搜尋員工、單號或內容..." oninput="filterAuditTable()">
+                            <select id="auditActionFilter" class="form-select form-select-sm" style="width: 170px;" onchange="filterAuditTable()">
+                                <option value="all">所有操作類型</option>
+                                <option value="POS_CREATE_ORDER">POS 收銀建單</option>
+                                <option value="CANCEL_ORDER">取消訂單回滾</option>
+                                <option value="MARK_PICKED_UP">櫃檯取餐核銷</option>
+                                <option value="EDIT_USER">修改會員/點數</option>
+                                <option value="POS_SET_MEMBER_PIN">櫃檯設定PIN碼</option>
+                                <option value="DELETE_USER">刪除會員</option>
+                                <option value="DELETE_MENU_ITEM">刪除菜單品項</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive" style="max-height: 55vh; overflow-y: auto;">
+                        <table class="table table-dark-custom align-middle mb-0" id="staffAuditTable">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>時間</th>
+                                    <th>操作員工 (角色)</th>
+                                    <th>動作類型</th>
+                                    <th>關聯單號 / 會員ID</th>
+                                    <th>點數異動</th>
+                                    <th>詳細稽核說明</th>
+                                    <th>IP 位址</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for au in audit_logs %}
+                                <tr class="audit-row" data-action="{{ au.action_type }}">
+                                    <td class="text-white-50 small text-nowrap">{{ au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else '' }}</td>
+                                    <td>
+                                        <span class="fw-bold text-white">{{ au.staff_username }}</span>
+                                        <span class="badge bg-secondary ms-1">{{ au.staff_role }}</span>
+                                    </td>
+                                    <td>
+                                        {% if au.action_type == 'POS_CREATE_ORDER' %}
+                                        <span class="badge bg-warning text-dark">POS 收銀建單</span>
+                                        {% elif au.action_type == 'CANCEL_ORDER' %}
+                                        <span class="badge bg-danger">取消訂單回滾</span>
+                                        {% elif au.action_type == 'MARK_PICKED_UP' %}
+                                        <span class="badge bg-success">取餐核銷</span>
+                                        {% elif au.action_type in ['EDIT_USER', 'POS_SET_MEMBER_PIN'] %}
+                                        <span class="badge bg-info text-dark">{{ '櫃檯設定PIN' if au.action_type == 'POS_SET_MEMBER_PIN' else '修改會員/點數' }}</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">{{ au.action_type }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="small">
+                                        {% if au.target_order_id %}<span class="badge bg-dark border border-secondary me-1">單號 #{{ au.target_order_id }}</span>{% endif %}
+                                        {% if au.target_user_id %}<span class="badge bg-dark border border-warning text-warning">會員 #{{ au.target_user_id }}</span>{% endif %}
+                                        {% if not au.target_order_id and not au.target_user_id %}<span class="text-white-50">-</span>{% endif %}
+                                    </td>
+                                    <td class="fw-bold">
+                                        {% if au.points_delta and au.points_delta > 0 %}
+                                        <span class="text-success">+{{ au.points_delta }} 點</span>
+                                        {% elif au.points_delta and au.points_delta < 0 %}
+                                        <span class="text-danger">{{ au.points_delta }} 點</span>
+                                        {% else %}
+                                        <span class="text-white-50">0</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="small text-white">{{ au.details }}</td>
+                                    <td class="small text-white-50">{{ au.ip_address or '-' }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center text-white-50 py-4">目前尚無操作稽核紀錄</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="card card-custom p-4">
+                    <h6 class="fw-bold text-white mb-3"><i class="bi bi-door-open text-info me-2"></i>後台登入 / 登出日誌 (最近 100 筆)</h6>
+                    <div class="table-responsive" style="max-height: 35vh; overflow-y: auto;">
+                        <table class="table table-dark-custom table-sm align-middle mb-0">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>ID</th>
+                                    <th>員工帳號</th>
+                                    <th>登入時間</th>
+                                    <th>登出時間</th>
+                                    <th>IP 位址</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for lg in admin_logs %}
+                                <tr>
+                                    <td class="text-white-50">#{{ lg.id }}</td>
+                                    <td class="fw-bold text-white">{{ lg.username }}</td>
+                                    <td class="small text-info">{{ lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '' }}</td>
+                                    <td class="small text-white-50">{{ lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '尚未登出' }}</td>
+                                    <td class="small text-white-50">{{ lg.ip_address or '-' }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center text-white-50 py-3">尚無登入紀錄</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -944,6 +1104,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form action="/admin/add_coupon" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">優惠券名稱</label>
@@ -1008,6 +1169,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form action="/admin/add_reward" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">選擇菜單品項</label>
@@ -1045,6 +1207,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="addItemForm" action="/admin/add" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">餐點名稱</label>
@@ -1143,6 +1306,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="editItemForm" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="from_tab" id="edit-from-tab" value="rewards">
                     
                     <div class="modal-body p-4">
@@ -1264,6 +1428,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form action="/admin/add_combo" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
@@ -1366,6 +1531,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="editComboForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">關聯主餐 (Main Item)</label>
@@ -1467,6 +1633,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form action="/admin/import_excel" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <p class="small text-white-50">請上傳包含 <code>name, category, price, modifiers, description</code> 等欄位的 <code>.xlsx</code> 或 <code>.csv</code> 檔案。</p>
                         <input type="file" class="form-control" name="file" accept=".xlsx, .xls, .csv" required>
@@ -1509,6 +1676,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="editUserForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">會員姓名</label>
@@ -1522,6 +1690,10 @@
                             <label class="form-label small fw-bold">紅利點數 (點)</label>
                             <input type="number" min="0" class="form-control" name="points" id="edit-user-points" min="0" required>
                             <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">重設手機登入 PIN 碼 (選填，4~6位數字)</label>
+                            <input type="password" class="form-control" name="pin" id="edit-user-pin" placeholder="不修改請留空" pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6">
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -1557,6 +1729,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form id="editCouponForm" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold">優惠券名稱</label>
@@ -1620,6 +1793,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <form action="/admin/export_excel" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <div class="modal-body p-4">
                         <p class="small text-white-50">請勾選欲匯出的資料表 (每個選中的 Table 將產生獨立的 Excel 工作表)：</p>
                         
@@ -1713,6 +1887,7 @@
                         <!-- ------------------------------------------------------------- -->
                         <div class="tab-pane fade show active" id="pane-restore-zip" role="tabpanel">
                             <form action="/admin/restore_backup" method="POST" enctype="multipart/form-data" onsubmit="return confirm('⚠️ 警告：系統還原將依下方設定覆寫現有檔案與紀錄，確定要繼續執行嗎？');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <div class="mb-3">
                                     <label class="form-label small fw-bold text-warning">選擇系統備份壓縮檔 (ZIP File)</label>
                                     <input type="file" class="form-control" name="backup_zip" accept=".zip" required>
@@ -1774,6 +1949,7 @@
                         <!-- ------------------------------------------------------------- -->
                         <div class="tab-pane fade" id="pane-import-excel" role="tabpanel">
                             <form action="/admin/import_smart" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <div class="mb-3">
                                     <label class="form-label small fw-bold text-info">選擇 Excel 試算表檔案</label>
                                     <input type="file" class="form-control" name="file" accept=".xlsx, .xls" required>
@@ -1802,10 +1978,44 @@
     <script src="https://cdn.jsdelivr.net/npm/cropperjs@1.6.2/dist/cropper.min.js"></script>
 
 <script>
+    const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    const _origFetch = window.fetch;
+    window.fetch = function(input, init = {}) {
+        init.headers = init.headers || {};
+        if (CSRF_TOKEN) {
+            if (init.headers instanceof Headers) {
+                init.headers.set('X-CSRFToken', CSRF_TOKEN);
+            } else {
+                init.headers['X-CSRFToken'] = CSRF_TOKEN;
+            }
+        }
+        return _origFetch(input, init);
+    };
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
 
 const menuCategories = [...new Set(JSON.parse('{{ items | map(attribute="category") | reject("none") | list | tojson | safe }}'))];
 const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojson | safe }}');
-    function autoExpandTextarea(el) {
+    function filterAuditTable() {
+    const q = (document.getElementById('auditSearchInput')?.value || '').trim().toLowerCase();
+    const act = document.getElementById('auditActionFilter')?.value || 'all';
+    document.querySelectorAll('#staffAuditTable .audit-row').forEach(row => {
+        const matchAct = (act === 'all') || (row.dataset.action === act);
+        const matchText = !q || row.innerText.toLowerCase().includes(q);
+        row.style.display = (matchAct && matchText) ? '' : 'none';
+    });
+}
+
+function autoExpandTextarea(el) {
         if (!el) return;
         el.style.height = 'auto';
         el.style.height = el.scrollHeight + 'px';
@@ -2034,8 +2244,8 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
                             ${coupons.map(c => `
                                 <tr>
                                     <td>
-                                        <div class="fw-bold text-white">${c.title}</div>
-                                        <small class="text-warning">代碼: ${c.code}</small>
+                                        <div class="fw-bold text-white">${escapeHtml(c.title)}</div>
+                                        <small class="text-warning">代碼: ${escapeHtml(c.code)}</small>
                                     </td>
                                     <td>
                                         ${c.is_used 
@@ -2043,7 +2253,7 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
                                             : '<span class="badge bg-success text-white">未使用 (Available)</span>'}
                                     </td>
                                     <td class="text-end">
-                                        <button type="button" class="btn btn-sm ${c.is_used ? 'btn-outline-success' : 'btn-outline-secondary'}" onclick="toggleCouponStatus(${c.id}, '${userName}')">
+                                        <button type="button" class="btn btn-sm ${c.is_used ? 'btn-outline-success' : 'btn-outline-secondary'}" onclick="toggleCouponStatus(${Number(c.id)}, '${escapeHtml(userName)}')">
                                             ${c.is_used ? '設為可用' : '設為已核銷'}
                                         </button>
                                     </td>
@@ -2470,10 +2680,13 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
                     <div class="col-12 col-md-6 col-lg-4">
                         <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${borderClass}">
                             <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">取餐 #${String(order.pickup_number || order.id).padStart(3, '0')} <small class="text-white-50 fs-6">(單號 #${order.id})</small></h5>
-                                <div class="d-flex gap-1">
-                                    <span class="badge bg-primary">${order.order_type}</span>
-                                    <span class="badge bg-secondary">${order.payment_method}</span>
+                                <h5 class="fw-bold text-warning mb-0">取餐 #${escapeHtml(String(order.pickup_number || order.id).padStart(3, '0'))} <small class="text-white-50 fs-6">(單號 #${escapeHtml(order.id)})</small></h5>
+                                <div class="d-flex flex-wrap justify-content-end gap-1">
+                                    ${order.order_source === 'POS'
+                                        ? `<span class="badge bg-warning text-dark"><i class="bi bi-pc-display-horizontal me-1"></i>POS (${escapeHtml(order.cashier_username || '櫃檯')})</span>`
+                                        : `<span class="badge bg-info text-dark"><i class="bi bi-phone me-1"></i>自助機</span>`}
+                                    <span class="badge bg-primary">${escapeHtml(order.order_type)}</span>
+                                    <span class="badge bg-secondary">${escapeHtml(order.payment_method)}</span>
                                 </div>
                             </div>
 
@@ -2482,12 +2695,12 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
                                 <span class="badge ${order.need_cutlery ? 'bg-success' : 'bg-secondary'}">
                                     ${order.need_cutlery ? '要餐具' : '不用餐具'}
                                 </span>
-                                ${order.note ? `<div class="small text-warning mt-1">備註：${order.note}</div>` : ''}
+                                ${order.note ? `<div class="small text-warning mt-1">備註：${escapeHtml(order.note)}</div>` : ''}
                             </div>` : ''}
 
                             <div class="text-white-50 small mb-2 d-flex justify-content-between">
-                                <span><i class="bi bi-person me-1"></i>${order.user_name}</span>
-                                <span><i class="bi bi-clock me-1"></i>${order.created_at}</span>
+                                <span><i class="bi bi-person me-1"></i>${escapeHtml(order.user_name)}</span>
+                                <span><i class="bi bi-clock me-1"></i>${escapeHtml(order.created_at)}</span>
                             </div>
 
                             <hr class="border-secondary my-2">
@@ -2496,8 +2709,8 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
                                 ${order.items.map(item => `
                                     <div class="d-flex justify-content-between align-items-start mb-2">
                                         <div>
-                                            <div class="text-white small fw-bold">${item.item_name} x ${item.quantity}</div>
-                                            ${item.customization ? `<small class="text-danger d-block" style="font-size: 0.75rem;">${item.customization}</small>` : ''}
+                                            <div class="text-white small fw-bold">${escapeHtml(item.item_name)} x ${Number(item.quantity)}</div>
+                                            ${item.customization ? `<small class="text-danger d-block" style="font-size: 0.75rem;">${escapeHtml(item.customization)}</small>` : ''}
                                         </div>
                                         <div class="text-white-50 small">$${Math.round(item.price * item.quantity)}</div>
                                     </div>
@@ -2506,7 +2719,12 @@ const menuItemsList = JSON.parse('{{ items | map(attribute="name") | list | tojs
 
                             <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary mt-auto">
                                 <div>
-                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">折抵: $${Math.round(order.discount_amount)}</small>
+                                    <small class="text-white-50 d-block" style="font-size:0.75rem;">
+                                        折抵: $${Math.round(order.discount_amount)}
+                                        ${(order.payment_method === 'Cash' && order.cash_received > order.total_price)
+                                            ? ` • 實收 $${Math.round(order.cash_received)} / 找零 $${Math.round(order.cash_change || 0)}`
+                                            : ''}
+                                    </small>
                                     <span class="text-white fw-bold fs-5">$${Math.round(order.total_price)}</span>
                                 </div>
                                 <div style="min-width: 130px;">
@@ -2812,6 +3030,7 @@ document.addEventListener("DOMContentLoaded", function () {
         'analytics': 'analytics-tab',
         'rewards': 'rewards-tab',
         'users': 'users-tab',
+        'audit': 'audit-tab',
         'orders': 'orders-tab'
     };
 

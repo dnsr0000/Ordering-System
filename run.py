@@ -27,4 +27,6 @@ if __name__ == '__main__':
     print("店家後台: http://127.0.0.1:5000/admin")
     print("="*50 + "\n")
 
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    is_debug = os.getenv("FLASK_DEBUG", "0") == "1"
+    bind_host = os.getenv("FLASK_HOST", "127.0.0.1" if is_debug else "0.0.0.0")
+    app.run(host=bind_host, port=5000, debug=is_debug, use_reloader=False)

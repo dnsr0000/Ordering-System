@@ -89,7 +89,8 @@
             box-shadow: 0 0 0 0.2rem rgba(245, 158, 11, 0.25);
         }
         .form-control::placeholder {
-            color: #64748b;
+            color: #94a3b8;
+            opacity: 1;
         }
         .cart-list-box {
             max-height: 28vh;
@@ -162,7 +163,6 @@
             }
         }
     
-        /* === 配色與對比度修正 (防止背景與文字顏色融合) === */
         .card:not(.text-dark):not(.light-card),
         .card-custom,
         .login-card,
@@ -244,7 +244,26 @@
         .thermal-receipt .bg-light {
             background-color: #f1f5f9 !important;
         }
-    </style>
+    
+        /* === 輸入框提示文字 / 下拉選單 / 自動填入 對比度修正 (防止文字與輸入框背景融合) === */
+        .form-control, .form-select { color-scheme: dark; }
+        .form-select { --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
+        .form-select option { background-color: #0f172a; color: #f8fafc; }
+        .form-select option:disabled { color: #8b98ad; }
+        .form-control:-webkit-autofill,
+        .form-control:-webkit-autofill:hover,
+        .form-control:-webkit-autofill:focus {
+            -webkit-text-fill-color: #f8fafc;
+            caret-color: #f8fafc;
+            -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
+            box-shadow: 0 0 0 1000px #0f172a inset !important;
+            transition: background-color 9999s ease-in-out 0s;
+        }
+        .form-control.bg-dark:-webkit-autofill {
+            -webkit-box-shadow: 0 0 0 1000px #212529 inset !important;
+            box-shadow: 0 0 0 1000px #212529 inset !important;
+        }
+</style>
 </head>
 <body>
 

@@ -3,6 +3,7 @@ from app.extensions import db
 from app.models.user import User
 from app.models.tenant import TenantScoped
 
+
 class Order(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, nullable=True)
@@ -11,6 +12,10 @@ class Order(TenantScoped, db.Model):
     total_price = db.Column(db.Integer, nullable=False)
     payment_method = db.Column(db.String(50), default='Cash')
     order_type = db.Column(db.String(50), default='內用')
+    order_source = db.Column(db.String(30), default='Kiosk')
+    cashier_username = db.Column(db.String(100), default='')
+    cash_received = db.Column(db.Integer, default=0)
+    cash_change = db.Column(db.Integer, default=0)
     need_cutlery = db.Column(db.Boolean, default=True)
     note = db.Column(db.String(200), default='')
     status = db.Column(db.String(50), default='Pending')
@@ -29,9 +34,12 @@ class Order(TenantScoped, db.Model):
             return db.session.get(User, self.user_id)
         return None
 
+
 class OrderItem(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
+    menu_item_id = db.Column(db.Integer, nullable=True)
+    combo_option_id = db.Column(db.Integer, nullable=True)
     item_name = db.Column(db.String(100), nullable=False)
     price = db.Column(db.Integer, nullable=False)
     quantity = db.Column(db.Integer, default=1)

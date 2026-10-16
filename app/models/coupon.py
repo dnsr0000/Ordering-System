@@ -2,9 +2,13 @@ from datetime import datetime
 from app.extensions import db
 from app.models.tenant import TenantScoped
 
+
 class Coupon(TenantScoped, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint('tenant_id', 'code', name='uq_coupon_tenant_code'),
+    )
     id = db.Column(db.Integer, primary_key=True)
-    code = db.Column(db.String(50), unique=True, nullable=False)
+    code = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(100), nullable=False)
     discount_type = db.Column(db.String(20), default='fixed')
     discount_value = db.Column(db.Float, nullable=False)
@@ -13,11 +17,14 @@ class Coupon(TenantScoped, db.Model):
     reward_discount_points = db.Column(db.Integer, default=0)
     is_reward = db.Column(db.Boolean, default=True)
     per_user_limit = db.Column(db.Integer, default=0)
+
     @property
     def limit_display(self):
         if not self.per_user_limit or self.per_user_limit <= 0:
             return "無上限"
         return f"{self.per_user_limit}次"
+
+
 class UserCoupon(TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)

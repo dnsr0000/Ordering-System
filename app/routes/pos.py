@@ -12,6 +12,7 @@ from app.services.order_service import (
 from app.services.event_bus import order_event_bus
 from app.services.ai_service import invalidate_ai_advice
 from app.routes.common import record_staff_audit
+from app.routes.auth import clear_pin_lockout
 from app.utils import (
     role_required, rate_limit, safe_int,
     ALLOWED_PAYMENT_METHODS, ALLOWED_ORDER_TYPES
@@ -150,6 +151,7 @@ def api_pos_set_member_pin():
         return jsonify({'success': False, 'message': '查無此會員！'}), 404
 
     user.set_pin(pin)
+    clear_pin_lockout(g.tenant_id, user.phone)
     record_staff_audit(
         action_type='POS_SET_MEMBER_PIN',
         target_user_id=user.id,
