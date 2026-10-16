@@ -6,6 +6,11 @@ from app.models.menu import ComboOption, ModifierOption
 from app.models.user import RewardSetting
 from app.models.tenant import Tenant, StaffAccount
 from app.config import Config
+from werkzeug.security import generate_password_hash
+import secrets
+import string
+
+
 
 def run_database_migrations():
     """
@@ -46,20 +51,35 @@ def run_database_migrations():
             ))
         db.session.commit()
 
-        # Convert the legacy environment-based admin credential into a tenant owner.
-        bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
-            username=Config.ADMIN_USERNAME
-        ).first()
-        if not bootstrap_account:
-            db.session.add(StaffAccount(
-                tenant_id=default_tenant.id,
-                username=Config.ADMIN_USERNAME,
-                password_hash=Config.ADMIN_PASSWORD_HASH,
-                role='owner',
-                is_active=True
-            ))
-            db.session.commit()
+        
+        bootstrap_account = (
+            StaffAccount.query.execution_options(skip_tenant_filter=True)
+            .filter_by(username=Config.ADMIN_USERNAME)
+            .first()
+        )
+     
 
+
+        if not bootstrap_account:
+          db.session.add(
+              StaffAccount(
+                  tenant_id=default_tenant.id,
+                  username=Config.ADMIN_USERNAME,
+                  password_hash=Config.ADMIN_PASSWORD_HASH,
+                  role="owner",
+                  is_active=True,
+              )
+          )
+          db.session.commit()
+          print(f"✅ 成功初始化管理員帳號: {Config.ADMIN_USERNAME}")
+        else:
+          # 2. 關鍵修正：若帳號已存在，直接覆寫刷新資料庫密碼
+          bootstrap_account.password_hash = Config.ADMIN_PASSWORD_HASH
+          db.session.commit()
+          print(
+              f"🔄 已同步刷新管理員 [{Config.ADMIN_USERNAME}]"
+              " 的密碼至資料庫！"
+          )
         # ======================================================================
         # 1. 檢查 User 資料表
         # ======================================================================
