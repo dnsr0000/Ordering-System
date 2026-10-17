@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, send_file, g
 from werkzeug.utils import secure_filename
 from openpyxl.styles import Font
-
 from app.config import Config
 from app.extensions import db
 from app.models.user import User, AdminLog, StaffAuditLog, CustomerLog, RewardSetting
@@ -20,7 +19,7 @@ from app.models.tenant import Tenant, StaffAccount
 from app.services.cv_service import save_and_fix_image
 from app.services.order_service import (
     update_popular_items, sanitize_discount_value, 
-    cancel_order_and_rollback, build_order_analytics
+    cancel_order_and_rollback, build_order_analytics,change_order_status
 )
 from app.services.ai_service import generate_ai_business_advice, _AI_ADVICE_STATE, run_local_slm, fallback_menu_description
 from app.services.event_bus import order_event_bus
@@ -714,49 +713,20 @@ def update_reward_setting():
 # ==============================================================================
 # 訂單狀態更新
 # ==============================================================================
-@admin_bp.route('/admin/update_order_status/<int:id>', methods=['POST'])
-@role_required('owner', 'manager', 'staff')
-def update_order_status(id):
-    order = Order.query.get_or_404(id)
-    payload = request.get_json(silent=True) or {}
-    new_status = payload.get('status') or request.form.get('status')
-
-    if new_status == 'Cancelled':
-        pts_before = order.user.points if order.user else 0
-        success, msg = cancel_order_and_rollback(order)
-        if not success:
-            return jsonify({'error': msg, 'message': msg}), 400
-        pts_after = order.user.points if order.user else 0
-        record_staff_audit(
-            action_type='CANCEL_ORDER',
-            target_order_id=order.id,
-            target_user_id=order.user_id,
-            points_delta=(pts_after - pts_before),
-            details=f"後台取消訂單 #{order.id} (取餐 #{order.pickup_number}) 並回滾庫存與點數"
-        )
-        db.session.commit()
-        return jsonify({'message': msg, 'status': 'Cancelled'})
-
-    if order.status == 'Cancelled':
-        return jsonify({'error': '已取消的訂單無法變更狀態！', 'message': '已取消的訂單無法變更狀態！'}), 400
-
-    if new_status in ['Pending', 'Completed', 'PickedUp']:
-        order.status = new_status
-        if new_status == 'Completed' and not order.completed_at:
-            order.completed_at = datetime.now()
-        if new_status == 'PickedUp':
-            record_staff_audit(
-                action_type='MARK_PICKED_UP',
-                target_order_id=order.id,
-                target_user_id=order.user_id,
-                details=f"後台核銷取餐：單號 #{order.id}"
-            )
-        db.session.commit()
-        _AI_ADVICE_STATE['last_signature'] = None
-        order_event_bus.notify()
-        return jsonify({'message': '狀態更新成功', 'status': new_status})
-    return jsonify({'error': '無效狀態'}), 400
-
+@admin_bp.route('/admin/update_order_status/<int:order_id>', methods=['POST'])
+@role_required('owner', 'manager')
+def admin_update_order_status(order_id):
+    """後台管理員或店長變更訂單狀態（如取消訂單回滾）"""
+    data = request.get_json() or {}
+    status = data.get('status')
+    
+    result, status_code = change_order_status(
+        order_id=order_id,
+        target_status=status,
+        staff_account=g.staff_account,
+        tenant_id=g.tenant_id
+    )
+    return jsonify(result), status_code
 
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
 @role_required('owner')

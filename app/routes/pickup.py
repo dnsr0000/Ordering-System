@@ -6,6 +6,7 @@ from app.models.order import Order
 from app.services.event_bus import order_event_bus
 from app.routes.common import record_staff_audit
 from app.utils import role_required
+from app.services.order_service import change_order_status
 
 pickup_bp = Blueprint('pickup', __name__)
 
@@ -52,27 +53,17 @@ def api_counter_orders():
         'preparing_orders': preparing_orders
     })
 
-
-@pickup_bp.route('/api/mark_picked_up/<int:id>', methods=['POST'])
+@pickup_bp.route('/api/mark_picked_up/<int:order_id>', methods=['POST'])
 @role_required('owner', 'manager', 'staff')
-def api_mark_picked_up(id):
-    order = Order.query.get_or_404(id)
-    if order.status != 'Completed':
-        return jsonify({
-            'success': False,
-            'message': f'訂單目前狀態為 {order.status}，只有已出餐 (Completed) 的訂單可核銷取餐！'
-        }), 400
-
-    order.status = 'PickedUp'
-    record_staff_audit(
-        action_type='MARK_PICKED_UP',
-        target_order_id=order.id,
-        target_user_id=order.user_id,
-        details=f"核銷取餐：取餐編號 #{order.pickup_number} (單號 #{order.id})"
+def api_mark_picked_up(order_id):
+    """櫃檯人員核銷取餐完成（狀態流轉為 PickedUp）"""
+    result, status_code = change_order_status(
+        order_id=order_id,
+        target_status='PickedUp',
+        staff_account=g.staff_account,
+        tenant_id=g.tenant_id
     )
-    db.session.commit()
-    order_event_bus.notify()
-    return jsonify({'success': True, 'message': f'取餐編號 #{order.pickup_number} 已完成取餐！'})
+    return jsonify(result), status_code
 
 
 @pickup_bp.route('/api/orders_stream')
