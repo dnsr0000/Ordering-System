@@ -65,7 +65,6 @@ def decode_feature_bytes_safely(raw_bytes):
         return None
     return None
 
-
 class SafeFeatureType(TypeDecorator):
     """SQLAlchemy 自訂資料庫欄位型別，對接 LargeBinary 並在 ORM 層透明加解密"""
     impl = LargeBinary
@@ -121,9 +120,13 @@ class User(TenantScoped, db.Model):
     last_logout_at = db.Column(db.DateTime, nullable=True)
 
     def set_pin(self, pin_str):
-        """將純數字 PIN 進行 Hash 雜湊處理後寫入"""
+        """將純數字 PIN 進行驗證與 Hash 雜湊處理後寫入"""
         if pin_str:
-            self.pin_hash = generate_password_hash(str(pin_str).strip())
+            clean_pin = str(pin_str).strip()
+            from app.utils import validate_pin
+            if not validate_pin(clean_pin):
+                raise ValueError("安全 PIN 碼必須為 4 至 6 位純數字！")
+            self.pin_hash = generate_password_hash(clean_pin)
 
     def check_pin(self, pin_str):
         """核對輸入之 PIN 碼是否相符"""

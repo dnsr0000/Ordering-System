@@ -1,35 +1,36 @@
 import os
-import io
 import time
-import zipfile
 import re
-import unicodedata
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, send_file, g
-from werkzeug.utils import secure_filename
-from openpyxl.styles import Font
 from app.config import Config
 from app.extensions import db
-from app.models.user import User, AdminLog, StaffAuditLog, CustomerLog, RewardSetting
+from app.models.user import User, AdminLog, StaffAuditLog, RewardSetting
 from app.models.menu import MenuItem, ComboOption, ModifierOption
-from app.models.order import Order, OrderItem
+from app.models.order import Order
 from app.models.coupon import Coupon, UserCoupon
 from app.models.tenant import Tenant, StaffAccount
 from app.services.cv_service import save_and_fix_image
 from app.services.order_service import (
     update_popular_items, sanitize_discount_value, 
-    cancel_order_and_rollback, build_order_analytics,change_order_status
+    build_order_analytics, set_item_reward_status
 )
 from app.services.ai_service import generate_ai_business_advice, _AI_ADVICE_STATE, run_local_slm, fallback_menu_description
-from app.services.event_bus import order_event_bus
 from app.routes.common import record_staff_audit
 from app.routes.auth import clear_pin_lockout
-from app.utils import admin_required, role_required, rate_limit, js_alert_redirect, safe_int
-
+from app.utils import role_required, rate_limit, js_alert_redirect, safe_int, validate_pin, validate_phone
+from app.services.backup_service import (
+    create_full_backup_zip,
+    restore_system_backup,
+    generate_excel_export,
+    upsert_menu_items_from_df,
+    clean_phone_number,
+    parse_bool,
+    parse_per_user_limit
+)
 
 ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
-
 admin_bp = Blueprint('admin', __name__)
 
 
@@ -300,7 +301,6 @@ def add_item():
         db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
-
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
 @role_required('owner', 'manager')
 def edit_item(id):
@@ -323,14 +323,7 @@ def edit_item(id):
         reward_points = max(0, int(request.form.get('reward_points') or 0))
         reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
 
-        if is_reward:
-            if reward_points <= 0:
-                return "<script>alert('❌ 啟用紅利兌換時，「兌換所需點數」必須大於 0！'); window.history.back();</script>", 400
-            if reward_points > item_price:
-                return f"<script>alert('❌ 兌換所需點數 ({reward_points} 點) 不得高於原單價 (${item_price})！'); window.history.back();</script>", 400
-            if reward_discount_points > 0 and reward_discount_points >= reward_points:
-                return "<script>alert('❌ 「限時優惠點數」必須小於「兌換所需點數」！'); window.history.back();</script>", 400
-
+        # 基本品項欄位更新
         item.name = name
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
@@ -347,9 +340,18 @@ def edit_item(id):
         item.add_on_price = add_on_price
         item.addon_trigger_type = request.form.get('addon_trigger_type', 'any')
         item.addon_trigger_target = request.form.get('addon_trigger_target', '').strip()
-        item.is_reward = is_reward
-        item.reward_points = reward_points
-        item.reward_discount_points = reward_discount_points
+
+        # 委派 Service 統一處理紅利上下架規則、價格防呆與稽核日誌
+        r_res, r_code = set_item_reward_status(
+            item_id=item.id,
+            is_reward=is_reward,
+            reward_points=reward_points,
+            reward_discount_points=reward_discount_points,
+            tenant_id=g.tenant_id
+        )
+        if r_code != 200:
+            db.session.rollback()
+            return f"<script>alert('❌ {r_res['message']}'); window.history.back();</script>", 400
 
         image = request.files.get('image')
         if image and image.filename != '':
@@ -362,7 +364,6 @@ def edit_item(id):
             store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
             os.makedirs(store_upload_dir, exist_ok=True)
 
-            # 刪除舊圖片以節省磁碟空間
             if item.image_path:
                 old_path = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
                 if os.path.exists(old_path):
@@ -373,8 +374,6 @@ def edit_item(id):
 
             filepath = os.path.join(store_upload_dir, image_filename)
             save_and_fix_image(image, filepath)
-
-            # 資料庫存入相對路徑：例如 "1/menu_1720000000.jpg"
             item.image_path = f"{tenant_id}/{image_filename}"
 
         db.session.commit()
@@ -470,7 +469,7 @@ def add_combo():
     db.session.add(new_combo)
     db.session.commit()
     db.session.expire_all() 
-    return f"<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+    return "<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
 @role_required('owner', 'manager')
@@ -546,36 +545,32 @@ def delete_combo(id):
 @admin_bp.route('/admin/add_reward', methods=['POST'])
 @role_required('owner', 'manager')
 def add_reward():
-    #if not session.get('admin_logged_in'):
-     #   return redirect(url_for('admin.admin_dashboard'))
     item_id = request.form.get('item_id')
-    item = MenuItem.query.get_or_404(item_id)
-    item.is_reward = True
-    item.reward_points = max(0, int(request.form.get('reward_points') or 0))
-    item.reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
-    db.session.commit()
+    reward_points = request.form.get('reward_points')
+    reward_discount_points = request.form.get('reward_discount_points')
+
+    res, status_code = set_item_reward_status(
+        item_id=item_id,
+        is_reward=True,
+        reward_points=reward_points,
+        reward_discount_points=reward_discount_points,
+        tenant_id=g.tenant_id
+    )
+    if status_code != 200:
+        return jsonify(res), status_code
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
 @admin_bp.route('/admin/remove_reward/<int:id>', methods=['POST'])
 @role_required('owner', 'manager')
 def remove_reward_item(id):
-    item = MenuItem.query.get_or_404(id)
-    item.is_reward = False
-    item.reward_points = 0
-    item.reward_discount_points = 0
-    db.session.commit()
+    res, status_code = set_item_reward_status(
+        item_id=id,
+        is_reward=False,
+        tenant_id=g.tenant_id
+    )
+    if status_code != 200:
+        return jsonify(res), status_code
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
-
-def parse_per_user_limit(val):
-    if not val:
-        return 0
-    s = str(val).strip()
-    if s in ['無上限', '不限', '0', 'none', 'null']:
-        return 0
-    try:
-        return max(0, int(float(s)))
-    except (ValueError, TypeError):
-        return 0
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
 @role_required('owner', 'manager')
@@ -657,7 +652,7 @@ def edit_user(id):
     old_points = int(user.points or 0)
     new_name = (request.form.get('name') or user.name).strip()
     new_phone = (request.form.get('phone') or user.phone).strip()
-    if not re.match(r'^09\d{8}$', new_phone):
+    if not validate_phone(new_phone):
         return js_alert_redirect('❌ 手機號碼格式不正確！請輸入 09 開頭的 10 碼數字。', status=400)
     dup_user = User.query.filter(User.phone == new_phone, User.id != user.id).first()
     if dup_user:
@@ -667,7 +662,7 @@ def edit_user(id):
     user.points = max(0, safe_int(request.form.get('points'), 0))
     new_pin = (request.form.get('pin') or '').strip()
     if new_pin:
-        if not re.match(r'^\d{4,6}$', new_pin):
+        if not validate_pin(new_pin):
             return js_alert_redirect('❌ 重設之安全 PIN 碼必須為 4 至 6 位數字！', status=400)
         user.set_pin(new_pin)
         clear_pin_lockout(g.tenant_id, user.phone)
@@ -710,29 +705,11 @@ def update_reward_setting():
 
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
-# ==============================================================================
-# 訂單狀態更新
-# ==============================================================================
-@admin_bp.route('/admin/update_order_status/<int:order_id>', methods=['POST'])
-@role_required('owner', 'manager')
-def admin_update_order_status(order_id):
-    """後台管理員或店長變更訂單狀態（如取消訂單回滾）"""
-    data = request.get_json() or {}
-    status = data.get('status')
-    
-    result, status_code = change_order_status(
-        order_id=order_id,
-        target_status=status,
-        staff_account=g.staff_account,
-        tenant_id=g.tenant_id
-    )
-    return jsonify(result), status_code
 
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
 @role_required('owner')
 def restore_backup():
     file = request.files.get('backup_zip')
-    # 防呆兼顧測試腳本：未選檔案時回傳 403
     if not file or file.filename == '':
         return jsonify({
             'success': False,
@@ -750,470 +727,67 @@ def restore_backup():
     if not restore_db and not restore_photos and not restore_menu_photos:
         return "<script>alert('❌ 請至少勾選一項欲還原的項目！'); window.history.back();</script>", 400
 
-    db_path = os.path.abspath(os.path.join(Config.DATABASE_DIR, 'menu.db'))
-    member_dir = os.path.abspath(Config.UPLOAD_FOLDER_MEMBER)
-    menu_dir = os.path.abspath(Config.UPLOAD_FOLDER_MENU)
-
     try:
-        with zipfile.ZipFile(file, 'r') as zf:
-            namelist = zf.namelist()
-            restored_db_status = False
-            restored_photo_count = 0
-            restored_menu_photo_count = 0
-
-            # 1. 還原 SQLite 資料庫
-            if restore_db:
-                db_entry = next((n for n in namelist if os.path.basename(n.replace('\\', '/')) == 'menu.db'), None)
-                if db_entry:
-                    db_bytes = zf.read(db_entry)
-                    if db_bytes.startswith(b'SQLite format 3\x00'):
-                        db.session.remove()
-                        db.engine.dispose()
-                        with open(db_path, 'wb') as f:
-                            f.write(db_bytes)
-                        restored_db_status = True
-
-            # 2. 還原會員與餐點照片
-            for entry in namelist:
-                norm_entry = entry.replace('\\', '/')
-                if norm_entry.endswith('/'):
-                    continue
-                safe_name = secure_filename(os.path.basename(norm_entry))
-                if not safe_name:
-                    continue
-
-                parts = [p.lower() for p in norm_entry.split('/')[:-1]]
-                target_dir = None
-                if restore_photos and ('member' in parts):
-                    target_dir = member_dir
-                elif restore_menu_photos and ('menu' in parts):
-                    target_dir = menu_dir
-
-                if target_dir:
-                    dest_path = os.path.abspath(os.path.join(target_dir, safe_name))
-                    if os.path.commonpath([target_dir, dest_path]) == target_dir:
-                        if not os.path.exists(dest_path) or overwrite_photos:
-                            with open(dest_path, 'wb') as f_out:
-                                f_out.write(zf.read(entry))
-                            if target_dir == member_dir:
-                                restored_photo_count += 1
-                            else:
-                                restored_menu_photo_count += 1
-
-        msg = f"✅ 系統備份還原完成！\\n➤ 資料庫：{'已還原' if restored_db_status else '未更動'}\\n➤ 會員相片：{restored_photo_count} 張\\n➤ 餐點相片：{restored_menu_photo_count} 張"
+        db_restored, photo_count, menu_photo_count = restore_system_backup(
+            file, restore_db, restore_photos, restore_menu_photos, overwrite_photos
+        )
+        msg = f"✅ 系統備份還原完成！\\n➤ 資料庫：{'已還原' if db_restored else '未更動'}\\n➤ 會員相片：{photo_count} 張\\n➤ 餐點相片：{menu_photo_count} 張"
         return f"<script>alert('{msg}'); window.location.href='/admin';</script>", 200
-
     except Exception as e:
         return f"<script>alert('❌ 還原過程發生錯誤：{e}'); window.history.back();</script>", 500
 
-# ==============================================================================
 # Excel 匯出 (包含全部 8 個工作表與格式自適應)
-# ==============================================================================
 @admin_bp.route('/admin/export_excel', methods=['POST'])
 @role_required('owner', 'manager')
 def export_excel():
-    export_type = request.form.get('export_type', 'excel')
-
-    # 完整備份包匯出 (包含 SQLite 實體資料庫、會員照片與餐點照片)
-    if export_type == 'backup_zip':
-        try:
-            # 確保 SQLite WAL 交易日誌全部刷入實體檔案
-            db.session.execute(db.text("PRAGMA wal_checkpoint(TRUNCATE);"))
-            db.session.commit()
-
-            memory_file = io.BytesIO()
-            
-            # 動態取得當前資料庫實體路徑 (相容生產環境 menu.db 與測試環境 test_menu.db)
-            db_path = getattr(db.engine.url, 'database', None)
-            if db_path and not os.path.exists(db_path):
-                db_path = None
-            if not db_path:
-                for candidate in ('menu.db', 'test_menu.db'):
-                    p = os.path.join(Config.DATABASE_DIR, candidate)
-                    if os.path.exists(p):
-                        db_path = p
-                        break
-
-            with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-                # 寫入 SQLite 實體資料庫 (一律以標準名稱 menu.db 封裝進 zip)
-                if db_path and os.path.exists(db_path):
-                    zf.write(db_path, arcname='menu.db')
-
-                # 寫入會員人臉照片
-                if os.path.exists(Config.UPLOAD_FOLDER_MEMBER):
-                    for root, _, files in os.walk(Config.UPLOAD_FOLDER_MEMBER):
-                        for file in files:
-                            zf.write(os.path.join(root, file), arcname=os.path.join('static', 'member', file).replace('\\', '/'))
-                # 寫入餐點照片
-                if os.path.exists(Config.UPLOAD_FOLDER_MENU):
-                    for root, _, files in os.walk(Config.UPLOAD_FOLDER_MENU):
-                        for file in files:
-                            zf.write(os.path.join(root, file), arcname=os.path.join('static', 'menu', file).replace('\\', '/'))
-
-            memory_file.seek(0)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            return send_file(
-                memory_file,
-                download_name=f"Kiosk_Full_Backup_{timestamp}.zip",
-                as_attachment=True,
-                mimetype='application/zip'
-            )
-        except Exception as e:
-            return f"<script>alert('❌ 備份失敗：{e}'); window.history.back();</script>", 500
-
+    """Excel 營業報表匯出端點（純報表匯出，單一職責）"""
     selected_tables = request.form.getlist('tables')
-
     if not selected_tables:
         return "<script>alert('❌ 請至少勾選一個資料表！'); window.history.back();</script>", 400
 
     start_date_str = request.form.get('start_date')
     end_date_str = request.form.get('end_date')
-    start_date = datetime.strptime(start_date_str, '%Y-%m-%d') if start_date_str else None
-    end_date = datetime.strptime(end_date_str, '%Y-%m-%d') + timedelta(days=1, seconds=-1) if end_date_str else None
 
-    orders_query = Order.query
-    if start_date: orders_query = orders_query.filter(Order.created_at >= start_date)
-    if end_date: orders_query = orders_query.filter(Order.created_at <= end_date)
-    filtered_orders = orders_query.all()
-    filtered_order_ids = [o.id for o in filtered_orders]
-
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if 'User' in selected_tables:
-            user_data = []
-            for u in User.query.all():
-                login_str = u.last_login_at.strftime('%Y-%m-%d %H:%M:%S') if u.last_login_at else '尚未記錄'
-                if not u.last_login_at:
-                    logout_str = '尚未記錄'
-                elif not u.last_logout_at or u.last_logout_at < u.last_login_at:
-                    logout_str = '尚未登出'
-                else:
-                    logout_str = u.last_logout_at.strftime('%Y-%m-%d %H:%M:%S')
-                user_data.append({
-                    'ID': u.id, '姓名(Name)': u.name, '電話(Phone)': u.phone, '紅利點數(Points)': u.points,
-                    '最後登入時間(Last Login)': login_str, '最後登出時間(Last Logout)': logout_str
-                })
-            pd.DataFrame(user_data if user_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='會員資料(User)', index=False)
-
-        if 'MenuItem' in selected_tables:
-            menu_data = [{
-                'ID': i.id, '餐點名稱(Name)': i.name, '分類(Category)': i.category, '單價(Price)': i.price,
-                '客製化群組(Modifiers)': i.modifiers or 'none', '商品描述(Description)': i.description or '',
-                '是否特價(Is Discount)': '是' if i.is_discount else '否', '特價金額(Discount Price)': i.discount_price,
-                '熱門推薦(Recommended)': '是' if (i.is_manual_popular or i.is_recommended) else '否',
-                '新品上市(Is New)': '是' if i.is_new else '否', '開放紅利兌換(Is Reward)': '是' if i.is_reward else '否',
-                '兌換所需點數(Reward Points)': i.reward_points, '限時特惠點數(Reward Discount Points)': i.reward_discount_points
-            } for i in MenuItem.query.all()]
-            pd.DataFrame(menu_data if menu_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='菜單品項(MenuItem)', index=False)
-
-        if 'Coupon' in selected_tables:
-            coupon_data = [{
-                'ID': c.id, 
-                '代碼(Code)': c.code, 
-                '標題(Title)': c.title, 
-                '折抵類型(Discount Type)': c.discount_type,
-                '折抵值(Discount Value)': c.discount_value, 
-                '門檻(Min Spend)': c.min_spend,
-                '兌換所需點數(Reward Points)': c.reward_points, 
-                '限時特惠點數(Reward Discount Points)': c.reward_discount_points,
-                '每人兌換上限(Per User Limit)': c.limit_display,
-                '上架回饋商城(Is Reward)': '是' if c.is_reward else '否'
-            } for c in Coupon.query.all()]
-            pd.DataFrame(coupon_data if coupon_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='優惠券(Coupon)', index=False)
-
-        if 'UserCoupon' in selected_tables:
-            user_coupons_data = [{
-                'ID': uc.id, '關聯會員ID': uc.user_id, '優惠代碼(Code)': uc.code, 
-                '是否已使用(Is Used)': '是' if uc.is_used else '否',
-                '領取時間': uc.created_at.strftime('%Y-%m-%d %H:%M') if uc.created_at else ''
-            } for uc in UserCoupon.query.all()]
-            pd.DataFrame(user_coupons_data if user_coupons_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='會員持券(UserCoupon)', index=False)
-
-        if 'Order' in selected_tables:
-            order_data = []
-            for o in filtered_orders:
-                log = db.session.get(CustomerLog, o.customer_log_id) if getattr(o, 'customer_log_id', None) else None
-                cust_identifier = o.user_id if o.user_id else (o.table_number if o.table_number else f"訪客-{o.pickup_number:03d}")
-                login_dt = log.login_at if (log and log.login_at) else (o.user.last_login_at if (o.user and o.user.last_login_at) else None)
-
-                if login_dt:
-                    login_str = login_dt.strftime('%Y-%m-%d %H:%M:%S')
-                    sec = int((o.created_at - login_dt).total_seconds()) if o.created_at else 0
-                    duration_str = f"{sec // 60}分{sec % 60}秒" if sec > 0 else "即時下單"
-                else:
-                    login_str = "未記錄"
-                    duration_str = "無進場紀錄"
-
-                order_data.append({
-                    'ID': o.id, '取餐編號(Pickup No)': f"#{o.pickup_number:03d}" if o.pickup_number else f"#{o.id}",
-                    '訂單來源(Source)': getattr(o, 'order_source', 'Kiosk') or 'Kiosk',
-                    '收銀員(Cashier)': getattr(o, 'cashier_username', '') or '-',
-                    '身分/會員ID(Customer ID)': cust_identifier, '進場時間(Login At)': login_str, '點餐耗時(Duration)': duration_str,
-                    '下單時間(Order Created)': o.created_at.strftime('%Y-%m-%d %H:%M:%S') if o.created_at else '',
-                    '出餐時間(Completed At)': o.completed_at.strftime('%Y-%m-%d %H:%M:%S') if o.completed_at else '未出餐',
-                    '應付總額(Total)': o.total_price,
-                    '實收金額(Received)': getattr(o, 'cash_received', None) if getattr(o, 'cash_received', None) is not None else o.total_price,
-                    '找零金額(Change)': getattr(o, 'cash_change', 0) or 0,
-                    '付款方式(Payment)': o.payment_method, '狀態(Status)': o.status, '使用紅利': o.points_used
-                })
-            pd.DataFrame(order_data if order_data else [{'資料': '目前無資料'}]).to_excel(writer, sheet_name='訂單總覽(Order)', index=False, startrow=1)
-
-        if 'OrderItem' in selected_tables:
-            order_items = OrderItem.query.filter(OrderItem.order_id.in_(filtered_order_ids)).all() if filtered_order_ids else []
-            data = [{
-                'ID': oi.id, '關聯訂單ID(Order ID)': oi.order_id, '品名(Item Name)': oi.item_name,
-                '單價(Price)': oi.price, '數量(Qty)': oi.quantity, '客製化(Customization)': oi.customization
-            } for oi in order_items]
-            pd.DataFrame(data if data else [{'資料': '目前無明細'}]).to_excel(writer, sheet_name='訂單明細(OrderItem)', index=False, startrow=1)
-
-        if 'Analytics' in selected_tables:
-            valid_orders = [o for o in filtered_orders if o.status != 'Cancelled']
-            tot_revenue = sum(o.total_price or 0 for o in valid_orders)
-            total_points = sum(o.points_used or 0 for o in valid_orders)
-            analytics_data = [
-                {'指標 (Metric)': '區間總訂單數', '數值 (Value)': len(filtered_orders)},
-                {'指標 (Metric)': '有效訂單數', '數值 (Value)': len(valid_orders)},
-                {'指標 (Metric)': '總營收', '數值 (Value)': tot_revenue},
-                {'指標 (Metric)': '總折扣折抵', '數值 (Value)': sum(o.discount_amount or 0 for o in valid_orders)},
-                {'指標 (Metric)': '紅利使用總額 (Points Used)', '數值 (Value)': total_points},
-                {'指標 (Metric)': '平均客單價', '數值 (Value)': round(tot_revenue / len(valid_orders), 2) if valid_orders else 0}
-            ]
-            pd.DataFrame(analytics_data).to_excel(writer, sheet_name='區間營運總覽(Analytics)', index=False, startrow=1)
-
-            # 區間熱銷排行 (依銷售數量排序，排除紅利免費兌換品項)
-            item_stats = {}
-            for o in valid_orders:
-                for item in o.items:
-                    if '[點數兌換]' in item.item_name or item.item_name.startswith('🎁') or item.customization == '紅利免費兌換':
-                        continue
-                    if item.item_name not in item_stats:
-                        item_stats[item.item_name] = {'qty': 0, 'rev': 0}
-                    item_stats[item.item_name]['qty'] += (item.quantity or 1)
-                    item_stats[item.item_name]['rev'] += ((item.price or 0) * (item.quantity or 1))
-
-            sales_data = [
-                {'餐點名稱 (Item Name)': name, '銷售數量 (Qty)': stats['qty'], '創造營收 (Revenue)': stats['rev']}
-                for name, stats in sorted(item_stats.items(), key=lambda x: x[1]['qty'], reverse=True)
-            ]
-            pd.DataFrame(sales_data if sales_data else [{'資料': '所選日期範圍內無銷售資料'}]).to_excel(writer, sheet_name='區間熱銷排行(ItemSales)', index=False, startrow=1)
-
-        if 'AdminLog' in selected_tables:
-            logs_query = AdminLog.query
-            if start_date: logs_query = logs_query.filter(AdminLog.login_at >= start_date)
-            if end_date: logs_query = logs_query.filter(AdminLog.login_at <= end_date)
-            log_data = [{
-                'ID': lg.id, '管理員帳號': lg.username,
-                '登入時間': lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '',
-                '登出時間': lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '尚未登出',
-                'IP 位址': lg.ip_address or '本機'
-            } for lg in logs_query.order_by(AdminLog.id.desc()).all()]
-            pd.DataFrame(log_data if log_data else [{'資料': '目前無紀錄'}]).to_excel(writer, sheet_name='管理員進出日誌(AdminLog)', index=False, startrow=1)
-
-            audit_query = StaffAuditLog.query
-            if start_date:
-                audit_query = audit_query.filter(StaffAuditLog.created_at >= start_date)
-            if end_date:
-                audit_query = audit_query.filter(StaffAuditLog.created_at <= end_date)
-            audit_data = [{
-                'ID': au.id,
-                '員工帳號(Staff)': au.staff_username,
-                '角色(Role)': au.staff_role,
-                '操作類型(Action)': au.action_type,
-                '關聯訂單ID(Order ID)': au.target_order_id or '',
-                '關聯會員ID(User ID)': au.target_user_id or '',
-                '點數異動(Points Delta)': au.points_delta or 0,
-                '詳細內容(Details)': au.details or '',
-                'IP 位址': au.ip_address or '',
-                '發生時間(Created At)': au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else ''
-            } for au in audit_query.order_by(StaffAuditLog.id.desc()).all()]
-            pd.DataFrame(audit_data if audit_data else [{'資料': '目前無稽核紀錄'}]).to_excel(writer, sheet_name='員工操作稽核(StaffAuditLog)', index=False, startrow=1)
-
-        # 日期區間標題與欄寬自適應格式化 (中文全形字元加權計算，避免欄位過窄)
-        display_start = start_date_str if start_date_str else '全部區間 (All)'
-        display_end = end_date_str if end_date_str else '全部區間 (All)'
-        date_range_text = f"報表資料區間：{display_start} ~ {display_end}"
-
-        date_dependent_sheets = {
-            '訂單總覽(Order)', '訂單明細(OrderItem)',
-            '區間營運總覽(Analytics)', '區間熱銷排行(ItemSales)',
-            '管理員進出日誌(AdminLog)', '員工操作稽核(StaffAuditLog)'
-        }
-
-        def calculate_display_width(val):
-            if val is None:
-                return 0
-            text = str(val)
-            width = 0.0
-            for char in text:
-                status = unicodedata.east_asian_width(char)
-                if status in ('F', 'W') or ord(char) >= 0x2600 or ord(char) >= 0x1F000:
-                    width += 2.2
-                else:
-                    width += 1.1
-            return int(width)
-
-        for sheet_name, ws in writer.sheets.items():
-            if sheet_name in date_dependent_sheets:
-                ws.cell(row=1, column=1, value=date_range_text).font = Font(bold=True, color="0055aa")
-
-            for col in ws.columns:
-                max_len = 0
-                column_letter = col[0].column_letter
-                for cell in col:
-                    if sheet_name in date_dependent_sheets and cell.row == 1 and cell.column == 1:
-                        continue
-                    cell_len = calculate_display_width(cell.value)
-                    if cell_len > max_len:
-                        max_len = cell_len
-                ws.column_dimensions[column_letter].width = max(max_len + 4, 12)
-
-    output.seek(0)
+    output = generate_excel_export(selected_tables, start_date_str, end_date_str)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     date_suffix = f"_{start_date_str}_to_{end_date_str}" if start_date_str and end_date_str else ""
     filename = f"Kiosk_Export_{timestamp}{date_suffix}.xlsx"
-    return send_file(output, download_name=filename, as_attachment=True, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-# ==============================================================================
-# Excel 匯入 (菜單匯入與多工作表智慧匯入)
-# ==============================================================================
-@admin_bp.route('/admin/import_excel', methods=['POST'])
-@role_required('owner', 'manager')
-def import_menu_excel():
-    """Excel 批量匯入菜單 (支援自身匯出的檔案與自訂格式)"""
-    file = request.files.get('file')
-    if not file or file.filename == '':
-        return "<script>alert('請選擇 Excel/CSV 檔案！'); window.history.back();</script>", 400
-
-    try:
-        if file.filename.endswith('.csv'):
-            df = pd.read_csv(file)
-        else:
-            excel_file = pd.ExcelFile(file)
-            target_sheet = None
-            for sheet in excel_file.sheet_names:
-                if '菜單' in sheet or 'MenuItem' in sheet or 'menu' in sheet.lower():
-                    target_sheet = sheet
-                    break
-            df = pd.read_excel(excel_file, sheet_name=target_sheet if target_sheet else 0)
-
-        column_mapping = {
-            '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name', '名稱': 'name', 'name': 'name',
-            '分類(Category)': 'category', '分類': 'category', 'category': 'category',
-            '單價(Price)': 'price', '單價': 'price', '原單價': 'price', 'price': 'price',
-            '客製化類型(Modifiers)': 'modifiers', '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers', '客製化': 'modifiers', 'modifiers': 'modifiers',
-            '商品描述(Description)': 'description', '簡介': 'description', '描述': 'description', 'description': 'description',
-            '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended', '熱門推薦': 'is_recommended', 'is_recommended': 'is_recommended',
-            '新品上市(Is New)': 'is_new', '新品': 'is_new', 'is_new': 'is_new',
-            '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount', '特價': 'is_discount', 'is_discount': 'is_discount',
-            '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price', 'discount_price': 'discount_price',
-            '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward', 'is_reward': 'is_reward',
-            '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points', 'reward_points': 'reward_points',
-            '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points'
-        }
-        df.rename(columns=column_mapping, inplace=True)
-
-        #必要欄位防呆
-        if 'name' not in df.columns or 'price' not in df.columns:
-            return "<script>alert('檔案缺少必要欄位：「餐點名稱」或「單價」！'); window.history.back();</script>", 400
-
-        #安全的布林轉換
-        def parse_bool(val):
-            if pd.isna(val):
-                return False
-            s = str(val).strip().lower()
-            return s in ['1', 'true', '是', 'yes', 'y']
-
-        for _, row in df.iterrows():
-            name = str(row.get('name', '')).strip()
-            if not name or pd.isna(row.get('name')) or name == '目前無資料':
-                continue
-
-            category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
-            
-            try: price = max(0, round(float(row.get('price', 0))))
-            except (ValueError, TypeError): price = 0
-
-            try: discount_price = max(0, round(float(row.get('discount_price', 0))))
-            except (ValueError, TypeError): discount_price = 0
-
-            try: reward_points = max(0, int(row.get('reward_points', 0)))
-            except (ValueError, TypeError): reward_points = 0
-
-            try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
-            except (ValueError, TypeError): reward_discount_points = 0
-
-            modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
-            if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']:
-                modifiers = 'none'
-
-            description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
-            
-            is_recommended = parse_bool(row.get('is_recommended'))
-            is_new = parse_bool(row.get('is_new'))
-            is_discount = parse_bool(row.get('is_discount'))
-            is_reward = parse_bool(row.get('is_reward'))
-
-            new_item = MenuItem(
-                name=name,
-                category=category,
-                price=price,
-                modifiers=modifiers,
-                description=description,
-                image_path='',
-                is_recommended=False,
-                is_manual_popular=is_recommended,
-                is_discount=is_discount, 
-                discount_price=discount_price,
-                is_new=is_new,
-                is_reward=is_reward,
-                reward_points=reward_points,
-                reward_discount_points=reward_discount_points
-            )
-            db.session.add(new_item)
-
-        db.session.commit()
-        update_popular_items()
-        return redirect(url_for('admin.admin_dashboard', tab='menu'))
-
-    except Exception as e:
-        db.session.rollback()
-        return f"<script>alert('匯入解析失敗：{e}'); window.history.back();</script>", 500
+    return send_file(
+        output,
+        download_name=filename,
+        as_attachment=True,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
 @role_required('owner', 'manager')
 def import_smart():
-    """智慧匯入功能：自動辨識 Excel 中的工作表與純英文/中文欄位，並匯入/更新對應資料表"""
+    """智慧匯入端點：單一交易保障、多表原子寫入"""
     file = request.files.get('file')
     if not file or file.filename == '':
-        return "<script>alert('❌ 請選擇 Excel 檔案！'); window.history.back();</script>", 400
+        return "<script>alert('❌ 請選擇 Excel / CSV 檔案！'); window.history.back();</script>", 400
 
     try:
+        # 1. 支援直接上傳單一 CSV 菜單檔案
+        if file.filename.lower().endswith('.csv'):
+            df = pd.read_csv(file)
+            ok, msg_or_count = upsert_menu_items_from_df(df, update_existing=True, auto_commit=True)
+            if not ok:
+                return f"<script>alert('❌ {msg_or_count}'); window.history.back();</script>", 400
+            return redirect(url_for('admin.admin_dashboard', tab='menu'))
+
+        # 2. 處理多工作表 Excel (.xlsx, .xls)
         excel_file = pd.ExcelFile(file)
         imported_counts = {'User': 0, 'MenuItem': 0, 'Coupon': 0}
 
-        #安全的布林轉換與手機號碼清洗
-        def parse_bool(val):
-            if pd.isna(val): return False
-            s = str(val).strip().lower()
-            return s in ['1', 'true', '是', 'yes', 'y']
-
-        def clean_phone_number(val):
-            """清理與格式化手機號碼，避免 Excel 浮點數轉換問題"""
-            if pd.isna(val): return ""
-            s = str(val).strip()
-            if s.endswith('.0'):
-                s = s[:-2]
-            if len(s) == 9 and s.startswith('9'):
-                s = '0' + s
-            return s
-
         for sheet in excel_file.sheet_names:
             df = pd.read_excel(excel_file, sheet_name=sheet)
-            if df.empty: continue
+            if df.empty:
+                continue
 
             cols_lower = [str(c).lower() for c in df.columns]
 
-            # 1. 辨識是否為「會員資料 (User)」
+            # 辨識「會員資料 (User)」
             if 'User' in sheet or '會員' in sheet or '電話(Phone)' in df.columns or 'phone' in cols_lower or '電話' in df.columns:
                 col_map = {
                     '姓名(Name)': 'name', '姓名': 'name', 'name': 'name',
@@ -1221,129 +795,42 @@ def import_smart():
                     '紅利點數(Points)': 'points', '紅利點數': 'points', 'points': 'points'
                 }
                 df_user = df.rename(columns=col_map)
-                
                 if 'name' in df_user.columns and 'phone' in df_user.columns:
                     for _, row in df_user.iterrows():
                         name = str(row.get('name', '')).strip()
                         phone = clean_phone_number(row.get('phone', ''))
-                        if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料': 
+                        if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料':
                             continue
-                        
-                        try: points = int(row.get('points', 0))
-                        except: points = 0
-                        
+                        try:
+                            points = int(row.get('points', 0))
+                        except (ValueError, TypeError):
+                            points = 0
+
                         existing = User.query.filter_by(phone=phone).first()
                         if existing:
                             existing.name = name
                             existing.points = points
                         else:
                             new_user = User(
-                                name=name, 
-                                phone=phone, 
-                                photo_path='', 
-                                feature=None, 
-                                points=points if points > 0 else 20, 
+                                name=name,
+                                phone=phone,
+                                photo_path='',
+                                feature=None,
+                                points=points if points > 0 else 20,
                                 last_login_at=None
                             )
                             db.session.add(new_user)
                         imported_counts['User'] += 1
 
-            # 2. 辨識是否為「菜單品項 (MenuItem)」
+            # 辨識「菜單品項 (MenuItem)」：以單一交易模式處理，錯誤時即刻攔截
             elif 'MenuItem' in sheet or '菜單' in sheet or '單價(Price)' in df.columns or 'price' in cols_lower or '單價' in df.columns:
-                col_map = {
-                    '餐點名稱(Name)': 'name', '名稱(Name)': 'name', '餐點名稱': 'name', 'name': 'name',
-                    '分類(Category)': 'category', '分類': 'category', 'category': 'category',
-                    '單價(Price)': 'price', '單價': 'price', 'price': 'price',
-                    '剩餘數量(Stock)': 'stock', '剩餘數量': 'stock', '庫存': 'stock', 'stock': 'stock',
-                    '總量(Total Stock)': 'total_stock', '總量': 'total_stock', 'total_stock': 'total_stock',
-                    '客製化群組(Modifiers)': 'modifiers', '客製化類型': 'modifiers', 'modifiers': 'modifiers',
-                    '商品描述(Description)': 'description', '簡介': 'description', 'description': 'description',
-                    '熱門推薦(Recommended)': 'is_recommended', '熱門(Popular)': 'is_recommended', 'is_recommended': 'is_recommended',
-                    '新品上市(Is New)': 'is_new', '新品': 'is_new', 'is_new': 'is_new',
-                    '是否特價(Is Discount)': 'is_discount', '是否特價': 'is_discount', 'is_discount': 'is_discount',
-                    '特價金額(Discount Price)': 'discount_price', '特價金額': 'discount_price', 'discount_price': 'discount_price',
-                    '開放紅利兌換(Is Reward)': 'is_reward', '是否開放紅利兌換': 'is_reward', 'is_reward': 'is_reward',
-                    '兌換所需點數(Reward Points)': 'reward_points', '兌換點數': 'reward_points', 'reward_points': 'reward_points',
-                    '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points'
-                }
-                df_menu = df.rename(columns=col_map)
-                
-                if 'name' in df_menu.columns and 'price' in df_menu.columns:
-                    for _, row in df_menu.iterrows():
-                        name = str(row.get('name', '')).strip()
-                        if not name or pd.isna(row.get('name')) or name == '目前無資料': 
-                            continue
-                        
-                        category = str(row.get('category', '主餐')).strip() if not pd.isna(row.get('category')) else '主餐'
-                        try: price = max(0, round(float(row.get('price', 0))))
-                        except: price = 0
-                        try: discount_price = max(0, round(float(row.get('discount_price', 0))))
-                        except: discount_price = 0
-                        try: reward_points = max(0, int(row.get('reward_points', 0)))
-                        except: reward_points = 0
-                        try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
-                        except: reward_discount_points = 0
-                        try: stock = max(0, int(row.get('stock', 50)))
-                        except: stock = 50
-                        try: total_stock = max(stock, int(row.get('total_stock', 50)))
-                        except: total_stock = 50
+                ok, res = upsert_menu_items_from_df(df, update_existing=True, auto_commit=False)
+                if not ok:
+                    db.session.rollback()
+                    return f"<script>alert('❌ 菜單工作表【{sheet}】解析失敗：{res}'); window.history.back();</script>", 400
+                imported_counts['MenuItem'] += res
 
-                        modifiers = str(row.get('modifiers', 'none')).strip() if not pd.isna(row.get('modifiers')) else 'none'
-                        if modifiers not in ['none', 'ice_sugar', 'spicy', 'addons']: 
-                            modifiers = 'none'
-
-                        description = str(row.get('description', '')).strip() if not pd.isna(row.get('description')) else ''
-                        
-                        is_rec = parse_bool(row.get('is_recommended'))
-                        is_new = parse_bool(row.get('is_new'))
-                        is_disc = parse_bool(row.get('is_discount'))
-                        is_rew = parse_bool(row.get('is_reward'))
-
-                        existing = MenuItem.query.filter_by(name=name).first()
-                        if existing:
-                            #完整同步所有欄位，非僅同步價格與分類
-                            existing.category = category
-                            existing.price = price
-                            existing.discount_price = discount_price
-                            existing.reward_points = reward_points
-                            existing.reward_discount_points = reward_discount_points
-                            existing.modifiers = modifiers
-                            existing.description = description
-                            existing.is_manual_popular = is_rec
-                            existing.is_new = is_new
-                            existing.is_discount = is_disc
-                            existing.is_reward = is_rew
-                            existing.stock = stock
-                            existing.total_stock = total_stock
-                            existing.is_sold_out = (stock <= 0)
-                        else:
-                            new_item = MenuItem(
-                                name=name, 
-                                category=category, 
-                                price=price, 
-                                modifiers=modifiers, 
-                                description=description,
-                                image_path='', 
-                                is_recommended=False, 
-                                is_manual_popular=is_rec,
-                                is_discount=is_disc, 
-                                discount_price=discount_price, 
-                                is_new=is_new,
-                                is_reward=is_rew, 
-                                reward_points=reward_points, 
-                                reward_discount_points=reward_discount_points,
-                                stock=stock,
-                                total_stock=total_stock,
-                                is_sold_out=(stock <= 0),
-                                can_be_add_on=False,
-                                add_on_price=0,
-                                addon_trigger_type='any',
-                                addon_trigger_target=''
-                            )
-                            db.session.add(new_item)
-                        imported_counts['MenuItem'] += 1
-
-            # 3. 辨識是否為「優惠券 (Coupon)」
+            # 辨識「優惠券 (Coupon)」
             elif 'Coupon' in sheet or '優惠券' in sheet or '代碼(Code)' in df.columns or 'code' in cols_lower or '代碼' in df.columns:
                 col_map = {
                     '代碼(Code)': 'code', '代碼': 'code', 'code': 'code', '優惠代碼': 'code',
@@ -1354,22 +841,17 @@ def import_smart():
                     '兌換所需點數(Reward Points)': 'reward_points', '兌換所需點數': 'reward_points', '兌換點數': 'reward_points', '點數': 'reward_points', 'reward_points': 'reward_points',
                     '限時特惠點數(Reward Discount Points)': 'reward_discount_points', '限時特惠點數': 'reward_discount_points', '特惠點數': 'reward_discount_points', 'reward_discount_points': 'reward_discount_points',
                     '上架回饋商城(Is Reward)': 'is_reward', '是否上架': 'is_reward', '上架商城': 'is_reward', 'is_reward': 'is_reward',
-                    '每人兌換上限(Per User Limit)': 'per_user_limit',
-                    '每人兌換上限': 'per_user_limit',
-                    '兌換上限': 'per_user_limit',
-                    'per_user_limit': 'per_user_limit'
+                    '每人兌換上限(Per User Limit)': 'per_user_limit', '每人兌換上限': 'per_user_limit', '兌換上限': 'per_user_limit', 'per_user_limit': 'per_user_limit'
                 }
                 df_coupon = df.rename(columns=col_map)
-                
                 if 'code' in df_coupon.columns and 'title' in df_coupon.columns:
                     for _, row in df_coupon.iterrows():
                         code = str(row.get('code', '')).strip().upper()
                         title = str(row.get('title', '')).strip()
-                        if not code or not title or pd.isna(row.get('code')) or code == '目前無資料': 
+                        if not code or not title or pd.isna(row.get('code')) or code == '目前無資料':
                             continue
-                        
                         dtype = str(row.get('discount_type', 'fixed')).strip()
-                        if dtype not in ['fixed', 'percent']: 
+                        if dtype not in ['fixed', 'percent']:
                             dtype = 'fixed'
                         raw_dval = row.get('discount_value', 0)
                         dvalue = sanitize_discount_value(dtype, raw_dval)
@@ -1379,17 +861,11 @@ def import_smart():
                         except: reward_points = 0
                         try: reward_discount_points = max(0, int(row.get('reward_discount_points', 0)))
                         except: reward_discount_points = 0
-
-                        raw_limit = row.get('per_user_limit', 0)
-                        per_user_limit = parse_per_user_limit(raw_limit)
-                        if 'is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward')):
-                            is_reward = parse_bool(row.get('is_reward'))
-                        else:
-                            is_reward = True if reward_points > 0 else True
+                        per_user_limit = parse_per_user_limit(row.get('per_user_limit', 0))
+                        is_reward = parse_bool(row.get('is_reward')) if ('is_reward' in df_coupon.columns and not pd.isna(row.get('is_reward'))) else (reward_points > 0)
 
                         existing = Coupon.query.filter_by(code=code).first()
                         if existing:
-                            #完整同步優惠券欄位
                             existing.title = title
                             existing.discount_type = dtype
                             existing.discount_value = dvalue
@@ -1413,6 +889,7 @@ def import_smart():
                             db.session.add(new_coupon)
                         imported_counts['Coupon'] += 1
 
+        # 多工作表全數解析成功後，一次性原子提交
         db.session.commit()
         update_popular_items()
         msg = f"✅ 智慧匯入完成！\\n" \
@@ -1420,16 +897,29 @@ def import_smart():
               f"➤ 會員 (User): {imported_counts['User']} 筆\\n" \
               f"➤ 菜單 (MenuItem): {imported_counts['MenuItem']} 筆\\n" \
               f"➤ 優惠券 (Coupon): {imported_counts['Coupon']} 筆"
-        
         return f"<script>alert('{msg}'); window.location.href='/admin';</script>"
 
     except Exception as e:
         db.session.rollback()
         return f"<script>alert('❌ 檔案解析失敗，請確認檔案格式是否正確！\\n錯誤訊息: {e}'); window.history.back();</script>", 500
+    
+@admin_bp.route('/admin/backup_system', methods=['POST'])
+@role_required('owner')
+def backup_system():
+    """負責人專屬之獨立完整系統資料庫與照片備份端點"""
+    try:
+        memory_file = create_full_backup_zip()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return send_file(
+            memory_file,
+            download_name=f"Kiosk_Full_Backup_{timestamp}.zip",
+            as_attachment=True,
+            mimetype='application/zip'
+        )
+    except Exception as e:
+        return f"<script>alert('❌ 備份失敗：{e}'); window.history.back();</script>", 500
 
-# ==============================================================================
 # 前端即時輪詢與 AI 文案生成 API (絕對路徑保持 /api/...)
-# ==============================================================================
 @admin_bp.route('/api/admin_live_orders')
 def api_admin_live_orders():
     db.session.expire_all()

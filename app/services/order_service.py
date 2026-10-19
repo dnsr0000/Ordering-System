@@ -1,14 +1,14 @@
 import re
 import time
 from datetime import datetime
-from flask import g, has_request_context
+from flask import g, has_request_context, session
 from app.extensions import db, acquire_distributed_lock
 from app.models.menu import MenuItem, ComboOption, ModifierOption
 from app.models.order import Order, OrderItem
 from app.models.user import User, RewardRedemption, RewardSetting, CustomerLog
 from app.models.coupon import Coupon, UserCoupon
 from app.services.event_bus import order_event_bus
-from app.services.ai_service import _AI_ADVICE_STATE, fallback_advice, invalidate_ai_advice
+from app.services.ai_service import invalidate_ai_advice
 from app.routes.common import record_staff_audit
 from app.utils import (
     ALLOWED_PAYMENT_METHODS,
@@ -18,6 +18,36 @@ from app.utils import (
 
 _LAST_POPULAR_UPDATE_TS = {}
 
+# 合法狀態流轉表：定義每個狀態允許轉換的下一階段，徹底杜絕倒退
+LEGAL_TRANSITIONS = {
+    'Pending': {'Completed', 'Cancelled'},
+    'Completed': {'PickedUp', 'Cancelled'},
+    'PickedUp': {'Cancelled'},
+    'Cancelled': set(),
+}
+
+# 角色權限矩陣：集中管理各角色允許執行的狀態流轉
+ROLE_TRANSITION_MATRIX = {
+    'owner': {
+        ('Pending', 'Completed'), ('Pending', 'Cancelled'),
+        ('Completed', 'PickedUp'), ('Completed', 'Cancelled'),
+        ('PickedUp', 'Cancelled')
+    },
+    'manager': {
+        ('Pending', 'Completed'), ('Pending', 'Cancelled'),
+        ('Completed', 'PickedUp'), ('Completed', 'Cancelled'),
+        ('PickedUp', 'Cancelled')
+    },
+    'staff': {
+        ('Pending', 'Completed'), ('Pending', 'Cancelled'),
+        ('Completed', 'PickedUp'), ('Completed', 'Cancelled')
+        # 嚴格禁止 staff 取消已取餐訂單 ('PickedUp', 'Cancelled')
+    },
+    'kitchen': {
+        ('Pending', 'Completed')
+        # 嚴格禁止 kitchen 執行取餐核銷或取消訂單
+    }
+}
 
 def sanitize_discount_value(discount_type, discount_value):
     try:
@@ -320,12 +350,14 @@ def process_checkout(
         with acquire_distributed_lock(f"lock:order_checkout:{tid}", timeout=8, blocking_timeout=5):
             today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-            max_pickup = db.session.query(db.func.max(Order.pickup_number)).filter(
+            # 取餐號 1~999 循環：接續「當日最後一張訂單」的號碼 (依 id 倒序)。
+            # 不可改用 MAX()：一旦當日最大值到 999，(999 % 999) + 1 永遠等於 1，之後每張單都會拿到 1。
+            last_pickup = db.session.query(Order.pickup_number).filter(
                 Order.tenant_id == tid,
                 Order.created_at >= today_start,
                 Order.created_at <= today_end
-            ).scalar()
-            next_pickup = (max_pickup % 999) + 1 if (max_pickup and max_pickup > 0) else 1
+            ).order_by(Order.id.desc()).limit(1).scalar()
+            next_pickup = (last_pickup % 999) + 1 if (last_pickup and last_pickup > 0) else 1
 
             for item_id, demanded_qty in item_demands.items():
                 result = db.session.execute(
@@ -584,40 +616,107 @@ def process_checkout(
         'items': receipt_items,
         'remaining_points': remaining_points
     }, 200
-
 def change_order_status(order_id, target_status, staff_account=None, tenant_id=None):
     """
-    全系統統一訂單狀態機轉換函式
-    涵蓋狀態轉換合法性校驗、主餐與套餐配餐庫存回滾、會員點數回補、優惠券還原與稽核日誌
+    全系統唯一核心訂單狀態機函式
+    - 先驗權限 (403 Forbidden)，再驗訂單存在 (404) 與狀態流轉合法性 (409 Conflict)，避免無權限者探測訂單狀態
+    - SQL 條件式更新 (CAS) 併發互斥防護 (409 Conflict)
+    - 取消訂單原子全量回滾 (庫存/點數/兌換品點數/優惠券)
     """
     tid = tenant_id or (getattr(g, 'tenant_id', None) if has_request_context() else None) or 1
     target_status = str(target_status or '').strip()
 
     valid_statuses = {'Pending', 'Completed', 'PickedUp', 'Cancelled'}
     if target_status not in valid_statuses:
-        return {'success': False, 'error': f'不支援的訂單狀態：{target_status}'}, 400
+        return {'success': False, 'error': f'不支援的訂單狀態：{target_status}', 'message': f'不支援的訂單狀態：{target_status}'}, 400
 
+    # 0. 目標狀態不可達 (409)：流轉表中沒有任何流程能轉入該狀態 (例如 Pending)。
+    #    此判斷與角色、訂單皆無關，回應固定，不會洩漏任何資訊，且比 403 更能說明原因。
+    reachable_targets = {t for targets in LEGAL_TRANSITIONS.values() for t in targets}
+    if target_status not in reachable_targets:
+        msg = f'非法狀態轉換：沒有任何流程可以將訂單變更為【{target_status}】！'
+        return {'success': False, 'error': msg, 'message': msg}, 409
+
+    # 1. 角色層級授權 (403)：在讀取訂單之前先驗證「此角色是否可能執行此目標狀態」。
+    #    無權限者不論訂單存在與否、目前處於何種狀態，回應一律相同，無法藉由 404/409 探測訂單資訊。
+    staff = staff_account or getattr(g, 'staff_account', None)
+    role = getattr(staff, 'role', None) or (
+        (session.get('admin_role') or session.get('staff_role')) if has_request_context() else ''
+    ) or ''
+    role_transitions = ROLE_TRANSITION_MATRIX.get(role, set())
+    role_targets = {t for (_, t) in role_transitions}
+
+    def _forbidden():
+        msg = f'權限不足：角色 [{role}] 無權將訂單變更為【{target_status}】！'
+        return {'success': False, 'error': msg, 'message': msg}, 403
+
+    if target_status not in role_targets:
+        return _forbidden()
+
+    # 2. 訂單存在性 (404，僅限有基本權限者)
     order = db.session.get(Order, order_id)
     if not order or order.tenant_id != tid:
-        return {'success': False, 'error': '查無此訂單！'}, 404
+        return {'success': False, 'error': '查無此訂單！', 'message': '查無此訂單！'}, 404
 
     current_status = order.status
 
-    # 1. 狀態機合法性防禦校驗
+    # 3. 狀態重複判斷 (409 Conflict)
     if current_status == target_status:
-        return {'success': False, 'error': f'訂單已處於【{current_status}】狀態，請勿重複操作！'}, 400
+        return {
+            'success': False,
+            'error': f'訂單已處於【{current_status}】狀態，請勿重複操作！',
+            'message': f'訂單已處於【{current_status}】狀態，請勿重複操作！'
+        }, 409
 
-    if current_status == 'Cancelled':
-        return {'success': False, 'error': '已取消之訂單無法再次變更狀態！'}, 400
+    # 4. 狀態轉換流轉表防禦 (409 Conflict)
+    if target_status not in LEGAL_TRANSITIONS.get(current_status, set()):
+        return {
+            'success': False,
+            'error': f'非法狀態轉換：不可從【{current_status}】轉換為【{target_status}】！',
+            'message': f'非法狀態轉換：不可從【{current_status}】轉換為【{target_status}】！'
+        }, 409
 
-    if target_status == 'PickedUp' and current_status != 'Completed':
-        return {'success': False, 'error': '餐點尚未出餐（Completed），不可直接進行取餐核銷！'}, 400
+    # 5. 細部轉換權限 (403)：例如 staff 不可取消「已取餐」訂單 (訊息與步驟 1 相同，不帶出訂單狀態)
+    if (current_status, target_status) not in role_transitions:
+        return _forbidden()
 
-    # 2. 狀態轉換業務邏輯
+    # 6. 防併發：SQL 條件式更新 (CAS - Compare-And-Swap)
+    now_dt = datetime.now()
+    completed_time = now_dt if target_status == 'Completed' else order.completed_at
+
+    cas_result = db.session.execute(
+        db.text("""
+            UPDATE "order"
+            SET status = :target_status,
+                completed_at = :completed_at
+            WHERE id = :id AND tenant_id = :tenant_id AND status = :current_status
+        """),
+        {
+            "target_status": target_status,
+            "completed_at": completed_time,
+            "id": order.id,
+            "tenant_id": tid,
+            "current_status": current_status
+        }
+    )
+
+    if cas_result.rowcount == 0:
+        db.session.rollback()
+        return {
+            'success': False,
+            'error': '訂單狀態已被其他操作者變更，請重新整理！',
+            'message': '訂單狀態已被其他操作者變更，請重新整理！'
+        }, 409
+
+    # 7. 狀態更新後之後續事務 (已保證單次原子執行)
+    order.status = target_status
+    if target_status == 'Completed':
+        order.completed_at = completed_time
+
     points_delta = 0
 
     if target_status == 'Cancelled':
-        # 取消訂單：全量回滾主餐、套餐配餐庫存
+        # (a) 回滾主餐庫存
         for item in order.items:
             if item.menu_item_id:
                 db.session.execute(
@@ -630,7 +729,7 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
                     {"id": item.menu_item_id, "qty": item.quantity, "tenant_id": tid}
                 )
 
-            # 若此細項屬於套餐，回滾套餐設定之配餐庫存
+            # (b) 回滾套餐配餐庫存
             if item.combo_option_id:
                 combo_opt = db.session.get(ComboOption, item.combo_option_id)
                 if combo_opt:
@@ -646,60 +745,53 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
                                 {"id": side_id, "qty": item.quantity, "tenant_id": tid}
                             )
 
-        # 取消訂單：回滾會員點數（歸還折抵點數、扣回消費贈點）
-        if order.user_id:
-            user = db.session.get(User, order.user_id)
-            if user:
-                net_pts_return = (order.points_used or 0) - (order.points_earned or 0)
-                if net_pts_return != 0:
-                    user.points = max(0, (user.points or 0) + net_pts_return)
-                    points_delta = net_pts_return
-
-        # 取消訂單：還原優惠券使用狀態
-        if order.user_id and order.coupon_code:
-            user_coupon = UserCoupon.query.filter_by(
-                tenant_id=tid,
-                user_id=order.user_id,
-                code=order.coupon_code,
-                is_used=True
-            ).first()
-            if user_coupon:
-                user_coupon.is_used = False
-                user_coupon.used_at = None
-
-        # 取消訂單：還原紅利兌換商品憑證狀態
+        # (c) 還原紅利兌換商品憑證狀態，並累計應退還點數
         redemptions = RewardRedemption.query.filter_by(
             tenant_id=tid,
             order_id=order.id
         ).all()
+        total_redeemed_pts = 0
         for r_obj in redemptions:
-            r_obj.is_used = False
-            r_obj.is_refunded = True
+            if not r_obj.is_refunded:
+                r_obj.is_used = False
+                r_obj.is_refunded = True
+                total_redeemed_pts += (r_obj.points_cost or 0)
 
-        order.status = 'Cancelled'
+        # (d) 回滾會員點數與優惠券（若為會員訂單）
+        if order.user_id:
+            user = db.session.get(User, order.user_id)
+            if user:
+                net_pts_return = (order.points_used or 0) + total_redeemed_pts - (order.points_earned or 0)
+                if net_pts_return != 0:
+                    user.points = max(0, (user.points or 0) + net_pts_return)
+                    points_delta = net_pts_return
+
+            if order.coupon_code:
+                user_coupon = UserCoupon.query.filter_by(
+                    tenant_id=tid,
+                    user_id=order.user_id,
+                    code=order.coupon_code,
+                    is_used=True
+                ).first()
+                if user_coupon:
+                    user_coupon.is_used = False
+                    user_coupon.used_at = None
+
         record_staff_audit(
             action_type='CANCEL_ORDER',
             target_order_id=order.id,
             target_user_id=order.user_id,
             points_delta=points_delta,
-            details=f"取消訂單 #{order.id} (取餐 #{order.pickup_number:03d})，已全量回滾庫存與點數"
+            details=f"取消訂單 #{order.id} (取餐 #{order.pickup_number:03d})，已全量回滾庫存、商品兌換點數({total_redeemed_pts}點)、折抵與贈點"
         )
 
-    elif target_status == 'Completed':
-        order.status = 'Completed'
-        order.completed_at = datetime.now()
-
     elif target_status == 'PickedUp':
-        order.status = 'PickedUp'
         record_staff_audit(
             action_type='MARK_PICKED_UP',
             target_order_id=order.id,
             target_user_id=order.user_id,
             details=f"核銷完成取餐單號 #{order.id} (取餐 #{order.pickup_number:03d})"
         )
-
-    else:
-        order.status = target_status
 
     db.session.commit()
     invalidate_ai_advice(tid)
@@ -711,7 +803,6 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
         'status': order.status,
         'message': f'訂單狀態已成功更新為【{order.status}】'
     }, 200
-
 
 def complete_all_pending_orders(tenant_id=None):
     """
@@ -734,12 +825,6 @@ def complete_all_pending_orders(tenant_id=None):
     order_event_bus.notify()
 
     return {'success': True, 'count': updated_count}, 200
-
-def cancel_order_and_rollback(order_id):
-    """向下相容歷史調用封裝，統一走狀態機 Cancelled 回滾流程"""
-    oid = order_id.id if hasattr(order_id, 'id') else order_id
-    res, _ = change_order_status(oid, 'Cancelled')
-    return res.get('success', False)
 
 
 def build_order_analytics(orders, limit=3):
@@ -778,3 +863,58 @@ def build_order_analytics(orders, limit=3):
         'eta_minutes': eta_minutes,
         'top_items': top_items
     }
+def set_item_reward_status(item_id, is_reward=True, reward_points=0, reward_discount_points=0, tenant_id=None):
+    """
+    全系統統一餐點紅利商城上下架管理函式
+    完整檢驗兌換點數不可高於原價、特惠點數合法性，且僅在狀態或點數有實質變動時寫入 StaffAuditLog 稽核日誌
+    """
+    tid = tenant_id or (getattr(g, 'tenant_id', None) if has_request_context() else None) or 1
+    clean_id = safe_int(item_id, 0)
+    
+    item = MenuItem.query.filter_by(id=clean_id, tenant_id=tid).first()
+    if not item:
+        return {'success': False, 'message': '查無此餐點品項！'}, 404
+
+    is_reward_bool = bool(is_reward)
+    pts = max(0, safe_int(reward_points, 0))
+    disc_pts = max(0, safe_int(reward_discount_points, 0))
+
+    if is_reward_bool:
+        if pts <= 0:
+            return {'success': False, 'message': '啟用紅利兌換時，「兌換所需點數」必須大於 0！'}, 400
+        if pts > item.price:
+            return {'success': False, 'message': f'兌換所需點數 ({pts} 點) 不得高於原單價 (${item.price})！'}, 400
+        if disc_pts > 0 and disc_pts >= pts:
+            return {'success': False, 'message': '「限時特惠點數」必須小於「兌換所需點數」！'}, 400
+
+    # 檢查紅利狀態或點數是否有實質改變，避免未異動時產生審計雜訊
+    changed = (
+        bool(item.is_reward) != is_reward_bool or
+        (is_reward_bool and (item.reward_points != pts or item.reward_discount_points != disc_pts))
+    )
+
+    if is_reward_bool:
+        item.is_reward = True
+        item.reward_points = pts
+        item.reward_discount_points = disc_pts
+        action_detail = f"上架/更新紅利商品：{item.name} (兌換點數:{item.reward_points}, 特惠點數:{item.reward_discount_points})"
+    else:
+        item.is_reward = False
+        item.reward_points = 0
+        item.reward_discount_points = 0
+        action_detail = f"下架紅利商品：{item.name}"
+
+    # 僅在狀態或數值有實質異動時才寫入稽核紀錄
+    if changed:
+        record_staff_audit(
+            action_type='TOGGLE_REWARD_ITEM',
+            details=action_detail
+        )
+
+    db.session.commit()
+    return {
+        'success': True,
+        'message': '紅利商品狀態已成功更新！',
+        'item_id': item.id,
+        'is_reward': item.is_reward
+    }, 200

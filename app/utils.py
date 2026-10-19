@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import re
 import threading
 from functools import wraps
 from flask import session, redirect, url_for, request, jsonify, g, current_app
@@ -14,6 +15,9 @@ ALLOWED_ORDER_TYPES = {'內用', '外帶'}
 _LOCAL_RATE_LOCK = threading.Lock()
 _LOCAL_RATE_BUCKETS = {}
 
+# 會員驗證常數
+PHONE_REGEX = re.compile(r'^09\d{8}$')
+PIN_REGEX = re.compile(r'^\d{4,6}$')
 
 def safe_int(val, default=0):
     try:
@@ -127,3 +131,16 @@ def role_required(*allowed_roles):
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+def validate_pin(pin):
+    """驗證 PIN 碼是否為 4 至 6 位純數字"""
+    if pin is None:
+        return False
+    return bool(PIN_REGEX.match(str(pin).strip()))
+
+
+def validate_phone(phone):
+    """驗證手機號碼是否為 09 開頭的 10 位數字"""
+    if phone is None:
+        return False
+    return bool(PHONE_REGEX.match(str(phone).strip()))
