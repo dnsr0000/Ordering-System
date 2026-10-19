@@ -1,4 +1,3 @@
-import re
 from flask import Blueprint, render_template, request, jsonify, g, session
 from app.extensions import db
 from app.models.user import User, RewardSetting
@@ -7,15 +6,9 @@ from app.models.coupon import Coupon, UserCoupon
 from app.services.order_service import verify_promo_code, process_checkout
 from app.routes.common import record_staff_audit
 from app.routes.auth import clear_pin_lockout
-from app.utils import (
-    role_required,
-    rate_limit,
-    safe_int
-)
+from app.utils import role_required, rate_limit, safe_int, validate_pin
 
 pos_bp = Blueprint('pos', __name__)
-PIN_REGEX = re.compile(r'^\d{4,6}$')
-
 
 def _serialize_pos_member(user):
     avail_cps = UserCoupon.query.filter_by(user_id=user.id, is_used=False).all()
@@ -138,7 +131,7 @@ def api_pos_set_member_pin():
     user_id = safe_int(data.get('user_id'), 0)
     pin = str(data.get('pin', '')).strip()
 
-    if user_id <= 0 or not PIN_REGEX.match(pin):
+    if user_id <= 0 or not validate_pin(pin):
         return jsonify({'success': False, 'message': '請輸入 4 至 6 位數字的安全 PIN 碼！'}), 400
 
     user = db.session.get(User, user_id)
@@ -176,6 +169,7 @@ def api_pos_verify_promo():
         'discount': result['discount'],
         'message': result['message']
     })
+
 @pos_bp.route('/api/pos/checkout', methods=['POST'])
 @role_required('owner', 'manager', 'staff')
 @rate_limit(max_requests=30, window_seconds=60, key_prefix="pos_checkout", methods=('POST',))

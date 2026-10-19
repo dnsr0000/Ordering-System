@@ -1,5 +1,4 @@
 import os
-import re
 import uuid
 import time
 import threading
@@ -13,16 +12,12 @@ from app.routes.common import (
     start_customer_session, clear_customer_session, 
     close_customer_session, refund_orphaned_redemptions
 )
-from app.utils import rate_limit, js_alert_redirect
+from app.utils import rate_limit, js_alert_redirect, validate_pin, validate_phone
 
 auth_bp = Blueprint('auth', __name__)
 
-PHONE_REGEX = re.compile(r'^09\d{8}$')
-PIN_REGEX = re.compile(r'^\d{4,6}$')
-
 _PIN_LOCK_MUTEX = threading.Lock()
-_PIN_FAIL_STATE = {}  # (tenant_id, phone, ip) -> {'fails': int, 'locked_until': float}
-
+_PIN_FAIL_STATE = {} 
 
 def get_face_embedding(filepath):
     return extract_feature(filepath)
@@ -33,24 +28,22 @@ def clear_pin_lockout(tenant_id, phone):
         keys_to_remove = [k for k in _PIN_FAIL_STATE if k[0] == tenant_id and k[1] == str(phone).strip()]
         for k in keys_to_remove:
             _PIN_FAIL_STATE.pop(k, None)
-
-
 @auth_bp.route('/register', methods=['GET', 'POST'], endpoint='register')
 @rate_limit(max_requests=10, window_seconds=60, key_prefix="auth_register", methods=('POST',))
 def register():
     if request.method == 'POST':
         name = (request.form.get('name') or '').strip()
         phone = (request.form.get('phone') or '').strip()
-        pin = (request.form.get('pin') or '0000').strip()
+        pin = (request.form.get('pin') or '').strip()
         photo = request.files.get('photo')
 
-        if not name or not phone or not photo or photo.filename == '':
+        if not name or not phone or not pin or not photo or photo.filename == '':
             return js_alert_redirect('請填寫完整資訊並拍攝/上傳照片！', status=400)
 
-        if not PHONE_REGEX.match(phone):
+        if not validate_phone(phone):
             return js_alert_redirect('❌ 手機號碼格式不正確！請輸入 09 開頭的 10 碼數字。', status=400)
 
-        if not PIN_REGEX.match(pin):
+        if not validate_pin(pin):
             return js_alert_redirect('❌ 安全 PIN 碼必須為 4 至 6 位純數字！', status=400)
 
         if User.query.filter_by(phone=phone).first():
@@ -92,8 +85,6 @@ def register():
         return redirect(url_for('customer.customer_index'))
 
     return render_template('register.html', login_mode=False)
-
-
 @auth_bp.route('/face_login', methods=['GET', 'POST'], endpoint='face_login')
 @rate_limit(max_requests=15, window_seconds=60, key_prefix="auth_face_login", methods=('POST',))
 def face_login():

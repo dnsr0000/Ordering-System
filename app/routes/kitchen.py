@@ -1,10 +1,10 @@
 import re
 import time
 from datetime import datetime
-from flask import Blueprint, render_template, request, jsonify, g
+from flask import Blueprint, render_template, jsonify, g
 from app.extensions import db
 from app.models.order import Order
-from app.services.order_service import change_order_status, complete_all_pending_orders
+from app.services.order_service import complete_all_pending_orders
 from app.utils import role_required
 
 kitchen_bp = Blueprint('kitchen', __name__)
@@ -13,7 +13,6 @@ kitchen_bp = Blueprint('kitchen', __name__)
 @role_required('owner', 'manager', 'kitchen')
 def kitchen_display():
     return render_template('kitchen.html')
-
 
 @kitchen_bp.route('/api/kitchen_orders')
 @role_required('owner', 'manager', 'kitchen')
@@ -47,23 +46,6 @@ def api_kitchen_orders():
             'items': list(aggregated.values())
         })
     return jsonify({'success': True, 'orders': orders_data})
-
-
-@kitchen_bp.route('/api/kitchen_update_status/<int:order_id>', methods=['POST'])
-@role_required('owner', 'manager', 'kitchen')
-def api_kitchen_update_status(order_id):
-    """KDS 廚房端變更訂單狀態（出餐或取消）"""
-    data = request.get_json() or {}
-    status = data.get('status', 'Completed')
-    
-    result, status_code = change_order_status(
-        order_id=order_id,
-        target_status=status,
-        staff_account=g.staff_account,
-        tenant_id=g.tenant_id
-    )
-    return jsonify(result), status_code
-
 
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])
 @role_required('owner', 'manager', 'kitchen')

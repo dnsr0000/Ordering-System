@@ -1,12 +1,9 @@
 import queue
 from datetime import datetime
 from flask import Blueprint, render_template, Response, jsonify, request, session, g
-from app.extensions import db
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
-from app.routes.common import record_staff_audit
 from app.utils import role_required
-from app.services.order_service import change_order_status
 
 pickup_bp = Blueprint('pickup', __name__)
 
@@ -52,19 +49,6 @@ def api_counter_orders():
         'ready_orders': ready_orders,
         'preparing_orders': preparing_orders
     })
-
-@pickup_bp.route('/api/mark_picked_up/<int:order_id>', methods=['POST'])
-@role_required('owner', 'manager', 'staff')
-def api_mark_picked_up(order_id):
-    """櫃檯人員核銷取餐完成（狀態流轉為 PickedUp）"""
-    result, status_code = change_order_status(
-        order_id=order_id,
-        target_status='PickedUp',
-        staff_account=g.staff_account,
-        tenant_id=g.tenant_id
-    )
-    return jsonify(result), status_code
-
 
 @pickup_bp.route('/api/orders_stream')
 def orders_stream():

@@ -82,6 +82,7 @@ def create_app(config_class=Config):
     from .routes.pickup import pickup_bp
     from .routes.admin import admin_bp
     from .routes.pos import pos_bp
+    from .routes.orders import orders_bp
 
     app.register_blueprint(customer_bp)
     app.register_blueprint(auth_bp)
@@ -90,6 +91,7 @@ def create_app(config_class=Config):
     app.register_blueprint(pickup_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(pos_bp)
+    app.register_blueprint(orders_bp)
 
     from app.tenant_context import install_tenant_context
     install_tenant_context(app)

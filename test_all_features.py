@@ -1,4 +1,3 @@
-
 """
 智慧自助點餐、POS 收銀、人臉辨識與多租戶系統 — 全功能與全排列組合自動化驗證腳本
 執行方式：
@@ -6,17 +5,17 @@
 自訂壓測參數 (選填)：
   python test_all_features.py --browse-users 60 --sse-streams 8 --checkout-users 30 --stock 10
 
-涵蓋 13 大測試模組、65 項細部測試與排列組合：
+涵蓋 13 大測試模組、77 項細部測試與排列組合：
   • 模組 1 ：系統初始化、資料庫遷移 (舊 Pickle 轉型/重複電話合併/舊訂單補值) 與多租戶隔離 (5 項)
   • 模組 2 ：資安防線、CSRF 反向 403 攔截、RBAC 四級權限矩陣、路徑穿越與相片保護 (6 項)
   • 模組 3 ：菜單 CRUD、刪除路由、紅利商城獨立上下架與三種加購觸發規則 (3 項)
   • 模組 4 ：套餐組合 (Combo) 建立、編輯、刪除、配餐防重複與客製化自動校正 (2 項)
   • 模組 5 ：會員註冊、電腦視覺向量比對、舊會員無 PIN 403、PIN 連續 5 次錯誤鎖定與刪修 (5 項)
-  • 模組 6 ：顧客端自助點餐 (/submit_order) 全排列組合、加料查表與付款/用餐白名單 (3 項)
+  • 模組 6 ：顧客端自助點餐 (/submit_order) 全排列組合、加料查表與付款/用餐白名單 (4 項)
   • 模組 7 ：優惠券 CRUD、紅利兌換憑證 (RewardRedemption)、重複退點攔截與複合折抵 (4 項)
   • 模組 8 ：櫃檯 POS 收銀系統 (/pos) 多筆候選查詢、設 PIN、優惠碼、實收不足與找零稽核 (5 項)
-  • 模組 9 ：廚房 KDS、櫃檯核銷、訂單狀態機非法轉換攔截與取消全量回滾 (4 項)
-  • 模組 10：營運分析、AI 三層韌性降級、Excel 10 工作表匯出 (含稽核表) 與智慧匯入 (3 項)
+  • 模組 9 ：廚房 KDS、櫃檯核銷、訂單狀態機非法轉換攔截與取消全量回滾 (11 項)
+  • 模組 10：營運分析、AI 三層韌性降級、Excel 10 工作表匯出 (含稽核表) 與智慧匯入 (7 項)
   • 模組 11：頻率限制 (Rate Limit 429) 與 SSE 即時串流連線配額 (10/25/60) 獨立驗證 (2 項)
   • 模組 12：多執行緒高併發搶購、點數防雙花、POS 併發結帳與真實 HTTP/SSE 壓力測試 (5 項)
   • 模組 13：補強覆蓋 — 未測路由 (/face_login、/api/verify_promo、/my_orders、/shop/<slug> 等)、免登入外洩、角色越權(含 owner/manager 回歸)、GET 刪除封鎖、跨店隔離掃描、匿名/CSRF 全路由掃描、限流與 SSE (18 項)
@@ -36,7 +35,7 @@ import inspect
 import tempfile
 import statistics
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sqlalchemy.exc import IntegrityError
 
@@ -669,31 +668,39 @@ def run_all_tests():
                     pass
     runner.check("2.5", "會員人臉照片 (/static/member/) 私密存取控制驗證", t2_5)
 
-    # 2.6 系統完整備份包匯出 (/admin/export_excel) 與還原防護 (/admin/restore_backup) 驗證
+    # 2.6 系統完整備份包匯出 (/admin/backup_system) 與還原防護 (/admin/restore_backup) 驗證
     def t2_6():
         csrf = get_client_csrf(admin_client, "/admin")
         
-        # 1. 測試整合至 export_excel 的完整備份包匯出 (包含 menu.db 實體資料庫)
+        # 1. 測試負責人 (owner) 調用 /admin/backup_system 成功匯出包含實體 menu.db 的 ZIP 備份包
         r_bak = admin_client.post(
-            "/admin/export_excel",
-            data={"export_type": "backup_zip", "csrf_token": csrf},
+            "/admin/backup_system",
+            data={"csrf_token": csrf},
             headers={"X-CSRFToken": csrf},
         )
         assert r_bak.status_code == 200, f"完整備份包匯出失敗: {r_bak.status_code}"
         assert r_bak.mimetype == "application/zip", f"備份包 MIME 類型錯誤: {r_bak.mimetype}"
         
-        # 檢驗下載的 ZIP 壓縮包內確實包含 menu.db 實體資料庫
         with zipfile.ZipFile(io.BytesIO(r_bak.data), 'r') as zf:
             assert "menu.db" in zf.namelist(), "完整備份包 ZIP 缺少 menu.db 資料庫檔案"
 
-        # 2. 測試未上傳實體檔案時，還原路由具備安全阻斷防護 (403)
+        # 2. 測試店長 (manager) 嘗試下載完整備份包被 403 阻斷（資安防護）
+        m_csrf = get_client_csrf(manager_client, "/admin")
+        r_mgr_bak = manager_client.post(
+            "/admin/backup_system",
+            data={"csrf_token": m_csrf},
+            headers={"X-CSRFToken": m_csrf},
+        )
+        assert r_mgr_bak.status_code == 403, f"店長下載完整備份未回傳 403: {r_mgr_bak.status_code}"
+
+        # 3. 測試未上傳實體檔案時，還原路由具備安全阻斷防護 (403)
         r_rest = admin_client.post(
             "/admin/restore_backup",
             data={"csrf_token": csrf},
             headers={"X-CSRFToken": csrf},
         )
         assert r_rest.status_code == 403, f"未選取檔案之還原請求未回傳 403: {r_rest.status_code}"
-        return "export_excel(backup_zip 成功打包 menu.db) 與 restore_backup(安全阻斷 403) 驗證通過"
+        return "backup_system(owner 成功打包 menu.db & manager 403 阻斷) 與 restore_backup(安全阻斷 403) 驗證通過"
     runner.check("2.6", "系統完整備份包匯出 (含 menu.db) 與還原安全防護驗證", t2_6)
 
     # ==========================================================================
@@ -1292,6 +1299,46 @@ def run_all_tests():
         return "非法 payment_method(400) 與非法 order_type(400) 白名單攔截通過"
     runner.check("6.3", "payment_method 與 order_type 白名單防禦驗證 (非法字串必回 400)", t6_3)
 
+    # 6.4 取餐號流水：1~999 循環，達 999 後回繞為 1 並持續遞增（不得卡在 1）
+    def t6_4():
+        clear_rate_buckets()
+        with app.app_context():
+            t1 = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
+            wrap_item = MenuItem(
+                tenant_id=t1.id, name="取餐號回繞測試餐", category="主餐", price=20,
+                stock=10, total_stock=10, is_sold_out=False, modifiers="none",
+            )
+            db.session.add(wrap_item)
+            # 模擬「當日最後一張訂單」取餐號已到 999 (Cancelled：不佔用廚房看板)
+            db.session.add(Order(
+                tenant_id=t1.id, user_id=None, table_number="取餐號回繞前置", total_price=0,
+                status="Cancelled", pickup_number=999,
+            ))
+            db.session.commit()
+            wrap_item_id = wrap_item.id
+
+        def _guest_order():
+            c = app.test_client()
+            c.get("/?shop=default")
+            c.get("/guest_login")
+            csrf = get_client_csrf(c, "/")
+            r = c.post(
+                "/submit_order",
+                json={
+                    "items": [{"id": wrap_item_id, "name": "取餐號回繞測試餐", "quantity": 1}],
+                    "payment_method": "Cash",
+                    "order_type": "內用",
+                },
+                headers={"X-CSRFToken": csrf},
+            )
+            assert r.status_code == 200, f"建立訪客訂單失敗: {r.status_code} {r.get_data(as_text=True)[:120]}"
+            return r.get_json()["pickup_number"]
+
+        seq = [_guest_order() for _ in range(3)]
+        assert seq == [1, 2, 3], f"取餐號達 999 後應回繞為 1 並持續遞增 (預期 [1, 2, 3])，實際 {seq}"
+        return f"當日最後一張為 #999 -> 接續結帳取餐號依序為 {seq}，不再卡在 1"
+    runner.check("6.4", "取餐號流水：達 999 後回繞為 1 並持續遞增 (不卡死在 1)", t6_4)
+
     # ==========================================================================
     # 模組 7：優惠券 CRUD、紅利兌換憑證 (RewardRedemption)、重複退點攔截與複合折抵
     # ==========================================================================
@@ -1689,8 +1736,7 @@ def run_all_tests():
     # 模組 9：廚房 KDS、櫃檯核銷、訂單狀態機非法轉換攔截與取消全量回滾
     # ==========================================================================
     runner.start_suite("模組 9：廚房 KDS、櫃檯核銷、訂單狀態機非法轉換攔截與取消全量回滾")
-
-    # 9.1 廚房 KDS 讀取、單筆出餐 (Completed)、櫃檯核銷 (PickedUp) 與 MARK_PICKED_UP 稽核
+    # 9.1 廚房 KDS 出餐、叫號牆同步、櫃檯核銷與 MARK_PICKED_UP 稽核
     def t9_1():
         r_kds = kitchen_client.get("/api/kitchen_orders")
         assert r_kds.status_code == 200
@@ -1698,26 +1744,27 @@ def run_all_tests():
         assert len(orders) >= 1, "廚房 KDS 未讀出待製作訂單"
         first_oid = orders[0]["id"]
 
-        # 廚房將第一張訂單標記為 Completed
+        # 廚房透過統一端點標記為 Completed
         k_csrf = get_client_csrf(kitchen_client, "/kitchen")
         r_comp = kitchen_client.post(
-            f"/api/kitchen_update_status/{first_oid}",
+            f"/api/orders/{first_oid}/status",
             json={"status": "Completed"},
             headers={"X-CSRFToken": k_csrf},
         )
         assert r_comp.status_code == 200 and r_comp.get_json().get("success") is True
 
-        # 公開叫號看板 API (/api/counter_orders) 應可免登入讀取，且該單出現在 ready_orders
+        # 公開叫號看板 API
         anon = app.test_client()
         r_cnt = anon.get("/api/counter_orders")
         assert r_cnt.status_code == 200
         ready_ids = [o["id"] for o in r_cnt.get_json().get("ready_orders", [])]
-        assert first_oid in ready_ids, "Completed 訂單未出現在公開叫號看板 ready_orders"
+        assert first_oid in ready_ids, "Completed 訂單未出現在公開叫號看板"
 
-        # 櫃檯人員核銷取餐 (/api/mark_picked_up/<id>)
+        # 櫃檯人員透過統一端點核銷取餐 (PickedUp)
         s_csrf = get_client_csrf(staff_client, "/pickup")
         r_pick = staff_client.post(
-            f"/api/mark_picked_up/{first_oid}",
+            f"/api/orders/{first_oid}/status",
+            json={"status": "PickedUp"},
             headers={"X-CSRFToken": s_csrf},
         )
         assert r_pick.status_code == 200 and r_pick.get_json().get("success") is True
@@ -1725,24 +1772,25 @@ def run_all_tests():
             assert db.session.get(Order, first_oid).status == "PickedUp"
             au = StaffAuditLog.query.filter_by(action_type="MARK_PICKED_UP", target_order_id=first_oid).first()
             assert au is not None, "櫃檯取餐核銷未寫入 MARK_PICKED_UP 稽核紀錄"
-        return f"訂單 #{first_oid} Pending -> Completed(叫號牆同步) -> PickedUp(含稽核) 通過"
-    runner.check("9.1", "廚房 KDS 出餐、公開叫號牆同步、櫃檯核銷與 MARK_PICKED_UP 稽核", t9_1)
+        return f"訂單 #{first_oid} Pending -> Completed -> PickedUp(統一端點) 通過"
+    runner.check("9.1", "廚房出餐、叫號牆同步、櫃檯核銷與 MARK_PICKED_UP 稽核", t9_1)
 
-    # 9.2 訂單狀態機非法轉換嚴格攔截 (Pending 直接取餐、Cancelled 復活回 Pending/Completed/PickedUp)
+    # 9.2 訂單狀態機非法轉換嚴格攔截 (對齊 409 Conflict 慣例)
     def t9_2():
         pos_oid = pos_order_id_holder["id"]
         s_csrf = get_client_csrf(staff_client, "/pickup")
         k_csrf = get_client_csrf(kitchen_client, "/kitchen")
         a_csrf = get_client_csrf(admin_client, "/admin")
 
-        # (a) pos_oid 目前為 Pending，嘗試未出餐直接呼叫 /api/mark_picked_up/<id> -> 必回 400
+        # (a) Pending 未出餐直接嘗試取餐 -> 409 Conflict
         r_premature = staff_client.post(
-            f"/api/mark_picked_up/{pos_oid}",
+            f"/api/orders/{pos_oid}/status",
+            json={"status": "PickedUp"},
             headers={"X-CSRFToken": s_csrf},
         )
-        assert r_premature.status_code == 400, f"Pending 訂單未出餐直接取餐未被攔截: {r_premature.status_code}"
+        assert r_premature.status_code == 409, f"Pending 訂單未出餐直接取餐未回 409: {r_premature.status_code}"
 
-        # (b) 建立一張測試單並先取消為 Cancelled，再測試各種非法復活轉換
+        # (b) 建立訪客單並取消為 Cancelled
         c = app.test_client()
         c.get("/?shop=default")
         c.get("/guest_login")
@@ -1754,52 +1802,52 @@ def run_all_tests():
                 "payment_method": "Cash",
                 "order_type": "內用",
             },
-            headers={"X-CSRFToken": c_csrf, "X-Forwarded-For": "10.60.1.1"},
+            headers={"X-CSRFToken": c_csrf},
         )
         cancel_oid = r_new.get_json()["order_id"]
 
-        # 透過店長取消該單
         r_cancel1 = manager_client.post(
-            f"/api/kitchen_update_status/{cancel_oid}",
+            f"/api/orders/{cancel_oid}/status",
             json={"status": "Cancelled"},
-            headers={"X-CSRFToken": get_client_csrf(manager_client, "/kitchen")},
+            headers={"X-CSRFToken": get_client_csrf(manager_client, "/admin")},
         )
         assert r_cancel1.status_code == 200
 
-        # 嘗試重複取消同一張已取消訂單 -> 必回 400
+        # (c) 重複取消同一張已取消訂單 -> 409 Conflict
         r_cancel2 = manager_client.post(
-            f"/api/kitchen_update_status/{cancel_oid}",
+            f"/api/orders/{cancel_oid}/status",
             json={"status": "Cancelled"},
-            headers={"X-CSRFToken": get_client_csrf(manager_client, "/kitchen")},
+            headers={"X-CSRFToken": get_client_csrf(manager_client, "/admin")},
         )
-        assert r_cancel2.status_code == 400, f"重複取消已取消訂單未回 400: {r_cancel2.status_code}"
+        assert r_cancel2.status_code == 409, f"重複取消已取消訂單未回 409: {r_cancel2.status_code}"
 
-        # 嘗試透過 KDS 將 Cancelled 改回 Completed -> 必回 400
-        r_revive_kds = kitchen_client.post(
-            f"/api/kitchen_update_status/{cancel_oid}",
+        # (d) Cancelled 復活為 Completed -> 409 Conflict
+        r_revive_kds = manager_client.post(
+            f"/api/orders/{cancel_oid}/status",
             json={"status": "Completed"},
-            headers={"X-CSRFToken": k_csrf},
+            headers={"X-CSRFToken": get_client_csrf(manager_client, "/admin")},
         )
-        assert r_revive_kds.status_code == 400, f"KDS 將 Cancelled 訂單復活為 Completed 未被攔截: {r_revive_kds.status_code}"
+        assert r_revive_kds.status_code == 409, f"Cancelled 訂單復活為 Completed 未回 409: {r_revive_kds.status_code}"
 
-        # 嘗試透過後台 /admin/update_order_status/<id> 將 Cancelled 改回 Pending -> 必回 400
+        # (e) Cancelled 復活為 Pending -> 409 Conflict
         r_revive_adm = admin_client.post(
-            f"/admin/update_order_status/{cancel_oid}",
+            f"/api/orders/{cancel_oid}/status",
             json={"status": "Pending"},
             headers={"X-CSRFToken": a_csrf},
         )
-        assert r_revive_adm.status_code == 400, f"後台將 Cancelled 訂單復活為 Pending 未被攔截: {r_revive_adm.status_code}"
+        assert r_revive_adm.status_code == 409, f"Cancelled 訂單復活為 Pending 未回 409: {r_revive_adm.status_code}"
 
-        # 嘗試將 Cancelled 訂單標記為 PickedUp -> 必回 400
-        r_revive_pick = staff_client.post(
-            f"/api/mark_picked_up/{cancel_oid}",
-            headers={"X-CSRFToken": s_csrf},
+        # (f) Cancelled 直接取餐 PickedUp -> 409 Conflict
+        r_revive_pick = manager_client.post(
+            f"/api/orders/{cancel_oid}/status",
+            json={"status": "PickedUp"},
+            headers={"X-CSRFToken": get_client_csrf(manager_client, "/admin")},
         )
-        assert r_revive_pick.status_code == 400, f"Cancelled 訂單直接取餐未被攔截: {r_revive_pick.status_code}"
-        return "Pending直接取餐(400)、重複取消(400)與Cancelled復活(KDS/Admin/Pickup全400) 攔截通過"
-    runner.check("9.2", "訂單狀態機非法轉換攔截 (Pending直接取餐、Cancelled復活與重複取消)", t9_2)
+        assert r_revive_pick.status_code == 409, f"Cancelled 訂單直接取餐未回 409: {r_revive_pick.status_code}"
+        return "Pending直接取餐(409)、重複取消(409)與Cancelled各類復活(全409) 語意攔截通過"
+    runner.check("9.2", "訂單狀態機非法轉換攔截 (409 Conflict 語意對齊與不可逆性)", t9_2)
 
-    # 9.3 取消訂單全量回滾 (主餐庫存、全部套餐配餐庫存、優惠券、折抵點數与贈點) + CANCEL_ORDER 稽核
+    # 9.3 取消訂單全量回滾
     def t9_3():
         pos_oid = pos_order_id_holder["id"]
         with app.app_context():
@@ -1807,27 +1855,26 @@ def run_all_tests():
             f_stock_before = db.session.get(MenuItem, menu_ids["美式脆薯"]).stock
             t_stock_before = db.session.get(MenuItem, menu_ids["錫蘭紅茶"]).stock
             u_mei = User.query.filter_by(phone="0912999888").first()
-            pts_before = u_mei.points  # 128 點
+            pts_before = u_mei.points
 
-        # 由後台取消 8.5 建立的 POS 套餐訂單 (含主餐+雙配餐、折抵 25 點、贈 3 點)
         a_csrf = get_client_csrf(admin_client, "/admin")
         r_cancel = admin_client.post(
-            f"/admin/update_order_status/{pos_oid}",
+            f"/api/orders/{pos_oid}/status",
             json={"status": "Cancelled"},
             headers={"X-CSRFToken": a_csrf},
         )
-        assert r_cancel.status_code in (200, 302)
+        assert r_cancel.status_code == 200
 
         with app.app_context():
             assert db.session.get(Order, pos_oid).status == "Cancelled"
-            assert db.session.get(MenuItem, menu_ids["招牌和牛堡"]).stock == b_stock_before + 1, "取消訂單主餐庫存未回補"
-            assert db.session.get(MenuItem, menu_ids["美式脆薯"]).stock == f_stock_before + 1, "取消訂單配餐1(脆薯)庫存未回補"
-            assert db.session.get(MenuItem, menu_ids["錫蘭紅茶"]).stock == t_stock_before + 1, "取消訂單配餐2(紅茶)庫存未回補"
+            assert db.session.get(MenuItem, menu_ids["招牌和牛堡"]).stock == b_stock_before + 1
+            assert db.session.get(MenuItem, menu_ids["美式脆薯"]).stock == f_stock_before + 1
+            assert db.session.get(MenuItem, menu_ids["錫蘭紅茶"]).stock == t_stock_before + 1
             u_mei_after = User.query.filter_by(phone="0912999888").first()
-            assert u_mei_after.points == pts_before + 25 - 3, f"取消訂單會員點數未精準回滾(期望 150, 實際 {u_mei_after.points})"
+            assert u_mei_after.points == pts_before + 25 - 3
             au = StaffAuditLog.query.filter_by(action_type="CANCEL_ORDER", target_order_id=pos_oid).first()
-            assert au is not None and au.points_delta == 22, "取消訂單未寫入 CANCEL_ORDER 稽核紀錄"
-        return "主餐+雙配餐庫存回補(+1)、會員點數回滾(128->150點) & CANCEL_ORDER 稽核通過"
+            assert au is not None and au.points_delta == 22
+        return "主餐+雙配餐庫存回補(+1)、會員點數回滾 & 統一端點取消成功"
     runner.check("9.3", "取消訂單全量回滾 (主餐/套餐配餐庫存、點數、優惠券) 與 CANCEL_ORDER 稽核", t9_3)
 
     # 9.4 廚房一鍵全部出餐 (/api/kitchen_complete_all)
@@ -1840,6 +1887,289 @@ def run_all_tests():
             assert pending_cnt == 0, f"一鍵出餐後仍有 {pending_cnt} 筆 Pending 訂單"
         return "當日所有 Pending 訂單一鍵批次出餐完成"
     runner.check("9.4", "廚房一鍵全部出餐 (/api/kitchen_complete_all) 批次更新驗證", t9_4)
+
+    # 9.5 訪客訂單取消狀態確實流轉為 Cancelled 且二次取消回 409
+    def t9_5():
+        c = app.test_client()
+        c.get("/?shop=default")
+        c.get("/guest_login")
+        c_csrf = get_client_csrf(c, "/")
+        r_new = c.post(
+            "/submit_order",
+            json={
+                "items": [{"id": menu_ids["錫蘭紅茶"], "name": "錫蘭紅茶", "quantity": 1}],
+                "payment_method": "Cash",
+                "order_type": "內用",
+            },
+            headers={"X-CSRFToken": c_csrf},
+        )
+        g_oid = r_new.get_json()["order_id"]
+
+        a_csrf = get_client_csrf(admin_client, "/admin")
+        r1 = admin_client.post(f"/api/orders/{g_oid}/status", json={"status": "Cancelled"}, headers={"X-CSRFToken": a_csrf})
+        assert r1.status_code == 200
+        with app.app_context():
+            assert db.session.get(Order, g_oid).status == "Cancelled", "訪客訂單取消後狀態未變更為 Cancelled！"
+
+        r2 = admin_client.post(f"/api/orders/{g_oid}/status", json={"status": "Cancelled"}, headers={"X-CSRFToken": a_csrf})
+        assert r2.status_code == 409, f"已取消之訪客訂單重複取消未回 409: {r2.status_code}"
+        return "訪客訂單狀態=Cancelled 且重複取消回 409 通過"
+    runner.check("9.5", "訪客訂單取消狀態流轉與防重複取消回補庫存驗證 (409)", t9_5)
+
+    # 9.6 角色矩陣卡控：廚房人員嘗試取消或取餐必回 403
+    def t9_6():
+        with app.app_context():
+            o = Order.query.filter_by(status="Completed").first()
+            target_oid = o.id
+        k_csrf = get_client_csrf(kitchen_client, "/kitchen")
+        r_illegal = kitchen_client.post(
+            f"/api/orders/{target_oid}/status",
+            json={"status": "PickedUp"},
+            headers={"X-CSRFToken": k_csrf}
+        )
+        assert r_illegal.status_code == 403, f"廚房人員越權執行 PickedUp 未回 403: {r_illegal.status_code}"
+        return "角色矩陣成功阻斷廚房人員執行 PickedUp (403)"
+    runner.check("9.6", "角色矩陣卡控：廚房人員嘗試核銷取餐 (PickedUp) 必回 403", t9_6)
+
+    # 9.7 角色矩陣卡控：一般店員嘗試取消已取餐訂單必回 403
+    def t9_7():
+        with app.app_context():
+            o = Order.query.filter_by(status="PickedUp").first()
+            picked_oid = o.id
+        s_csrf = get_client_csrf(staff_client, "/pos")
+        r_cancel_picked = staff_client.post(
+            f"/api/orders/{picked_oid}/status",
+            json={"status": "Cancelled"},
+            headers={"X-CSRFToken": s_csrf}
+        )
+        assert r_cancel_picked.status_code == 403, f"店員擅自取消已取餐訂單未回 403: {r_cancel_picked.status_code}"
+        return "角色矩陣成功阻斷一般店員取消已取餐訂單 (403)"
+    runner.check("9.7", "角色矩陣卡控：一般店員嘗試取消已取餐訂單必回 403", t9_7)
+
+    # 9.8 業務完整性：取消紅利兌換訂單之全額點數回補
+    def t9_8():
+        with app.app_context():
+            u = User.query.filter_by(phone="0912345678").first()
+            uid = u.id
+            init_pts = u.points
+
+        s_csrf = get_client_csrf(staff_client, "/pos")
+        r_checkout = staff_client.post(
+            "/api/pos/checkout",
+            json={
+                "user_id": uid,
+                "table_number": "退點測試桌",
+                "items": [{"id": f"reward_{menu_ids['黃金雞塊']}", "name": "🎁 [點數兌換] 黃金雞塊", "quantity": 1, "is_reward": True}],
+                "payment_method": "Cash",
+                "order_type": "內用"
+            },
+            headers={"X-CSRFToken": s_csrf}
+        )
+        assert r_checkout.status_code == 200
+        r_oid = r_checkout.get_json()["order_id"]
+
+        with app.app_context():
+            assert db.session.get(User, uid).points == init_pts - 50
+
+        a_csrf = get_client_csrf(admin_client, "/admin")
+        r_cancel = admin_client.post(f"/api/orders/{r_oid}/status", json={"status": "Cancelled"}, headers={"X-CSRFToken": a_csrf})
+        assert r_cancel.status_code == 200
+
+        with app.app_context():
+            final_pts = db.session.get(User, uid).points
+            assert final_pts == init_pts, f"取消兌換訂單後點數未全額退還！預期 {init_pts}，實際 {final_pts}"
+        return "含有點數兌換商品的訂單取消後，50 點全額回補會員"
+    runner.check("9.8", "業務完整性：取消紅利兌換訂單之全額點數回補驗證", t9_8)
+
+    # 9.9 同一張訂單併發重複取消 (SQL 條件式更新 CAS)：只有 1 次成功，其餘 409，庫存與稽核只處理 1 次
+    def t9_9():
+        n_threads = 8
+        with app.app_context():
+            t1 = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
+            t1_id = t1.id
+            mgr_staff_id = StaffAccount.query.filter_by(username="mgr_user").first().id
+            cas_item = MenuItem(
+                tenant_id=t1_id, name="CAS併發取消測試餐", category="主餐", price=50,
+                stock=9, total_stock=10, is_sold_out=False, modifiers="none",
+            )
+            db.session.add(cas_item)
+            db.session.flush()
+            cas_item_id = cas_item.id
+            # 模擬已售出 1 份 (10 -> 9)；取消一次後庫存應精準回到 10
+            cas_order = Order(
+                tenant_id=t1_id, user_id=None, table_number="CAS併發取消", total_price=50,
+                status="Pending", pickup_number=1,
+                created_at=datetime.now() - timedelta(days=1),   # 建立於昨天：不干擾當日取餐號流水與今日營運資料
+            )
+            db.session.add(cas_order)
+            db.session.flush()
+            db.session.add(OrderItem(
+                tenant_id=t1_id, order_id=cas_order.id, menu_item_id=cas_item_id,
+                item_name="CAS併發取消測試餐", price=50, quantity=1, customization="",
+            ))
+            db.session.commit()
+            cas_oid = cas_order.id
+
+        barrier = threading.Barrier(n_threads)
+
+        def _cancel_worker(_idx):
+            c = app.test_client()
+            with c.session_transaction() as sess:
+                sess["admin_logged_in"] = True
+                sess["staff_account_id"] = mgr_staff_id
+                sess["admin_username"] = "mgr_user"
+                sess["admin_role"] = "manager"
+                sess["staff_role"] = "manager"
+                sess["tenant_id"] = t1_id
+                sess["tenant_slug"] = "default"
+                sess["csrf_token"] = "cas_race_tok"
+                sess["_csrf_token"] = "cas_race_tok"
+            barrier.wait(timeout=10)
+            r = c.post(
+                f"/api/orders/{cas_oid}/status",
+                json={"status": "Cancelled"},
+                headers={"X-CSRFToken": "cas_race_tok"},
+            )
+            return r.status_code
+
+        with ThreadPoolExecutor(max_workers=n_threads) as ex:
+            codes = [f.result() for f in [ex.submit(_cancel_worker, i) for i in range(n_threads)]]
+
+        with app.app_context():
+            final_status = db.session.get(Order, cas_oid).status
+            final_stock = db.session.get(MenuItem, cas_item_id).stock
+            audit_cnt = StaffAuditLog.query.filter_by(action_type="CANCEL_ORDER", target_order_id=cas_oid).count()
+
+        assert codes.count(200) == 1, f"同一訂單併發取消應僅 1 次成功，實際回應碼: {sorted(codes)}"
+        assert all(c == 409 for c in codes if c != 200), f"其餘併發請求應全回 409，實際回應碼: {sorted(codes)}"
+        assert final_status == "Cancelled", f"訂單最終狀態應為 Cancelled，實際 {final_status}"
+        assert final_stock == 10, f"庫存應只回補 1 次 (9 -> 10)，實際 {final_stock}（>10 代表重複回補）"
+        assert audit_cnt == 1, f"CANCEL_ORDER 稽核紀錄應僅 1 筆，實際 {audit_cnt}"
+        return f"{n_threads} 執行緒同時取消同一單 -> 成功 1、409 共 {codes.count(409)}，庫存 9->10 僅回補 1 次、稽核 1 筆"
+    runner.check("9.9", "併發防護：同一訂單同時重複取消只成功 1 次 (CAS，庫存與稽核不重複)", t9_9)
+
+    # 9.10 角色 × 狀態轉換完整矩陣：4 角色 × 16 種 (當前狀態→目標狀態) 組合逐一驗證
+    def t9_10():
+        statuses = ["Pending", "Completed", "PickedUp", "Cancelled"]
+        legal = {
+            "Pending": {"Completed", "Cancelled"},
+            "Completed": {"PickedUp", "Cancelled"},
+            "PickedUp": {"Cancelled"},
+            "Cancelled": set(),
+        }
+        all_legal_pairs = {(c, t) for c, ts in legal.items() for t in ts}
+        role_allowed = {
+            "owner": set(all_legal_pairs),
+            "manager": set(all_legal_pairs),
+            "staff": all_legal_pairs - {("PickedUp", "Cancelled")},
+            "kitchen": {("Pending", "Completed")},
+        }
+        role_clients = {
+            "owner": (admin_client, "/admin"),
+            "manager": (manager_client, "/admin"),
+            "staff": (staff_client, "/pos"),
+            "kitchen": (kitchen_client, "/kitchen"),
+        }
+        tokens = {role: get_client_csrf(cl, path) for role, (cl, path) in role_clients.items()}
+
+        # 一次建立所有測試訂單 (無明細，避免影響庫存)；取餐號需為整數供稽核格式化使用 (取消稽核會格式化 pickup_number)
+        case_orders = {}
+        with app.app_context():
+            t1 = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
+            seq = 0
+            for role in role_clients:
+                for cur in statuses:
+                    for tgt in statuses:
+                        seq += 1
+                        o = Order(
+                            tenant_id=t1.id, user_id=None, table_number=f"矩陣{role}", total_price=10,
+                            status=cur, pickup_number=1,
+                            created_at=datetime.now() - timedelta(days=1),   # 建立於昨天：不干擾當日取餐號流水
+                        )
+                        db.session.add(o)
+                        db.session.flush()
+                        case_orders[(role, cur, tgt)] = o.id
+            db.session.commit()
+
+        role_targets = {r: {t for (_c, t) in pairs} for r, pairs in role_allowed.items()}
+        reachable_targets = {t for ts in legal.values() for t in ts}   # 任何流程皆無法轉入 Pending
+
+        def _expected(role, cur, tgt):
+            # 判定順序：目標不可達 (409) -> 角色是否可能執行該目標 (403) -> 同狀態/非法轉換 (409)
+            #           -> 細部轉換權限 (403) -> 成功 (200)
+            if tgt not in reachable_targets:
+                return 409
+            if tgt not in role_targets[role]:
+                return 403
+            if cur == tgt or tgt not in legal[cur]:
+                return 409
+            if (cur, tgt) not in role_allowed[role]:
+                return 403
+            return 200
+
+        problems = []
+        for (role, cur, tgt), oid in case_orders.items():
+            client, _path = role_clients[role]
+            r = client.post(
+                f"/api/orders/{oid}/status",
+                json={"status": tgt},
+                headers={"X-CSRFToken": tokens[role]},
+            )
+            with app.app_context():
+                after = db.session.get(Order, oid).status
+            exp = _expected(role, cur, tgt)
+            tag = f"[{role}] {cur}->{tgt}"
+            if r.status_code != exp:
+                problems.append(f"{tag} 預期 {exp}，實際 {r.status_code}")
+            expected_after = tgt if exp == 200 else cur
+            if after != expected_after:
+                problems.append(f"{tag} 狀態應為 {expected_after}，實際 {after}")
+
+        assert not problems, f"狀態矩陣有 {len(problems)} 項不符：" + "；".join(problems[:8])
+        ok_cnt = sum(len(v) for v in role_allowed.values())
+        return f"4 角色 × 16 組合共 {len(case_orders)} 次逐一比對 200/403/409 預期通過（允許 {ok_cnt} 種、其餘皆被拒且狀態不變）"
+    runner.check("9.10", "角色 × 狀態轉換完整矩陣 (owner/manager/staff/kitchen × 16 種轉換)", t9_10)
+
+    # 9.11 無權限角色不論訂單狀態/是否存在，回應一律相同 (403)，不得藉由 404/409 探測訂單資訊
+    def t9_11():
+        k_csrf = get_client_csrf(kitchen_client, "/kitchen")
+        probe_ids = {}
+        with app.app_context():
+            t1 = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
+            for st in ("Pending", "Completed", "PickedUp", "Cancelled"):
+                o = Order(
+                    tenant_id=t1.id, user_id=None, table_number="探測測試", total_price=10,
+                    status=st, pickup_number=1,
+                    created_at=datetime.now() - timedelta(days=1),
+                )
+                db.session.add(o)
+                db.session.flush()
+                probe_ids[st] = o.id
+            db.session.commit()
+
+        responses = {}
+        for st, oid in probe_ids.items():
+            r = kitchen_client.post(
+                f"/api/orders/{oid}/status",
+                json={"status": "Cancelled"},
+                headers={"X-CSRFToken": k_csrf},
+            )
+            responses[st] = (r.status_code, (r.get_json() or {}).get("message"))
+        # 不存在的訂單編號
+        r_missing = kitchen_client.post(
+            "/api/orders/987654321/status",
+            json={"status": "Cancelled"},
+            headers={"X-CSRFToken": k_csrf},
+        )
+        responses["(不存在)"] = (r_missing.status_code, (r_missing.get_json() or {}).get("message"))
+
+        assert all(code == 403 for code, _ in responses.values()), f"無權限角色應一律回 403，實際: {responses}"
+        assert len({msg for _, msg in responses.values()}) == 1, f"不同訂單狀態的回應訊息不一致，會洩漏狀態: {responses}"
+        with app.app_context():
+            unchanged = {st: db.session.get(Order, oid).status for st, oid in probe_ids.items()}
+        assert unchanged == {st: st for st in probe_ids}, f"無權限請求不應改動任何訂單狀態: {unchanged}"
+        return "廚房對 4 種狀態與不存在的訂單送出取消，全數回應相同 403 訊息、訂單狀態不變"
+    runner.check("9.11", "權限優先於狀態判斷：無權限角色無法藉 404/409 探測訂單資訊", t9_11)
 
     # ==========================================================================
     # 模組 10：營運分析、AI 三層韌性降級、Excel 10 工作表匯出與智慧匯入
@@ -1910,28 +2240,22 @@ def run_all_tests():
         return f"成功匯出 {len(wb.sheetnames)} 張工作表 (含 POS 對帳欄位與 StaffAuditLog 稽核表)"
     runner.check("10.2", "Excel 完整匯出 (/admin/export_excel)：10 張工作表與 POS/稽核欄位驗證", t10_2)
 
-    # 10.3 Excel 菜單匯入 (/admin/import_excel) 與智慧匯入 (/admin/import_smart) 驗證
+    # 10.3 智慧匯入 (/admin/import_smart) 支援單一 CSV 菜單與 Excel 多工作表 Upsert 同步驗證
     def t10_3():
         csrf = get_client_csrf(admin_client, "/admin")
 
-        # (a) 測試 /admin/import_excel：建立包含新菜色「宇治抹茶拿鐵 ($65)」的 Excel 並匯入
-        wb_new = openpyxl.Workbook()
-        ws_new = wb_new.active
-        ws_new.title = "菜單品項(MenuItem)"
-        ws_new.append(["餐點名稱(Name)", "分類(Category)", "單價(Price)", "客製化群組(Modifiers)", "商品描述(Description)"])
-        ws_new.append(["宇治抹茶拿鐵", "飲料", 65, "ice_sugar", "京都宇治抹茶鮮奶"])
-        buf_new = io.BytesIO()
-        wb_new.save(buf_new)
-        buf_new.seek(0)
+        # (a) 測試 /admin/import_smart 支援單一 CSV 菜單匯入：建立「宇治抹茶拿鐵 ($65)」並匯入
+        csv_content = "餐點名稱,分類,單價,客製化群組,商品描述\n宇治抹茶拿鐵,飲料,65,ice_sugar,京都宇治抹茶鮮奶\n"
+        buf_csv = io.BytesIO(csv_content.encode('utf-8'))
 
-        r_imp_menu = admin_client.post(
-            "/admin/import_excel",
-            data={"csrf_token": csrf, "file": (buf_new, "new_menu_items.xlsx")},
+        r_imp_csv = admin_client.post(
+            "/admin/import_smart",
+            data={"csrf_token": csrf, "file": (buf_csv, "new_menu_items.csv")},
             content_type="multipart/form-data",
         )
-        assert r_imp_menu.status_code in (200, 302), f"/admin/import_excel 失敗: {r_imp_menu.status_code}"
+        assert r_imp_csv.status_code in (200, 302), f"/admin/import_smart CSV 匯入失敗: {r_imp_csv.status_code}"
 
-        # (b) 測試 /admin/import_smart：修改剛才匯出的全店 Excel 中「錫蘭紅茶」單價為 45，上傳進行 Upsert 同步
+        # (b) 測試 /admin/import_smart 支援 Excel 多表智慧 Upsert：修改全店 Excel 中「錫蘭紅茶」單價為 45
         wb = openpyxl.load_workbook(io.BytesIO(exported_xlsx_bytes["data"]))
         ws_menu = wb["菜單品項(MenuItem)"]
         headers = [c.value for c in ws_menu[1]]
@@ -1947,20 +2271,245 @@ def run_all_tests():
         wb.save(buf_smart)
         buf_smart.seek(0)
 
-        r_imp_smart = admin_client.post(
+        r_imp_excel = admin_client.post(
             "/admin/import_smart",
             data={"csrf_token": csrf, "file": (buf_smart, "updated_store_data.xlsx")},
             content_type="multipart/form-data",
         )
-        assert r_imp_smart.status_code in (200, 302), f"/admin/import_smart 失敗: {r_imp_smart.status_code}"
+        assert r_imp_excel.status_code in (200, 302), f"/admin/import_smart Excel 匯入失敗: {r_imp_excel.status_code}"
 
         with app.app_context():
             matcha = MenuItem.query.filter_by(name="宇治抹茶拿鐵").first()
             tea = MenuItem.query.filter_by(name="錫蘭紅茶").first()
-            assert matcha is not None and matcha.price == 65, "/admin/import_excel 未成功匯入宇治抹茶拿鐵"
+            assert matcha is not None and matcha.price == 65, "/admin/import_smart 未成功匯入宇治抹茶拿鐵"
             assert tea.price == 45, f"/admin/import_smart 未同步更新錫蘭紅茶價格: {tea.price}"
-        return "import_excel 新增'宇治抹茶拿鐵($65)' & import_smart 更新'錫蘭紅茶($45)' 通過"
-    runner.check("10.3", "Excel 菜單匯入 (/admin/import_excel) 與智慧匯入 (/admin/import_smart) 驗證", t10_3)
+        return "import_smart 成功支援 CSV 新增'宇治抹茶拿鐵($65)' 與 Excel 更新'錫蘭紅茶($45)'"
+    runner.check("10.3", "智慧匯入 (/admin/import_smart) 新增菜單與全店資料 Upsert 同步驗證", t10_3)
+
+    # 10.4 智慧匯入庫存保護：檔案未提供庫存欄位時，既有品項庫存與售完狀態不被覆蓋
+    def t10_4():
+        csrf = get_client_csrf(admin_client, "/admin")
+
+        def _import_csv(text):
+            return admin_client.post(
+                "/admin/import_smart",
+                data={"csrf_token": csrf, "file": (io.BytesIO(text.encode("utf-8")), "stock_test.csv")},
+                content_type="multipart/form-data",
+            )
+
+        def _get(name):
+            return MenuItem.query.filter_by(name=name).first()
+
+        try:
+            # (a) 含庫存欄位新增 -> 庫存=7
+            r = _import_csv("餐點名稱,分類,單價,庫存\n庫存保留測試茶,飲料,40,7\n")
+            assert r.status_code in (200, 302), f"CSV 匯入失敗: {r.status_code}"
+            with app.app_context():
+                assert _get("庫存保留測試茶").stock == 7, "含庫存欄位新增品項庫存應為 7"
+                it = _get("庫存保留測試茶")
+                it.stock = 3            # 模擬已售出 4 份
+                it.is_sold_out = False
+                db.session.commit()
+
+            # (b) 無庫存欄位更新 -> 價格更新、庫存維持 3；全新品項套用預設庫存 50
+            r = _import_csv("餐點名稱,分類,單價\n庫存保留測試茶,飲料,55\n庫存保留測試茶二號,飲料,35\n")
+            assert r.status_code in (200, 302)
+            with app.app_context():
+                it = _get("庫存保留測試茶")
+                assert it.price == 55, f"價格應被更新為 55，實際 {it.price}"
+                assert it.stock == 3, f"檔案未提供庫存欄位，既有庫存應維持 3，實際 {it.stock}"
+                new_it = _get("庫存保留測試茶二號")
+                assert new_it is not None and new_it.stock == 50, "全新品項未提供庫存時應套用預設庫存 50"
+                it.stock = 0            # 模擬售完
+                it.is_sold_out = True
+                db.session.commit()
+
+            # (c) 售完品項再次無庫存欄位匯入 -> 仍維持售完 (不得被誤補回)
+            r = _import_csv("餐點名稱,分類,單價\n庫存保留測試茶,飲料,60\n")
+            assert r.status_code in (200, 302)
+            with app.app_context():
+                it = _get("庫存保留測試茶")
+                assert it.price == 60 and it.stock == 0 and it.is_sold_out is True, \
+                    f"售完品項不應被覆蓋: price={it.price}, stock={it.stock}, sold_out={it.is_sold_out}"
+
+            # (d) 明確提供庫存欄位 -> 才允許覆蓋並解除售完
+            r = _import_csv("餐點名稱,分類,單價,庫存\n庫存保留測試茶,飲料,60,12\n")
+            assert r.status_code in (200, 302)
+            with app.app_context():
+                it = _get("庫存保留測試茶")
+                assert it.stock == 12 and it.is_sold_out is False, \
+                    f"明確提供庫存時應覆蓋為 12 並解除售完，實際 stock={it.stock}, sold_out={it.is_sold_out}"
+            return "無庫存欄位不覆蓋(3/售完保持)、新品預設 50、明確提供庫存才覆蓋(12) 驗證通過"
+        finally:
+            with app.app_context():
+                for nm in ("庫存保留測試茶", "庫存保留測試茶二號"):
+                    obj = _get(nm)
+                    if obj:
+                        db.session.delete(obj)
+                db.session.commit()
+    runner.check("10.4", "智慧匯入庫存保護：未提供庫存欄位時既有庫存/售完狀態不被覆蓋", t10_4)
+
+    # 10.5 智慧匯入單一交易原子性：任一菜單工作表解析失敗時整批 rollback，不留半套資料
+    def t10_5():
+        csrf = get_client_csrf(admin_client, "/admin")
+
+        def _build_xlsx(include_bad_sheet):
+            wb = openpyxl.Workbook()
+            ws1 = wb.active
+            ws1.title = "菜單品項(MenuItem)"
+            ws1.append(["餐點名稱(Name)", "分類(Category)", "單價(Price)"])
+            ws1.append(["原子匯入測試餐A", "點心", 30])
+            ws2 = wb.create_sheet("會員資料(User)")
+            ws2.append(["姓名(Name)", "電話(Phone)", "紅利點數(Points)"])
+            ws2.append(["原子匯入測試會員", "0900111222", 10])
+            if include_bad_sheet:
+                ws3 = wb.create_sheet("菜單_壞資料")      # 欄位無法對應「餐點名稱 / 單價」
+                ws3.append(["品名", "金額"])
+                ws3.append(["原子匯入測試餐B", 40])
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            return buf
+
+        def _post(buf):
+            return admin_client.post(
+                "/admin/import_smart",
+                data={"csrf_token": csrf, "file": (buf, "atomic_test.xlsx")},
+                content_type="multipart/form-data",
+            )
+
+        try:
+            # (a) 含壞工作表 -> 400，且前面已解析的菜單與會員都不得寫入
+            r_bad = _post(_build_xlsx(include_bad_sheet=True))
+            assert r_bad.status_code == 400, f"含壞工作表的匯入應回 400，實際 {r_bad.status_code}"
+            with app.app_context():
+                assert MenuItem.query.filter_by(name="原子匯入測試餐A").first() is None, \
+                    "匯入失敗後，前一張菜單工作表資料不應殘留 (未 rollback)"
+                assert MenuItem.query.filter_by(name="原子匯入測試餐B").first() is None, "壞工作表資料不應寫入"
+                assert User.query.filter_by(phone="0900111222").first() is None, \
+                    "匯入失敗後，會員工作表資料不應殘留 (未 rollback)"
+
+            # (b) 對照組：移除壞工作表後同樣檔案應完整匯入成功
+            r_ok = _post(_build_xlsx(include_bad_sheet=False))
+            assert r_ok.status_code in (200, 302), f"移除壞工作表後應可正常匯入，實際 {r_ok.status_code}"
+            with app.app_context():
+                a_item = MenuItem.query.filter_by(name="原子匯入測試餐A").first()
+                member = User.query.filter_by(phone="0900111222").first()
+                assert a_item is not None and a_item.price == 30, "對照組菜單品項未成功匯入"
+                assert member is not None and member.points == 10, "對照組會員未成功匯入"
+            return "壞工作表 -> 400 且整批 rollback (菜單/會員皆未殘留)；移除後完整匯入成功"
+        finally:
+            with app.app_context():
+                for nm in ("原子匯入測試餐A", "原子匯入測試餐B"):
+                    obj = MenuItem.query.filter_by(name=nm).first()
+                    if obj:
+                        db.session.delete(obj)
+                m = User.query.filter_by(phone="0900111222").first()
+                if m:
+                    db.session.delete(m)
+                db.session.commit()
+    runner.check("10.5", "智慧匯入原子性：多工作表任一表失敗整批 rollback，不留半套資料", t10_5)
+
+    # 10.6 智慧匯入紅利防呆：兌換點數不得高於單價、特惠點數須小於兌換點數 (新增與更新路徑)
+    def t10_6():
+        csrf = get_client_csrf(admin_client, "/admin")
+        names = ("紅利防呆測試A", "紅利防呆測試B", "紅利防呆測試C", "紅利防呆測試D")
+
+        def _import_csv(text):
+            return admin_client.post(
+                "/admin/import_smart",
+                data={"csrf_token": csrf, "file": (io.BytesIO(text.encode("utf-8")), "reward_guard.csv")},
+                content_type="multipart/form-data",
+            )
+
+        def _get(name):
+            return MenuItem.query.filter_by(name=name).first()
+
+        try:
+            header = "餐點名稱,分類,單價,是否開放紅利兌換,兌換點數,特惠點數\n"
+            rows = (
+                "紅利防呆測試A,點心,50,是,80,0\n"    # 兌換點數 80 > 單價 50 -> 自動關閉紅利
+                "紅利防呆測試B,點心,50,是,30,40\n"   # 特惠點數 40 >= 兌換點數 30 -> 特惠歸 0，紅利保留
+                "紅利防呆測試C,點心,50,是,30,10\n"   # 合法
+                "紅利防呆測試D,點心,50,是,0,0\n"     # 兌換點數 0 -> 自動關閉紅利
+            )
+            r = _import_csv(header + rows)
+            assert r.status_code in (200, 302), f"CSV 匯入失敗: {r.status_code}"
+            with app.app_context():
+                a, b, c, d = (_get(n) for n in names)
+                assert (a.is_reward, a.reward_points, a.reward_discount_points) == (False, 0, 0), \
+                    f"A：點數高於單價應關閉紅利，實際 {(a.is_reward, a.reward_points, a.reward_discount_points)}"
+                assert (b.is_reward, b.reward_points, b.reward_discount_points) == (True, 30, 0), \
+                    f"B：特惠點數不合法應歸 0 並保留紅利，實際 {(b.is_reward, b.reward_points, b.reward_discount_points)}"
+                assert (c.is_reward, c.reward_points, c.reward_discount_points) == (True, 30, 10), \
+                    f"C：合法設定不應被改動，實際 {(c.is_reward, c.reward_points, c.reward_discount_points)}"
+                assert (d.is_reward, d.reward_points) == (False, 0), \
+                    f"D：兌換點數 0 應關閉紅利，實際 {(d.is_reward, d.reward_points)}"
+
+            # 更新路徑：既有合法紅利品再次匯入不合法點數 -> 同樣被防呆關閉
+            r2 = _import_csv(header + "紅利防呆測試C,點心,50,是,99,0\n")
+            assert r2.status_code in (200, 302)
+            with app.app_context():
+                c2 = _get("紅利防呆測試C")
+                assert (c2.is_reward, c2.reward_points, c2.reward_discount_points) == (False, 0, 0), \
+                    f"更新路徑：不合法點數應關閉紅利，實際 {(c2.is_reward, c2.reward_points, c2.reward_discount_points)}"
+            return "新增/更新路徑皆套用紅利防呆：點數>單價與點數=0 關閉紅利、不合法特惠點數歸 0、合法設定保留"
+        finally:
+            with app.app_context():
+                for nm in names:
+                    obj = _get(nm)
+                    if obj:
+                        db.session.delete(obj)
+                db.session.commit()
+    runner.check("10.6", "智慧匯入紅利防呆：點數不得高於單價、特惠點數須小於兌換點數", t10_6)
+
+    # 10.7 匯入庫存/總量一致性：只給庫存或只給較小總量時，總量自動修正為不小於庫存
+    def t10_7():
+        csrf = get_client_csrf(admin_client, "/admin")
+        name = "總量修正測試茶"
+
+        def _import_csv(text):
+            r = admin_client.post(
+                "/admin/import_smart",
+                data={"csrf_token": csrf, "file": (io.BytesIO(text.encode("utf-8")), "total_stock_test.csv")},
+                content_type="multipart/form-data",
+            )
+            assert r.status_code in (200, 302), f"CSV 匯入失敗: {r.status_code}"
+
+        def _snap():
+            with app.app_context():
+                it = MenuItem.query.filter_by(name=name).first()
+                return it.stock, it.total_stock
+
+        try:
+            _import_csv("餐點名稱,分類,單價,庫存,總量\n總量修正測試茶,飲料,30,10,10\n")
+            assert _snap() == (10, 10), f"初始應為 (10, 10)，實際 {_snap()}"
+
+            # (a) 只給庫存 25 (> 總量 10) -> 總量需上調為 25
+            _import_csv("餐點名稱,分類,單價,庫存\n總量修正測試茶,飲料,30,25\n")
+            stock, total = _snap()
+            assert stock == 25 and total >= stock, f"只給庫存 25：總量應 >= 庫存，實際 (stock={stock}, total={total})"
+
+            # (b) 只給較小總量 5 (< 目前庫存 25) -> 庫存不變，總量不得低於庫存
+            _import_csv("餐點名稱,分類,單價,總量\n總量修正測試茶,飲料,30,5\n")
+            stock, total = _snap()
+            assert stock == 25 and total == 25, f"只給較小總量 5：總量應被夾至庫存 25，實際 (stock={stock}, total={total})"
+
+            # (c) 同時給庫存 8、總量 20 -> 原樣套用
+            _import_csv("餐點名稱,分類,單價,庫存,總量\n總量修正測試茶,飲料,30,8,20\n")
+            assert _snap() == (8, 20), f"同時給庫存與總量應原樣套用 (8, 20)，實際 {_snap()}"
+
+            # (d) 只給較大總量 40 -> 庫存不變，總量 40
+            _import_csv("餐點名稱,分類,單價,總量\n總量修正測試茶,飲料,30,40\n")
+            assert _snap() == (8, 40), f"只給較大總量 40：應為 (8, 40)，實際 {_snap()}"
+            return "庫存>總量時總量上調、較小總量被夾至庫存、同時提供或較大總量則原樣套用，stock<=total 恆成立"
+        finally:
+            with app.app_context():
+                obj = MenuItem.query.filter_by(name=name).first()
+                if obj:
+                    db.session.delete(obj)
+                db.session.commit()
+    runner.check("10.7", "智慧匯入庫存/總量一致性：庫存不得大於總量", t10_7)
 
     # ==========================================================================
     # 模組 11：頻率限制 (Rate Limit 429) 與 SSE 即時串流連線配額獨立驗證模組
@@ -2041,610 +2590,6 @@ def run_all_tests():
             with order_event_bus._lock:
                 order_event_bus._subscribers.clear()
     runner.check("11.2", "SSE 即時串流配額驗證：單 IP 10 條、公開 25 條、員工 60 條上限保護", t11_2)
-
-    # ==========================================================================
-    # 模組 13：補強覆蓋 — 先前未被測試的路由、免登入資料外洩與 admin_required 角色越權
-    # ==========================================================================
-    runner.start_suite("模組 13：補強覆蓋 (未測路由、免登入資料外洩、admin_required 角色越權與跨店隔離)")
-    clear_rate_buckets()
-    state13 = {}
-
-    def _tid13():
-        with app.app_context():
-            return Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first().id
-
-    def _make_member13():
-        """建立專屬於模組 13 的會員 (手機 0933130013 / PIN 2468 / 77 點)，只建立一次。"""
-        if "uid" not in state13:
-            with app.app_context():
-                u = User(tenant_id=_tid13(), name="模組13會員", phone="0933130013", photo_path="m13.jpg", points=77)
-                u.set_pin("2468")
-                db.session.add(u)
-                db.session.commit()
-                state13["uid"] = u.id
-        return state13["uid"]
-
-    def _login13():
-        _make_member13()
-        c = app.test_client()
-        c.get("/?shop=default")
-        csrf = get_client_csrf(c, "/register")
-        clear_rate_buckets()
-        r = c.post("/phone_login", json={"phone": "0933130013", "pin": "2468"}, headers={"X-CSRFToken": csrf})
-        assert r.status_code == 200 and r.get_json().get("success") is True, f"模組13會員登入失敗: {r.status_code}"
-        return c
-
-    # 13.1 免登入資料外洩：/api/admin_live_orders 與 AI 文案 API 必須要求後台登入
-    def t13_1():
-        anon = app.test_client()
-        anon.get("/?shop=default")
-        csrf = get_client_csrf(anon, "/")
-        r_live = anon.get("/api/admin_live_orders")
-        r_ai = anon.post("/api/generate_item_description", json={"name": "測試"}, headers={"X-CSRFToken": csrf})
-        assert r_live.status_code in (401, 403), (
-            f"/api/admin_live_orders 未登入即可讀取當日訂單/會員姓名/收銀員/營運分析: HTTP {r_live.status_code}"
-        )
-        assert r_ai.status_code == 401, f"/api/generate_item_description 未登入未回 401: {r_ai.status_code}"
-        return f"匿名存取 admin_live_orders({r_live.status_code}) 與 AI 文案 API(401) 皆被攔截"
-    runner.check("13.1", "免登入資料外洩防護：/api/admin_live_orders 與 AI 文案 API 需登入", t13_1)
-
-    # 13.2 只掛 @admin_required 的路由是否擋掉 kitchen / staff 角色
-    def t13_2():
-        tid = _tid13()
-        with app.app_context():
-            rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid).first()
-            snap = None if rs is None else (rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
-        probes = [
-            ("/admin/update_reward_setting", {"data": {"points_per_dollar": "1", "max_discount_per_order": "0", "spend_per_point": "100"}}),
-            ("/admin/toggle_user_coupon/987654", {}),
-            ("/admin/import_smart", {}),
-            ("/admin/import_excel", {}),
-            ("/admin/export_excel", {}),
-            ("/api/generate_item_description", {"json": {"name": "越權測試", "category": "主餐"}}),
-        ]
-        offenders = []
-        try:
-            for role, client, csrf_path in (("kitchen", kitchen_client, "/kitchen"), ("staff", staff_client, "/pos")):
-                csrf = get_client_csrf(client, csrf_path)
-                for path, kw in probes:
-                    kw = dict(kw)
-                    kw["headers"] = {"X-CSRFToken": csrf}
-                    if "data" in kw:
-                        kw["data"] = dict(kw["data"], csrf_token=csrf)
-                    r = client.post(path, **kw)
-                    if r.status_code != 403:
-                        offenders.append(f"{role}:{path}={r.status_code}")
-        finally:
-            # 若有越權成功寫入紅利設定，還原，避免污染後續模組
-            if snap is not None:
-                with app.app_context():
-                    rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid).first()
-                    rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point = snap
-                    db.session.commit()
-        assert not offenders, "角色越權 (應回 403，建議改用 @role_required('owner','manager')): " + "; ".join(offenders)
-        return "kitchen/staff 對 6 個管理路由 100% 回傳 403"
-    runner.check("13.2", "admin_required 路由角色越權：kitchen / staff 不得改紅利設定、匯入匯出、呼叫 AI", t13_2)
-
-    # 13.3 /face_login：GET 版面、缺照片、無人臉照片與暫存檔清除
-    def _t13_3_body():
-        c = app.test_client()
-        c.get("/?shop=default")
-        assert c.get("/face_login").status_code == 200
-        csrf = get_client_csrf(c, "/face_login")
-        clear_rate_buckets()
-        r_none = c.post("/face_login", data={}, headers={"X-CSRFToken": csrf})
-        assert r_none.status_code == 400 and r_none.get_json().get("success") is False, f"缺照片未回 400: {r_none.status_code}"
-        r_blank = c.post(
-            "/face_login",
-            data={"photo": (make_test_jpeg_bytes(200, 200, color=(255, 255, 255)), "blank.jpg")},
-            content_type="multipart/form-data",
-            headers={"X-CSRFToken": csrf},
-        )
-        assert r_blank.status_code == 400, f"純色無人臉照片未回 400: {r_blank.status_code}"
-        assert "人臉" in (r_blank.get_json().get("message") or ""), "無人臉提示訊息不含『人臉』"
-        leftovers = [f for f in os.listdir(Config.UPLOAD_FOLDER_MEMBER) if f.startswith("temp_")]
-        assert not leftovers, f"/face_login 暫存照片未清除: {leftovers}"
-        return "GET(200)、缺照片(400)、無人臉(400) 與 temp_ 暫存檔清除驗證通過"
-
-    def t13_3():
-        # 本測試需使用「真實」人臉偵測器驗證無人臉照片；測完務必把模組 5 的確定性 mock 掛回去，
-        # 避免後續需要人臉特徵的測試 (例如 13.17 註冊防呆) 受真實模型影響。
-        if _orig_extract_feature is not None:
-            cv_service_mod.extract_feature = _orig_extract_feature
-            auth_route_mod.extract_feature = _orig_extract_feature
-        try:
-            return _t13_3_body()
-        finally:
-            cv_service_mod.extract_feature = _deterministic_face_embedding
-            cv_service_mod.get_face_embedding = _deterministic_face_embedding
-            auth_route_mod.extract_feature = _deterministic_face_embedding
-            auth_route_mod.get_face_embedding = _deterministic_face_embedding
-    runner.check("13.3", "人臉登入路由 (/face_login) 缺照片、無人臉與暫存檔清除驗證", t13_3)
-
-    # 13.4 顧客端優惠碼驗證 /api/verify_promo
-    def t13_4():
-        tid = _tid13()
-        with app.app_context():
-            db.session.add(Coupon(tenant_id=tid, code="X13PUB", title="模組13公開券", discount_type="fixed",
-                                  discount_value=10, min_spend=100, reward_points=0, is_reward=False))
-            db.session.add(Coupon(tenant_id=tid, code="X13RWD", title="模組13紅利券", discount_type="fixed",
-                                  discount_value=50, min_spend=0, reward_points=50, is_reward=True))
-            db.session.commit()
-        c = app.test_client()
-        c.get("/?shop=default")
-        csrf = get_client_csrf(c, "/")
-        clear_rate_buckets()
-
-        def verify(code, subtotal):
-            return c.post("/api/verify_promo", json={"promo_code": code, "subtotal": subtotal},
-                          headers={"X-CSRFToken": csrf}).get_json()
-
-        assert verify("", 200)["valid"] is False, "空白代碼不應有效"
-        assert verify("NO_SUCH_CODE", 200)["valid"] is False, "不存在代碼不應有效"
-        low = verify("X13PUB", 50)
-        assert low["valid"] is False and "門檻" in low["message"], f"未達低消未攔截: {low}"
-        ok = verify("x13pub", 200)  # 小寫輸入應自動轉大寫
-        assert ok["valid"] is True and abs(ok["discount"] - 10) < 1e-6, f"公開券折抵錯誤: {ok}"
-        rwd = verify("X13RWD", 200)
-        assert rwd["valid"] is False and "登入" in rwd["message"], f"紅利專屬券未登入應提示登入: {rwd}"
-        return "空碼/無效碼/低消門檻/公開券(含小寫)/紅利專屬券未登入 五種情境驗證通過"
-    runner.check("13.4", "顧客端優惠碼驗證 (/api/verify_promo) 公開券、低消與紅利專屬券", t13_4)
-
-    # 13.5 /api/user_available_coupons
-    def t13_5():
-        anon = app.test_client()
-        anon.get("/?shop=default")
-        j0 = anon.get("/api/user_available_coupons").get_json()
-        assert j0["success"] is False and j0["coupons"] == [] and j0["points"] == 0, f"未登入回應異常: {j0}"
-        uid = _make_member13()
-        tid = _tid13()
-        with app.app_context():
-            cp = Coupon(tenant_id=tid, code="X13OWN", title="模組13專屬券", discount_type="fixed",
-                        discount_value=30, min_spend=0, reward_points=10, is_reward=True)
-            db.session.add(cp)
-            db.session.flush()
-            db.session.add(UserCoupon(tenant_id=tid, user_id=uid, coupon_id=cp.id, code="X13OWN-A", is_used=False))
-            db.session.add(UserCoupon(tenant_id=tid, user_id=uid, coupon_id=cp.id, code="X13OWN-B", is_used=True))
-            db.session.commit()
-        c = _login13()
-        j = c.get("/api/user_available_coupons").get_json()
-        codes = [x["code"] for x in j["coupons"]]
-        assert j["success"] is True and j["points"] == 77, f"會員點數/狀態錯誤: {j}"
-        assert codes == ["X13OWN-A"], f"只應列出未使用的券，實際: {codes}"
-        assert "折$30" in j["coupons"][0]["title"], f"券標題格式異常: {j['coupons'][0]['title']}"
-        return "未登入空清單；登入後僅列出未使用券 (已使用券被排除) 且點數正確"
-    runner.check("13.5", "可用優惠券 API (/api/user_available_coupons) 登入/未登入與已使用券排除", t13_5)
-
-    # 13.6 /my_orders
-    def t13_6():
-        anon = app.test_client()
-        anon.get("/?shop=default")
-        assert anon.get("/my_orders").get_json() == [], "未登入應回傳空陣列"
-        uid = _make_member13()
-        tid = _tid13()
-        with app.app_context():
-            db.session.add(Order(tenant_id=tid, user_id=uid, table_number="模組13會員", total_price=100, status="Pending", pickup_number=1))
-            db.session.add(Order(tenant_id=tid, user_id=uid, table_number="模組13會員", total_price=200, status="Completed", pickup_number=2))
-            db.session.add(Order(tenant_id=tid, user_id=uid + 100000, table_number="他人", total_price=999, status="Pending", pickup_number=3))
-            db.session.commit()
-        c = _login13()
-        data = c.get("/my_orders").get_json()
-        assert [d["total_price"] for d in data] == [200, 100], f"應只回傳本人訂單且新到舊排序: {[d['total_price'] for d in data]}"
-        assert [d["user_order_no"] for d in data] == [2, 1], f"個人流水號錯誤: {[d['user_order_no'] for d in data]}"
-        assert data[0]["status"] == "已出餐" and data[1]["status"] == "製作中", "狀態中文對照錯誤"
-        return "未登入空陣列；會員僅看到自己的 2 筆訂單 (他人 999 元訂單未外洩)"
-    runner.check("13.6", "我的訂單 (/my_orders) 歸戶隔離、排序、個人流水號與狀態對照", t13_6)
-
-    # 13.7 /shop/<slug>
-    def t13_7():
-        from urllib.parse import urlparse
-        with app.app_context():
-            on_t = Tenant(name="啟用店13", slug="on-shop-13", is_active=True)
-            off_t = Tenant(name="停用店13", slug="off-shop-13", is_active=False)
-            db.session.add_all([on_t, off_t])
-            db.session.commit()
-            on_id = on_t.id
-        c = app.test_client()
-        r_ok = c.get("/shop/on-shop-13")
-        assert r_ok.status_code == 302 and urlparse(r_ok.headers["Location"]).path == "/", f"有效店家未導向首頁: {r_ok.status_code}"
-        with c.session_transaction() as s:
-            assert s.get("tenant_id") == on_id, f"session 未綁定店家: {s.get('tenant_id')}"
-        assert app.test_client().get("/shop/no-such-shop-13").status_code == 404, "不存在的店家未回 404"
-        assert app.test_client().get("/shop/off-shop-13").status_code == 404, "已停用店家未回 404"
-        return "有效 slug(302 並綁定 session)、不存在(404)、已停用店家(404) 驗證通過"
-    runner.check("13.7", "店家入口 (/shop/<slug>) 啟用/停用/不存在三種情境", t13_7)
-
-    # 13.8 /admin/toggle_user_coupon：同店切換與跨店隔離
-    def t13_8():
-        uid = _make_member13()
-        tid = _tid13()
-        with app.app_context():
-            tb = Tenant(name="跨店B13", slug="tenant-b-13", is_active=True)
-            db.session.add(tb)
-            db.session.flush()
-            ub = User(tenant_id=tb.id, name="B店會員", phone="0933130099", photo_path="b13.jpg", points=5)
-            cb = Coupon(tenant_id=tb.id, code="X13B", title="B店券", discount_type="fixed", discount_value=5,
-                        min_spend=0, reward_points=1, is_reward=True)
-            db.session.add_all([ub, cb])
-            db.session.flush()
-            ucb = UserCoupon(tenant_id=tb.id, user_id=ub.id, coupon_id=cb.id, code="X13B-1", is_used=False)
-            db.session.add(ucb)
-            db.session.commit()
-            ucb_id = ucb.id
-            own = UserCoupon.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid, code="X13OWN-A").first()
-            own_id = own.id
-        csrf = get_client_csrf(admin_client, "/admin")
-        hdr = {"X-CSRFToken": csrf}
-        # (a) 跨店：預設店負責人操作 B 店券 -> 404 且狀態不變
-        r_x = admin_client.post(f"/admin/toggle_user_coupon/{ucb_id}", headers=hdr)
-        assert r_x.status_code == 404, f"跨店切換未被租戶隔離攔截: {r_x.status_code}"
-        with app.app_context():
-            assert UserCoupon.query.execution_options(skip_tenant_filter=True).get(ucb_id).is_used is False, "B 店券被跨店修改"
-        # (b) 同店：切換為已使用 -> 再切回未使用
-        r1 = admin_client.post(f"/admin/toggle_user_coupon/{own_id}", headers=hdr)
-        j1 = r1.get_json()
-        assert r1.status_code == 200 and j1["success"] is True
-        assert any(c["code"] == "X13OWN-A" and c["is_used"] is True for c in j1["coupons"]), f"第一次切換結果錯誤: {j1}"
-        j2 = admin_client.post(f"/admin/toggle_user_coupon/{own_id}", headers=hdr).get_json()
-        assert any(c["code"] == "X13OWN-A" and c["is_used"] is False for c in j2["coupons"]), f"第二次切換結果錯誤: {j2}"
-        return "跨店切換回 404 且資料未變；同店 is_used 可往返切換並回傳完整券清單"
-    runner.check("13.8", "後台會員券核銷切換 (/admin/toggle_user_coupon) 同店切換與跨店隔離", t13_8)
-
-    # ==========================================================================
-    # 13.9 ~ 13.18：伺服器端修正後的回歸與補強測試
-    # ==========================================================================
-    def _reward_setting_snapshot13():
-        with app.app_context():
-            rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
-            return None if rs is None else (rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
-
-    def _restore_reward_setting13(snap):
-        if snap is None:
-            return
-        with app.app_context():
-            rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
-            rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point = snap
-            db.session.commit()
-
-    # 13.9 owner / manager 對 13.2 那六個路由仍可使用 (防止 role_required 修正過頭)
-    def t13_9():
-        snap = _reward_setting_snapshot13()
-        blocked = []
-        try:
-            for role, client in (("owner", admin_client), ("manager", manager_client)):
-                csrf = get_client_csrf(client, "/admin")
-                hdr = {"X-CSRFToken": csrf}
-                r = client.post(
-                    "/admin/update_reward_setting",
-                    data={"is_enabled": "1", "points_per_dollar": "2", "max_discount_per_order": "15",
-                          "spend_per_point": "80", "csrf_token": csrf},
-                    headers=hdr,
-                )
-                if r.status_code != 302:
-                    blocked.append(f"{role}:/admin/update_reward_setting={r.status_code}")
-                else:
-                    with app.app_context():
-                        rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
-                        assert (rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point) == (2, 15, 80), \
-                            f"{role} 紅利設定未寫入: {(rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)}"
-                # 這些路由在缺少檔案/欄位時會回 400 或 404，重點是「進得了 handler」而不是 401/403
-                probes = [
-                    ("/admin/toggle_user_coupon/987654", {}, 404),
-                    ("/admin/import_smart", {}, 400),
-                    ("/admin/import_excel", {}, 400),
-                    ("/admin/export_excel", {}, 400),
-                    ("/api/generate_item_description", {"json": {"name": "", "category": ""}}, 400),
-                ]
-                for path, kw, expect in probes:
-                    r = client.post(path, headers=hdr, **kw)
-                    if r.status_code != expect:
-                        blocked.append(f"{role}:{path}={r.status_code}(預期{expect})")
-        finally:
-            _restore_reward_setting13(snap)
-        assert not blocked, "owner/manager 被誤擋或行為異常: " + "; ".join(blocked)
-        return "owner 與 manager 對 6 個管理路由皆可進入 handler，紅利設定可實際寫入"
-    runner.check("13.9", "角色修正回歸：owner / manager 仍可使用紅利設定、匯入匯出、AI 文案與券核銷", t13_9)
-
-    # 13.10 刪除 / 下架路由不得被 GET 觸發 (GET 會繞過 CSRF 防護)
-    def t13_10():
-        tid = _tid13()
-        with app.app_context():
-            item = MenuItem(tenant_id=tid, name="GET刪除測試品13", category="主餐", price=10, stock=5, total_stock=5, modifiers="none")
-            rwd = MenuItem(tenant_id=tid, name="GET下架測試品13", category="主餐", price=10, stock=5, total_stock=5,
-                           modifiers="none", is_reward=True, reward_points=10)
-            cp = Coupon(tenant_id=tid, code="X13GETDEL", title="GET刪除券13", discount_type="fixed", discount_value=5,
-                        min_spend=0, reward_points=0, is_reward=False)
-            usr = User(tenant_id=tid, name="GET刪除會員13", phone="0933130120", photo_path="g13.jpg", points=1)
-            db.session.add_all([item, rwd, cp, usr])
-            db.session.flush()
-            cb = ComboOption(tenant_id=tid, main_item_id=item.id, name="GET刪除套餐13", additional_price=10)
-            db.session.add(cb)
-            db.session.commit()
-            ids = {"item": item.id, "rwd": rwd.id, "cp": cp.id, "usr": usr.id, "cb": cb.id}
-        offenders = []
-        try:
-            for path, key, model in (
-                (f"/admin/delete/{ids['item']}", "item", MenuItem),
-                (f"/admin/delete_combo/{ids['cb']}", "cb", ComboOption),
-                (f"/admin/remove_reward/{ids['rwd']}", "rwd", MenuItem),
-                (f"/admin/delete_coupon/{ids['cp']}", "cp", Coupon),
-                (f"/admin/delete_user/{ids['usr']}", "usr", User),
-            ):
-                r = admin_client.get(path)
-                if r.status_code != 405:
-                    offenders.append(f"GET {path}={r.status_code}")
-                with app.app_context():
-                    row = model.query.execution_options(skip_tenant_filter=True).get(ids[key])
-                    if row is None:
-                        offenders.append(f"GET {path} 已刪除資料")
-                    elif key == "rwd" and not row.is_reward:
-                        offenders.append(f"GET {path} 已下架紅利商品")
-        finally:
-            with app.app_context():
-                for model, key in ((ComboOption, "cb"), (Coupon, "cp"), (User, "usr"), (MenuItem, "rwd"), (MenuItem, "item")):
-                    row = model.query.execution_options(skip_tenant_filter=True).get(ids[key])
-                    if row is not None:
-                        db.session.delete(row)
-                db.session.commit()
-        assert not offenders, "刪除/下架路由仍可被 GET 觸發 (可繞過 CSRF，應只允許 POST): " + "; ".join(offenders)
-        return "5 個刪除/下架路由以 GET 呼叫皆回 405 且資料完整保留"
-    runner.check("13.10", "狀態變更路由不得允許 GET：delete / delete_combo / remove_reward / delete_coupon / delete_user", t13_10)
-
-    # 13.11 跨店隔離掃描：預設店負責人不得讀寫 B 店的資料 (全數應回 404 且資料不變)
-    def t13_11():
-        with app.app_context():
-            tb = Tenant(name="跨店B13X", slug="tenant-b-13x", is_active=True)
-            db.session.add(tb)
-            db.session.flush()
-            tbid = tb.id
-            b_item = MenuItem(tenant_id=tbid, name="B店紅利品", category="主餐", price=50, stock=9, total_stock=9,
-                              modifiers="none", is_reward=True, reward_points=10)
-            b_cp = Coupon(tenant_id=tbid, code="X13BSWEEP", title="B店掃描券", discount_type="fixed", discount_value=5,
-                          min_spend=0, reward_points=0, is_reward=False)
-            b_usr = User(tenant_id=tbid, name="B店掃描會員", phone="0933130198", photo_path="b13x.jpg", points=50)
-            db.session.add_all([b_item, b_cp, b_usr])
-            db.session.flush()
-            b_cb = ComboOption(tenant_id=tbid, main_item_id=b_item.id, name="B店掃描套餐", additional_price=5)
-            o_pending = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Pending", pickup_number=1)
-            o_kds = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Pending", pickup_number=2)
-            o_done = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Completed", pickup_number=3)
-            db.session.add_all([b_cb, o_pending, o_kds, o_done])
-            db.session.commit()
-            ids = {"item": b_item.id, "cb": b_cb.id, "cp": b_cp.id, "usr": b_usr.id,
-                   "o1": o_pending.id, "o2": o_kds.id, "o3": o_done.id}
-        csrf = get_client_csrf(admin_client, "/admin")
-        hdr = {"X-CSRFToken": csrf}
-
-        def _form(**kw):
-            return {"data": dict(kw, csrf_token=csrf)}
-
-        probes = [
-            ("POST", f"/admin/edit/{ids['item']}", _form(name="被入侵", price="1")),
-            ("POST", f"/admin/edit_combo/{ids['cb']}", _form(main_item_id=str(ids["item"]), name="被入侵", additional_price="1")),
-            ("POST", f"/admin/edit_coupon/{ids['cp']}", _form(code="HACKED13", title="被入侵", discount_type="fixed", discount_value="1")),
-            ("POST", f"/admin/edit_user/{ids['usr']}", _form(name="被入侵", phone="0933130197", points="9999")),
-            ("POST", f"/admin/delete/{ids['item']}", _form()),
-            ("POST", f"/admin/delete_combo/{ids['cb']}", _form()),
-            ("POST", f"/admin/remove_reward/{ids['item']}", _form()),
-            ("POST", f"/admin/delete_coupon/{ids['cp']}", _form()),
-            ("POST", f"/admin/delete_user/{ids['usr']}", _form()),
-            ("POST", f"/admin/update_order_status/{ids['o1']}", {"json": {"status": "Completed"}}),
-            ("POST", f"/api/kitchen_update_status/{ids['o2']}", {"json": {"status": "Completed"}}),
-            ("POST", f"/api/mark_picked_up/{ids['o3']}", {}),
-        ]
-        offenders = []
-        for _m, path, kw in probes:
-            r = admin_client.post(path, headers=hdr, **kw)
-            if r.status_code != 404:
-                offenders.append(f"{path}={r.status_code}")
-        with app.app_context():
-            q = lambda model, i: model.query.execution_options(skip_tenant_filter=True).get(i)
-            it, cb, cp, us = q(MenuItem, ids["item"]), q(ComboOption, ids["cb"]), q(Coupon, ids["cp"]), q(User, ids["usr"])
-            assert it is not None and cb is not None and cp is not None and us is not None, "B 店資料被跨店刪除"
-            assert (it.name, it.price, it.is_reward) == ("B店紅利品", 50, True), f"B 店品項被跨店修改: {(it.name, it.price, it.is_reward)}"
-            assert cb.name == "B店掃描套餐", f"B 店套餐被跨店修改: {cb.name}"
-            assert (cp.code, cp.title) == ("X13BSWEEP", "B店掃描券"), f"B 店優惠券被跨店修改: {(cp.code, cp.title)}"
-            assert (us.name, us.points) == ("B店掃描會員", 50), f"B 店會員被跨店修改: {(us.name, us.points)}"
-            st = [q(Order, ids[k]).status for k in ("o1", "o2", "o3")]
-            assert st == ["Pending", "Pending", "Completed"], f"B 店訂單狀態被跨店修改: {st}"
-        assert not offenders, "跨店操作未被租戶隔離攔截 (應回 404): " + "; ".join(offenders)
-        return "12 個依 ID 操作的路由對 B 店資料全數回 404，且 B 店資料完全未變"
-    runner.check("13.11", "跨店隔離掃描：編輯/刪除/下架/訂單狀態/廚房/核銷路由不得操作 B 店資料", t13_11)
-
-    # 13.12 未登入存取掃描：所有後台/POS/廚房路由匿名一律被攔截
-    def t13_12():
-        anon = app.test_client()
-        anon.get("/?shop=default")
-        csrf = get_client_csrf(anon, "/")
-        hdr = {"X-CSRFToken": csrf}
-        clear_rate_buckets()
-        gets = ["/pos", "/kitchen", "/pickup", "/admin/staff", "/api/kitchen_orders", "/api/admin_live_orders"]
-        posts = [
-            "/api/pos/member_lookup", "/api/pos/set_member_pin", "/api/pos/verify_promo", "/api/pos/checkout",
-            "/api/kitchen_update_status/1", "/api/kitchen_complete_all", "/api/mark_picked_up/1",
-            "/admin/staff", "/admin/add", "/admin/edit/1", "/admin/delete/1", "/admin/add_combo", "/admin/edit_combo/1",
-            "/admin/delete_combo/1", "/admin/add_reward", "/admin/remove_reward/1", "/admin/add_coupon",
-            "/admin/delete_coupon/1", "/admin/edit_coupon/1", "/admin/delete_user/1", "/admin/edit_user/1",
-            "/admin/toggle_user_coupon/1", "/admin/update_reward_setting", "/admin/update_order_status/1",
-            "/admin/restore_backup", "/admin/export_excel", "/admin/import_excel", "/admin/import_smart",
-            "/api/generate_item_description",
-        ]
-        allowed = (301, 302, 303, 401, 403)
-        offenders = []
-        for p in gets:
-            r = anon.get(p)
-            if r.status_code not in allowed:
-                offenders.append(f"GET {p}={r.status_code}")
-        for p in posts:
-            r = anon.post(p, json={}, headers=hdr)
-            if r.status_code not in allowed:
-                offenders.append(f"POST {p}={r.status_code}")
-        assert not offenders, "匿名使用者可進入受保護路由: " + "; ".join(offenders)
-        return f"匿名對 {len(gets)} 個 GET 與 {len(posts)} 個 POST 受保護路由全數被攔截 (302/401/403)"
-    runner.check("13.12", "未登入存取掃描：後台 / POS / 廚房 / 核銷 / 匯入匯出路由匿名必被攔截", t13_12)
-
-    # 13.13 /admin/update_reward_setting 非法輸入不得造成 500，且數值需被夾限
-    def t13_13():
-        snap = _reward_setting_snapshot13()
-        try:
-            csrf = get_client_csrf(admin_client, "/admin")
-            r = admin_client.post(
-                "/admin/update_reward_setting",
-                data={"is_enabled": "1", "points_per_dollar": "abc", "max_discount_per_order": "-5",
-                      "spend_per_point": "0", "csrf_token": csrf},
-                headers={"X-CSRFToken": csrf},
-            )
-            assert r.status_code == 302, f"非法輸入應被安全處理並導回 (302)，實際 {r.status_code}"
-            with app.app_context():
-                rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
-                vals = (rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
-                assert vals == (1, 0, 1), f"非法值夾限結果錯誤，預期 (1, 0, 1)，實際 {vals}"
-        finally:
-            _restore_reward_setting13(snap)
-        return "非數字/負數/零 皆不產生 500，並夾限為 (1, 0, 1)"
-    runner.check("13.13", "紅利設定非法輸入防呆：非數字、負數與 0 不得造成 500", t13_13)
-
-    # 13.14 /rewards 紅利商城頁面：訪客導向登入、會員可見紅利商品且不含一般商品
-    def t13_14():
-        tid = _tid13()
-        with app.app_context():
-            db.session.add_all([
-                MenuItem(tenant_id=tid, name="模組13紅利品Z", category="主餐", price=10, stock=5, total_stock=5,
-                         modifiers="none", is_reward=True, reward_points=5),
-                MenuItem(tenant_id=tid, name="模組13一般品Z", category="主餐", price=10, stock=5, total_stock=5,
-                         modifiers="none", is_reward=False),
-            ])
-            db.session.commit()
-        try:
-            anon = app.test_client()
-            anon.get("/?shop=default")
-            r_anon = anon.get("/rewards")
-            assert r_anon.status_code == 302 and "face_login" in r_anon.headers.get("Location", ""), \
-                f"訪客應導向 /face_login，實際 {r_anon.status_code} {r_anon.headers.get('Location')}"
-            c = _login13()
-            r = c.get("/rewards")
-            html = r.get_data(as_text=True)
-            assert r.status_code == 200, f"會員進入紅利商城失敗: {r.status_code}"
-            assert "模組13紅利品Z" in html, "紅利商城未顯示紅利商品"
-            assert "模組13一般品Z" not in html, "紅利商城混入非紅利商品"
-        finally:
-            with app.app_context():
-                for nm in ("模組13紅利品Z", "模組13一般品Z"):
-                    row = MenuItem.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid, name=nm).first()
-                    if row is not None:
-                        db.session.delete(row)
-                db.session.commit()
-        return "訪客 302 導向登入；會員 200 且只顯示紅利商品"
-    runner.check("13.14", "紅利商城頁面 (/rewards)：訪客導向、會員只看到紅利商品", t13_14)
-
-    # 13.15 /api/orders_stream：SSE 標頭、首筆事件格式與連線釋放
-    def t13_15():
-        from app.services.event_bus import order_event_bus
-        with order_event_bus._lock:
-            order_event_bus._subscribers.clear()
-        c = app.test_client()
-        c.get("/?shop=default")
-        resp = c.get("/api/orders_stream", buffered=False)
-        try:
-            assert resp.status_code == 200, f"SSE 狀態碼應為 200，實際 {resp.status_code}"
-            assert resp.mimetype == "text/event-stream", f"SSE Content-Type 錯誤: {resp.mimetype}"
-            assert "no-cache" in (resp.headers.get("Cache-Control") or ""), "SSE 缺少 Cache-Control: no-cache"
-            first = next(iter(resp.response))
-            first = first.decode("utf-8") if isinstance(first, bytes) else first
-            assert first.startswith("data: ") and first.endswith("\n\n"), f"首筆 SSE 事件格式錯誤: {first!r}"
-            with order_event_bus._lock:
-                active = len(order_event_bus._subscribers)
-            assert active == 1, f"連線期間訂閱數應為 1，實際 {active}"
-        finally:
-            resp.close()
-        with order_event_bus._lock:
-            left = len(order_event_bus._subscribers)
-            order_event_bus._subscribers.clear()
-        assert left == 0, f"連線關閉後訂閱未釋放 (剩 {left} 條)"
-        return "SSE 200、text/event-stream、首筆 data 事件格式正確，關閉後訂閱釋放"
-    runner.check("13.15", "即時串流 (/api/orders_stream)：標頭、首筆事件格式與連線釋放", t13_15)
-
-    # 13.16 /face_login 與 /phone_login 的頻率限制 (各 15 次 / 60 秒)
-    def t13_16():
-        os.environ["DISABLE_RATE_LIMIT"] = "0"
-        clear_rate_buckets()
-        try:
-            c = app.test_client()
-            c.get("/?shop=default")
-            csrf = get_client_csrf(c, "/register")
-            phone_codes = []
-            for i in range(17):
-                # 每次換不同手機，避免觸發「PIN 連錯 5 次鎖定」的 429 干擾判讀
-                r = c.post("/phone_login", json={"phone": f"0900{i:06d}", "pin": "0000"},
-                           headers={"X-CSRFToken": csrf, "X-Forwarded-For": "203.0.113.213"})
-                phone_codes.append(r.status_code)
-            assert 429 not in phone_codes[:15] and 429 in phone_codes[15:], f"/phone_login 限流未在第 16 次觸發: {phone_codes}"
-            clear_rate_buckets()
-            face_codes = []
-            for _ in range(17):
-                r = c.post("/face_login", data={}, headers={"X-CSRFToken": csrf, "X-Forwarded-For": "203.0.113.214"})
-                face_codes.append(r.status_code)
-            assert 429 not in face_codes[:15] and 429 in face_codes[15:], f"/face_login 限流未在第 16 次觸發: {face_codes}"
-        finally:
-            clear_rate_buckets()
-        return f"/phone_login 前15次≠429、之後 {phone_codes[15:]}；/face_login 前15次≠429、之後 {face_codes[15:]}"
-    runner.check("13.16", "會員登入頻率限制：/phone_login 與 /face_login 超過 15 次/分鐘回 429", t13_16)
-
-    # 13.17 /register：GET 版面與各類缺漏/格式錯誤/重複電話防呆
-    def t13_17():
-        _make_member13()
-        clear_rate_buckets()
-        c = app.test_client()
-        c.get("/?shop=default")
-        assert c.get("/register").status_code == 200, "GET /register 未回 200"
-        csrf = get_client_csrf(c, "/register")
-        hdr = {"X-CSRFToken": csrf}
-
-        def _post(**fields):
-            data = {k: v for k, v in fields.items() if k != "photo"}
-            if "photo" in fields:
-                data["photo"] = fields["photo"]
-            return c.post("/register", data=data, content_type="multipart/form-data", headers=hdr)
-
-        def _jpg(name="p.jpg"):
-            return (make_test_jpeg_bytes(200, 200, color=(255, 255, 255)), name)
-
-        checks = {
-            "缺照片": (_post(name="A", phone="0933130201", pin="1234").status_code, 400),
-            "缺姓名": (_post(name="", phone="0933130201", pin="1234", photo=_jpg()).status_code, 400),
-            "手機格式錯誤": (_post(name="A", phone="12345", pin="1234", photo=_jpg()).status_code, 400),
-            "PIN 格式錯誤": (_post(name="A", phone="0933130201", pin="12", photo=_jpg()).status_code, 400),
-            "重複電話": (_post(name="A", phone="0933130013", pin="1234", photo=_jpg()).status_code, 409),
-            "損壞圖片": (_post(name="A", phone="0933130202", pin="1234",
-                              photo=(io.BytesIO(b"not-an-image"), "bad.jpg")).status_code, 400),
-        }
-        bad = [f"{k}={got}(預期{exp})" for k, (got, exp) in checks.items() if got != exp]
-        assert not bad, "/register 防呆回應碼不符: " + "; ".join(bad)
-        with app.app_context():
-            assert User.query.execution_options(skip_tenant_filter=True).filter(User.phone.in_(["0933130201", "0933130202"])).count() == 0, \
-                "防呆失敗的請求不應建立會員"
-        return "GET(200)、缺照片/缺姓名/手機/PIN 格式/損壞圖片(400)、重複電話(409) 且未誤建會員"
-    runner.check("13.17", "會員註冊 (/register) 版面與缺漏、格式錯誤、重複電話與損壞圖片防呆", t13_17)
-
-    # 13.18 全域 CSRF 掃描：依路由表自動走訪所有 POST 路由，缺 Token 一律 403
-    def t13_18():
-        anon = app.test_client()
-        anon.get("/?shop=default")
-        clear_rate_buckets()
-        offenders, total = [], 0
-        for rule in app.url_map.iter_rules():
-            if rule.endpoint == "static" or "POST" not in rule.methods:
-                continue
-            path = re.sub(r"<int:[^>]+>", "1", rule.rule)
-            path = re.sub(r"<[^>]+>", "x", path)
-            total += 1
-            r = anon.post(path, json={})
-            if r.status_code != 403:
-                offenders.append(f"{path}={r.status_code}")
-        assert not offenders, "下列 POST 路由缺少 CSRF Token 時未回 403: " + "; ".join(offenders)
-        return f"路由表中 {total} 個 POST 路由缺 Token 全數回 403"
-    runner.check("13.18", "全域 CSRF 掃描：依路由表自動驗證每個 POST 路由缺 Token 必回 403", t13_18)
-
     # ==========================================================================
     # 模組 12：多執行緒高併發搶購、點數防雙花、POS 併發結帳與真實 HTTP 壓力測試
     # ==========================================================================
@@ -2838,7 +2783,7 @@ def run_all_tests():
                 sess["csrf_token"] = "mgr_race_tok"
                 sess["_csrf_token"] = "mgr_race_tok"
             r = c.post(
-                f"/api/kitchen_update_status/{oid}",
+                f"/api/orders/{oid}/status",
                 json={"status": "Cancelled"},
                 headers={"X-CSRFToken": "mgr_race_tok"},
             )
@@ -3100,11 +3045,10 @@ def run_all_tests():
                 f"防超賣攔截{len(sold_out_blocked)}筆、429限流=0筆、取餐號全唯一 | {lat_str}"
             )
         runner.check("12.5", "真實 HTTP 壓測 (階段 2)：30 人同時結帳搶購 10 份限量漢堡、防超賣與取餐號互斥驗證", t12_5)
+
     finally:
+        # 模組 12 收尾：還原頻率限制設定並關閉真實 HTTP 壓測伺服器
         os.environ["DISABLE_RATE_LIMIT"] = "0"
-        if _orig_extract_feature is not None:
-            cv_service_mod.extract_feature = _orig_extract_feature
-            auth_route_mod.extract_feature = _orig_extract_feature  # <-- 補上這行
         try:
             for q in list(getattr(order_event_bus, "_subscribers", {}).keys()):
                 try:
@@ -3115,6 +3059,615 @@ def run_all_tests():
             live_server.server_close()
         except Exception:
             pass
+
+    os.environ["DISABLE_RATE_LIMIT"] = "0"   # 模組 12 結束後恢復頻率限制，模組 13 在正常限流狀態下執行
+    try:
+        # ==========================================================================
+        # 模組 13：補強覆蓋 — 先前未被測試的路由、免登入資料外洩與 admin_required 角色越權
+        # ==========================================================================
+        runner.start_suite("模組 13：補強覆蓋 (未測路由、免登入資料外洩、admin_required 角色越權與跨店隔離)")
+        clear_rate_buckets()
+        state13 = {}
+
+        def _tid13():
+            with app.app_context():
+                return Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first().id
+
+        def _make_member13():
+            """建立專屬於模組 13 的會員 (手機 0933130013 / PIN 2468 / 77 點)，只建立一次。"""
+            if "uid" not in state13:
+                with app.app_context():
+                    u = User(tenant_id=_tid13(), name="模組13會員", phone="0933130013", photo_path="m13.jpg", points=77)
+                    u.set_pin("2468")
+                    db.session.add(u)
+                    db.session.commit()
+                    state13["uid"] = u.id
+            return state13["uid"]
+
+        def _login13():
+            _make_member13()
+            c = app.test_client()
+            c.get("/?shop=default")
+            csrf = get_client_csrf(c, "/register")
+            clear_rate_buckets()
+            r = c.post("/phone_login", json={"phone": "0933130013", "pin": "2468"}, headers={"X-CSRFToken": csrf})
+            assert r.status_code == 200 and r.get_json().get("success") is True, f"模組13會員登入失敗: {r.status_code}"
+            return c
+
+        # 13.1 免登入資料外洩：/api/admin_live_orders 與 AI 文案 API 必須要求後台登入
+        def t13_1():
+            anon = app.test_client()
+            anon.get("/?shop=default")
+            csrf = get_client_csrf(anon, "/")
+            r_live = anon.get("/api/admin_live_orders")
+            r_ai = anon.post("/api/generate_item_description", json={"name": "測試"}, headers={"X-CSRFToken": csrf})
+            assert r_live.status_code in (401, 403), (
+                f"/api/admin_live_orders 未登入即可讀取當日訂單/會員姓名/收銀員/營運分析: HTTP {r_live.status_code}"
+            )
+            assert r_ai.status_code == 401, f"/api/generate_item_description 未登入未回 401: {r_ai.status_code}"
+            return f"匿名存取 admin_live_orders({r_live.status_code}) 與 AI 文案 API(401) 皆被攔截"
+        runner.check("13.1", "免登入資料外洩防護：/api/admin_live_orders 與 AI 文案 API 需登入", t13_1)
+
+        # 13.2 只掛 @admin_required 的路由是否擋掉 kitchen / staff 角色
+        def t13_2():
+            tid = _tid13()
+            with app.app_context():
+                rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid).first()
+                snap = None if rs is None else (rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
+            probes = [
+                ("/admin/update_reward_setting", {"data": {"points_per_dollar": "1", "max_discount_per_order": "0", "spend_per_point": "100"}}),
+                ("/admin/toggle_user_coupon/987654", {}),
+                ("/admin/import_smart", {}),
+                ("/admin/backup_system", {}),
+                ("/admin/export_excel", {}),
+                ("/api/generate_item_description", {"json": {"name": "越權測試", "category": "主餐"}}),
+            ]
+            offenders = []
+            try:
+                for role, client, csrf_path in (("kitchen", kitchen_client, "/kitchen"), ("staff", staff_client, "/pos")):
+                    csrf = get_client_csrf(client, csrf_path)
+                    for path, kw in probes:
+                        kw = dict(kw)
+                        kw["headers"] = {"X-CSRFToken": csrf}
+                        if "data" in kw:
+                            kw["data"] = dict(kw["data"], csrf_token=csrf)
+                        r = client.post(path, **kw)
+                        if r.status_code != 403:
+                            offenders.append(f"{role}:{path}={r.status_code}")
+            finally:
+                if snap is not None:
+                    with app.app_context():
+                        rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid).first()
+                        rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point = snap
+                        db.session.commit()
+            assert not offenders, "角色越權 (應回 403，建議改用 @role_required('owner','manager')): " + "; ".join(offenders)
+            return "kitchen/staff 對 6 個管理路由 100% 回傳 403"
+        runner.check("13.2", "admin_required 路由角色越權：kitchen / staff 不得改紅利設定、匯入匯出、呼叫 AI", t13_2)
+
+        # 13.3 /face_login：GET 版面、缺照片、無人臉照片與暫存檔清除
+        def _t13_3_body():
+            c = app.test_client()
+            c.get("/?shop=default")
+            assert c.get("/face_login").status_code == 200
+            csrf = get_client_csrf(c, "/face_login")
+            clear_rate_buckets()
+            r_none = c.post("/face_login", data={}, headers={"X-CSRFToken": csrf})
+            assert r_none.status_code == 400 and r_none.get_json().get("success") is False, f"缺照片未回 400: {r_none.status_code}"
+            r_blank = c.post(
+                "/face_login",
+                data={"photo": (make_test_jpeg_bytes(200, 200, color=(255, 255, 255)), "blank.jpg")},
+                content_type="multipart/form-data",
+                headers={"X-CSRFToken": csrf},
+            )
+            assert r_blank.status_code == 400, f"純色無人臉照片未回 400: {r_blank.status_code}"
+            assert "人臉" in (r_blank.get_json().get("message") or ""), "無人臉提示訊息不含『人臉』"
+            leftovers = [f for f in os.listdir(Config.UPLOAD_FOLDER_MEMBER) if f.startswith("temp_")]
+            assert not leftovers, f"/face_login 暫存照片未清除: {leftovers}"
+            return "GET(200)、缺照片(400)、無人臉(400) 與 temp_ 暫存檔清除驗證通過"
+
+        def t13_3():
+            # 本測試需使用「真實」人臉偵測器驗證無人臉照片；測完務必把模組 5 的確定性 mock 掛回去，
+            # 避免後續需要人臉特徵的測試 (例如 13.17 註冊防呆) 受真實模型影響。
+            if _orig_extract_feature is not None:
+                cv_service_mod.extract_feature = _orig_extract_feature
+                auth_route_mod.extract_feature = _orig_extract_feature
+            try:
+                return _t13_3_body()
+            finally:
+                cv_service_mod.extract_feature = _deterministic_face_embedding
+                cv_service_mod.get_face_embedding = _deterministic_face_embedding
+                auth_route_mod.extract_feature = _deterministic_face_embedding
+                auth_route_mod.get_face_embedding = _deterministic_face_embedding
+        runner.check("13.3", "人臉登入路由 (/face_login) 缺照片、無人臉與暫存檔清除驗證", t13_3)
+
+        # 13.4 顧客端優惠碼驗證 /api/verify_promo
+        def t13_4():
+            tid = _tid13()
+            with app.app_context():
+                db.session.add(Coupon(tenant_id=tid, code="X13PUB", title="模組13公開券", discount_type="fixed",
+                                      discount_value=10, min_spend=100, reward_points=0, is_reward=False))
+                db.session.add(Coupon(tenant_id=tid, code="X13RWD", title="模組13紅利券", discount_type="fixed",
+                                      discount_value=50, min_spend=0, reward_points=50, is_reward=True))
+                db.session.commit()
+            c = app.test_client()
+            c.get("/?shop=default")
+            csrf = get_client_csrf(c, "/")
+            clear_rate_buckets()
+
+            def verify(code, subtotal):
+                return c.post("/api/verify_promo", json={"promo_code": code, "subtotal": subtotal},
+                              headers={"X-CSRFToken": csrf}).get_json()
+
+            assert verify("", 200)["valid"] is False, "空白代碼不應有效"
+            assert verify("NO_SUCH_CODE", 200)["valid"] is False, "不存在代碼不應有效"
+            low = verify("X13PUB", 50)
+            assert low["valid"] is False and "門檻" in low["message"], f"未達低消未攔截: {low}"
+            ok = verify("x13pub", 200)  # 小寫輸入應自動轉大寫
+            assert ok["valid"] is True and abs(ok["discount"] - 10) < 1e-6, f"公開券折抵錯誤: {ok}"
+            rwd = verify("X13RWD", 200)
+            assert rwd["valid"] is False and "登入" in rwd["message"], f"紅利專屬券未登入應提示登入: {rwd}"
+            return "空碼/無效碼/低消門檻/公開券(含小寫)/紅利專屬券未登入 五種情境驗證通過"
+        runner.check("13.4", "顧客端優惠碼驗證 (/api/verify_promo) 公開券、低消與紅利專屬券", t13_4)
+
+        # 13.5 /api/user_available_coupons
+        def t13_5():
+            anon = app.test_client()
+            anon.get("/?shop=default")
+            j0 = anon.get("/api/user_available_coupons").get_json()
+            assert j0["success"] is False and j0["coupons"] == [] and j0["points"] == 0, f"未登入回應異常: {j0}"
+            uid = _make_member13()
+            tid = _tid13()
+            with app.app_context():
+                cp = Coupon(tenant_id=tid, code="X13OWN", title="模組13專屬券", discount_type="fixed",
+                            discount_value=30, min_spend=0, reward_points=10, is_reward=True)
+                db.session.add(cp)
+                db.session.flush()
+                db.session.add(UserCoupon(tenant_id=tid, user_id=uid, coupon_id=cp.id, code="X13OWN-A", is_used=False))
+                db.session.add(UserCoupon(tenant_id=tid, user_id=uid, coupon_id=cp.id, code="X13OWN-B", is_used=True))
+                db.session.commit()
+            c = _login13()
+            j = c.get("/api/user_available_coupons").get_json()
+            codes = [x["code"] for x in j["coupons"]]
+            assert j["success"] is True and j["points"] == 77, f"會員點數/狀態錯誤: {j}"
+            assert codes == ["X13OWN-A"], f"只應列出未使用的券，實際: {codes}"
+            assert "折$30" in j["coupons"][0]["title"], f"券標題格式異常: {j['coupons'][0]['title']}"
+            return "未登入空清單；登入後僅列出未使用券 (已使用券被排除) 且點數正確"
+        runner.check("13.5", "可用優惠券 API (/api/user_available_coupons) 登入/未登入與已使用券排除", t13_5)
+
+        # 13.6 /my_orders
+        def t13_6():
+            anon = app.test_client()
+            anon.get("/?shop=default")
+            assert anon.get("/my_orders").get_json() == [], "未登入應回傳空陣列"
+            uid = _make_member13()
+            tid = _tid13()
+            with app.app_context():
+                db.session.add(Order(tenant_id=tid, user_id=uid, table_number="模組13會員", total_price=100, status="Pending", pickup_number=1))
+                db.session.add(Order(tenant_id=tid, user_id=uid, table_number="模組13會員", total_price=200, status="Completed", pickup_number=2))
+                db.session.add(Order(tenant_id=tid, user_id=uid + 100000, table_number="他人", total_price=999, status="Pending", pickup_number=3))
+                db.session.commit()
+            c = _login13()
+            data = c.get("/my_orders").get_json()
+            assert [d["total_price"] for d in data] == [200, 100], f"應只回傳本人訂單且新到舊排序: {[d['total_price'] for d in data]}"
+            assert [d["user_order_no"] for d in data] == [2, 1], f"個人流水號錯誤: {[d['user_order_no'] for d in data]}"
+            assert data[0]["status"] == "已出餐" and data[1]["status"] == "製作中", "狀態中文對照錯誤"
+            return "未登入空陣列；會員僅看到自己的 2 筆訂單 (他人 999 元訂單未外洩)"
+        runner.check("13.6", "我的訂單 (/my_orders) 歸戶隔離、排序、個人流水號與狀態對照", t13_6)
+
+        # 13.7 /shop/<slug>
+        def t13_7():
+            from urllib.parse import urlparse
+            with app.app_context():
+                on_t = Tenant(name="啟用店13", slug="on-shop-13", is_active=True)
+                off_t = Tenant(name="停用店13", slug="off-shop-13", is_active=False)
+                db.session.add_all([on_t, off_t])
+                db.session.commit()
+                on_id = on_t.id
+            c = app.test_client()
+            r_ok = c.get("/shop/on-shop-13")
+            assert r_ok.status_code == 302 and urlparse(r_ok.headers["Location"]).path == "/", f"有效店家未導向首頁: {r_ok.status_code}"
+            with c.session_transaction() as s:
+                assert s.get("tenant_id") == on_id, f"session 未綁定店家: {s.get('tenant_id')}"
+            assert app.test_client().get("/shop/no-such-shop-13").status_code == 404, "不存在的店家未回 404"
+            assert app.test_client().get("/shop/off-shop-13").status_code == 404, "已停用店家未回 404"
+            return "有效 slug(302 並綁定 session)、不存在(404)、已停用店家(404) 驗證通過"
+        runner.check("13.7", "店家入口 (/shop/<slug>) 啟用/停用/不存在三種情境", t13_7)
+
+        # 13.8 /admin/toggle_user_coupon：同店切換與跨店隔離
+        def t13_8():
+            uid = _make_member13()
+            tid = _tid13()
+            with app.app_context():
+                tb = Tenant(name="跨店B13", slug="tenant-b-13", is_active=True)
+                db.session.add(tb)
+                db.session.flush()
+                ub = User(tenant_id=tb.id, name="B店會員", phone="0933130099", photo_path="b13.jpg", points=5)
+                cb = Coupon(tenant_id=tb.id, code="X13B", title="B店券", discount_type="fixed", discount_value=5,
+                            min_spend=0, reward_points=1, is_reward=True)
+                db.session.add_all([ub, cb])
+                db.session.flush()
+                ucb = UserCoupon(tenant_id=tb.id, user_id=ub.id, coupon_id=cb.id, code="X13B-1", is_used=False)
+                db.session.add(ucb)
+                db.session.commit()
+                ucb_id = ucb.id
+                own = UserCoupon.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid, code="X13OWN-A").first()
+                own_id = own.id
+            csrf = get_client_csrf(admin_client, "/admin")
+            hdr = {"X-CSRFToken": csrf}
+            # (a) 跨店：預設店負責人操作 B 店券 -> 404 且狀態不變
+            r_x = admin_client.post(f"/admin/toggle_user_coupon/{ucb_id}", headers=hdr)
+            assert r_x.status_code == 404, f"跨店切換未被租戶隔離攔截: {r_x.status_code}"
+            with app.app_context():
+                assert UserCoupon.query.execution_options(skip_tenant_filter=True).get(ucb_id).is_used is False, "B 店券被跨店修改"
+            # (b) 同店：切換為已使用 -> 再切回未使用
+            r1 = admin_client.post(f"/admin/toggle_user_coupon/{own_id}", headers=hdr)
+            j1 = r1.get_json()
+            assert r1.status_code == 200 and j1["success"] is True
+            assert any(c["code"] == "X13OWN-A" and c["is_used"] is True for c in j1["coupons"]), f"第一次切換結果錯誤: {j1}"
+            j2 = admin_client.post(f"/admin/toggle_user_coupon/{own_id}", headers=hdr).get_json()
+            assert any(c["code"] == "X13OWN-A" and c["is_used"] is False for c in j2["coupons"]), f"第二次切換結果錯誤: {j2}"
+            return "跨店切換回 404 且資料未變；同店 is_used 可往返切換並回傳完整券清單"
+        runner.check("13.8", "後台會員券核銷切換 (/admin/toggle_user_coupon) 同店切換與跨店隔離", t13_8)
+
+        # ==========================================================================
+        # 13.9 ~ 13.18：伺服器端修正後的回歸與補強測試
+        # ==========================================================================
+        def _reward_setting_snapshot13():
+            with app.app_context():
+                rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
+                return None if rs is None else (rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
+
+        def _restore_reward_setting13(snap):
+            if snap is None:
+                return
+            with app.app_context():
+                rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
+                rs.is_enabled, rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point = snap
+                db.session.commit()
+
+        # 13.9 owner / manager 對 13.2 那六個路由仍可使用 (防止 role_required 修正過頭)
+        def t13_9():
+            snap = _reward_setting_snapshot13()
+            blocked = []
+            try:
+                for role, client in (("owner", admin_client), ("manager", manager_client)):
+                    csrf = get_client_csrf(client, "/admin")
+                    hdr = {"X-CSRFToken": csrf}
+                    r = client.post(
+                        "/admin/update_reward_setting",
+                        data={"is_enabled": "1", "points_per_dollar": "2", "max_discount_per_order": "15",
+                              "spend_per_point": "80", "csrf_token": csrf},
+                        headers=hdr,
+                    )
+                    if r.status_code != 302:
+                        blocked.append(f"{role}:/admin/update_reward_setting={r.status_code}")
+                    else:
+                        with app.app_context():
+                            rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
+                            assert (rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point) == (2, 15, 80), \
+                                f"{role} 紅利設定未寫入: {(rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)}"
+
+                    # 這些路由在缺少檔案/欄位時會回 400 或 404，重點是「進得了 handler」而不是 401/403
+                    probes = [
+                        ("/admin/toggle_user_coupon/987654", {}, 404),
+                        ("/admin/import_smart", {}, 400),
+                        ("/admin/export_excel", {}, 400),
+                        ("/api/generate_item_description", {"json": {"name": "", "category": ""}}, 400),
+                    ]
+                    for path, kw, expect in probes:
+                        r = client.post(path, headers=hdr, **kw)
+                        if r.status_code != expect:
+                            blocked.append(f"{role}:{path}={r.status_code}(預期{expect})")
+            finally:
+                _restore_reward_setting13(snap)
+            assert not blocked, "owner/manager 被誤擋或行為異常: " + "; ".join(blocked)
+            return "owner 與 manager 對管理路由皆可進入 handler，紅利設定可實際寫入"
+        runner.check("13.9", "角色修正回歸：owner / manager 仍可使用紅利設定、智慧匯入、匯出、AI 文案與券核銷", t13_9)
+
+        # 13.10 刪除 / 下架路由不得被 GET 觸發 (GET 會繞過 CSRF 防護)
+        def t13_10():
+            tid = _tid13()
+            with app.app_context():
+                item = MenuItem(tenant_id=tid, name="GET刪除測試品13", category="主餐", price=10, stock=5, total_stock=5, modifiers="none")
+                rwd = MenuItem(tenant_id=tid, name="GET下架測試品13", category="主餐", price=10, stock=5, total_stock=5,
+                               modifiers="none", is_reward=True, reward_points=10)
+                cp = Coupon(tenant_id=tid, code="X13GETDEL", title="GET刪除券13", discount_type="fixed", discount_value=5,
+                            min_spend=0, reward_points=0, is_reward=False)
+                usr = User(tenant_id=tid, name="GET刪除會員13", phone="0933130120", photo_path="g13.jpg", points=1)
+                db.session.add_all([item, rwd, cp, usr])
+                db.session.flush()
+                cb = ComboOption(tenant_id=tid, main_item_id=item.id, name="GET刪除套餐13", additional_price=10)
+                db.session.add(cb)
+                db.session.commit()
+                ids = {"item": item.id, "rwd": rwd.id, "cp": cp.id, "usr": usr.id, "cb": cb.id}
+            offenders = []
+            try:
+                for path, key, model in (
+                    (f"/admin/delete/{ids['item']}", "item", MenuItem),
+                    (f"/admin/delete_combo/{ids['cb']}", "cb", ComboOption),
+                    (f"/admin/remove_reward/{ids['rwd']}", "rwd", MenuItem),
+                    (f"/admin/delete_coupon/{ids['cp']}", "cp", Coupon),
+                    (f"/admin/delete_user/{ids['usr']}", "usr", User),
+                ):
+                    r = admin_client.get(path)
+                    if r.status_code != 405:
+                        offenders.append(f"GET {path}={r.status_code}")
+                    with app.app_context():
+                        row = model.query.execution_options(skip_tenant_filter=True).get(ids[key])
+                        if row is None:
+                            offenders.append(f"GET {path} 已刪除資料")
+                        elif key == "rwd" and not row.is_reward:
+                            offenders.append(f"GET {path} 已下架紅利商品")
+            finally:
+                with app.app_context():
+                    for model, key in ((ComboOption, "cb"), (Coupon, "cp"), (User, "usr"), (MenuItem, "rwd"), (MenuItem, "item")):
+                        row = model.query.execution_options(skip_tenant_filter=True).get(ids[key])
+                        if row is not None:
+                            db.session.delete(row)
+                    db.session.commit()
+            assert not offenders, "刪除/下架路由仍可被 GET 觸發 (可繞過 CSRF，應只允許 POST): " + "; ".join(offenders)
+            return "5 個刪除/下架路由以 GET 呼叫皆回 405 且資料完整保留"
+        runner.check("13.10", "狀態變更路由不得允許 GET：delete / delete_combo / remove_reward / delete_coupon / delete_user", t13_10)
+
+        # 13.11 跨店隔離掃描：預設店負責人不得讀寫 B 店的資料 (全數應回 404 且資料不變)
+        def t13_11():
+            with app.app_context():
+                tb = Tenant(name="跨店B13X", slug="tenant-b-13x", is_active=True)
+                db.session.add(tb)
+                db.session.flush()
+                tbid = tb.id
+                b_item = MenuItem(tenant_id=tbid, name="B店紅利品", category="主餐", price=50, stock=9, total_stock=9,
+                                  modifiers="none", is_reward=True, reward_points=10)
+                b_cp = Coupon(tenant_id=tbid, code="X13BSWEEP", title="B店掃描券", discount_type="fixed", discount_value=5,
+                              min_spend=0, reward_points=0, is_reward=False)
+                b_usr = User(tenant_id=tbid, name="B店掃描會員", phone="0933130198", photo_path="b13x.jpg", points=50)
+                db.session.add_all([b_item, b_cp, b_usr])
+                db.session.flush()
+                b_cb = ComboOption(tenant_id=tbid, main_item_id=b_item.id, name="B店掃描套餐", additional_price=5)
+                o_pending = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Pending", pickup_number=1)
+                o_kds = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Pending", pickup_number=2)
+                o_done = Order(tenant_id=tbid, user_id=None, table_number="B店", total_price=10, status="Completed", pickup_number=3)
+                db.session.add_all([b_cb, o_pending, o_kds, o_done])
+                db.session.commit()
+                ids = {"item": b_item.id, "cb": b_cb.id, "cp": b_cp.id, "usr": b_usr.id,
+                       "o1": o_pending.id, "o2": o_kds.id, "o3": o_done.id}
+            csrf = get_client_csrf(admin_client, "/admin")
+            hdr = {"X-CSRFToken": csrf}
+
+            def _form(**kw):
+                return {"data": dict(kw, csrf_token=csrf)}
+
+            probes = [
+                ("POST", f"/admin/edit/{ids['item']}", _form(name="被入侵", price="1")),
+                ("POST", f"/admin/edit_combo/{ids['cb']}", _form(main_item_id=str(ids["item"]), name="被入侵", additional_price="1")),
+                ("POST", f"/admin/edit_coupon/{ids['cp']}", _form(code="HACKED13", title="被入侵", discount_type="fixed", discount_value="1")),
+                ("POST", f"/admin/edit_user/{ids['usr']}", _form(name="被入侵", phone="0933130197", points="9999")),
+                ("POST", f"/admin/delete/{ids['item']}", _form()),
+                ("POST", f"/admin/delete_combo/{ids['cb']}", _form()),
+                ("POST", f"/admin/remove_reward/{ids['item']}", _form()),
+                ("POST", f"/admin/delete_coupon/{ids['cp']}", _form()),
+                ("POST", f"/api/orders/{ids['o1']}/status", {"json": {"status": "Completed"}}),
+                ("POST", f"/api/orders/{ids['o2']}/status", {"json": {"status": "Completed"}}),
+                ("POST", f"/api/orders/{ids['o3']}/status", {"json": {"status": "PickedUp"}}),
+                ]
+            offenders = []
+            for _m, path, kw in probes:
+                r = admin_client.post(path, headers=hdr, **kw)
+                if r.status_code != 404:
+                    offenders.append(f"{path}={r.status_code}")
+            with app.app_context():
+                q = lambda model, i: model.query.execution_options(skip_tenant_filter=True).get(i)
+                it, cb, cp, us = q(MenuItem, ids["item"]), q(ComboOption, ids["cb"]), q(Coupon, ids["cp"]), q(User, ids["usr"])
+                assert it is not None and cb is not None and cp is not None and us is not None, "B 店資料被跨店刪除"
+                assert (it.name, it.price, it.is_reward) == ("B店紅利品", 50, True), f"B 店品項被跨店修改: {(it.name, it.price, it.is_reward)}"
+                assert cb.name == "B店掃描套餐", f"B 店套餐被跨店修改: {cb.name}"
+                assert (cp.code, cp.title) == ("X13BSWEEP", "B店掃描券"), f"B 店優惠券被跨店修改: {(cp.code, cp.title)}"
+                assert (us.name, us.points) == ("B店掃描會員", 50), f"B 店會員被跨店修改: {(us.name, us.points)}"
+                st = [q(Order, ids[k]).status for k in ("o1", "o2", "o3")]
+                assert st == ["Pending", "Pending", "Completed"], f"B 店訂單狀態被跨店修改: {st}"
+            assert not offenders, "跨店操作未被租戶隔離攔截 (應回 404): " + "; ".join(offenders)
+            return "11 個依 ID 操作的路由對 B 店資料全數回 404，且 B 店資料完全未變"
+        runner.check("13.11", "跨店隔離掃描：編輯/刪除/下架/訂單狀態/廚房/核銷路由不得操作 B 店資料", t13_11)
+
+        # 13.12 未登入存取掃描：所有後台/POS/廚房路由匿名一律被攔截
+        def t13_12():
+            anon = app.test_client()
+            anon.get("/?shop=default")
+            csrf = get_client_csrf(anon, "/")
+            hdr = {"X-CSRFToken": csrf}
+            clear_rate_buckets()
+            gets = ["/pos", "/kitchen", "/pickup", "/admin/staff", "/api/kitchen_orders", "/api/admin_live_orders"]
+            posts = [
+                "/api/pos/member_lookup", "/api/pos/set_member_pin", "/api/pos/verify_promo", "/api/pos/checkout",
+                "/api/orders/1/status",
+                "/api/kitchen_complete_all",
+                "/admin/staff", "/admin/add", "/admin/edit/1", "/admin/delete/1", "/admin/add_combo", "/admin/edit_combo/1",
+                "/admin/delete_combo/1", "/admin/add_reward", "/admin/remove_reward/1", "/admin/add_coupon",
+                "/admin/delete_coupon/1", "/admin/edit_coupon/1", "/admin/delete_user/1", "/admin/edit_user/1",
+                "/admin/toggle_user_coupon/1", "/admin/update_reward_setting",
+                "/admin/restore_backup", "/admin/export_excel", "/admin/import_smart", "/admin/backup_system",
+                "/api/generate_item_description",
+            ]
+            allowed = (301, 302, 303, 401, 403)
+            offenders = []
+            for p in gets:
+                r = anon.get(p)
+                if r.status_code not in allowed:
+                    offenders.append(f"GET {p}={r.status_code}")
+            for p in posts:
+                r = anon.post(p, json={}, headers=hdr)
+                if r.status_code not in allowed:
+                    offenders.append(f"POST {p}={r.status_code}")
+            assert not offenders, "匿名使用者可進入受保護路由: " + "; ".join(offenders)
+            return f"匿名對 {len(gets)} 個 GET 與 {len(posts)} 個 POST 受保護路由全數被攔截 (302/401/403)"
+        runner.check("13.12", "未登入存取掃描：後台 / POS / 廚房 / 核銷 / 匯入匯出路由匿名必被攔截", t13_12)
+
+        # 13.13 /admin/update_reward_setting 非法輸入不得造成 500，且數值需被夾限
+        def t13_13():
+            snap = _reward_setting_snapshot13()
+            try:
+                csrf = get_client_csrf(admin_client, "/admin")
+                r = admin_client.post(
+                    "/admin/update_reward_setting",
+                    data={"is_enabled": "1", "points_per_dollar": "abc", "max_discount_per_order": "-5",
+                          "spend_per_point": "0", "csrf_token": csrf},
+                    headers={"X-CSRFToken": csrf},
+                )
+                assert r.status_code == 302, f"非法輸入應被安全處理並導回 (302)，實際 {r.status_code}"
+                with app.app_context():
+                    rs = RewardSetting.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=_tid13()).first()
+                    vals = (rs.points_per_dollar, rs.max_discount_per_order, rs.spend_per_point)
+                    assert vals == (1, 0, 1), f"非法值夾限結果錯誤，預期 (1, 0, 1)，實際 {vals}"
+            finally:
+                _restore_reward_setting13(snap)
+            return "非數字/負數/零 皆不產生 500，並夾限為 (1, 0, 1)"
+        runner.check("13.13", "紅利設定非法輸入防呆：非數字、負數與 0 不得造成 500", t13_13)
+
+        # 13.14 /rewards 紅利商城頁面：訪客導向登入、會員可見紅利商品且不含一般商品
+        def t13_14():
+            tid = _tid13()
+            with app.app_context():
+                db.session.add_all([
+                    MenuItem(tenant_id=tid, name="模組13紅利品Z", category="主餐", price=10, stock=5, total_stock=5,
+                             modifiers="none", is_reward=True, reward_points=5),
+                    MenuItem(tenant_id=tid, name="模組13一般品Z", category="主餐", price=10, stock=5, total_stock=5,
+                             modifiers="none", is_reward=False),
+                ])
+                db.session.commit()
+            try:
+                anon = app.test_client()
+                anon.get("/?shop=default")
+                r_anon = anon.get("/rewards")
+                assert r_anon.status_code == 302 and "face_login" in r_anon.headers.get("Location", ""), \
+                    f"訪客應導向 /face_login，實際 {r_anon.status_code} {r_anon.headers.get('Location')}"
+                c = _login13()
+                r = c.get("/rewards")
+                html = r.get_data(as_text=True)
+                assert r.status_code == 200, f"會員進入紅利商城失敗: {r.status_code}"
+                assert "模組13紅利品Z" in html, "紅利商城未顯示紅利商品"
+                assert "模組13一般品Z" not in html, "紅利商城混入非紅利商品"
+            finally:
+                with app.app_context():
+                    for nm in ("模組13紅利品Z", "模組13一般品Z"):
+                        row = MenuItem.query.execution_options(skip_tenant_filter=True).filter_by(tenant_id=tid, name=nm).first()
+                        if row is not None:
+                            db.session.delete(row)
+                    db.session.commit()
+            return "訪客 302 導向登入；會員 200 且只顯示紅利商品"
+        runner.check("13.14", "紅利商城頁面 (/rewards)：訪客導向、會員只看到紅利商品", t13_14)
+
+        # 13.15 /api/orders_stream：SSE 標頭、首筆事件格式與連線釋放
+        def t13_15():
+            from app.services.event_bus import order_event_bus
+            with order_event_bus._lock:
+                order_event_bus._subscribers.clear()
+            c = app.test_client()
+            c.get("/?shop=default")
+            resp = c.get("/api/orders_stream", buffered=False)
+            try:
+                assert resp.status_code == 200, f"SSE 狀態碼應為 200，實際 {resp.status_code}"
+                assert resp.mimetype == "text/event-stream", f"SSE Content-Type 錯誤: {resp.mimetype}"
+                assert "no-cache" in (resp.headers.get("Cache-Control") or ""), "SSE 缺少 Cache-Control: no-cache"
+                first = next(iter(resp.response))
+                first = first.decode("utf-8") if isinstance(first, bytes) else first
+                assert first.startswith("data: ") and first.endswith("\n\n"), f"首筆 SSE 事件格式錯誤: {first!r}"
+                with order_event_bus._lock:
+                    active = len(order_event_bus._subscribers)
+                assert active == 1, f"連線期間訂閱數應為 1，實際 {active}"
+            finally:
+                resp.close()
+            with order_event_bus._lock:
+                left = len(order_event_bus._subscribers)
+                order_event_bus._subscribers.clear()
+            assert left == 0, f"連線關閉後訂閱未釋放 (剩 {left} 條)"
+            return "SSE 200、text/event-stream、首筆 data 事件格式正確，關閉後訂閱釋放"
+        runner.check("13.15", "即時串流 (/api/orders_stream)：標頭、首筆事件格式與連線釋放", t13_15)
+
+        # 13.16 /face_login 與 /phone_login 的頻率限制 (各 15 次 / 60 秒)
+        def t13_16():
+            os.environ["DISABLE_RATE_LIMIT"] = "0"
+            clear_rate_buckets()
+            try:
+                c = app.test_client()
+                c.get("/?shop=default")
+                csrf = get_client_csrf(c, "/register")
+                phone_codes = []
+                for i in range(17):
+                    # 每次換不同手機，避免觸發「PIN 連錯 5 次鎖定」的 429 干擾判讀
+                    r = c.post("/phone_login", json={"phone": f"0900{i:06d}", "pin": "0000"},
+                               headers={"X-CSRFToken": csrf, "X-Forwarded-For": "203.0.113.213"})
+                    phone_codes.append(r.status_code)
+                assert 429 not in phone_codes[:15] and 429 in phone_codes[15:], f"/phone_login 限流未在第 16 次觸發: {phone_codes}"
+                clear_rate_buckets()
+                face_codes = []
+                for _ in range(17):
+                    r = c.post("/face_login", data={}, headers={"X-CSRFToken": csrf, "X-Forwarded-For": "203.0.113.214"})
+                    face_codes.append(r.status_code)
+                assert 429 not in face_codes[:15] and 429 in face_codes[15:], f"/face_login 限流未在第 16 次觸發: {face_codes}"
+            finally:
+                clear_rate_buckets()
+            return f"/phone_login 前15次≠429、之後 {phone_codes[15:]}；/face_login 前15次≠429、之後 {face_codes[15:]}"
+        runner.check("13.16", "會員登入頻率限制：/phone_login 與 /face_login 超過 15 次/分鐘回 429", t13_16)
+
+        # 13.17 /register：GET 版面與各類缺漏/格式錯誤/重複電話防呆
+        def t13_17():
+            _make_member13()
+            clear_rate_buckets()
+            c = app.test_client()
+            c.get("/?shop=default")
+            assert c.get("/register").status_code == 200, "GET /register 未回 200"
+            csrf = get_client_csrf(c, "/register")
+            hdr = {"X-CSRFToken": csrf}
+
+            def _post(**fields):
+                data = {k: v for k, v in fields.items() if k != "photo"}
+                if "photo" in fields:
+                    data["photo"] = fields["photo"]
+                return c.post("/register", data=data, content_type="multipart/form-data", headers=hdr)
+
+            def _jpg(name="p.jpg"):
+                return (make_test_jpeg_bytes(200, 200, color=(255, 255, 255)), name)
+
+            checks = {
+                "缺照片": (_post(name="A", phone="0933130201", pin="1234").status_code, 400),
+                "缺姓名": (_post(name="", phone="0933130201", pin="1234", photo=_jpg()).status_code, 400),
+                "手機格式錯誤": (_post(name="A", phone="12345", pin="1234", photo=_jpg()).status_code, 400),
+                "PIN 格式錯誤": (_post(name="A", phone="0933130201", pin="12", photo=_jpg()).status_code, 400),
+                "重複電話": (_post(name="A", phone="0933130013", pin="1234", photo=_jpg()).status_code, 409),
+                "損壞圖片": (_post(name="A", phone="0933130202", pin="1234",
+                                  photo=(io.BytesIO(b"not-an-image"), "bad.jpg")).status_code, 400),
+            }
+            bad = [f"{k}={got}(預期{exp})" for k, (got, exp) in checks.items() if got != exp]
+            assert not bad, "/register 防呆回應碼不符: " + "; ".join(bad)
+            with app.app_context():
+                assert User.query.execution_options(skip_tenant_filter=True).filter(User.phone.in_(["0933130201", "0933130202"])).count() == 0, \
+                    "防呆失敗的請求不應建立會員"
+            return "GET(200)、缺照片/缺姓名/手機/PIN 格式/損壞圖片(400)、重複電話(409) 且未誤建會員"
+        runner.check("13.17", "會員註冊 (/register) 版面與缺漏、格式錯誤、重複電話與損壞圖片防呆", t13_17)
+
+        # 13.18 全域 CSRF 掃描：依路由表自動走訪所有 POST 路由，缺 Token 一律 403
+        def t13_18():
+            anon = app.test_client()
+            anon.get("/?shop=default")
+            clear_rate_buckets()
+            offenders, total = [], 0
+            for rule in app.url_map.iter_rules():
+                if rule.endpoint == "static" or "POST" not in rule.methods:
+                    continue
+                path = re.sub(r"<int:[^>]+>", "1", rule.rule)
+                path = re.sub(r"<[^>]+>", "x", path)
+                total += 1
+                r = anon.post(path, json={})
+                if r.status_code != 403:
+                    offenders.append(f"{path}={r.status_code}")
+            assert not offenders, "下列 POST 路由缺少 CSRF Token 時未回 403: " + "; ".join(offenders)
+            return f"路由表中 {total} 個 POST 路由缺 Token 全數回 403"
+        runner.check("13.18", "全域 CSRF 掃描：依路由表自動驗證每個 POST 路由缺 Token 必回 403", t13_18)
+    finally:
+        os.environ["DISABLE_RATE_LIMIT"] = "0"
+        if _orig_extract_feature is not None:
+            cv_service_mod.extract_feature = _orig_extract_feature
+            auth_route_mod.extract_feature = _orig_extract_feature
 
     elapsed = time.perf_counter() - t_global_start
     runner.print_summary(elapsed)

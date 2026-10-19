@@ -1,4 +1,3 @@
-import os
 import threading
 import redis
 from contextlib import contextmanager

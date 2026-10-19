@@ -2,7 +2,6 @@ from flask import abort, current_app, g, has_request_context, request, session
 from sqlalchemy import event
 from sqlalchemy.orm import Session, with_loader_criteria
 
-from app.extensions import db
 from app.models.tenant import StaffAccount, Tenant, TenantScoped
 
 

@@ -1,14 +1,13 @@
 import re
-from datetime import datetime
 from flask import Blueprint, render_template, request, session, jsonify, redirect, url_for, g
 from app.extensions import db
-from app.models.user import User, CustomerLog, RewardSetting
+from app.models.user import User, RewardSetting
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.coupon import UserCoupon
 from app.services.order_service import update_popular_items, verify_promo_code, process_checkout
 from app.routes.common import clear_customer_session
-from app.utils import rate_limit, safe_int
+from app.utils import rate_limit
 
 customer_bp = Blueprint('customer', __name__)
 
