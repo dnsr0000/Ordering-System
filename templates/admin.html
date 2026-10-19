@@ -481,7 +481,7 @@
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
                         <h5 class="fw-bold mb-0 text-white"><i class="bi bi-list-stars text-warning me-2"></i>菜單品項清單</h5>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-outline-info btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#importExcelModal">
+                            <button class="btn btn-outline-info btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
                                 <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel 菜單
                             </button>
                             <button class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#addItemModal">
@@ -1623,29 +1623,6 @@
             </div>
         </div>
     </div>
-    <!--  Excel 匯入 Modal -->
-    <div class="modal fade" id="importExcelModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content card-custom text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-info"><i class="bi bi-file-earmark-excel me-2"></i>批次匯入菜單</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <form action="/admin/import_excel" method="POST" enctype="multipart/form-data">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <div class="modal-body p-4">
-                        <p class="small text-white-50">請上傳包含 <code>name, category, price, modifiers, description</code> 等欄位的 <code>.xlsx</code> 或 <code>.csv</code> 檔案。</p>
-                        <input type="file" class="form-control" name="file" accept=".xlsx, .xls, .csv" required>
-                    </div>
-                    <div class="modal-footer border-secondary justify-content-between">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                        <button type="submit" class="btn btn-info fw-bold text-dark px-4">確認上傳匯入</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
     <!--  圖片裁切 Modal -->
     <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -1856,9 +1833,8 @@
                                     <li><strong>餐點商品相片 (<code>static/menu/</code>)</strong>：菜單展示圖檔。</li>
                                 </ul>
                             </div>
-                            <form action="/admin/export_excel" method="POST">
+                            <form action="{{ url_for('admin.backup_system') }}" method="POST">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <input type="hidden" name="export_type" value="backup_zip">
                                 <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
                                     <i class="bi bi-file-zip-fill me-1"></i> 下載完整備份包 (.zip)
                                 </button>
@@ -2026,43 +2002,31 @@ function autoExpandTextarea(el) {
     }
     updateDiscountHint('coupon');
 }
-
     // 後台切換訂單狀態時更新
     function changeOrderStatus(orderId, newStatus, selectEl) {
         localStorage.setItem('adminActiveTab', 'orders');
-        // 1.  當下立即讓下拉選單失去焦點，解除 syncAdminLiveOrders 的攔截
         if (selectEl) {
             selectEl.blur();
-            
-            // 2.  立即原地切換卡片外框邊框顏色
-            const card = selectEl.closest('.card-custom');
-            if (card) {
-                card.classList.remove('border-warning', 'border-success', 'border-danger', 'border-info');
-                if (newStatus === 'Pending') card.classList.add('border-warning');
-                else if (newStatus === 'Completed') card.classList.add('border-success');
-                else if (newStatus === 'PickedUp') card.classList.add('border-secondary');
-                else if (newStatus === 'Cancelled') card.classList.add('border-danger');
-                else card.classList.add('border-info');
-            }
         }
 
-        // 3. 送出後端更新請求並觸發全面同步
-        fetch(`/admin/update_order_status/${orderId}`, {
+        fetch(`/api/orders/${orderId}/status`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: newStatus })
         })
-        .then(r => r.json())
-        .then(d => { 
-            if (d.message) {
+        .then(r => r.json().then(d => ({ status: r.status, ok: r.ok, data: d })))
+        .then(({ status, ok, data }) => { 
+            if (ok && data.success) {
                 syncAdminLiveOrders();
             } else {
-                alert(d.error);
+                alert(`❌ ${data.error || data.message || '更新狀態失敗'}`);
+                syncAdminLiveOrders();
             }
         })
         .catch(err => {
             console.error("狀態更新失敗:", err);
             alert("網路異常，狀態更新失敗！");
+            syncAdminLiveOrders();
         });
     }
 

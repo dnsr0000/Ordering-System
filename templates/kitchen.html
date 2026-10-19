@@ -376,25 +376,26 @@
 
         function completeOrder(orderId) {
             getAudioContext();
-            fetch(`/api/kitchen_update_status/${orderId}`, {
+            fetch(`/api/orders/${orderId}/status`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: 'Completed' })
             })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
+            .then(res => res.json().then(d => ({ ok: res.ok, data: d })))
+            .then(({ ok, data }) => {
+                if (ok && data.success) {
                     knownOrderIds.delete(orderId);
                     fetchKitchenOrders();
                 } else {
-                    alert(data.message || '操作失敗');
+                    alert(`❌ ${data.error || data.message || '操作失敗'}`);
+                    fetchKitchenOrders();
                 }
             })
             .catch(err => alert('連線失敗'));
         }
 
     // ==============================================================================
-    // 新增：廚房看板 SSE 即時推播監聽器
+    // 廚房看板 SSE 即時推播監聽器
     // ==============================================================================
         let kitchenEventSource = null;
         let kitchenLastSignature = null;

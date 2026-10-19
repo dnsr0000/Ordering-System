@@ -2146,17 +2146,19 @@
             if (newStatus === 'Cancelled' && !confirm(`確定要取消訂單 #${orderId} 並全額回滾庫存與紅利點數嗎？`)) {
                 return;
             }
-            fetch(`/admin/update_order_status/${orderId}`, {
+            fetch(`/api/orders/${orderId}/status`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: newStatus })
             })
-            .then(r => r.json())
-            .then(d => {
-                if (d.error) alert(`❌ ${d.error}`);
+            .then(r => r.json().then(d => ({ status: r.status, ok: r.ok, data: d })))
+            .then(({ status, ok, data }) => {
+                if (!ok || !data.success) {
+                    alert(`❌ ${data.error || data.message || '更新狀態失敗'}`);
+                }
                 syncPosLiveState();
             })
-            .catch(() => alert('更新狀態失敗'));
+            .catch(() => alert('更新狀態連線失敗'));
         }
 
         function reprintOrderReceipt(orderId) {

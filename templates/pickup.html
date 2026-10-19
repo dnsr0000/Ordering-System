@@ -255,10 +255,9 @@
         }
 
         function markAsPickedUp(orderId) {
-            if (processingIds.has(orderId)) return; // 防連點重複觸發
+            if (processingIds.has(orderId)) return;
             processingIds.add(orderId);
 
-            //  1. 樂觀更新 (Optimistic UI)：直接在前端視覺上立即淡出或移除卡片
             const cardCol = document.getElementById(`order-card-col-${orderId}`);
             if (cardCol) {
                 cardCol.style.transition = 'all 0.15s ease';
@@ -269,7 +268,6 @@
                 }, 150);
             }
 
-            // 更新待取餐計數徽章
             currentOrders = currentOrders.filter(o => o.id !== orderId);
             const countBadge = document.getElementById('readyCountBadge');
             if (countBadge) countBadge.innerText = currentOrders.length;
@@ -277,19 +275,18 @@
                 document.getElementById('noOrdersMessage').style.display = 'block';
             }
 
-            //  2. 背景非同步向後端發送核銷請求
-            fetch(`/api/mark_picked_up/${orderId}`, {
+            fetch(`/api/orders/${orderId}/status`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'PickedUp' })
             })
-            .then(res => res.json())
-            .then(data => {
-                if (!data.success) {
-                    alert(data.message || '核銷失敗');
+            .then(res => res.json().then(d => ({ ok: res.ok, data: d })))
+            .then(({ ok, data }) => {
+                if (!ok || !data.success) {
+                    alert(`❌ ${data.error || data.message || '核銷失敗'}`);
                     processingIds.delete(orderId);
-                    fetchPickupOrders(); // 若失敗才強制回滾並刷新
+                    fetchPickupOrders();
                 } else {
-                    // 成功後延遲清理處理中標記
                     setTimeout(() => processingIds.delete(orderId), 1000);
                 }
             })
