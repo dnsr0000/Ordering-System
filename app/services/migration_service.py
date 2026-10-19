@@ -5,7 +5,7 @@ from app.extensions import db
 from app.models.order import Order
 from app.models.menu import ComboOption, ModifierOption
 from app.models.user import (
-    User, RewardSetting, FEATURE_MAGIC_PREFIX,
+    RewardSetting, FEATURE_MAGIC_PREFIX,
     decode_feature_bytes_safely, encode_feature_array
 )
 from app.models.tenant import Tenant, StaffAccount
