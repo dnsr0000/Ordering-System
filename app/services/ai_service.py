@@ -115,7 +115,7 @@ def _async_fetch_gemini_advice(analytics_data, signature, tenant_id=1):
 
         top_items_str = ", ".join([f"{i['name']}({i['quantity']}份)" for i in analytics_data.get('top_items', [])]) or "尚無"
         prompt = f"今日訂單：{analytics_data.get('today_orders', 0)}筆、營收：NT${analytics_data.get('today_revenue', 0)}、客單價：NT${int(analytics_data.get('avg_order_value', 0))}、待製作：{analytics_data.get('pending_count', 0)}筆、熱銷：{top_items_str}。請給出60字以內繁體中文營運行動建議，不要客套。"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
         payload = {
             "contents": [{"parts": [{"text": "【重要指令】：禁止輸出任何英文思考或草稿，繁體中文介紹，必須有完整句號收尾。\n" + prompt}]}],
             "generationConfig": {"maxOutputTokens": 800}
