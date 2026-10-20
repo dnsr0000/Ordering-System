@@ -47,6 +47,17 @@ def _run_migrations_inner():
             ))
         db.session.commit()
 
+        # 紅利設定每店只能一筆：先清掉歷史上因競態重複建立的列 (保留最小 id)，再建立唯一索引
+        rs_cols = db.session.execute(db.text('PRAGMA table_info("reward_setting")')).fetchall()
+        if rs_cols:
+            db.session.execute(db.text(
+                'DELETE FROM reward_setting WHERE id NOT IN (SELECT MIN(id) FROM reward_setting GROUP BY tenant_id)'
+            ))
+            db.session.execute(db.text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS "ux_reward_setting_tenant" ON "reward_setting" (tenant_id)'
+            ))
+            db.session.commit()
+
         # 建立或同步 .env 設定之預設管理員帳號與密碼 (#1)
         bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
             username=Config.ADMIN_USERNAME
@@ -61,11 +72,17 @@ def _run_migrations_inner():
                 is_active=True
             ))
             db.session.commit()
-        else:
+            if getattr(Config, 'ADMIN_PASSWORD_GENERATED', False):
+                print(f"\n⚠️  [安全警告] 未在 .env 設定 ADMIN_PASSWORD，已為預設負責人【{Config.ADMIN_USERNAME}】"
+                      f"自動生成初始密碼 (僅顯示這一次，請登入後立即修改): {Config.ADMIN_PASSWORD}\n")
+        elif getattr(Config, 'RESET_ADMIN_PASSWORD_ON_START', False):
+            # 忘記密碼的救援開關 (.env 設 RESET_ADMIN_PASSWORD_ON_START=1)：重設為 .env 的密碼並重新啟用。
+            # 預設不重設，負責人自行修改的密碼、停用狀態不會被重啟洗掉。
             if not bootstrap_account.check_password(Config.ADMIN_PASSWORD) or not bootstrap_account.is_active:
                 bootstrap_account.password_hash = pwd_hash
                 bootstrap_account.is_active = True
                 db.session.commit()
+                print(f"ℹ️ 已依 RESET_ADMIN_PASSWORD_ON_START 重設預設負責人【{Config.ADMIN_USERNAME}】的密碼並重新啟用。")
 
         # ======================================================================
         # 0.5 確保 staff_audit_log 與 reward_redemption 資料表及所有欄位完整存在
@@ -161,6 +178,9 @@ def _run_migrations_inner():
                 continue
             b_data = bytes(raw_blob) if not isinstance(raw_blob, bytes) else raw_blob
             if b_data.startswith(FEATURE_MAGIC_PREFIX):
+                # 已是安全格式：不改寫，但維度/內容異常者一併列入警告，方便日後人工處理
+                if decode_feature_bytes_safely(b_data) is None:
+                    undecodable_ids.append(uid)
                 continue
             arr = decode_feature_bytes_safely(b_data)
             if arr is None:
@@ -173,7 +193,7 @@ def _run_migrations_inner():
             )
         db.session.commit()
         if undecodable_ids:
-            print(f"[!] 有 {len(undecodable_ids)} 筆會員舊特徵無法解析，已保留原始資料未覆寫 "
+            print(f"[!] 有 {len(undecodable_ids)} 筆會員舊特徵無法解析或維度異常，已保留原始資料未覆寫 "
                   f"(user id: {undecodable_ids[:20]}{'...' if len(undecodable_ids) > 20 else ''})")
 
         # 1b. 自動合併同店重複電話號碼會員 (保留最高點數帳號，並將歷史訂單與優惠券歸戶)
@@ -297,6 +317,8 @@ def _run_migrations_inner():
             db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN customer_log_id INTEGER'))
         if 'coupon_code' not in order_cols:
             db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN coupon_code VARCHAR(50) DEFAULT ""'))
+        if 'applied_user_coupon_id' not in order_cols:
+            db.session.execute(db.text('ALTER TABLE "order" ADD COLUMN applied_user_coupon_id INTEGER'))
 
         # 回填歷史訂單的 order_source 與 cash_received，避免舊訂單匯出實收顯示為 $0
         db.session.execute(db.text("""

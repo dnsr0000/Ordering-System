@@ -1,8 +1,11 @@
 import os
-import time
 import re
+import time
+import uuid
 import pandas as pd
 from datetime import datetime
+from sqlalchemy import or_
+from sqlalchemy.orm import selectinload
 from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify, send_file, g
 from app.config import Config
 from app.extensions import db
@@ -13,13 +16,16 @@ from app.models.coupon import Coupon, UserCoupon
 from app.models.tenant import Tenant, StaffAccount
 from app.services.cv_service import save_and_fix_image
 from app.services.order_service import (
-    update_popular_items, sanitize_discount_value, 
+    sanitize_discount_value, 
     build_order_analytics, set_item_reward_status
 )
 from app.services.ai_service import generate_ai_business_advice, _AI_ADVICE_STATE, run_local_slm, fallback_menu_description
-from app.routes.common import record_staff_audit
+from app.routes.common import record_staff_audit, get_or_create_reward_setting
 from app.routes.auth import clear_pin_lockout
-from app.utils import role_required, rate_limit, js_alert_redirect, safe_int, validate_pin, validate_phone
+from app.utils import (
+    role_required, rate_limit, js_alert_redirect, safe_int, safe_float, safe_round, validate_pin, validate_phone,
+    platform_admin_required, is_platform_admin, get_json_dict
+)
 from app.services.backup_service import (
     create_full_backup_zip,
     restore_system_backup,
@@ -72,39 +78,37 @@ def admin_dashboard():
             db.session.commit()
             session['admin_log_id'] = log.id
             return redirect(url_for('admin.admin_dashboard'))
-        return "<script>alert('❌ 帳號或密碼錯誤！'); window.history.back();</script>", 401
+        return js_alert_redirect("❌ 帳號或密碼錯誤！", status=401)
 
     if not session.get('staff_account_id'):
         return render_template('admin.html', is_admin=False)
 
     limit = max(1, request.args.get('limit', 3, type=int))
-    all_orders = Order.query.order_by(Order.id.desc()).all()
+    # 只載入「今天的訂單 + 所有尚未出餐的訂單」(營運分析只用到這兩類)，不再每次把歷史上全部訂單載進記憶體；
+    # 並一次預載訂單明細，避免逐筆查詢 (N+1)。
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    all_orders = (
+        Order.query.options(selectinload(Order.items))
+        .filter(or_(Order.created_at >= today_start, Order.status == 'Pending'))
+        .order_by(Order.id.desc()).all()
+    )
     items = MenuItem.query.all()
     reward_items = MenuItem.query.filter_by(is_reward=True).all()
     reward_coupons = Coupon.query.all()
     users = User.query.all()
 
     analytics = build_order_analytics(all_orders, limit=limit)
-    today = datetime.now().date()
-    today_orders = [o for o in all_orders if o.created_at and o.created_at.date() == today]
-    # 讀取當前紅利設定 (若無則自動產生預設值)
-    reward_setting = RewardSetting.query.first()
-    if not reward_setting:
-        reward_setting = RewardSetting(is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
-        db.session.add(reward_setting)
-        db.session.commit()
+    analytics['ai_advice'] = generate_ai_business_advice(analytics)   # 首次載入就顯示建議，不必等第一次輪詢
+    today_orders = [o for o in all_orders if o.created_at and o.created_at >= today_start]
+    # 讀取當前紅利設定 (若無則自動產生預設值；同時多個請求首次進入也只會建立一筆)
+    reward_setting = get_or_create_reward_setting(g.tenant_id)
 
     try:
         audit_logs = StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all()
     except Exception:
+        # 資料表結構問題由啟動/還原時的遷移負責，這裡不在請求途中跑遷移 (遷移內的 commit/rollback 會干擾目前交易)
         db.session.rollback()
-        from app.services.migration_service import run_database_migrations
-        run_database_migrations()
-        try:
-            audit_logs = StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all()
-        except Exception:
-            db.session.rollback()
-            audit_logs = []
+        audit_logs = []
     try:
         admin_logs = AdminLog.query.order_by(AdminLog.id.desc()).limit(100).all()
     except Exception:
@@ -124,7 +128,8 @@ def admin_dashboard():
         reward_setting=reward_setting,
         tenant=g.tenant,
         audit_logs=audit_logs,
-        admin_logs=admin_logs
+        admin_logs=admin_logs,
+        is_platform_admin=is_platform_admin(g.staff_account, g.tenant)
     )
 
 @admin_bp.route('/admin/logout', endpoint='admin_logout')
@@ -152,11 +157,11 @@ def tenant_register():
     slug = re.sub(r'[^a-z0-9-]+', '-', slug).strip('-')
 
     if not shop_name or not username or len(password) < 10 or not slug:
-        return "<script>alert('請填妥資料；密碼至少 10 個字元。'); window.history.back();</script>", 400
+        return js_alert_redirect("請填妥資料；密碼至少 10 個字元。", status=400)
     if Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug=slug).first():
-        return "<script>alert('店家網址代號已被使用。'); window.history.back();</script>", 409
+        return js_alert_redirect("店家網址代號已被使用。", status=409)
     if StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first():
-        return "<script>alert('員工帳號已被使用。'); window.history.back();</script>", 409
+        return js_alert_redirect("員工帳號已被使用。", status=409)
 
     try:
         tenant = Tenant(name=shop_name, slug=slug, is_active=True)
@@ -175,7 +180,7 @@ def tenant_register():
         db.session.commit()
     except Exception:
         db.session.rollback()
-        return "<script>alert('建立店家失敗，請檢查資料後重試。'); window.history.back();</script>", 500
+        return js_alert_redirect("建立店家失敗，請檢查資料後重試。", status=500)
 
     session.clear()
     session.permanent = True
@@ -233,48 +238,60 @@ def staff_accounts():
 # ==============================================================================
 # 菜單品項與加購品 CRUD
 # ==============================================================================
+def _save_menu_image(image):
+    """
+    儲存上傳的菜單圖片，回傳 (資料庫相對路徑, 錯誤訊息)。
+    - 檔名使用隨機 UUID (舊版用秒級時間戳，同一秒上傳兩張會互相覆蓋)
+    - 圖片損毀/無法處理時回傳錯誤，呼叫端不可再把不存在的路徑寫進資料庫
+    - 內容一律重新編碼為 JPEG，因此副檔名固定為 .jpg
+    """
+    _, ext = os.path.splitext((image.filename or '').lower())
+    if ext not in ALLOWED_IMAGE_EXTS:
+        return None, '❌ 僅支援 JPG、PNG、WEBP 圖片格式！'
+    tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id')
+    store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
+    os.makedirs(store_upload_dir, exist_ok=True)
+    image_filename = f"menu_{uuid.uuid4().hex[:16]}.jpg"
+    if not save_and_fix_image(image, os.path.join(store_upload_dir, image_filename)):
+        return None, '❌ 上傳的圖片已損壞或格式不支援，請重新選擇清晰的 JPG/PNG/WEBP 圖片！'
+    # 存進資料庫的相對路徑：例如 "1/menu_ab12cd34ef56ab78.jpg"
+    return f"{tenant_id}/{image_filename}", None
+
+
 @admin_bp.route('/admin/add', methods=['POST'])
 @role_required('owner', 'manager')
 def add_item():
     name = request.form.get('name')
     price = request.form.get('price')
     if name and price:
-        final_price = max(0, round(float(price)))
+        price_num = safe_float(price, None)
+        if price_num is None:
+            return js_alert_redirect('❌ 單價格式不正確，請輸入數字！', status=400)
+        final_price = max(0, round(price_num))
         can_be_add_on = True if request.form.get('can_be_add_on') else False
-        add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
+        add_on_price = max(0, safe_round(request.form.get('add_on_price')))
         
         if can_be_add_on:
             if add_on_price <= 0:
-                return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
+                return js_alert_redirect("❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！", status=400)
             if add_on_price >= final_price:
-                return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${final_price})！'); window.history.back();</script>", 400
+                return js_alert_redirect(f"❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${final_price})！", status=400)
 
         image = request.files.get('image')
         db_image_path = ''
 
         if image and image.filename != '':
-            _, ext = os.path.splitext(image.filename.lower())
-            if ext not in ALLOWED_IMAGE_EXTS:
-                return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
-
-            image_filename = f"menu_{int(time.time())}{ext}"
-            tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id')
-            store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
-            os.makedirs(store_upload_dir, exist_ok=True)
-            
-            filepath = os.path.join(store_upload_dir, image_filename)
-            save_and_fix_image(image, filepath)
-
-            # 存進資料庫的相對路徑：例如 "1/menu_1720000000.jpg"
-            db_image_path = f"{tenant_id}/{image_filename}"
+            db_image_path, img_err = _save_menu_image(image)
+            if img_err:
+                return js_alert_redirect(img_err, status=400)
 
         is_sold_out = request.form.get('is_sold_out') == '1'
         is_rec = request.form.get('is_recommended') == '1'
         is_new = request.form.get('is_new') == '1'
         is_discount = request.form.get('is_discount') == '1'
 
-        stock_val = max(0, int(request.form.get('stock') or 0))
-        total_stock_val = max(stock_val, int(request.form.get('total_stock') or stock_val))
+        stock_val = max(0, safe_int(request.form.get('stock'), 0))
+        total_stock_val = max(stock_val, safe_int(request.form.get('total_stock'), stock_val))
 
         new_item = MenuItem(
             tenant_id=g.tenant_id,
@@ -290,7 +307,7 @@ def add_item():
             is_recommended=is_rec,
             is_manual_popular=is_rec,
             is_discount=is_discount,
-            discount_price=max(0, round(float(request.form.get('discount_price') or 0))),
+            discount_price=max(0, safe_round(request.form.get('discount_price'))),
             is_new=is_new,
             can_be_add_on=can_be_add_on,
             add_on_price=add_on_price,
@@ -310,28 +327,50 @@ def edit_item(id):
     from_tab = request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')
 
     if name and price:
-        item_price = max(0, round(float(price)))
+        price_num = safe_float(price, None)
+        if price_num is None:
+            return js_alert_redirect('❌ 單價格式不正確，請輸入數字！', status=400)
+        item_price = max(0, round(price_num))
         can_be_add_on = bool(request.form.get('can_be_add_on'))
-        add_on_price = max(0, round(float(request.form.get('add_on_price') or 0)))
+        add_on_price = max(0, safe_round(request.form.get('add_on_price')))
         if can_be_add_on:
             if add_on_price <= 0:
-                return "<script>alert('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！'); window.history.back();</script>", 400
+                return js_alert_redirect("❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！", status=400)
             if add_on_price >= item_price:
-                return f"<script>alert('❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${item_price})！'); window.history.back();</script>", 400
+                return js_alert_redirect(f"❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${item_price})！", status=400)
 
         is_reward = bool(request.form.get('is_reward'))
-        reward_points = max(0, int(request.form.get('reward_points') or 0))
-        reward_discount_points = max(0, int(request.form.get('reward_discount_points') or 0))
+        reward_points = max(0, safe_int(request.form.get('reward_points'), 0))
+        reward_discount_points = max(0, safe_int(request.form.get('reward_discount_points'), 0))
+
+        # 庫存：表單帶有「載入編輯視窗當下的庫存」(loaded_stock) 時只套用「差額」，
+        # 不再用過期的表單值蓋掉編輯期間已被顧客買走的數量 (例如只想改價格，結果庫存被重設回舊數字)。
+        # 沒帶 loaded_stock (舊表單/API 呼叫) 時維持原本「以表單值為準」的行為。
+        submitted_stock = max(0, safe_int(request.form.get('stock'), 0))
+        loaded_stock_raw = request.form.get('loaded_stock')
+        if loaded_stock_raw not in (None, ''):
+            stock_delta = submitted_stock - max(0, safe_int(loaded_stock_raw, 0))
+            if stock_delta != 0:
+                db.session.execute(
+                    db.text("UPDATE menu_item SET stock = MAX(0, stock + :d) WHERE id = :id AND tenant_id = :t"),
+                    {"d": stock_delta, "id": item.id, "t": g.tenant_id}
+                )
+                db.session.refresh(item)
+        else:
+            item.stock = submitted_stock
+        submitted_total = max(0, safe_int(request.form.get('total_stock'), item.stock or 0))
+        loaded_total_raw = request.form.get('loaded_total_stock')
+        if loaded_total_raw not in (None, '') and submitted_total == max(0, safe_int(loaded_total_raw, 0)):
+            submitted_total = item.total_stock or 0   # 總量沒被改動：保留目前資料庫的值
 
         # 基本品項欄位更新
         item.name = name
         item.category = request.form.get('category', '主餐')
         item.modifiers = request.form.get('modifiers', 'none')
         item.price = item_price
-        item.stock = max(0, int(request.form.get('stock') or 0))
-        item.total_stock = max(item.stock, int(request.form.get('total_stock') or item.stock))
+        item.total_stock = max(item.stock or 0, submitted_total)
         item.is_discount = bool(request.form.get('is_discount'))
-        item.discount_price = max(0, round(float(request.form.get('discount_price') or 0)))
+        item.discount_price = max(0, safe_round(request.form.get('discount_price')))
         item.description = request.form.get('description', '')
         item.is_sold_out = bool(request.form.get('is_sold_out')) or (item.stock == 0)
         item.is_manual_popular = bool(request.form.get('is_recommended'))
@@ -351,19 +390,15 @@ def edit_item(id):
         )
         if r_code != 200:
             db.session.rollback()
-            return f"<script>alert('❌ {r_res['message']}'); window.history.back();</script>", 400
+            return js_alert_redirect(f"❌ {r_res['message']}", status=400)
 
         image = request.files.get('image')
         if image and image.filename != '':
-            _, ext = os.path.splitext(image.filename.lower())
-            if ext not in ALLOWED_IMAGE_EXTS:
-                return "<script>alert('❌ 僅支援 JPG、PNG、WEBP 圖片格式！'); window.history.back();</script>", 400
-
-            image_filename = f"menu_{int(time.time())}{ext}"
-            tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id')
-            store_upload_dir = os.path.join(Config.UPLOAD_FOLDER_MENU, str(tenant_id))
-            os.makedirs(store_upload_dir, exist_ok=True)
-
+            new_image_path, img_err = _save_menu_image(image)
+            if img_err:
+                db.session.rollback()
+                return js_alert_redirect(img_err, status=400)
+            # 新圖片確定存好之後才刪舊圖，圖片損毀時不會把原本的圖弄丟
             if item.image_path:
                 old_path = os.path.join(Config.UPLOAD_FOLDER_MENU, item.image_path)
                 if os.path.exists(old_path):
@@ -371,10 +406,7 @@ def edit_item(id):
                         os.remove(old_path)
                     except Exception:
                         pass
-
-            filepath = os.path.join(store_upload_dir, image_filename)
-            save_and_fix_image(image, filepath)
-            item.image_path = f"{tenant_id}/{image_filename}"
+            item.image_path = new_image_path
 
         db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab=from_tab))
@@ -395,12 +427,23 @@ def delete_item(id):
     record_staff_audit('DELETE_MENU_ITEM', details=f'刪除菜單品項：{item.name} (${item.price})')
     db.session.delete(item)
     db.session.commit()
-    update_popular_items()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
 # ==============================================================================
 # 套餐組合 CRUD
 # ==============================================================================
+def _validate_combo_refs(main_item_id, name, side_ids):
+    """驗證套餐表單：名稱必填，主餐與配餐必須都是「本店」存在的餐點 (不可引用別家店的餐點 ID)"""
+    if not name:
+        return '❌ 請輸入套餐名稱！'
+    if not main_item_id:
+        return '❌ 請選擇主餐！'
+    ids = {i for i in [main_item_id, *side_ids] if i}
+    if MenuItem.query.filter(MenuItem.id.in_(ids)).count() != len(ids):
+        return '❌ 套餐包含不存在或不屬於本店的餐點，請重新選擇！'
+    return None
+
+
 def check_side_customizable(item_id, is_checked):
     """檢查配餐是否具備客製化群組，無客製化品項一律強制為 False"""
     if not item_id or not is_checked:
@@ -416,19 +459,23 @@ def add_combo():
     #if not session.get('admin_logged_in'):
     #    return redirect(url_for('admin.admin_dashboard'))
     
-    main_item_id = int(request.form.get('main_item_id'))
+    main_item_id = safe_int(request.form.get('main_item_id'), 0)
     name = str(request.form.get('name', '')).strip()
-    additional_price = max(0, int(request.form.get('additional_price') or 0))
+    additional_price = max(0, safe_int(request.form.get('additional_price'), 0))
     description = request.form.get('description', '')
     
-    item1_id = int(request.form.get('item1_id')) if request.form.get('item1_id') else None
-    item2_id = int(request.form.get('item2_id')) if request.form.get('item2_id') else None
-    item3_id = int(request.form.get('item3_id')) if request.form.get('item3_id') else None
+    item1_id = safe_int(request.form.get('item1_id'), 0) or None
+    item2_id = safe_int(request.form.get('item2_id'), 0) or None
+    item3_id = safe_int(request.form.get('item3_id'), 0) or None
+
+    combo_err = _validate_combo_refs(main_item_id, name, [item1_id, item2_id, item3_id])
+    if combo_err:
+        return js_alert_redirect(combo_err, '/admin?tab=menu')
 
     chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
         db.session.rollback()
-        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
+        return js_alert_redirect("❌ 配餐不可重複選擇相同的餐點！", '/admin?tab=menu')
 
     #同主餐名稱重複防呆
     existing_name = ComboOption.query.filter_by(
@@ -437,7 +484,7 @@ def add_combo():
     ).first()
     if existing_name:
         db.session.rollback()
-        return f"<script>alert('❌ 該主餐已存在名為【{name}】的套餐，請使用不同名稱！'); window.location.href='/admin?tab=menu';</script>"
+        return js_alert_redirect(f"❌ 該主餐已存在名為【{name}】的套餐，請使用不同名稱！", '/admin?tab=menu')
 
     #同主餐配餐內容重複防呆
     target_sides_set = set(chosen_sides)
@@ -446,7 +493,7 @@ def add_combo():
         ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
         if set(ec_sides) == target_sides_set:
             db.session.rollback()
-            return f"<script>alert('❌ 該主餐已存在包含相同配餐內容的套餐【{ec.name}】，不可重複建立相同組合！'); window.location.href='/admin?tab=menu';</script>"
+            return js_alert_redirect(f"❌ 該主餐已存在包含相同配餐內容的套餐【{ec.name}】，不可重複建立相同組合！", '/admin?tab=menu')
 
     item1_customizable = check_side_customizable(item1_id, request.form.get('item1_customizable') == '1')
     item2_customizable = check_side_customizable(item2_id, request.form.get('item2_customizable') == '1')
@@ -467,9 +514,10 @@ def add_combo():
         can_addon=can_addon
     )
     db.session.add(new_combo)
+    record_staff_audit('COMBO_CHANGE', details=f"新增套餐：{name} (主餐 #{main_item_id}，加價 ${additional_price})")
     db.session.commit()
     db.session.expire_all() 
-    return "<script>alert('✅ 成功為餐點新增套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+    return js_alert_redirect("✅ 成功為餐點新增套餐組合！", '/admin?tab=menu')
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
 @role_required('owner', 'manager')
@@ -479,19 +527,23 @@ def edit_combo(id):
         return redirect(url_for('admin.admin_dashboard'))
         
     combo = ComboOption.query.get_or_404(id)
-    main_item_id = int(request.form.get('main_item_id'))
+    main_item_id = safe_int(request.form.get('main_item_id'), 0)
     name = str(request.form.get('name', '')).strip()
-    additional_price = max(0, int(request.form.get('additional_price') or 0))
+    additional_price = max(0, safe_int(request.form.get('additional_price'), 0))
     description = request.form.get('description', '')
 
-    item1_id = int(request.form.get('item1_id')) if request.form.get('item1_id') else None
-    item2_id = int(request.form.get('item2_id')) if request.form.get('item2_id') else None
-    item3_id = int(request.form.get('item3_id')) if request.form.get('item3_id') else None
+    item1_id = safe_int(request.form.get('item1_id'), 0) or None
+    item2_id = safe_int(request.form.get('item2_id'), 0) or None
+    item3_id = safe_int(request.form.get('item3_id'), 0) or None
+
+    combo_err = _validate_combo_refs(main_item_id, name, [item1_id, item2_id, item3_id])
+    if combo_err:
+        return js_alert_redirect(combo_err, '/admin?tab=menu')
 
     chosen_sides = [s for s in [item1_id, item2_id, item3_id] if s is not None]
     if len(chosen_sides) != len(set(chosen_sides)):
         db.session.rollback()
-        return "<script>alert('❌ 配餐不可重複選擇相同的餐點！'); window.location.href='/admin?tab=menu';</script>"
+        return js_alert_redirect("❌ 配餐不可重複選擇相同的餐點！", '/admin?tab=menu')
 
     #同主餐名稱重複防呆 (排除自己)
     duplicate_name = ComboOption.query.filter(
@@ -501,7 +553,7 @@ def edit_combo(id):
     ).first()
     if duplicate_name:
         db.session.rollback()
-        return f"<script>alert('❌ 該主餐已有其他名為【{name}】的套餐組合！'); window.location.href='/admin?tab=menu';</script>"
+        return js_alert_redirect(f"❌ 該主餐已有其他名為【{name}】的套餐組合！", '/admin?tab=menu')
 
     #同主餐配餐內容重複防呆 (排除自己)
     target_sides_set = set(chosen_sides)
@@ -513,7 +565,7 @@ def edit_combo(id):
         ec_sides = [s for s in [ec.item1_id, ec.item2_id, ec.item3_id] if s is not None]
         if set(ec_sides) == target_sides_set:
             db.session.rollback()
-            return f"<script>alert('❌ 該主餐已有相同配餐組合的套餐【{ec.name}】，請勿重複配置！'); window.location.href='/admin?tab=menu';</script>"
+            return js_alert_redirect(f"❌ 該主餐已有相同配餐組合的套餐【{ec.name}】，請勿重複配置！", '/admin?tab=menu')
 
     combo.main_item_id = main_item_id
     combo.name = name
@@ -527,6 +579,7 @@ def edit_combo(id):
     combo.item3_customizable = check_side_customizable(item3_id, request.form.get('item3_customizable') == '1')
     combo.can_addon = True if request.form.get('can_addon') == '1' else False
 
+    record_staff_audit('COMBO_CHANGE', details=f"編輯套餐 #{combo.id}：{name} (主餐 #{main_item_id}，加價 ${additional_price})")
     db.session.commit()
     db.session.expire_all()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
@@ -535,6 +588,7 @@ def edit_combo(id):
 @role_required('owner', 'manager')
 def delete_combo(id):
     combo = ComboOption.query.get_or_404(id)
+    record_staff_audit('COMBO_CHANGE', details=f"刪除套餐 #{combo.id}：{combo.name}")
     db.session.delete(combo)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='menu'))
@@ -576,22 +630,26 @@ def remove_reward_item(id):
 @role_required('owner', 'manager')
 def add_coupon():
     code = request.form.get('code', '').strip().upper()
+    title = (request.form.get('title') or '').strip()
+    if not code or not title:
+        return js_alert_redirect("❌ 請輸入優惠券名稱與代碼！", status=400)
     if Coupon.query.filter_by(code=code).first():
-        return "<script>alert('❌ 代碼重複！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 代碼重複！", status=400)
     dtype = request.form.get('discount_type', 'fixed')
     req_pts = max(0, safe_int(request.form.get('reward_points'), 0))
     new_c = Coupon(
-        title=request.form.get('title'),
+        title=title,
         code=code,
         discount_type=dtype,
         discount_value=sanitize_discount_value(dtype, request.form.get('discount_value') or 0),
-        min_spend=max(0.0, float(request.form.get('min_spend') or 0)),
+        min_spend=max(0.0, safe_float(request.form.get('min_spend'), 0.0)),
         reward_points=req_pts,
         reward_discount_points=max(0, safe_int(request.form.get('reward_discount_points'), 0)) if req_pts > 0 else 0,
         per_user_limit=parse_per_user_limit(request.form.get('per_user_limit')),
         is_reward=(req_pts > 0)
     )
     db.session.add(new_c)
+    record_staff_audit('COUPON_CHANGE', details=f"新增優惠券：{title} ({code}，{dtype}={new_c.discount_value}，門檻${new_c.min_spend}，兌換點數:{req_pts})")
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
@@ -599,6 +657,7 @@ def add_coupon():
 @role_required('owner', 'manager')
 def delete_coupon(id):
     c = Coupon.query.get_or_404(id)
+    record_staff_audit('COUPON_CHANGE', details=f"刪除優惠券：{c.title} ({c.code})，連同會員已領取的 {len(c.user_coupons)} 張持券")
     db.session.delete(c)
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
@@ -608,19 +667,24 @@ def delete_coupon(id):
 def edit_coupon(id):
     c = Coupon.query.get_or_404(id)
     code = request.form.get('code', '').strip().upper()
+    title = (request.form.get('title') or '').strip()
+    if not code or not title:
+        return js_alert_redirect("❌ 請輸入優惠券名稱與代碼！", status=400)
     if Coupon.query.filter(Coupon.code == code, Coupon.id != id).first():
-        return "<script>alert('❌ 代碼已被使用！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 代碼已被使用！", status=400)
     if c.code != code:
         UserCoupon.query.filter_by(coupon_id=c.id).update({UserCoupon.code: code})
-    c.title = request.form.get('title')
+    old_desc = f"{c.title} ({c.code}，{c.discount_type}={c.discount_value}，門檻${c.min_spend}，兌換點數:{c.reward_points})"
+    c.title = title
     c.code = code
     c.discount_type = request.form.get('discount_type', 'fixed')
     c.discount_value = sanitize_discount_value(c.discount_type, request.form.get('discount_value') or 0)
-    c.min_spend = max(0.0, float(request.form.get('min_spend') or 0))
+    c.min_spend = max(0.0, safe_float(request.form.get('min_spend'), 0.0))
     c.reward_points = max(0, safe_int(request.form.get('reward_points'), 0))
     c.reward_discount_points = max(0, safe_int(request.form.get('reward_discount_points'), 0)) if c.reward_points > 0 else 0
     c.is_reward = (c.reward_points > 0)
     c.per_user_limit = parse_per_user_limit(request.form.get('per_user_limit'))
+    record_staff_audit('COUPON_CHANGE', details=f"編輯優惠券：{old_desc} → {c.title} ({c.code}，{c.discount_type}={c.discount_value}，門檻${c.min_spend}，兌換點數:{c.reward_points})")
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='rewards'))
 
@@ -650,6 +714,7 @@ def delete_user(id):
 def edit_user(id):
     user = User.query.get_or_404(id)
     old_points = int(user.points or 0)
+    old_name, old_phone = user.name, user.phone
     new_name = (request.form.get('name') or user.name).strip()
     new_phone = (request.form.get('phone') or user.phone).strip()
     if not validate_phone(new_phone):
@@ -657,22 +722,49 @@ def edit_user(id):
     dup_user = User.query.filter(User.phone == new_phone, User.id != user.id).first()
     if dup_user:
         return js_alert_redirect(f'❌ 手機號碼 {new_phone} 已被其他會員【{dup_user.name}】使用！', status=409)
-    user.name = new_name
-    user.phone = new_phone
-    user.points = max(0, safe_int(request.form.get('points'), 0))
     new_pin = (request.form.get('pin') or '').strip()
+    if new_pin and not validate_pin(new_pin):
+        return js_alert_redirect('❌ 重設之安全 PIN 碼必須為 4 至 6 位數字！', status=400)
+    user.name = new_name[:100]
+    user.phone = new_phone
+
+    # 點數：表單帶有「載入編輯視窗當下的點數」(loaded_points) 時只套用「差額」，
+    # 不會用過期的數字蓋掉編輯期間顧客剛消費賺到或剛花掉的點數 (只想改姓名/電話也不會動到點數)。
+    # 沒帶 loaded_points (舊表單/API 呼叫) 時維持原本「以表單值為準」的行為。
+    submitted_points = max(0, safe_int(request.form.get('points'), 0))
+    loaded_points_raw = request.form.get('loaded_points')
+    if loaded_points_raw not in (None, ''):
+        points_delta_req = submitted_points - max(0, safe_int(loaded_points_raw, 0))
+        if points_delta_req != 0:
+            db.session.execute(
+                db.text("UPDATE user SET points = MAX(0, points + :d) WHERE id = :id AND tenant_id = :t"),
+                {"d": points_delta_req, "id": user.id, "t": g.tenant_id}
+            )
+            db.session.expire(user, ['points'])
+    else:
+        user.points = submitted_points
     if new_pin:
-        if not validate_pin(new_pin):
-            return js_alert_redirect('❌ 重設之安全 PIN 碼必須為 4 至 6 位數字！', status=400)
         user.set_pin(new_pin)
         clear_pin_lockout(g.tenant_id, user.phone)
-    pts_diff = int(user.points) - old_points
-    record_staff_audit(
-        action_type='EDIT_USER',
-        target_user_id=user.id,
-        points_delta=pts_diff,
-        details=f"編輯會員 {user.name} ({user.phone})：點數 {old_points} -> {user.points}{'，並重設安全PIN碼' if new_pin else ''}"
-    )
+    pts_diff = int(user.points or 0) - old_points
+
+    # 稽核只記「真的有變動」的欄位 (舊版固定寫「點數 A -> A」，改電話時反而看不出電話改了什麼)
+    changes = []
+    if user.name != old_name:
+        changes.append(f"姓名 {old_name} -> {user.name}")
+    if user.phone != old_phone:
+        changes.append(f"手機 {old_phone} -> {user.phone}")
+    if pts_diff != 0:
+        changes.append(f"點數 {old_points} -> {int(user.points or 0)}")
+    if new_pin:
+        changes.append("重設安全PIN碼")
+    if changes:
+        record_staff_audit(
+            action_type='EDIT_USER',
+            target_user_id=user.id,
+            points_delta=pts_diff,
+            details=f"編輯會員 #{user.id}：" + "；".join(changes)
+        )
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
@@ -682,6 +774,10 @@ def toggle_user_coupon(uc_id):
     uc = UserCoupon.query.get_or_404(uc_id)
     uc.is_used = not bool(uc.is_used)
     uc.used_at = datetime.now() if uc.is_used else None
+    record_staff_audit(
+        'TOGGLE_USER_COUPON', target_user_id=uc.user_id,
+        details=f"手動將會員券 {uc.code} (持券 #{uc.id}) 切換為「{'已使用' if uc.is_used else '未使用'}」"
+    )
     db.session.commit()
     all_user_coupons = UserCoupon.query.filter_by(user_id=uc.user_id).order_by(UserCoupon.id.asc()).all()
     return jsonify({
@@ -693,21 +789,26 @@ def toggle_user_coupon(uc_id):
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])
 @role_required('owner', 'manager')
 def update_reward_setting():
-    setting = RewardSetting.query.first()
-    if not setting:
-        setting = RewardSetting(tenant_id=g.tenant_id)
-        db.session.add(setting)
+    setting = get_or_create_reward_setting(g.tenant_id)
+    before = (setting.is_enabled, setting.points_per_dollar, setting.max_discount_per_order, setting.spend_per_point)
 
     setting.is_enabled = bool(request.form.get('is_enabled'))
     setting.points_per_dollar = max(1, safe_int(request.form.get('points_per_dollar'), 1))
     setting.max_discount_per_order = max(0, safe_int(request.form.get('max_discount_per_order'), 0))
     setting.spend_per_point = max(1, safe_int(request.form.get('spend_per_point'), 1))
 
+    after = (setting.is_enabled, setting.points_per_dollar, setting.max_discount_per_order, setting.spend_per_point)
+    if before != after:
+        record_staff_audit(
+            'UPDATE_REWARD_SETTING',
+            details=(f"紅利設定 (啟用/幾點折$1/單筆折抵上限/每幾元送1點)：{before} → {after}")
+        )
     db.session.commit()
     return redirect(url_for('admin.admin_dashboard', tab='users'))
 
 @admin_bp.route('/admin/restore_backup', methods=['POST'])
 @role_required('owner')
+@platform_admin_required
 def restore_backup():
     file = request.files.get('backup_zip')
     if not file or file.filename == '':
@@ -717,7 +818,7 @@ def restore_backup():
         }), 403
 
     if not file.filename.lower().endswith('.zip'):
-        return "<script>alert('❌ 僅支援 .zip 壓縮格式！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 僅支援 .zip 壓縮格式！", status=400)
 
     restore_db = (request.form.get('restore_db') == '1')
     restore_photos = (request.form.get('restore_photos') == '1')
@@ -725,16 +826,20 @@ def restore_backup():
     overwrite_photos = (request.form.get('overwrite_photos') == '1')
 
     if not restore_db and not restore_photos and not restore_menu_photos:
-        return "<script>alert('❌ 請至少勾選一項欲還原的項目！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 請至少勾選一項欲還原的項目！", status=400)
 
     try:
         db_restored, photo_count, menu_photo_count = restore_system_backup(
             file, restore_db, restore_photos, restore_menu_photos, overwrite_photos
         )
-        msg = f"✅ 系統備份還原完成！\\n➤ 資料庫：{'已還原' if db_restored else '未更動'}\\n➤ 會員相片：{photo_count} 張\\n➤ 餐點相片：{menu_photo_count} 張"
-        return f"<script>alert('{msg}'); window.location.href='/admin';</script>", 200
+        msg = (
+            f"✅ 系統備份還原完成！\n➤ 資料庫：{'已還原 (還原前的資料庫已另存為 database/menu.db.bak-時間)' if db_restored else '未更動'}"
+            f"\n➤ 會員相片：{photo_count} 張\n➤ 餐點相片：{menu_photo_count} 張"
+        )
+        return js_alert_redirect(msg, '/admin', status=200)
     except Exception as e:
-        return f"<script>alert('❌ 還原過程發生錯誤：{e}'); window.history.back();</script>", 500
+        # 錯誤訊息可能含備份包內的檔名 (使用者可控)，一律經 js_alert_redirect 跳脫後輸出
+        return js_alert_redirect(f'❌ 還原過程發生錯誤：{e}', status=500)
 
 # Excel 匯出 (包含全部 8 個工作表與格式自適應)
 @admin_bp.route('/admin/export_excel', methods=['POST'])
@@ -743,7 +848,7 @@ def export_excel():
     """Excel 營業報表匯出端點（純報表匯出，單一職責）"""
     selected_tables = request.form.getlist('tables')
     if not selected_tables:
-        return "<script>alert('❌ 請至少勾選一個資料表！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 請至少勾選一個資料表！", status=400)
 
     start_date_str = request.form.get('start_date')
     end_date_str = request.form.get('end_date')
@@ -765,7 +870,7 @@ def import_smart():
     """智慧匯入端點：單一交易保障、多表原子寫入"""
     file = request.files.get('file')
     if not file or file.filename == '':
-        return "<script>alert('❌ 請選擇 Excel / CSV 檔案！'); window.history.back();</script>", 400
+        return js_alert_redirect("❌ 請選擇 Excel / CSV 檔案！", status=400)
 
     try:
         # 1. 支援直接上傳單一 CSV 菜單檔案
@@ -773,7 +878,7 @@ def import_smart():
             df = pd.read_csv(file)
             ok, msg_or_count = upsert_menu_items_from_df(df, update_existing=True, auto_commit=True)
             if not ok:
-                return f"<script>alert('❌ {msg_or_count}'); window.history.back();</script>", 400
+                return js_alert_redirect(f"❌ {msg_or_count}", status=400)
             return redirect(url_for('admin.admin_dashboard', tab='menu'))
 
         # 2. 處理多工作表 Excel (.xlsx, .xls)
@@ -801,9 +906,15 @@ def import_smart():
                         phone = clean_phone_number(row.get('phone', ''))
                         if not name or not phone or pd.isna(row.get('name')) or name == '目前無資料':
                             continue
+                        points_raw = row.get('points')
+                        points_given = False
                         try:
-                            points = int(row.get('points', 0))
-                        except (ValueError, TypeError):
+                            if points_raw is not None and not pd.isna(points_raw):
+                                points = max(0, int(float(points_raw)))
+                                points_given = True
+                            else:
+                                points = 0
+                        except (ValueError, TypeError, OverflowError):
                             points = 0
 
                         existing = User.query.filter_by(phone=phone).first()
@@ -816,7 +927,8 @@ def import_smart():
                                 phone=phone,
                                 photo_path='',
                                 feature=None,
-                                points=points if points > 0 else 20,
+                                # 檔案有提供點數就照填 (包含 0 點)；沒提供該欄位才給新會員預設 20 點
+                                points=points if points_given else 20,
                                 last_login_at=None
                             )
                             db.session.add(new_user)
@@ -827,7 +939,7 @@ def import_smart():
                 ok, res = upsert_menu_items_from_df(df, update_existing=True, auto_commit=False)
                 if not ok:
                     db.session.rollback()
-                    return f"<script>alert('❌ 菜單工作表【{sheet}】解析失敗：{res}'); window.history.back();</script>", 400
+                    return js_alert_redirect(f"❌ 菜單工作表【{sheet}】解析失敗：{res}", status=400)
                 imported_counts['MenuItem'] += res
 
             # 辨識「優惠券 (Coupon)」
@@ -891,22 +1003,22 @@ def import_smart():
 
         # 多工作表全數解析成功後，一次性原子提交
         db.session.commit()
-        update_popular_items()
-        msg = f"✅ 智慧匯入完成！\\n" \
-              f"共處理更新與新增：\\n" \
-              f"➤ 會員 (User): {imported_counts['User']} 筆\\n" \
-              f"➤ 菜單 (MenuItem): {imported_counts['MenuItem']} 筆\\n" \
+        msg = f"✅ 智慧匯入完成！\n" \
+              f"共處理更新與新增：\n" \
+              f"➤ 會員 (User): {imported_counts['User']} 筆\n" \
+              f"➤ 菜單 (MenuItem): {imported_counts['MenuItem']} 筆\n" \
               f"➤ 優惠券 (Coupon): {imported_counts['Coupon']} 筆"
-        return f"<script>alert('{msg}'); window.location.href='/admin';</script>"
+        return js_alert_redirect(msg, '/admin')
 
     except Exception as e:
         db.session.rollback()
-        return f"<script>alert('❌ 檔案解析失敗，請確認檔案格式是否正確！\\n錯誤訊息: {e}'); window.history.back();</script>", 500
+        return js_alert_redirect(f"❌ 檔案解析失敗，請確認檔案格式是否正確！\n錯誤訊息: {e}", status=500)
     
 @admin_bp.route('/admin/backup_system', methods=['POST'])
 @role_required('owner')
+@platform_admin_required
 def backup_system():
-    """負責人專屬之獨立完整系統資料庫與照片備份端點"""
+    """平台管理者專屬之完整系統資料庫與照片備份端點 (備份包含所有店家資料，其他店家負責人不可使用)"""
     try:
         memory_file = create_full_backup_zip()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -917,7 +1029,7 @@ def backup_system():
             mimetype='application/zip'
         )
     except Exception as e:
-        return f"<script>alert('❌ 備份失敗：{e}'); window.history.back();</script>", 500
+        return js_alert_redirect(f'❌ 備份失敗：{e}', status=500)
 
 # 前端即時輪詢與 AI 文案生成 API (絕對路徑保持 /api/...)
 @admin_bp.route('/api/admin_live_orders')
@@ -925,7 +1037,13 @@ def api_admin_live_orders():
     db.session.expire_all()
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-    today_orders = Order.query.filter(Order.created_at >= today_start, Order.created_at <= today_end).order_by(Order.id.desc()).all()
+    # 分析只需要「今天 + 待製作」的訂單；預載明細避免 N+1。(舊版每次輪詢都載入歷史全部訂單)
+    analytics_orders = (
+        Order.query.options(selectinload(Order.items))
+        .filter(or_(Order.created_at >= today_start, Order.status == 'Pending'))
+        .order_by(Order.id.desc()).all()
+    )
+    today_orders = [o for o in analytics_orders if o.created_at and today_start <= o.created_at <= today_end]
 
     orders_data = [{
         'id': o.id, 'pickup_number': o.pickup_number if getattr(o, 'pickup_number', None) else o.id,
@@ -947,7 +1065,9 @@ def api_admin_live_orders():
         'is_sold_out': bool(item.is_sold_out) or ((item.stock or 0) <= 0)
     } for item in MenuItem.query.all()]
 
-    analytics = build_order_analytics(Order.query.order_by(Order.id.desc()).all(), limit=3)
+    # 熱門餐點排行的顯示筆數與頁面上的設定一致 (頁面以 ?limit= 帶入)
+    ranking_limit = max(1, min(100, request.args.get('limit', 3, type=int) or 3))
+    analytics = build_order_analytics(analytics_orders, limit=ranking_limit)
     analytics['ai_advice'] = generate_ai_business_advice(analytics)
 
     return jsonify({'success': True, 'orders': orders_data, 'menu_items': menu_items_data, 'analytics': analytics})
@@ -957,7 +1077,7 @@ def api_admin_live_orders():
 def api_generate_item_description():
     """AI 智慧菜單文案生成路由 (AI Copywriter - 具備三層自動降級機制)"""
 
-    data = request.get_json() or {}
+    data = get_json_dict()
     name = str(data.get('name', '')).strip()
     category = str(data.get('category', '')).strip()
 
@@ -985,7 +1105,7 @@ def api_generate_item_description():
     if api_key_clean and api_key_clean not in ["YOUR_API_KEY", "1234", "none"] and not is_in_cooldown:
         try:
             import requests
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key_clean}"
+            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
             system_instruction = "你是一位專業的美食文案師。請直接輸出最終的繁體中文介紹，嚴格禁止輸出任何思考過程、草稿檢查、字數驗證或英文自我問答。"
             payload = {
                 "contents": [{"parts": [{"text": f"{system_instruction}\n\n{prompt}"}]}],
