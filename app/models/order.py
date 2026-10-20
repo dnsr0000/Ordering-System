@@ -61,8 +61,11 @@ class Order(TenantScoped, db.Model):
     # 優惠券與紅利點數合併折抵總金額 (INTEGER，單位 NTD)
     discount_amount = db.Column(db.Integer, default=0)
 
-    # 本單套用之優惠代碼 (VARCHAR(50))
+    # 本單「實際套用成功」之優惠代碼 (VARCHAR(50))；輸入無效或未達門檻而沒有折抵時為空字串
     coupon_code = db.Column(db.String(50), default='')
+
+    # 本單核銷掉的會員持有券 (user_coupon.id)；取消訂單時只還原這一張。公開券或未使用券時為 Null
+    applied_user_coupon_id = db.Column(db.Integer, nullable=True)
 
     # 廚房出餐/出單完成時間 (DATETIME，可為空)
     completed_at = db.Column(db.DateTime, nullable=True)

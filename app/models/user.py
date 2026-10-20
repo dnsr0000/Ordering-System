@@ -10,6 +10,9 @@ from app.models.tenant import TenantScoped
 # 安全特徵向量 Magic Header，格式：NPF32v1: + 128 維 float32 bytes
 FEATURE_MAGIC_PREFIX = b"NPF32v1:"
 
+# 特徵向量固定維度 (SFace 輸出 128 維 float32)；維度不符的資料一律視為無效，避免污染 1:N 矩陣比對
+FEATURE_DIM = 128
+
 # 白名單限制 Unpickler 所允許載入的模組與類別
 _SAFE_NUMPY_MODULES = {
     "numpy",
@@ -29,24 +32,38 @@ class _RestrictedFeatureUnpickler(pickle.Unpickler):
         raise pickle.UnpicklingError(f"Blocked unsafe pickle class: {module}.{name}")
 
 
+def _as_valid_feature(arr):
+    """統一驗證特徵向量：可轉為一維 float32、維度必須為 FEATURE_DIM 且數值皆為有限值，否則回傳 None"""
+    try:
+        vec = np.asarray(arr, dtype=np.float32).reshape(-1)
+    except Exception:
+        return None
+    if vec.shape[0] != FEATURE_DIM or not np.all(np.isfinite(vec)):
+        return None
+    return vec
+
+
 def encode_feature_array(arr):
-    """將 NumPy 特徵向量序列化為帶有 Magic Header 的安全二進位字串"""
+    """將 NumPy 特徵向量序列化為帶有 Magic Header 的安全二進位字串 (寫入前先驗證維度與數值)"""
     if arr is None:
         return None
-    np_arr = np.asarray(arr, dtype=np.float32).reshape(-1)
-    return FEATURE_MAGIC_PREFIX + np_arr.tobytes()
+    vec = _as_valid_feature(arr)
+    if vec is None:
+        raise ValueError(f"人臉特徵向量必須為 {FEATURE_DIM} 維且數值皆為有限值")
+    return FEATURE_MAGIC_PREFIX + vec.tobytes()
 
 
 def decode_feature_bytes_safely(raw_bytes):
     """
-    安全還原特徵向量二進位資料為 NumPy float32 一維陣列：
+    安全還原特徵向量二進位資料為 NumPy float32 一維陣列 (固定 FEATURE_DIM 維)：
     1. 優先以 NPF32v1 安全位元組流直接載入
     2. 針對舊版資料庫歷史 Pickle 資料，透過受限白名單反序列化讀取
+    3. 維度不符、含 NaN/Inf 或無法解析者一律回傳 None (呼叫端不得將其視為有效特徵)
     """
     if not raw_bytes:
         return None
     if isinstance(raw_bytes, np.ndarray):
-        return np.asarray(raw_bytes, dtype=np.float32).reshape(-1)
+        return _as_valid_feature(raw_bytes)
     if isinstance(raw_bytes, memoryview):
         raw_bytes = raw_bytes.tobytes()
     if not isinstance(raw_bytes, (bytes, bytearray)):
@@ -54,13 +71,13 @@ def decode_feature_bytes_safely(raw_bytes):
     raw_bytes = bytes(raw_bytes)
     if raw_bytes.startswith(FEATURE_MAGIC_PREFIX):
         payload = raw_bytes[len(FEATURE_MAGIC_PREFIX):]
-        if len(payload) == 0 or len(payload) % 4 != 0:
+        if len(payload) != FEATURE_DIM * 4:
             return None
-        return np.frombuffer(payload, dtype=np.float32).copy()
+        return _as_valid_feature(np.frombuffer(payload, dtype=np.float32).copy())
     try:
         arr = _RestrictedFeatureUnpickler(io.BytesIO(raw_bytes)).load()
         if isinstance(arr, np.ndarray):
-            return np.asarray(arr, dtype=np.float32).reshape(-1)
+            return _as_valid_feature(arr)
     except Exception:
         return None
     return None
@@ -230,6 +247,11 @@ class RewardSetting(TenantScoped, db.Model):
     紅利點數系統設定表:定義各店家專屬的點數回饋門檻、折抵現金比率與單筆折抵上限。
     """
     __tablename__ = 'reward_setting'
+
+    # 約束條件：每個店家只能有一筆紅利設定 (避免多個請求同時首次進入時重複建立)
+    __table_args__ = (
+        db.Index('ux_reward_setting_tenant', 'tenant_id', unique=True),
+    )
 
     # 主鍵：設定編號 (Integer)
     id = db.Column(db.Integer, primary_key=True)
