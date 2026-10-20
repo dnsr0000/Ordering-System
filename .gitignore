@@ -11,6 +11,7 @@
 database/*.db
 database/*.db-wal
 database/*.db-shm
+database/*.bak-*
 *.db
 *.sqlite3
 instance/
@@ -92,4 +93,3 @@ Desktop.ini
 .DS_Store
 
 repomix-output.xml
-test_all_features.py

@@ -304,6 +304,32 @@ def run_all_tests():
         return "舊版 Pickle 自動轉型 NPF32v1 成功 & 惡意 Payload 攔截通過"
     runner.check("1.2", "舊版 Pickle 人臉特徵自動轉型遷移實測與惡意反序列化阻擋", t1_2)
 
+     # 1.2b 無法解析的舊特徵：遷移不得覆寫為 NULL
+    def t1_2b():
+        garbage = b"\x80\x04not-a-valid-pickle-or-npf32"
+        with app.app_context():
+            t = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(slug="default").first()
+            db.session.execute(
+                db.text("INSERT INTO user (tenant_id, name, phone, photo_path, feature, points) "
+                        "VALUES (:tid, :name, :phone, :photo, :feat, 0)"),
+                {"tid": t.id, "name": "壞特徵測試員", "phone": "0910000002",
+                 "photo": "bad_feat.jpg", "feat": garbage},
+            )
+            db.session.commit()
+
+        run_database_migrations(app)
+
+        with app.app_context():
+            row = db.session.execute(
+                db.text("SELECT feature FROM user WHERE phone = '0910000002'")
+            ).fetchone()
+            assert row is not None and row[0] is not None, "無法解析的舊特徵被覆寫成 NULL"
+            assert bytes(row[0]) == garbage, "無法解析的舊特徵原始內容被改動"
+            db.session.execute(db.text("DELETE FROM user WHERE phone = '0910000002'"))
+            db.session.commit()
+        return "無法解析的舊特徵遷移後原始資料完整保留"
+    runner.check("1.2b", "無法解析的舊特徵不得被遷移覆寫為 NULL", t1_2b)
+    
     # 1.3 歷史重複電話號碼自動合併 (保留高點數/歸戶訂單) + 複合唯一索引攔截
     def t1_3():
         with app.app_context():

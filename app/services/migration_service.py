@@ -155,18 +155,26 @@ def _run_migrations_inner():
         raw_feat_rows = db.session.execute(
             db.text("SELECT id, feature FROM user WHERE feature IS NOT NULL")
         ).fetchall()
+        undecodable_ids = []
         for uid, raw_blob in raw_feat_rows:
             if not raw_blob:
                 continue
             b_data = bytes(raw_blob) if not isinstance(raw_blob, bytes) else raw_blob
-            if not b_data.startswith(FEATURE_MAGIC_PREFIX):
-                arr = decode_feature_bytes_safely(b_data)
-                safe_blob = encode_feature_array(arr) if arr is not None else None
-                db.session.execute(
-                    db.text("UPDATE user SET feature = :feat WHERE id = :id"),
-                    {"feat": safe_blob, "id": uid}
-                )
+            if b_data.startswith(FEATURE_MAGIC_PREFIX):
+                continue
+            arr = decode_feature_bytes_safely(b_data)
+            if arr is None:
+                # 解不開：保留原始資料，不覆寫成 NULL，留待日後修正解碼器或人工處理
+                undecodable_ids.append(uid)
+                continue
+            db.session.execute(
+                db.text("UPDATE user SET feature = :feat WHERE id = :id"),
+                {"feat": encode_feature_array(arr), "id": uid}
+            )
         db.session.commit()
+        if undecodable_ids:
+            print(f"[!] 有 {len(undecodable_ids)} 筆會員舊特徵無法解析，已保留原始資料未覆寫 "
+                  f"(user id: {undecodable_ids[:20]}{'...' if len(undecodable_ids) > 20 else ''})")
 
         # 1b. 自動合併同店重複電話號碼會員 (保留最高點數帳號，並將歷史訂單與優惠券歸戶)
         dup_groups = db.session.execute(db.text("""
