@@ -1,6 +1,9 @@
+import math
 import re
+import statistics
+import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import g, has_request_context, session
 from app.extensions import db, acquire_distributed_lock
 from app.models.menu import MenuItem, ComboOption, ModifierOption
@@ -8,6 +11,7 @@ from app.models.order import Order, OrderItem
 from app.models.user import User, RewardRedemption, RewardSetting, CustomerLog
 from app.models.coupon import Coupon, UserCoupon
 from app.services.event_bus import order_event_bus
+from app.services.voucher_service import claim_vouchers_for_item, bind_vouchers_to_order
 from app.services.ai_service import invalidate_ai_advice
 from app.routes.common import record_staff_audit
 from app.utils import (
@@ -15,8 +19,6 @@ from app.utils import (
     ALLOWED_ORDER_TYPES,
     safe_int
 )
-
-_LAST_POPULAR_UPDATE_TS = {}
 
 # 合法狀態流轉表：定義每個狀態允許轉換的下一階段，徹底杜絕倒退
 LEGAL_TRANSITIONS = {
@@ -72,15 +74,6 @@ def calc_promo_discount(coupon, subtotal):
     else:
         safe_percent = sanitize_discount_value('percent', coupon.discount_value)
         return min(subtotal, max(0.0, round(subtotal * (1.0 - safe_percent), 2)))
-
-
-def update_popular_items(force=False):
-    tid = getattr(g, 'tenant_id', 1) if has_request_context() else 1
-    now = time.time()
-    last_ts = _LAST_POPULAR_UPDATE_TS.get(tid, 0)
-    if not force and (now - last_ts < 300):
-        return
-    _LAST_POPULAR_UPDATE_TS[tid] = now
 
 
 def verify_promo_code(code, subtotal, user_id=None, is_pos=False, tenant_id=None):
@@ -220,8 +213,7 @@ def process_checkout(
 
     verified_items = []
     item_demands = {}
-    reward_item_demands = []
-    claimed_redemption_matches = []
+    reward_lines = []  # [(menu_item, 數量, 單件所需點數)]；憑證/點數的拆分一律在鎖內以原子操作決定
 
     for client_item in items_data:
         if not isinstance(client_item, dict):
@@ -243,6 +235,11 @@ def process_checkout(
 
         if not menu_item:
             return {'success': False, 'error': f'餐點【{clean_name}】不存在於系統中！', 'message': f'餐點【{clean_name}】不存在於系統中！'}, 400
+
+        # 店員手動標示「售完」(庫存仍大於 0) 的餐點也不可下單；前端雖會隱藏，但舊頁面或直接呼叫 API 仍可能送出
+        if menu_item.is_sold_out:
+            msg = f'餐點【{menu_item.name}】已售完，請移除後再結帳！'
+            return {'success': False, 'insufficient_stock': True, 'sold_out': True, 'error': msg, 'message': msg}, 400
 
         item_demands[menu_item.id] = item_demands.get(menu_item.id, 0) + quantity
 
@@ -291,22 +288,7 @@ def process_checkout(
             if not unit_pts or unit_pts <= 0:
                 return {'success': False, 'error': f'餐點【{menu_item.name}】未設定有效兌換點數！', 'message': f'餐點【{menu_item.name}】未設定有效兌換點數！'}, 400
 
-            unused_vouchers = RewardRedemption.query.filter_by(
-                tenant_id=tid,
-                user_id=user_id,
-                menu_item_id=menu_item.id,
-                is_used=False,
-                is_refunded=False,
-                order_id=None
-            ).all()
-
-            vouchers_to_use = unused_vouchers[:quantity]
-            for v_obj in vouchers_to_use:
-                claimed_redemption_matches.append(v_obj)
-
-            needed_from_pts = quantity - len(vouchers_to_use)
-            if needed_from_pts > 0:
-                reward_item_demands.append((menu_item, needed_from_pts, unit_pts))
+            reward_lines.append((menu_item, quantity, unit_pts))
 
             unit_price = extra_modifier_price
             display_name = f"[點數兌換] {menu_item.name}"
@@ -347,7 +329,7 @@ def process_checkout(
     subtotal = sum(v['price'] * v['quantity'] for v in verified_items)
 
     try:
-        with acquire_distributed_lock(f"lock:order_checkout:{tid}", timeout=8, blocking_timeout=5):
+        with acquire_distributed_lock(f"lock:order_checkout:{tid}", timeout=30, blocking_timeout=10):
             today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             today_end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
             # 取餐號 1~999 循環：接續「當日最後一張訂單」的號碼 (依 id 倒序)。
@@ -361,19 +343,30 @@ def process_checkout(
 
             for item_id, demanded_qty in item_demands.items():
                 result = db.session.execute(
-                    db.text("UPDATE menu_item SET stock = stock - :qty, is_sold_out = CASE WHEN stock - :qty <= 0 THEN 1 ELSE is_sold_out END WHERE id = :id AND tenant_id = :tenant_id AND stock >= :qty"),
+                    db.text("UPDATE menu_item SET stock = stock - :qty, is_sold_out = CASE WHEN stock - :qty <= 0 THEN 1 ELSE is_sold_out END WHERE id = :id AND tenant_id = :tenant_id AND stock >= :qty AND (is_sold_out = 0 OR is_sold_out IS NULL)"),
                     {"id": item_id, "qty": demanded_qty, "tenant_id": tid}
                 )
                 if result.rowcount == 0:
                     db.session.rollback()
                     m_item = db.session.get(MenuItem, item_id)
                     curr = m_item.stock if m_item else 0
-                    return {
-                        'success': False,
-                        'insufficient_stock': True,
-                        'error': f'餐點或配餐【{m_item.name if m_item else ""}】庫存剩 {curr} 份，庫存不足！',
-                        'message': f'餐點或配餐【{m_item.name if m_item else ""}】庫存剩 {curr} 份，庫存不足！'
-                    }, 400
+                    if m_item and m_item.is_sold_out:
+                        msg = f'餐點或配餐【{m_item.name}】已售完，請移除後再結帳！'
+                    else:
+                        msg = f'餐點或配餐【{m_item.name if m_item else ""}】庫存剩 {curr} 份，庫存不足！'
+                    return {'success': False, 'insufficient_stock': True, 'error': msg, 'message': msg}, 400
+
+            # 兌換憑證核銷：在鎖內以「原子條件式 UPDATE」逐張搶占 (先建立者優先)。
+            # 若同一時間有另一個請求 (重複結帳、/api/refund_reward_item、登入時的自動退點) 先動了這張憑證，
+            # 這裡就搶不到，該件改以點數支付，不會出現「餐點拿了、點數也退了」的雙重使用。
+            reward_item_demands = []
+            claimed_voucher_ids = []
+            for m_item, qty, unit_pts in reward_lines:
+                got_ids = claim_vouchers_for_item(tid, user_id, m_item.id, qty)
+                claimed_voucher_ids.extend(got_ids)
+                still_needed = qty - len(got_ids)
+                if still_needed > 0:
+                    reward_item_demands.append((m_item, still_needed, unit_pts))
 
             created_redemptions = []
             total_reward_item_pts = 0
@@ -402,6 +395,8 @@ def process_checkout(
             clean_promo_code = str(promo_code or '').strip().upper()
             promo_discount = 0
             target_user_coupon = None
+            applied_coupon_code = ''          # 實際套用成功的代碼 (輸入無效/未達門檻時維持空字串)
+            applied_user_coupon_id = None     # 實際核銷的會員持有券 ID
             if clean_promo_code and user_id:
                 target_user_coupon = UserCoupon.query.filter_by(tenant_id=tid, user_id=user_id, code=clean_promo_code, is_used=False).first()
                 if target_user_coupon and subtotal >= target_user_coupon.coupon.min_spend:
@@ -414,11 +409,14 @@ def process_checkout(
                     if coupon_update.rowcount == 0:
                         db.session.rollback()
                         return {'success': False, 'error': '該優惠券已被核銷！', 'message': '該優惠券已被核銷！'}, 400
+                    applied_coupon_code = clean_promo_code
+                    applied_user_coupon_id = target_user_coupon.id
 
             if clean_promo_code and not target_user_coupon:
                 pub_cp = Coupon.query.filter_by(tenant_id=tid, code=clean_promo_code, is_reward=False, reward_points=0).first()
                 if pub_cp and subtotal >= pub_cp.min_spend:
                     promo_discount = calc_promo_discount(pub_cp, subtotal)
+                    applied_coupon_code = clean_promo_code
 
             setting = RewardSetting.query.filter_by(tenant_id=tid).first()
             ppd = setting.points_per_dollar if (setting and setting.points_per_dollar > 0) else 1
@@ -438,7 +436,7 @@ def process_checkout(
                 ).fetchone()
                 avail_points = int(curr_pts_row[0] or 0) if curr_pts_row else 0
 
-                max_cash = remaining_amount
+                max_cash = int(math.floor(remaining_amount))   # 點數只能折抵整數元，避免出現小數折抵
                 if max_discount_limit > 0:
                     max_cash = min(max_cash, max_discount_limit)
 
@@ -455,8 +453,10 @@ def process_checkout(
                         db.session.rollback()
                         return {'success': False, 'error': '會員紅利點數不足！', 'message': '會員紅利點數不足！'}, 400
 
-            final_price = int(max(0, remaining_amount - points_discount))
-            total_discount = int(promo_discount + points_discount)
+            # 百分比優惠券可能產生小數 (例如 105 元 9 折)：最終應付金額四捨五入到整數元，
+            # 並以「小計 - 應付」反推折扣總額，讓 小計 = 應付 + 折扣 恆成立 (原本各自取整會相差 1 元)
+            final_price = int(math.floor(max(0, remaining_amount - points_discount) + 0.5))
+            total_discount = max(0, int(subtotal) - final_price)
             points_earned = int(final_price // spend_threshold) if user_id else 0
 
             cash_received_clean = max(0, safe_int(cash_received, 0))
@@ -524,7 +524,8 @@ def process_checkout(
                 points_used=points_used_val,
                 points_earned=points_earned,
                 discount_amount=total_discount,
-                coupon_code=clean_promo_code,
+                coupon_code=applied_coupon_code,
+                applied_user_coupon_id=applied_user_coupon_id,
                 pickup_number=next_pickup,
                 customer_log_id=final_cust_log_id,
                 created_at=now_dt
@@ -534,9 +535,7 @@ def process_checkout(
 
             for r_obj in created_redemptions:
                 r_obj.order_id = new_order.id
-            for v_obj in claimed_redemption_matches:
-                v_obj.is_used = True
-                v_obj.order_id = new_order.id
+            bind_vouchers_to_order(tid, claimed_voucher_ids, new_order.id)
 
             receipt_items = []
             for v in verified_items:
@@ -566,11 +565,12 @@ def process_checkout(
                     action_type='POS_CREATE_ORDER',
                     target_order_id=new_order.id,
                     target_user_id=user_id,
+                    tenant_id=tid,
                     points_delta=net_pts_delta,
                     details=(
                         f"POS 結帳單號 #{new_order.id} (取餐 #{next_pickup:03d}) | "
                         f"顧客:{table_display} | 付款:{payment_method} 應收:${final_price} 實收:${actual_received} 找零:${cash_change} | "
-                        f"兌換扣點:{total_reward_item_pts} 折抵扣點:{points_used_val} 贈點:{points_earned} 優惠碼:{clean_promo_code or '無'}"
+                        f"兌換扣點:{total_reward_item_pts} 折抵扣點:{points_used_val} 贈點:{points_earned} 優惠碼:{applied_coupon_code or '無'}"
                     )
                 )
 
@@ -589,7 +589,6 @@ def process_checkout(
         refreshed_user = db.session.get(User, user_id)
         remaining_points = refreshed_user.points if refreshed_user else 0
 
-    update_popular_items(force=False)
     invalidate_ai_advice(tid)
     order_event_bus.notify()
 
@@ -723,7 +722,7 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
                     db.text("""
                         UPDATE menu_item 
                         SET stock = stock + :qty,
-                            is_sold_out = CASE WHEN stock + :qty > 0 THEN 0 ELSE is_sold_out END
+                            is_sold_out = CASE WHEN stock <= 0 AND stock + :qty > 0 THEN 0 ELSE is_sold_out END
                         WHERE id = :id AND tenant_id = :tenant_id
                     """),
                     {"id": item.menu_item_id, "qty": item.quantity, "tenant_id": tid}
@@ -739,7 +738,7 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
                                 db.text("""
                                     UPDATE menu_item 
                                     SET stock = stock + :qty,
-                                        is_sold_out = CASE WHEN stock + :qty > 0 THEN 0 ELSE is_sold_out END
+                                        is_sold_out = CASE WHEN stock <= 0 AND stock + :qty > 0 THEN 0 ELSE is_sold_out END
                                     WHERE id = :id AND tenant_id = :tenant_id
                                 """),
                                 {"id": side_id, "qty": item.quantity, "tenant_id": tid}
@@ -758,36 +757,59 @@ def change_order_status(order_id, target_status, staff_account=None, tenant_id=N
                 total_redeemed_pts += (r_obj.points_cost or 0)
 
         # (d) 回滾會員點數與優惠券（若為會員訂單）
+        points_note = ''
         if order.user_id:
-            user = db.session.get(User, order.user_id)
-            if user:
-                net_pts_return = (order.points_used or 0) + total_redeemed_pts - (order.points_earned or 0)
-                if net_pts_return != 0:
-                    user.points = max(0, (user.points or 0) + net_pts_return)
-                    points_delta = net_pts_return
+            net_pts_return = (order.points_used or 0) + total_redeemed_pts - (order.points_earned or 0)
+            if net_pts_return != 0:
+                # 以單一 SQL 原子更新 (不再 ORM 讀改寫，避免與同時進行的結帳互相覆蓋)；
+                # 會員餘額不足以追回贈點時，餘額最低到 0，並把追不回的點數寫進稽核紀錄，不再無聲吞掉
+                cur_row = db.session.execute(
+                    db.text("SELECT points FROM user WHERE id = :id AND tenant_id = :t"),
+                    {"id": order.user_id, "t": tid}
+                ).fetchone()
+                if cur_row is not None:
+                    cur_pts = int(cur_row[0] or 0)
+                    db.session.execute(
+                        db.text("UPDATE user SET points = MAX(0, points + :d) WHERE id = :id AND tenant_id = :t"),
+                        {"d": net_pts_return, "id": order.user_id, "t": tid}
+                    )
+                    points_delta = max(0, cur_pts + net_pts_return) - cur_pts
+                    if cur_pts + net_pts_return < 0:
+                        points_note = f"；會員餘額不足，有 {-(cur_pts + net_pts_return)} 點贈點無法追回"
 
-            if order.coupon_code:
-                user_coupon = UserCoupon.query.filter_by(
-                    tenant_id=tid,
-                    user_id=order.user_id,
-                    code=order.coupon_code,
-                    is_used=True
-                ).first()
-                if user_coupon:
-                    user_coupon.is_used = False
-                    user_coupon.used_at = None
+            # 只還原「本單實際核銷」的那一張會員券；公開券、或輸入了代碼但沒有套用成功的訂單不會還原任何券
+            user_coupon = None
+            if order.applied_user_coupon_id:
+                user_coupon = db.session.get(UserCoupon, order.applied_user_coupon_id)
+                if user_coupon and (user_coupon.user_id != order.user_id or not user_coupon.is_used):
+                    user_coupon = None
+            elif order.coupon_code and order.created_at:
+                # 舊版訂單沒有記錄券 ID：只在「核銷時間與下單時間相近」時才認定是同一張券
+                user_coupon = UserCoupon.query.filter(
+                    UserCoupon.tenant_id == tid,
+                    UserCoupon.user_id == order.user_id,
+                    UserCoupon.code == order.coupon_code,
+                    UserCoupon.is_used == True,
+                    UserCoupon.used_at >= order.created_at - timedelta(seconds=120),
+                    UserCoupon.used_at <= order.created_at + timedelta(seconds=120)
+                ).order_by(UserCoupon.used_at.desc()).first()
+            if user_coupon:
+                user_coupon.is_used = False
+                user_coupon.used_at = None
 
         record_staff_audit(
             action_type='CANCEL_ORDER',
+            tenant_id=tid,
             target_order_id=order.id,
             target_user_id=order.user_id,
             points_delta=points_delta,
-            details=f"取消訂單 #{order.id} (取餐 #{order.pickup_number:03d})，已全量回滾庫存、商品兌換點數({total_redeemed_pts}點)、折抵與贈點"
+            details=f"取消訂單 #{order.id} (取餐 #{order.pickup_number:03d})，已全量回滾庫存、商品兌換點數({total_redeemed_pts}點)、折抵與贈點{points_note}"
         )
 
     elif target_status == 'PickedUp':
         record_staff_audit(
             action_type='MARK_PICKED_UP',
+            tenant_id=tid,
             target_order_id=order.id,
             target_user_id=order.user_id,
             details=f"核銷完成取餐單號 #{order.id} (取餐 #{order.pickup_number:03d})"
@@ -827,42 +849,161 @@ def complete_all_pending_orders(tenant_id=None):
     return {'success': True, 'count': updated_count}, 200
 
 
+# 預估出餐：每張待製作訂單估多少分鐘。今天還沒有任何有效的出餐紀錄時，使用這個預設值
+DEFAULT_MINUTES_PER_ORDER = 3.0
+# 單張訂單從建單到出餐超過這個分鐘數，視為「忘了按出餐」之類的異常，不納入平均
+OUTLIER_HARD_CAP_MINUTES = 90.0
+
+
+def mean_without_outliers(values, hard_cap=OUTLIER_HARD_CAP_MINUTES):
+    """
+    排除極端值後的平均：
+    1. 先丟掉負數與超過 hard_cap 的值 (例如忘了按出餐、隔很久才補按)。
+    2. 樣本數 >= 4 時，再用四分位距 (IQR) 法排除離群值：只保留 [Q1 - 1.5×IQR, Q3 + 1.5×IQR] 內的值。
+    回傳 (平均值, 實際採用的樣本數)；沒有可用樣本時回傳 (0.0, 0)。
+    """
+    vals = sorted(v for v in values if 0 <= v <= hard_cap)
+    if len(vals) >= 4:
+        q1, _q2, q3 = statistics.quantiles(vals, n=4, method='inclusive')
+        iqr = q3 - q1
+        low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        vals = [v for v in vals if low <= v <= high]
+    if not vals:
+        return 0.0, 0
+    return sum(vals) / len(vals), len(vals)
+
+
 def build_order_analytics(orders, limit=3):
     """
     營運分析指標計算函式
     計算當日訂單數、營收、平均客單價、待製作單數、預估出餐時間與熱銷排行
     """
     today = datetime.now().date()
-    today_valid_orders = [
-        o for o in orders 
-        if o.created_at and o.created_at.date() == today and o.status != 'Cancelled'
-    ]
+    today_all_orders = [o for o in orders if o.created_at and o.created_at.date() == today]
+    today_valid_orders = [o for o in today_all_orders if o.status != 'Cancelled']
 
     today_revenue = sum(o.total_price or 0 for o in today_valid_orders)
     today_orders_count = len(today_valid_orders)
-    avg_order_value = round(today_revenue / today_orders_count, 1) if today_orders_count > 0 else 0
+    # 平均客單價：排除「純點數兌換、實付 0 元」的訂單 (後台標籤寫明排除純點數訂單)，否則會把平均拉低
+    paid_orders = [o for o in today_valid_orders if (o.total_price or 0) > 0]
+    avg_order_value = round(today_revenue / len(paid_orders), 1) if paid_orders else 0
 
-    pending_orders = [o for o in orders if o.status == 'Pending']
-    pending_count = len(pending_orders)
-    eta_minutes = pending_count * 3
+    # 待製作 / 預估出餐：只算「今天」的待製作訂單，與廚房看板 (只顯示今天) 一致。
+    # 以前日期遺留、一直沒結案的訂單不應灌水預估等待時間 (例如 27 張舊單 × 3 = 81 分鐘)，另外以 stale_pending_count 提示。
+    pending_count = sum(1 for o in today_all_orders if o.status == 'Pending')
+    stale_pending_count = sum(
+        1 for o in orders
+        if o.status == 'Pending' and o.created_at and o.created_at.date() < today
+    )
 
-    item_counts = {}
+    # 已完成今日訂單 (已出餐 + 已取餐) 與平均出餐時間 (建單到出餐完成，分鐘)。
+    # 被系統換日自動結案的訂單沒有 completed_at，不是真實出餐時間，因此不會進入平均。
+    completed_orders = [o for o in today_all_orders if o.status in ('Completed', 'PickedUp')]
+    durations = [
+        (o.completed_at - o.created_at).total_seconds() / 60.0
+        for o in completed_orders if o.completed_at and o.created_at and o.completed_at >= o.created_at
+    ]
+    avg_minutes, sample_count = mean_without_outliers(durations)
+    avg_order_time = round(avg_minutes, 1) if sample_count else 0
+
+    # 預估出餐 = 待製作張數 × 每張的實際平均出餐時間 (已排除極端值)；今天還沒有可用的出餐紀錄時用預設值
+    per_order_minutes = avg_minutes if sample_count else DEFAULT_MINUTES_PER_ORDER
+    eta_minutes = int(math.ceil(pending_count * per_order_minutes - 1e-9)) if pending_count else 0
+
+    # 熱門餐點排行：份數與銷售額 (單價 × 份數，點數兌換的免費品項銷售額為 0)。
+    # 後台模板顯示 item.revenue，這個欄位以前沒有回傳，所以排行榜的價錢是空的。
+    item_stats = {}
     for o in today_valid_orders:
         for i in o.items:
             clean_name = re.sub(r'^(🎁\s*)?(\[點數兌換\]\s*)?', '', i.item_name).strip()
-            item_counts[clean_name] = item_counts.get(clean_name, 0) + (i.quantity or 1)
+            qty = i.quantity or 1
+            st = item_stats.setdefault(clean_name, {'quantity': 0, 'revenue': 0})
+            st['quantity'] += qty
+            st['revenue'] += int(i.price or 0) * qty
 
-    sorted_items = sorted(item_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
-    top_items = [{'name': name, 'quantity': qty} for name, qty in sorted_items]
+    sorted_items = sorted(item_stats.items(), key=lambda x: (x[1]['quantity'], x[1]['revenue']), reverse=True)[:limit]
+    top_items = [{'name': name, 'quantity': st['quantity'], 'revenue': st['revenue']} for name, st in sorted_items]
 
     return {
         'today_orders': today_orders_count,
         'today_revenue': today_revenue,
         'avg_order_value': avg_order_value,
         'pending_count': pending_count,
+        'stale_pending_count': stale_pending_count,
         'eta_minutes': eta_minutes,
+        'eta_per_order_minutes': round(per_order_minutes, 1),
+        'eta_based_on_samples': sample_count,
+        'completed_today': len(completed_orders),
+        'avg_order_time': avg_order_time,
         'top_items': top_items
     }
+def auto_close_stale_orders():
+    """
+    換日自動結案：把「今天 00:00 以前建立、卻還停在製作中 (Pending)」的訂單一律改為已出餐 (Completed)。
+    - 對所有店家執行；以條件式 UPDATE (status='Pending') 一次完成，與店員同時操作時不會互相覆蓋。
+    - completed_at 保持空白：這不是真實的出餐時間，因此不會被計入平均出餐時間 / 預估出餐。
+    - 庫存與點數不動 (訂單成立時已扣、已發)；每家有結案的店各寫一筆系統稽核 (AUTO_CLOSE_STALE_ORDERS)。
+    回傳 {tenant_id: 結案張數}。呼叫端負責 commit 之外的流程；此函式內部已 commit。
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    rows = db.session.execute(
+        db.text('SELECT id, tenant_id FROM "order" WHERE status = \'Pending\' AND created_at < :t ORDER BY id'),
+        {"t": today_start}
+    ).fetchall()
+    by_tenant = {}
+    for oid, tid in rows:
+        by_tenant.setdefault(tid, []).append(oid)
+
+    closed = {}
+    now_dt = datetime.now()
+    for tid, ids in by_tenant.items():
+        res = db.session.execute(
+            db.text('UPDATE "order" SET status = \'Completed\' '
+                    'WHERE tenant_id = :tid AND status = \'Pending\' AND created_at < :t'),
+            {"tid": tid, "t": today_start}
+        )
+        n = res.rowcount or 0
+        if n <= 0:
+            continue
+        closed[tid] = n
+        shown = "、".join(f"#{i}" for i in ids[:20]) + ("…" if len(ids) > 20 else "")
+        # 以原生 SQL 寫稽核：ORM 在請求中會把新物件的 tenant_id 強制改成目前請求的店家，會記到別家去
+        db.session.execute(
+            db.text("INSERT INTO staff_audit_log (tenant_id, staff_account_id, staff_username, staff_role, action_type, "
+                    "target_order_id, target_user_id, points_delta, details, ip_address, created_at) "
+                    "VALUES (:tid, NULL, 'system', 'system', 'AUTO_CLOSE_STALE_ORDERS', NULL, NULL, 0, :d, '', :now)"),
+            {"tid": tid, "now": now_dt,
+             "d": f"換日自動結案：{n} 張前一日(含更早)未切換狀態的「製作中」訂單已改為「已出餐」({shown})"[:500]}
+        )
+    db.session.commit()
+    for tid in closed:
+        try:
+            order_event_bus.notify(tenant_id=tid)
+        except Exception:
+            pass
+    return closed
+
+
+_AUTO_CLOSE_STATE = {'date': None}
+_AUTO_CLOSE_LOCK = threading.Lock()
+
+
+def ensure_daily_auto_close():
+    """每個行程每天只執行一次換日自動結案 (之後的檢查只是比較日期，幾乎沒有成本)。伺服器跨日不重啟也會在第一個請求時結案。"""
+    today = datetime.now().date()
+    if _AUTO_CLOSE_STATE['date'] == today:
+        return
+    with _AUTO_CLOSE_LOCK:
+        if _AUTO_CLOSE_STATE['date'] == today:
+            return
+        try:
+            auto_close_stale_orders()
+            _AUTO_CLOSE_STATE['date'] = today
+        except Exception as e:  # noqa: BLE001
+            db.session.rollback()
+            print(f"[!] 換日自動結案失敗 (稍後會重試): {e}")
+
+
 def set_item_reward_status(item_id, is_reward=True, reward_points=0, reward_discount_points=0, tenant_id=None):
     """
     全系統統一餐點紅利商城上下架管理函式
@@ -908,6 +1049,7 @@ def set_item_reward_status(item_id, is_reward=True, reward_points=0, reward_disc
     if changed:
         record_staff_audit(
             action_type='TOGGLE_REWARD_ITEM',
+            tenant_id=tid,
             details=action_detail
         )
 
