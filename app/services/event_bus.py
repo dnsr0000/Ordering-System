@@ -4,7 +4,7 @@ import queue
 import threading
 from datetime import datetime
 from flask import current_app, g, has_request_context
-from app.extensions import db, redis_client
+from app.extensions import db
 from app.models.order import Order
 
 
@@ -17,6 +17,19 @@ class OrderEventBus:
         self._max_staff_subscribers = max_staff_subscribers
         self._max_subscribers = max_public_subscribers + max_staff_subscribers
 
+    def _evict(self, q):
+        """(需持有 self._lock) 淘汰一條連線：移出名單並送出結束訊號 (None)，讓該連線的串流迴圈結束、釋放伺服器執行緒；
+        瀏覽器的 EventSource 會自動重連。若不送結束訊號，被淘汰的連線會永遠占用一條執行緒卻再也收不到任何更新。"""
+        self._subscribers.pop(q, None)
+        try:
+            q.put_nowait(None)
+        except queue.Full:
+            try:
+                q.get_nowait()
+                q.put_nowait(None)
+            except Exception:
+                pass
+
     def subscribe(self, tenant_id, client_ip="", is_staff=False):
         ip_str = str(client_ip or "127.0.0.1").strip()
         staff_flag = bool(is_staff)
@@ -24,8 +37,7 @@ class OrderEventBus:
             if staff_flag:
                 staff_qs = [q for q, meta in self._subscribers.items() if isinstance(meta, dict) and meta.get('is_staff')]
                 while len(staff_qs) >= self._max_staff_subscribers:
-                    oldest_q = staff_qs.pop(0)
-                    self._subscribers.pop(oldest_q, None)
+                    self._evict(staff_qs.pop(0))
             else:
                 # 1. 單一 IP 公開看板連線上限 (預設 10 條)
                 same_ip_qs = [
@@ -33,14 +45,12 @@ class OrderEventBus:
                     if isinstance(meta, dict) and not meta.get('is_staff') and meta.get('ip') == ip_str
                 ]
                 while len(same_ip_qs) >= self._max_per_ip:
-                    oldest_ip_q = same_ip_qs.pop(0)
-                    self._subscribers.pop(oldest_ip_q, None)
+                    self._evict(same_ip_qs.pop(0))
 
                 # 2. 公開看板總連線上限 (預設 25 條)
                 pub_qs = [q for q, meta in self._subscribers.items() if not isinstance(meta, dict) or not meta.get('is_staff')]
                 while len(pub_qs) >= self._max_public_subscribers:
-                    oldest_pub_q = pub_qs.pop(0)
-                    self._subscribers.pop(oldest_pub_q, None)
+                    self._evict(pub_qs.pop(0))
 
             q = queue.Queue(maxsize=10)
             self._subscribers[q] = {
@@ -90,12 +100,6 @@ class OrderEventBus:
                     payload = self.get_current_payload(resolved_tid)
             except Exception as e:
                 print(f"[!] SSE 廣播打包異常: {e}")
-
-        if redis_client and resolved_tid is not None:
-            try:
-                redis_client.publish(f"kiosk:orders_stream:{resolved_tid}", payload)
-            except Exception:
-                pass
 
         dead_queues = []
         with self._lock:

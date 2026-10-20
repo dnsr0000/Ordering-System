@@ -11,4 +11,6 @@ Requests==2.34.2
 SQLAlchemy==2.0.53
 waitress==3.0.2
 Werkzeug==3.1.8
-llama-cpp-python
+# 選用：本地 Qwen2.5 SLM 推論 (需 C++ 編譯環境，安裝較耗時)。沒有安裝時系統自動降級為 Gemini / 規則引擎。
+# 需要時請取消下一行註解後再 pip install -r requirements.txt
+# llama-cpp-python

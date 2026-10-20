@@ -16,6 +16,9 @@ database/*.bak-*
 *.sqlite3
 instance/
 
+# 自動產生的 Session 簽章金鑰 (SECRET_KEY 未設定時使用)
+database/.secret_key
+
 # 保留 database 目錄結構
 !database/.gitkeep
 
@@ -30,12 +33,8 @@ static/member/*
 static/menu/*
 !static/menu/.gitkeep
 
-# 臨時擷取相片快照與圖片檔案
+# 臨時擷取相片快照
 static/temp/
-*.jpg
-*.jpeg
-*.png
-*.webp
 
 # ==============================================================================
 # 4. 系統備份壓縮檔與 Excel 匯出/匯入報表 (Backups & Exports)
