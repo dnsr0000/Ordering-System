@@ -988,7 +988,7 @@
         if (!cartItem || cartItem.is_add_on === true || cartItem.is_add_on === 'true') {
             return false;
         }
-        if (cartItem.can_addon === false) {
+        if (cartItem.can_addon === false || isRewardCartItem(cartItem)) {
             return false;
         }
 
@@ -1002,9 +1002,9 @@
             return cat.trim().toLowerCase() === expectedCategory;
         }
 
-        // 2. 指定餐點：嚴格比對特定品名
+        // 2. 指定餐點：比對餐點 ID 或品名 (後台下拉選單存名稱，舊資料/API 可能存 ID；與後端 _addon_qualifies 一致)
         if (triggerType === 'item') {
-            return cartItem.name.trim().toLowerCase() === target;
+            return String(cartItem.id) === target || cartItem.name.trim().toLowerCase() === target;
         }
 
         // 3. 通用加購 (any) 防呆：
@@ -1028,42 +1028,60 @@
             .filter(i => i.is_add_on && String(i.id) === String(addonId))
             .reduce((sum, i) => sum + i.quantity, 0);
     }
-    // 計算特定加購品當前的剩餘配額 (Remaining Quota)
+    // 加購配額採「二分圖配對」：每一份合格正價餐點最多搭配一份加購，且加購品必須符合該餐點的觸發條件。
+    // (取代舊的「依類別分池」計數：分池會讓指定單品加購與通用加購互相排擠，或在餐點類別不同時放行過多加購)
+    function isRewardCartItem(i) {
+        return Boolean(i && (i.is_reward || String(i.id).startsWith('reward_') || (i.name && i.name.includes('[點數兌換]'))));
+    }
+
+    function getMainUnitsForAddon() {
+        const units = [];
+        cart.forEach(i => {
+            if (i.is_add_on === true || i.is_add_on === 'true' || i.can_addon === false || isRewardCartItem(i)) return;
+            for (let k = 0; k < i.quantity; k++) units.push(i);
+        });
+        return units;
+    }
+
+    function addonUnitsFeasible(addonDefs) {
+        const mains = getMainUnitsForAddon();
+        if (addonDefs.length > mains.length) return false;
+        const owner = new Array(mains.length).fill(-1);
+        const tryAssign = (a, seen) => {
+            for (let m = 0; m < mains.length; m++) {
+                if (seen[m] || !isItemQualifyingForAddon(mains[m], addonDefs[a])) continue;
+                seen[m] = true;
+                if (owner[m] === -1 || tryAssign(owner[m], seen)) {
+                    owner[m] = a;
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (let a = 0; a < addonDefs.length; a++) {
+            if (!tryAssign(a, new Array(mains.length).fill(false))) return false;
+        }
+        return true;
+    }
+
+    function getCartAddonDefs() {
+        const defs = [];
+        cart.filter(i => i.is_add_on).forEach(i => {
+            const def = (typeof availableAddons !== 'undefined')
+                ? availableAddons.find(a => String(a.id) === String(i.id))
+                : null;
+            if (!def) return;
+            for (let k = 0; k < i.quantity; k++) defs.push(def);
+        });
+        return defs;
+    }
+
+    // 計算特定加購品當前的剩餘配額 (在不破壞既有加購配對的前提下，還能再加幾份)
     function getRemainingQuotaForAddon(addonDef) {
-        // 1. 全局總量防呆：購物車內所有加購品總數不得超過所有合格正價商品數
-        const totalRegularDishes = cart
-            .filter(i => !i.is_add_on && i.can_addon !== false)
-            .reduce((sum, i) => sum + i.quantity, 0);
-
-        const totalAddonsInCart = cart
-            .filter(i => i.is_add_on)
-            .reduce((sum, i) => sum + i.quantity, 0);
-
-        if (totalRegularDishes - totalAddonsInCart <= 0) return 0;
-
-        // 2. 符合此加購品條件的正價餐點總數 (例如：購物車內的主餐總數)
-        const qualifyingCount = getQualifyingCountForAddon(addonDef);
-        if (qualifyingCount <= 0) return 0;
-
-        // 3. 關鍵修正：計算購物車內「已經佔用這個母體類別」的加購品總數
-        // 不管加購品是限特定單品(a)還是通用主餐(b)，只要它消耗的是同一個母體類別，就共用配額池！
-        const usedCount = cart
-            .filter(i => i.is_add_on)
-            .filter(i => {
-                const def = (typeof availableAddons !== 'undefined')
-                    ? availableAddons.find(a => String(a.id) === String(i.id))
-                    : null;
-                if (!def) return false;
-
-                // 若此加購品本身也屬於相同觸發條件，或是兩者都消耗同一個母體分類（例如都是主餐解鎖）
-                const thisTargetCat = getAddonTargetCategory(addonDef);
-                const otherTargetCat = getAddonTargetCategory(def);
-
-                return thisTargetCat === otherTargetCat;
-            })
-            .reduce((sum, i) => sum + i.quantity, 0);
-
-        return Math.max(0, qualifyingCount - usedCount);
+        const current = getCartAddonDefs();
+        let n = 0;
+        while (addonUnitsFeasible(current.concat(new Array(n + 1).fill(addonDef)))) n++;
+        return n;
     }
 
     // 輔助函式：取得加購品所依賴的母體類別群組 (主餐、飲料等)
@@ -1597,10 +1615,9 @@
 
         let hasRemoved = false;
 
-       // 按觸發條件分類統計可用正價額度與加購品
+        // 加購配額校驗：依購物車順序逐份保留，無法配對到合格餐點的加購自動減量
         if (typeof availableAddons !== 'undefined') {
-            const categoryPoolUsage = {}; 
-
+            const keptAddonDefs = [];
             cart.forEach(item => {
                 if (!item.is_add_on) return;
 
@@ -1611,20 +1628,16 @@
                     return;
                 }
 
-                // 取得此加購品依賴的母體類別 (如 '主餐' 或 '飲料')
-                const targetPool = getAddonTargetCategory(addonDef);
-                const qualifyingTotal = getQualifyingCountForAddon(addonDef);
-                const currentUsed = categoryPoolUsage[targetPool] || 0;
-
-                // 該母體類別下的加購總數不可超過合格正價商品數
-                if (currentUsed + item.quantity > qualifyingTotal) {
-                    const allowedQty = Math.max(0, qualifyingTotal - currentUsed);
-                    if (item.quantity !== allowedQty) {
-                        item.quantity = allowedQty;
-                        hasRemoved = true;
-                    }
+                let allowed = 0;
+                for (let k = 0; k < item.quantity; k++) {
+                    if (!addonUnitsFeasible(keptAddonDefs.concat([addonDef]))) break;
+                    keptAddonDefs.push(addonDef);
+                    allowed++;
                 }
-                categoryPoolUsage[targetPool] = currentUsed + item.quantity;
+                if (item.quantity !== allowed) {
+                    item.quantity = allowed;
+                    hasRemoved = true;
+                }
             });
         }
 

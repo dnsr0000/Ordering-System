@@ -27,7 +27,14 @@ class IdempotencyCache:
     def _purge(self, now):
         if len(self._entries) < self._max_entries:
             return
-        for k in [k for k, e in self._entries.items() if e['value'] is not None and now - e['ts'] > self._ttl]:
+        # 清除「已超過 TTL 且目前沒有請求持有/等待處理」的項目，成功 (有 value) 與失敗 (value 為 None) 都一視同仁；
+        # 否則失敗請求的 key 永遠不會被清掉，累積到上限後每次請求都會做一次全表掃描卻刪不掉任何東西。
+        # ts 在建立與完成時都會更新，因此「處理中」的項目不會被誤刪；lock.locked() 再多擋一層保險。
+        expired = [
+            k for k, e in self._entries.items()
+            if now - e['ts'] > self._ttl and not e['lock'].locked()
+        ]
+        for k in expired:
             self._entries.pop(k, None)
 
     def run(self, key, fn):
@@ -37,7 +44,7 @@ class IdempotencyCache:
             self._purge(now)
             entry = self._entries.get(key)
             if entry is None:
-                entry = self._entries[key] = {'lock': threading.Lock(), 'value': None, 'ts': 0.0}
+                entry = self._entries[key] = {'lock': threading.Lock(), 'value': None, 'ts': now}
         with entry['lock']:
             now = time.time()
             if entry['value'] is not None and now - entry['ts'] <= self._ttl:
@@ -46,9 +53,11 @@ class IdempotencyCache:
             result, status = fn()
             if status == 200:
                 entry['value'] = (result, status)
-                entry['ts'] = time.time()
             else:
                 entry['value'] = None
+            # 不論成功或失敗都記錄完成時間，讓 _purge 能依 TTL 回收。
+            # (不在失敗時直接 pop：排在同一把鎖後面的重送請求仍需共用這個 entry 才能被序列化，避免同時建立兩張單)
+            entry['ts'] = time.time()
             return result, status, False
 
 

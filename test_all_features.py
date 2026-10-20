@@ -1299,6 +1299,40 @@ def run_all_tests():
         return "套餐+配餐客製化+加購計價($215) & 主餐/雙配餐/加購品庫存同步扣減通過"
     runner.check("6.2", "排列組合 2：套餐 + 配餐客製化 + 加購品 + 主餐與配餐庫存同步扣減", t6_2)
 
+    # 6.2a 加購配額後端驗證 (二分圖配對)：加購不可超過合格正價餐點，且每份加購都要能配到符合觸發條件的餐點
+    def t6_2a():
+        c = app.test_client()
+        c.get("/?shop=default")
+        c.get("/guest_login")
+        csrf = get_client_csrf(c, "/")
+        seq = [40]
+
+        def post(items):
+            seq[0] += 1
+            return c.post(
+                "/submit_order",
+                json={"items": items, "payment_method": "Line Pay", "order_type": "內用"},
+                headers={"X-CSRFToken": csrf, "X-Forwarded-For": f"10.31.1.{seq[0]}"},
+            )
+
+        def line(name, qty=1, is_add_on=False):
+            return {"id": menu_ids[name], "name": name, "price": 100, "quantity": qty, "customization": "", "is_add_on": is_add_on}
+
+        r = post([line("招牌和牛堡"), line("松露沾醬", 2, True)])
+        assert r.status_code == 400, f"加購數量超過主餐數量應被拒絕: {r.status_code}"
+        r = post([line("松露沾醬", 1, True)])
+        assert r.status_code == 400, f"沒有任何合格主餐的加購應被拒絕: {r.status_code}"
+        r = post([line("美式脆薯"), line("松露沾醬", 1, True)])
+        assert r.status_code == 400, f"松露沾醬限搭和牛堡，搭副餐應被拒絕: {r.status_code}"
+        # 總量足夠 (2 份加購 / 2 份正價) 但兩份加購都只能搭同一個和牛堡 → 配對失敗
+        r = post([line("招牌和牛堡"), line("美式脆薯"), line("錫蘭紅茶", 1, True), line("松露沾醬", 1, True)])
+        assert r.status_code == 400, f"總量足夠但無法一對一配對應被拒絕: {r.status_code}"
+        # 兩個和牛堡：通用加購 + 單品加購可各配一個 → 合法
+        r = post([line("招牌和牛堡", 2), line("錫蘭紅茶", 1, True), line("松露沾醬", 1, True)])
+        assert r.status_code == 200, f"可一對一配對的加購應通過: {r.status_code} {r.get_data(as_text=True)}"
+        return "加購超量 / 無合格主餐 / 不符單品條件 / 總量足夠但配對失敗 皆回 400，可配對組合通過"
+    runner.check("6.2a", "加購配額後端驗證：二分圖配對 (超量、不符條件、配對失敗皆擋下)", t6_2a)
+
     # 6.3 payment_method 與 order_type 白名單防禦驗證
     def t6_3():
         c = app.test_client()

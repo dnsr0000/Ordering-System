@@ -1,4 +1,5 @@
 import os
+import threading
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
@@ -15,13 +16,19 @@ Image.MAX_IMAGE_PIXELS = MAX_UPLOAD_IMAGE_PIXELS
 _detector = None
 _recognizer = None
 
+# OpenCV 的 FaceDetectorYN / FaceRecognizerSF 為全域共用單例，且 detect 前必須 setInputSize (會改寫模型內部狀態)，
+# 多個 Waitress 執行緒同時推論會互相覆寫輸入尺寸而崩潰，因此所有「建立模型 + 推論」一律在此鎖內序列化。
+# 使用 RLock：同一執行緒在持鎖狀態下再呼叫 get_face_models() 不會自我死鎖。
+CV_LOCK = threading.RLock()
+
 def get_face_models():
     global _detector, _recognizer
-    if _recognizer is None and os.path.exists(Config.SFACE_MODEL):
-        _recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
-    if _detector is None and os.path.exists(Config.YUNET_MODEL):
-        _detector = cv2.FaceDetectorYN.create(Config.YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
-    return _detector, _recognizer
+    with CV_LOCK:
+        if _recognizer is None and os.path.exists(Config.SFACE_MODEL):
+            _recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
+        if _detector is None and os.path.exists(Config.YUNET_MODEL):
+            _detector = cv2.FaceDetectorYN.create(Config.YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+        return _detector, _recognizer
 
 def save_and_fix_image(file_storage, dest_path):
     try:
@@ -62,13 +69,15 @@ def extract_feature(image_path):
         img = cv2.imread(image_path)
         if img is None or img.size == 0 or img.shape[0] < 20 or img.shape[1] < 20:
             return None
-        detector.setInputSize((img.shape[1], img.shape[0]))
-        _, faces = detector.detect(img)
-        if faces is not None and len(faces) > 0:
-            # 依面積 找出最大人臉
-            largest_face = max(faces, key=lambda f: float(f[2]) * float(f[3]))
-            aligned_face = recognizer.alignCrop(img, largest_face)
-            return recognizer.feature(aligned_face)
+        # setInputSize → detect → alignCrop → feature 必須在同一把鎖內完成 (中途不可被其他執行緒改寫輸入尺寸)
+        with CV_LOCK:
+            detector.setInputSize((img.shape[1], img.shape[0]))
+            _, faces = detector.detect(img)
+            if faces is not None and len(faces) > 0:
+                # 依面積 找出最大人臉
+                largest_face = max(faces, key=lambda f: float(f[2]) * float(f[3]))
+                aligned_face = recognizer.alignCrop(img, largest_face)
+                return recognizer.feature(aligned_face)
     except Exception as e:
         print(f"[!] 人臉特徵分析過程異常: {e}")
     return None
@@ -80,7 +89,8 @@ def compare_faces(feat1, feat2):
     _, recognizer = get_face_models()
     if recognizer is None:
         return 0.0
-    return recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)
+    with CV_LOCK:
+        return recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)
 
 def find_best_match_vectorized(target_feature, candidate_users, threshold=0.363):
     """

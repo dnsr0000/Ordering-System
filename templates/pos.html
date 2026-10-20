@@ -1287,7 +1287,8 @@
             const triggerType = addonDef.trigger_type || 'any';
             const target = (addonDef.trigger_target || '').trim().toLowerCase();
             if (triggerType === 'category') return target || (addonDef.category || '').trim().toLowerCase();
-            if (triggerType === 'item') return (itemCategoryMap[target] || '主餐').trim().toLowerCase();
+            // 指定單品觸發：每個目標餐點使用獨立配額池，避免與「全單主餐 (any)」共用而互相排擠
+            if (triggerType === 'item') return 'item:' + target;
             return '主餐';
         }
 
@@ -1300,7 +1301,8 @@
                 return cat.toLowerCase() === (target || (addonDef.category || '').trim().toLowerCase());
             }
             if (triggerType === 'item') {
-                return cartItem.name.trim().toLowerCase() === target;
+                // 後台下拉選單存餐點名稱，舊資料/API 可能存餐點 ID；兩種都接受 (與後端 _addon_qualifies 一致)
+                return String(cartItem.id) === target || cartItem.name.trim().toLowerCase() === target;
             }
             const nonMain = ['飲料', '點心', '副餐', '配餐'];
             return !nonMain.includes(cat);
@@ -1310,24 +1312,54 @@
             return posCart.filter(i => isItemQualifyingForAddon(i, addonDef)).reduce((s, i) => s + i.quantity, 0);
         }
 
+        // 加購配額採「二分圖配對」：每一份合格正價餐點最多搭配一份加購，且加購品必須符合該餐點的觸發條件。
+        // (取代舊的「依類別分池」計數：分池無法同時處理 any / category / item 三種觸發互相重疊的情況)
+        function getPosMainUnits() {
+            const units = [];
+            posCart.forEach(i => {
+                if (i.is_add_on || i.is_reward || i.can_addon === false) return;
+                for (let k = 0; k < i.quantity; k++) units.push(i);
+            });
+            return units;
+        }
+
+        function posAddonUnitsFeasible(addonDefs) {
+            const mains = getPosMainUnits();
+            if (addonDefs.length > mains.length) return false;
+            const owner = new Array(mains.length).fill(-1);
+            const tryAssign = (a, seen) => {
+                for (let m = 0; m < mains.length; m++) {
+                    if (seen[m] || !isItemQualifyingForAddon(mains[m], addonDefs[a])) continue;
+                    seen[m] = true;
+                    if (owner[m] === -1 || tryAssign(owner[m], seen)) {
+                        owner[m] = a;
+                        return true;
+                    }
+                }
+                return false;
+            };
+            for (let a = 0; a < addonDefs.length; a++) {
+                if (!tryAssign(a, new Array(mains.length).fill(false))) return false;
+            }
+            return true;
+        }
+
+        function getPosCartAddonDefs() {
+            const defs = [];
+            posCart.filter(i => i.is_add_on).forEach(i => {
+                const def = availableAddons.find(a => String(a.id) === String(i.id));
+                if (!def) return;
+                for (let k = 0; k < i.quantity; k++) defs.push(def);
+            });
+            return defs;
+        }
+
+        // 此加購品目前還能再加幾份 (在不破壞既有加購配對的前提下)
         function getRemainingQuotaForAddon(addonDef) {
-            const totalRegular = posCart.filter(i => !i.is_add_on && !i.is_reward && i.can_addon !== false).reduce((s, i) => s + i.quantity, 0);
-            const totalAddons = posCart.filter(i => i.is_add_on).reduce((s, i) => s + i.quantity, 0);
-            if (totalRegular - totalAddons <= 0) return 0;
-
-            const qualifyingCount = getQualifyingCountForAddon(addonDef);
-            if (qualifyingCount <= 0) return 0;
-
-            const thisTargetCat = getAddonTargetCategory(addonDef);
-            const usedCount = posCart
-                .filter(i => i.is_add_on)
-                .filter(i => {
-                    const def = availableAddons.find(a => String(a.id) === String(i.id));
-                    return def && getAddonTargetCategory(def) === thisTargetCat;
-                })
-                .reduce((s, i) => s + i.quantity, 0);
-
-            return Math.max(0, qualifyingCount - usedCount);
+            const current = getPosCartAddonDefs();
+            let n = 0;
+            while (posAddonUnitsFeasible(current.concat(new Array(n + 1).fill(addonDef)))) n++;
+            return n;
         }
 
         function triggerPosAddonFromBtn(btn) {
@@ -1423,17 +1455,13 @@
         function clearPosCart() {
             if (posCart.length === 0) return;
             posCart = [];
-            activePromoCode = '';
-            appliedPromoDiscount = 0;
-            document.getElementById('posPromoInput').value = '';
-            document.getElementById('posPromoMsg').innerHTML = '';
-            document.getElementById('posMemberCouponSelect').value = '';
+            resetPosPromo();
             renderPosCart();
         }
 
         function renderPosCart() {
-            // 自動校驗加購配額
-            const categoryPoolUsage = {};
+            // 自動校驗加購配額：依購物車順序逐份保留，無法配對到合格餐點的加購自動減量
+            const keptAddonDefs = [];
             posCart.forEach(item => {
                 if (!item.is_add_on) return;
                 const addonDef = availableAddons.find(a => Number(a.id) === Number(item.id));
@@ -1441,13 +1469,13 @@
                     item.quantity = 0;
                     return;
                 }
-                const pool = getAddonTargetCategory(addonDef);
-                const qualTotal = getQualifyingCountForAddon(addonDef);
-                const used = categoryPoolUsage[pool] || 0;
-                if (used + item.quantity > qualTotal) {
-                    item.quantity = Math.max(0, qualTotal - used);
+                let allowed = 0;
+                for (let k = 0; k < item.quantity; k++) {
+                    if (!posAddonUnitsFeasible(keptAddonDefs.concat([addonDef]))) break;
+                    keptAddonDefs.push(addonDef);
+                    allowed++;
                 }
-                categoryPoolUsage[pool] = used + item.quantity;
+                item.quantity = allowed;
             });
             posCart = posCart.filter(i => i.quantity > 0);
 
@@ -1513,6 +1541,7 @@
             }
 
             recalcPosTotals();
+            revalidatePosPromo();
         }
 
         // 6. 會員查詢、多筆候選清單確認、PIN 設定與金額計算
@@ -1666,18 +1695,45 @@
             applyPosPromo();
         }
 
+        // 優惠券驗證請求序號：購物車連續變動或掛單/清單時，只採用「最新一次」請求的結果，舊回應一律丟棄
+        let posPromoSeq = 0;
+
+        // 一次清掉優惠券狀態 (代碼、折抵金額、輸入框、訊息、會員券下拉)，並讓進行中的驗證請求失效
+        function resetPosPromo() {
+            posPromoSeq++;
+            activePromoCode = '';
+            appliedPromoDiscount = 0;
+            const inputEl = document.getElementById('posPromoInput');
+            const msgEl = document.getElementById('posPromoMsg');
+            const selEl = document.getElementById('posMemberCouponSelect');
+            if (inputEl) inputEl.value = '';
+            if (msgEl) msgEl.innerHTML = '';
+            if (selEl) selEl.value = '';
+        }
+
         function applyPosPromo() {
             const code = (document.getElementById('posPromoInput').value || '').trim();
-            const subtotal = posCart.reduce((s, i) => s + i.price * i.quantity, 0);
-            const msgEl = document.getElementById('posPromoMsg');
-
             if (!code) {
+                posPromoSeq++;
                 activePromoCode = '';
                 appliedPromoDiscount = 0;
-                msgEl.innerHTML = '';
+                document.getElementById('posPromoMsg').innerHTML = '';
                 recalcPosTotals();
                 return;
             }
+            runPosPromoCheck(code);
+        }
+
+        // 購物車內容變動後重新驗證已套用的優惠券 (最低消費門檻、百分比折扣金額都會隨小計改變)
+        function revalidatePosPromo() {
+            if (!activePromoCode || posCart.length === 0) return;
+            runPosPromoCheck(activePromoCode);
+        }
+
+        function runPosPromoCheck(code) {
+            const subtotal = posCart.reduce((s, i) => s + i.price * i.quantity, 0);
+            const msgEl = document.getElementById('posPromoMsg');
+            const seq = ++posPromoSeq;
 
             fetch('/api/pos/verify_promo', {
                 method: 'POST',
@@ -1690,6 +1746,7 @@
             })
             .then(r => r.json())
             .then(res => {
+                if (seq !== posPromoSeq) return;  // 已有更新的請求或已被重置，丟棄過期結果
                 if (res.valid) {
                     activePromoCode = code;
                     appliedPromoDiscount = res.discount;
@@ -1702,6 +1759,10 @@
                     msgEl.innerHTML = `<i class="bi bi-x-circle me-1"></i>${escapeHtml(res.message)}`;
                 }
                 recalcPosTotals();
+            })
+            .catch(err => {
+                // 網路異常時保留原狀；結帳時後端仍會重新驗證優惠券
+                console.error('優惠券驗證失敗:', err);
             });
         }
 
@@ -1877,10 +1938,7 @@
                 document.getElementById('posTableInput').value = '';
                 document.getElementById('posOrderNote').value = '';
                 document.getElementById('posCashReceived').value = '';
-                document.getElementById('posPromoInput').value = '';
-                document.getElementById('posPromoMsg').innerHTML = '';
-                activePromoCode = '';
-                appliedPromoDiscount = 0;
+                resetPosPromo();
                 renderPosCart();
                 syncPosLiveState();
             })
@@ -1953,15 +2011,11 @@
             document.getElementById('holdCountBadge').innerText = list.length;
         }
 
-        function holdCurrentOrder() {
-            if (posCart.length === 0) {
-                alert('⚠️ 目前沒有餐點可掛單！');
-                return;
-            }
-            const list = getHeldOrders();
+        // 把「目前畫面上的單據」打包成掛單物件 (含優惠碼；折抵金額取回時一律重新驗證，不沿用舊值)
+        function buildHeldSnapshot(list) {
             const tableVal = (document.getElementById('posTableInput').value || '').trim();
             const label = tableVal || (posMember ? posMember.name : `掛單 #${list.length + 1}`);
-            list.push({
+            return {
                 id: Date.now(),
                 label: label,
                 time: new Date().toTimeString().split(' ')[0],
@@ -1969,10 +2023,22 @@
                 member: posMember,
                 table: tableVal,
                 orderType: document.getElementById('posTypeTakeout').checked ? '外帶' : '內用',
-                note: (document.getElementById('posOrderNote').value || '').trim()
-            });
+                note: (document.getElementById('posOrderNote').value || '').trim(),
+                promoCode: activePromoCode || ''
+            };
+        }
+
+        function holdCurrentOrder() {
+            if (posCart.length === 0) {
+                alert('⚠️ 目前沒有餐點可掛單！');
+                return;
+            }
+            const list = getHeldOrders();
+            list.push(buildHeldSnapshot(list));
             saveHeldOrders(list);
             posCart = [];
+            // 先重置優惠券，下一位顧客才不會繼承上一單的折扣 (必須在 clearPosMember/renderPosCart 之前)
+            resetPosPromo();
             clearPosMember();
             document.getElementById('posTableInput').value = '';
             document.getElementById('posOrderNote').value = '';
@@ -2005,6 +2071,14 @@
             const list = getHeldOrders();
             const target = list[idx];
             if (!target) return;
+
+            // 目前購物車還有餐點時一律拒絕取單，避免畫面上的餐點被覆蓋遺失；請先結帳、掛單或清空
+            if (posCart.length > 0) {
+                alert('⚠️ 目前購物車尚有餐點，請先結帳、掛單或清空後再取回掛單！');
+                return;
+            }
+
+            resetPosPromo();
             posCart = target.cart || [];
             if (target.member) bindPosMember(target.member);
             else clearPosMember();
@@ -2013,6 +2087,13 @@
             if (target.orderType === '外帶') document.getElementById('posTypeTakeout').checked = true;
             else document.getElementById('posTypeDineIn').checked = true;
             onPosOrderTypeChange();
+
+            // 還原優惠碼：先填入代碼，由 renderPosCart() 內的 revalidatePosPromo() 依目前小計與會員重新驗證
+            if (target.promoCode) {
+                activePromoCode = target.promoCode;
+                const inputEl = document.getElementById('posPromoInput');
+                if (inputEl) inputEl.value = target.promoCode;
+            }
 
             list.splice(idx, 1);
             saveHeldOrders(list);

@@ -167,6 +167,89 @@ def verify_promo_code(code, subtotal, user_id=None, is_pos=False, tenant_id=None
     }
 
 
+# 加購配額驗證：與前端 (customer.html / pos.html) 採同一套規則
+NON_MAIN_ADDON_CATEGORIES = ('飲料', '點心', '副餐', '配餐')
+
+
+def _addon_qualifies(main_item, addon_item):
+    """正價餐點 main_item 是否符合加購品 addon_item 設定的觸發條件。"""
+    trigger_type = (addon_item.addon_trigger_type or 'any')
+    target = (addon_item.addon_trigger_target or '').strip().lower()
+    main_cat = (main_item.category or '未分類').strip()
+    if trigger_type == 'category':
+        expected = target or (addon_item.category or '').strip().lower()
+        return main_cat.lower() == expected
+    if trigger_type == 'item':
+        # 後台下拉選單存的是餐點名稱，但舊資料/測試可能存餐點 ID，兩種都接受
+        return str(main_item.id) == target or (main_item.name or '').strip().lower() == target
+    return main_cat not in NON_MAIN_ADDON_CATEGORIES
+
+
+def _validate_addon_quota(main_units, addon_units):
+    """
+    驗證加購數量是否合法；合法回傳 None，不合法回傳錯誤訊息。
+    規則：每一份「合格正價餐點」最多搭配一份加購，且加購品必須符合該餐點的觸發條件。
+    以二分圖最大流量判斷是否存在合法配對 (依品項分組並帶入數量，不會因為數量極大而展開成大量節點)。
+    main_units / addon_units: [(MenuItem, quantity), ...]
+    """
+    mains, addons = {}, {}
+    for item, qty in main_units:
+        mains.setdefault(item.id, [item, 0])[1] += qty
+    for item, qty in addon_units:
+        addons.setdefault(item.id, [item, 0])[1] += qty
+    total_addons = sum(q for _, q in addons.values())
+    if total_addons == 0:
+        return None
+    total_mains = sum(q for _, q in mains.values())
+    msg = '加購品數量超過可搭配的合格餐點數量，請調整購物車後重新結帳！'
+    if total_addons > total_mains:
+        return msg
+
+    SRC, SNK = ('s',), ('t',)
+    cap = {}
+    adj = {}
+
+    def add_edge(u, v, c):
+        cap[(u, v)] = cap.get((u, v), 0) + c
+        cap.setdefault((v, u), 0)
+        adj.setdefault(u, set()).add(v)
+        adj.setdefault(v, set()).add(u)
+
+    for aid, (a_item, a_qty) in addons.items():
+        add_edge(SRC, ('a', aid), a_qty)
+        for mid, (m_item, m_qty) in mains.items():
+            if _addon_qualifies(m_item, a_item):
+                add_edge(('a', aid), ('m', mid), a_qty)
+    for mid, (_, m_qty) in mains.items():
+        add_edge(('m', mid), SNK, m_qty)
+
+    flow = 0
+    while True:
+        parent = {SRC: None}
+        queue = [SRC]
+        for u in queue:
+            if u == SNK:
+                break
+            for v in adj.get(u, ()):
+                if v not in parent and cap[(u, v)] > 0:
+                    parent[v] = u
+                    queue.append(v)
+        if SNK not in parent:
+            break
+        bottleneck, v = None, SNK
+        while parent[v] is not None:
+            c = cap[(parent[v], v)]
+            bottleneck = c if bottleneck is None else min(bottleneck, c)
+            v = parent[v]
+        v = SNK
+        while parent[v] is not None:
+            cap[(parent[v], v)] -= bottleneck
+            cap[(v, parent[v])] += bottleneck
+            v = parent[v]
+        flow += bottleneck
+    return None if flow >= total_addons else msg
+
+
 def process_checkout(
     items_data,
     payment_method='Cash',
@@ -212,6 +295,8 @@ def process_checkout(
     modifier_names_set = {mod.name for mod in all_active_modifiers}
 
     verified_items = []
+    main_units = []    # [(menu_item, 數量)]：可提供加購資格的正價餐點
+    addon_units = []   # [(menu_item, 數量)]：加購品
     item_demands = {}
     reward_lines = []  # [(menu_item, 數量, 單件所需點數)]；憑證/點數的拆分一律在鎖內以原子操作決定
 
@@ -298,9 +383,11 @@ def process_checkout(
             if not menu_item.can_be_add_on:
                 return {'success': False, 'error': f'餐點【{menu_item.name}】非合法加購品項！', 'message': f'餐點【{menu_item.name}】非合法加購品項！'}, 400
             unit_price = menu_item.add_on_price + extra_modifier_price
+            addon_units.append((menu_item, quantity))
         else:
             base_price = menu_item.discount_price if (menu_item.is_discount and menu_item.discount_price > 0) else menu_item.price
             combo_extra_price = 0
+            main_can_addon = True
             combo_match = re.search(r'\[套餐:\s*([^\]]+)\]', raw_custom)
             if combo_match:
                 combo_name = combo_match.group(1).strip()
@@ -308,10 +395,14 @@ def process_checkout(
                 if combo_opt:
                     combo_extra_price = combo_opt.additional_price
                     combo_option_id = combo_opt.id
+                    if combo_opt.can_addon is not None and not combo_opt.can_addon:
+                        main_can_addon = False  # 此套餐不再享有加購優惠
                     for side_id in (combo_opt.item1_id, combo_opt.item2_id, combo_opt.item3_id):
                         if side_id:
                             item_demands[side_id] = item_demands.get(side_id, 0) + quantity
             unit_price = base_price + combo_extra_price + extra_modifier_price
+            if main_can_addon:
+                main_units.append((menu_item, quantity))
 
         verified_items.append({
             'menu_item_id': menu_item.id,
@@ -325,6 +416,10 @@ def process_checkout(
 
     if not verified_items:
         return {'success': False, 'error': '無有效結帳品項！', 'message': '無有效結帳品項！'}, 400
+
+    quota_error = _validate_addon_quota(main_units, addon_units)
+    if quota_error:
+        return {'success': False, 'error': quota_error, 'message': quota_error}, 400
 
     subtotal = sum(v['price'] * v['quantity'] for v in verified_items)
 
