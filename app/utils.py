@@ -24,14 +24,51 @@ def safe_int(val, default=0):
         if val is None or val == '':
             return default
         return int(float(val))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):  # float('inf') / '1e999' 會丟 OverflowError
         return default
 
 
+def safe_float(val, default=0.0):
+    """安全轉浮點數：空值、格式錯誤、NaN、Infinity 一律回傳 default"""
+    try:
+        if val is None or val == '':
+            return default
+        num = float(val)
+    except (ValueError, TypeError, OverflowError):
+        return default
+    if num != num or num in (float('inf'), float('-inf')):
+        return default
+    return num
+
+
+def safe_round(val, default=0):
+    """四捨五入成整數；空值/格式錯誤/NaN/Infinity 回傳 default"""
+    num = safe_float(val, None)
+    return default if num is None else int(round(num))
+
+
+def get_json_dict():
+    """讀取請求的 JSON 本文：內容不是合法 JSON、Content-Type 不符或根節點不是物件時，一律回傳 {} (避免 400/415 HTML 錯誤頁與 AttributeError)"""
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _js_string_literal(value):
+    """產生可安全嵌入 <script> 的 JS 字串常值：額外跳脫 < > & 與 U+2028/2029，避免 </script> 提前結束腳本區塊"""
+    return (
+        json.dumps(str(value), ensure_ascii=False)
+        .replace('<', '\\u003c')
+        .replace('>', '\\u003e')
+        .replace('&', '\\u0026')
+        .replace('\u2028', '\\u2028')
+        .replace('\u2029', '\\u2029')
+    )
+
+
 def js_alert_redirect(msg, target_url=None, status=200):
-    safe_msg = json.dumps(str(msg), ensure_ascii=False)
+    safe_msg = _js_string_literal(msg)
     if target_url:
-        safe_url = json.dumps(str(target_url), ensure_ascii=False)
+        safe_url = _js_string_literal(target_url)
         return f"<script>alert({safe_msg}); window.location.href={safe_url};</script>", status
     return f"<script>alert({safe_msg}); window.history.back();</script>", status
 
@@ -67,6 +104,9 @@ def _check_rate_limit_redis_or_local(bucket_key, max_requests, window_seconds):
             pass
 
     with _LOCAL_RATE_LOCK:
+        if len(_LOCAL_RATE_BUCKETS) > 5000:  # 過期的計數桶定期清除，避免來源 IP 很多時記憶體無限增長
+            for stale_key in [k for k, v in _LOCAL_RATE_BUCKETS.items() if now >= v['reset_at']]:
+                _LOCAL_RATE_BUCKETS.pop(stale_key, None)
         entry = _LOCAL_RATE_BUCKETS.get(bucket_key)
         if not entry or now >= entry['reset_at']:
             _LOCAL_RATE_BUCKETS[bucket_key] = {'count': 1, 'reset_at': now + window_seconds}
@@ -131,6 +171,59 @@ def role_required(*allowed_roles):
             return f(*args, **kwargs)
         return wrapped
     return decorator
+
+def is_platform_admin(staff=None, tenant=None):
+    """
+    平台管理者：預設店家 (slug=default，系統部署者自己的店) 的負責人。
+    整庫備份/還原會觸及所有店家的資料，因此只有平台管理者可以使用；
+    其他店家的負責人請改用 Excel 匯出 (僅含自己店家的資料)。
+    """
+    staff = staff if staff is not None else getattr(g, 'staff_account', None)
+    tenant = tenant if tenant is not None else getattr(g, 'tenant', None)
+    return bool(
+        staff and tenant
+        and getattr(staff, 'role', None) == 'owner'
+        and getattr(tenant, 'slug', None) == 'default'
+    )
+
+
+def platform_admin_required(f):
+    """需搭配 @role_required('owner') 使用：僅平台管理者可執行 (整庫備份/還原等跨店家操作)"""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not is_platform_admin():
+            msg = '權限不足：整庫備份與還原會涉及所有店家的資料，僅限平台管理者 (預設店家負責人) 使用；請改用 Excel 匯出您店家的資料。'
+            if request.is_json or request.path.startswith('/api/'):
+                return jsonify({'success': False, 'error': msg, 'message': msg}), 403
+            return js_alert_redirect(f"❌ {msg}", url_for('admin.admin_dashboard'), status=403)
+        return f(*args, **kwargs)
+    return wrapped
+
+
+def mask_name(name):
+    """姓名遮罩 (王小明 → 王○明、王小 → 王○)，供公開叫號看板這類任何人都看得到的畫面使用"""
+    chars = list((name or '').strip())
+    if len(chars) <= 1:
+        return ''.join(chars)
+    if len(chars) == 2:
+        return chars[0] + '○'
+    return chars[0] + '○' * (len(chars) - 2) + chars[-1]
+
+
+def public_display_name(order):
+    """公開看板顯示用名稱：會員一律遮罩姓名；訪客編號、櫃檯 POS、桌號 (純英數) 原樣顯示"""
+    if order.user_id:
+        user = order.user
+        return mask_name(user.name if user else (order.table_number or ''))
+    table = (order.table_number or '').strip() or '訪客'
+    if table.startswith(('訪客', '櫃檯POS', 'POS')) and '(' not in table and '（' not in table:
+        return table
+    if re.fullmatch(r'[A-Za-z0-9_\-]{1,10}', table):
+        return table
+    # 其他情況 (例如 "A5 (王小明)"、"王小明 (已註銷會員)")：保留括號外的桌號/代號，姓名部分遮罩
+    base = re.split(r'\s*[(（]', table)[0]
+    return mask_name(base)
+
 
 def validate_pin(pin):
     """驗證 PIN 碼是否為 4 至 6 位純數字"""
