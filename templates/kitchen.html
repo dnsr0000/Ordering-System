@@ -329,10 +329,10 @@
                         <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
                             <div>
                                 <h3 class="fw-bold text-warning mb-0">#${o.id}</h3>
-                                <small class="text-white-50"><i class="bi bi-person me-1"></i>${o.table_number}</small>
+                                <small class="text-white-50"><i class="bi bi-person me-1"></i>${escapeHtml(o.table_number)}</small>
                             </div>
                             <div class="text-end">
-                                <span class="badge bg-primary mb-1">${o.order_type}</span><br>
+                                <span class="badge bg-primary mb-1">${escapeHtml(o.order_type)}</span><br>
                                 <span class="badge ${timeBadgeClass}">
                                     <i class="bi bi-clock me-1"></i>已等 ${waitMinutes} 分鐘
                                 </span>
@@ -344,19 +344,19 @@
                             <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'} small">
                                 ${o.need_cutlery ? '要餐具' : '不用餐具'}
                             </span>
-                            ${o.note ? `<div class="small text-warning mt-1">備註：${o.note}</div>` : ''}
+                            ${o.note ? `<div class="small text-warning mt-1">備註：${escapeHtml(o.note)}</div>` : ''}
                         </div>` : ''}
 
                         <div class="flex-grow-1 my-2 overflow-y-auto" style="max-height: 260px;">
                             ${o.items.map(item => `
                                 <div class="item-row py-2">
                                     <div class="d-flex justify-content-between align-items-center">
-                                        <span class="fs-5 fw-bold text-white">${item.name}</span>
-                                        <span class="badge bg-light text-dark fs-6 px-2">x ${item.quantity}</span>
+                                        <span class="fs-5 fw-bold text-white">${escapeHtml(item.name)}</span>
+                                        <span class="badge bg-light text-dark fs-6 px-2">x ${Number(item.quantity) || 0}</span>
                                     </div>
                                     ${item.customization ? `
                                         <div class="text-danger fw-bold small mt-1">
-                                            <i class="bi bi-arrow-return-right me-1"></i>${item.customization}
+                                            <i class="bi bi-arrow-return-right me-1"></i>${escapeHtml(item.customization)}
                                         </div>
                                     ` : ''}
                                 </div>

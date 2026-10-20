@@ -4,9 +4,9 @@ from app.models.user import User, RewardSetting
 from app.models.menu import MenuItem, ModifierOption
 from app.models.coupon import Coupon, UserCoupon
 from app.services.order_service import verify_promo_code, process_checkout
-from app.routes.common import record_staff_audit
+from app.routes.common import record_staff_audit, get_or_create_reward_setting
 from app.routes.auth import clear_pin_lockout
-from app.utils import role_required, rate_limit, safe_int, validate_pin
+from app.utils import role_required, rate_limit, safe_int, validate_pin, get_json_dict
 
 pos_bp = Blueprint('pos', __name__)
 
@@ -42,16 +42,7 @@ def pos_terminal():
     modifier_options = ModifierOption.query.filter_by(is_active=True).all()
     coupons = Coupon.query.all()
 
-    reward_setting = RewardSetting.query.first()
-    if not reward_setting:
-        reward_setting = RewardSetting(
-            is_enabled=True,
-            points_per_dollar=1,
-            max_discount_per_order=0,
-            spend_per_point=100
-        )
-        db.session.add(reward_setting)
-        db.session.commit()
+    reward_setting = get_or_create_reward_setting(g.tenant_id)
 
     return render_template(
         'pos.html',
@@ -75,7 +66,7 @@ def api_pos_member_lookup():
     - 若查詢關鍵字僅符合 1 筆，直接回傳該會員
     - 若模糊比對符合多筆 (>1)，回傳 candidates 清單讓店員於前端明確點選，避免綁錯同名會員扣錯點數
     """
-    data = request.get_json() or {}
+    data = get_json_dict()
     exact_id = safe_int(data.get('member_id'), 0)
     if exact_id > 0:
         user = db.session.get(User, exact_id)
@@ -127,7 +118,7 @@ def api_pos_member_lookup():
 @rate_limit(max_requests=15, window_seconds=60, key_prefix="pos_set_pin", methods=('POST',))
 def api_pos_set_member_pin():
     """櫃檯店員當面核對會員身分後，協助設定或重設會員 4~6 碼手機登入 PIN 碼並解除鎖定"""
-    data = request.get_json() or {}
+    data = get_json_dict()
     user_id = safe_int(data.get('user_id'), 0)
     pin = str(data.get('pin', '')).strip()
 
@@ -150,9 +141,10 @@ def api_pos_set_member_pin():
 
 @pos_bp.route('/api/pos/verify_promo', methods=['POST'])
 @role_required('owner', 'manager', 'staff')
+@rate_limit(max_requests=60, window_seconds=60, key_prefix="pos_verify_promo", methods=('POST',))
 def api_pos_verify_promo():
     """POS 專用促銷碼與會員持有優惠券驗證"""
-    data = request.get_json() or {}
+    data = get_json_dict()
     code = data.get('promo_code', '')
     user_id = safe_int(data.get('user_id'), 0) or None
     subtotal = data.get('subtotal', 0)
@@ -178,7 +170,7 @@ def api_pos_checkout():
     櫃檯 POS 原子結帳端點：
     委派 order_service.process_checkout 處理原子交易、扣庫存與稽核日誌
     """
-    data = request.get_json() or {}
+    data = get_json_dict()
     cashier_name = getattr(g.staff_account, 'username', None) or session.get('admin_username', 'POS')
 
     result, status_code = process_checkout(

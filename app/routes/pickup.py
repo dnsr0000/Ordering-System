@@ -3,7 +3,7 @@ from datetime import datetime
 from flask import Blueprint, render_template, Response, jsonify, request, session, g
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
-from app.utils import role_required
+from app.utils import role_required, public_display_name
 
 pickup_bp = Blueprint('pickup', __name__)
 
@@ -28,6 +28,7 @@ def api_counter_orders():
         Order.created_at <= today_end,
         Order.status.in_(['Pending', 'Completed'])
     ).order_by(Order.id.desc()).all()
+    # 叫號看板只顯示取餐號與遮罩後的名稱，不需要訂單明細，這裡刻意不預載 items
 
     ready_orders = []
     preparing_orders = []
@@ -36,7 +37,8 @@ def api_counter_orders():
             'id': o.id,
             'pickup_number': o.pickup_number if getattr(o, 'pickup_number', None) else o.id,
             'order_type': o.order_type,
-            'user_name': o.user.name if o.user else (o.table_number or '訪客'),
+            # 這支 API 不需登入 (給大螢幕叫號用)，會員姓名一律遮罩，避免被路過的人從手機抓到其他顧客的全名
+            'user_name': public_display_name(o),
             'created_at': o.created_at.strftime('%H:%M') if o.created_at else ''
         }
         if o.status == 'Completed':
@@ -68,6 +70,8 @@ def orders_stream():
             while True:
                 try:
                     payload = client_queue.get(timeout=15)
+                    if payload is None:  # 被連線配額淘汰：結束串流以釋放執行緒，瀏覽器會自動重連
+                        return
                     yield f"data: {payload}\n\n"
                 except queue.Empty:
                     yield ": keep-alive\n\n"

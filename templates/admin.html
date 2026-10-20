@@ -399,6 +399,7 @@
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">待製作</div>
                                     <div class="display-6 fw-bold text-info" id="stat-pending-count">{{ analytics.pending_count }}</div>
+                                    <div class="small text-warning" id="stat-stale-pending" style="{% if not analytics.stale_pending_count %}display:none;{% endif %}">另有 <span id="stat-stale-pending-n">{{ analytics.stale_pending_count }}</span> 張前幾日未結案的訂單</div>
                                 </div>
                             </div>
                         </div>
@@ -407,6 +408,7 @@
                                 <div class="card-body p-3">
                                     <div class="text-white-50 small">預估出餐</div>
                                     <div class="display-6 fw-bold text-danger" id="stat-eta-minutes">{{ analytics.eta_minutes }} 分鐘</div>
+                                    <div class="small text-white-50" id="stat-eta-basis">{% if analytics.eta_based_on_samples %}依今日實際平均 {{ analytics.eta_per_order_minutes }} 分鐘/單 (已排除極端值){% else %}今日尚無出餐紀錄，暫以 {{ analytics.eta_per_order_minutes }} 分鐘/單估算{% endif %}</div>
                                 </div>
                             </div>
                         </div>
@@ -426,14 +428,14 @@
                                         </div>
                                     </div>
 
-                                    <div class="list-group list-group-flush">
+                                    <div class="list-group list-group-flush" id="stat-top-items">
                                         {% for item in analytics.top_items %}
                                         <div class="list-group-item bg-transparent border-secondary text-white d-flex justify-content-between align-items-center px-0 py-2">
                                             <div>
                                                 <div class="fw-bold">{{ loop.index }}. {{ item.name }}</div>
                                                 <small class="text-white-50">已售 {{ item.quantity }} 份</small>
                                             </div>
-                                            <span class="badge bg-warning text-dark">${{ item.revenue }}</span>
+                                            <span class="badge bg-warning text-dark">${{ item.revenue | default(0) }}</span>
                                         </div>
                                         {% else %}
                                         <div class="text-white-50">目前尚無銷售資料。</div>
@@ -455,7 +457,7 @@
 
                                     <div class="mb-3">
                                         <div class="text-white-50 small">平均每單時間</div>
-                                        <div class="fw-bold fs-4 text-info">{{ analytics.avg_order_time }} <span class="fs-6 text-white-50">分鐘</span></div>
+                                        <div class="fw-bold fs-4 text-info"><span id="stat-avg-order-time">{{ analytics.avg_order_time if analytics.avg_order_time else '-' }}</span> <span class="fs-6 text-white-50">分鐘</span></div>
                                     </div>
 
                                     <div class="mb-3">
@@ -994,6 +996,12 @@
                                 <option value="POS_SET_MEMBER_PIN">櫃檯設定PIN碼</option>
                                 <option value="DELETE_USER">刪除會員</option>
                                 <option value="DELETE_MENU_ITEM">刪除菜單品項</option>
+                                <option value="COUPON_CHANGE">優惠券異動</option>
+                                <option value="COMBO_CHANGE">套餐異動</option>
+                                <option value="UPDATE_REWARD_SETTING">紅利設定異動</option>
+                                <option value="TOGGLE_USER_COUPON">會員券核銷切換</option>
+                                <option value="KITCHEN_COMPLETE_ALL">廚房一鍵出餐</option>
+                                <option value="AUTO_CLOSE_STALE_ORDERS">換日自動結案</option>
                             </select>
                         </div>
                     </div>
@@ -1029,7 +1037,8 @@
                                         {% elif au.action_type in ['EDIT_USER', 'POS_SET_MEMBER_PIN'] %}
                                         <span class="badge bg-info text-dark">{{ '櫃檯設定PIN' if au.action_type == 'POS_SET_MEMBER_PIN' else '修改會員/點數' }}</span>
                                         {% else %}
-                                        <span class="badge bg-secondary">{{ au.action_type }}</span>
+                                        {% set _action_labels = {'COUPON_CHANGE': '優惠券異動', 'COMBO_CHANGE': '套餐異動', 'UPDATE_REWARD_SETTING': '紅利設定異動', 'TOGGLE_USER_COUPON': '會員券核銷切換', 'KITCHEN_COMPLETE_ALL': '廚房一鍵出餐', 'AUTO_CLOSE_STALE_ORDERS': '換日自動結案'} %}
+                                        <span class="badge bg-secondary">{{ _action_labels.get(au.action_type, au.action_type) }}</span>
                                         {% endif %}
                                     </td>
                                     <td class="small">
@@ -1349,10 +1358,13 @@
                             <div class="col-6">
                                 <label class="form-label small fw-bold">剩餘數量 (庫存)</label>
                                 <input type="number" min="0" class="form-control" name="stock" id="edit-stock" required>
+                                <!-- 開啟視窗當下的庫存：後端只套用「差額」，編輯期間被顧客買走的數量不會被蓋掉 -->
+                                <input type="hidden" name="loaded_stock" id="edit-loaded-stock">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold">總量 (初始庫存)</label>
                                 <input type="number" min="0" class="form-control" name="total_stock" id="edit-total-stock" required>
+                                <input type="hidden" name="loaded_total_stock" id="edit-loaded-total-stock">
                             </div>
                         </div>
 
@@ -1665,11 +1677,13 @@
                         <div class="mb-3">
                             <label class="form-label small fw-bold">紅利點數 (點)</label>
                             <input type="number" min="0" class="form-control" name="points" id="edit-user-points" min="0" required>
+                            <!-- 開啟視窗當下的點數：後端只套用「差額」，期間顧客消費賺到/花掉的點數不會被蓋掉 -->
+                            <input type="hidden" name="loaded_points" id="edit-user-loaded-points">
                             <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold">重設手機登入 PIN 碼 (選填，4~6位數字)</label>
-                            <input type="password" class="form-control" name="pin" id="edit-user-pin" placeholder="不修改請留空" pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6">
+                            <input type="password" class="form-control" name="pin" id="edit-user-pin" placeholder="不修改請留空" pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore>
                         </div>
                     </div>
                     <div class="modal-footer border-secondary justify-content-between">
@@ -1780,11 +1794,13 @@
                                 <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出 Excel 營業報表 (.xlsx)
                             </button>
                         </li>
+                        {% if is_platform_admin %}
                         <li class="nav-item">
                             <button class="nav-link fw-bold" id="tab-export-zip-btn" data-bs-toggle="pill" data-bs-target="#pane-export-zip">
                                 <i class="bi bi-archive-fill me-1"></i> 匯出系統完整備份包 (.zip)
                             </button>
                         </li>
+                        {% endif %}
                     </ul>
 
                     <div class="tab-content">
@@ -1823,7 +1839,8 @@
                             </form>
                         </div>
 
-                        <!-- 分頁 B：完整備份包 ZIP (包含 menu.db 與照片) -->
+                        {% if is_platform_admin %}
+                        <!-- 分頁 B：完整備份包 ZIP (包含 menu.db 與照片；含所有店家資料，僅平台管理者可見) -->
                         <div class="tab-pane fade" id="pane-export-zip">
                             <div class="p-3 rounded bg-black bg-opacity-25 border border-secondary mb-3">
                                 <h6 class="fw-bold text-warning mb-2"><i class="bi bi-info-circle me-1"></i>備份包收錄內容：</h6>
@@ -1840,6 +1857,7 @@
                                 </button>
                             </form>
                         </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -1865,11 +1883,13 @@
                                 <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel / CSV 資料同步
                             </button>
                         </li>
+                        {% if is_platform_admin %}
                         <li class="nav-item">
                             <button class="nav-link fw-bold" id="tab-restore-zip-btn" data-bs-toggle="pill" data-bs-target="#pane-restore-zip">
                                 <i class="bi bi-arrow-counterclockwise me-1"></i> 還原 ZIP 備份包 (覆蓋還原)
                             </button>
                         </li>
+                        {% endif %}
                     </ul>
 
                     <div class="tab-content">
@@ -1890,7 +1910,8 @@
                             </form>
                         </div>
 
-                        <!-- 分頁 B：ZIP 完整還原 (覆蓋 menu.db 與相片) -->
+                        {% if is_platform_admin %}
+                        <!-- 分頁 B：ZIP 完整還原 (覆蓋 menu.db 與相片；僅平台管理者可見) -->
                         <div class="tab-pane fade" id="pane-restore-zip">
                             <div class="alert alert-danger py-2 small mb-3">
                                 <i class="bi bi-exclamation-triangle-fill me-1"></i>
@@ -1913,6 +1934,7 @@
                                 </button>
                             </form>
                         </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -1923,6 +1945,7 @@
 
 <script>
     const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    const RANKING_LIMIT = Math.max(1, parseInt('{{ current_limit }}', 10) || 3);
     const _origFetch = window.fetch;
     window.fetch = function(input, init = {}) {
         init.headers = init.headers || {};
@@ -2054,6 +2077,8 @@ function autoExpandTextarea(el) {
         document.getElementById('edit-price').value = Math.round(Number(d.price || 0));
         document.getElementById('edit-stock').value = d.stock || 0;
         document.getElementById('edit-total-stock').value = d.totalStock || 0;
+        document.getElementById('edit-loaded-stock').value = d.stock || 0;
+        document.getElementById('edit-loaded-total-stock').value = d.totalStock || 0;
         document.getElementById('edit-sold-out').checked = d.isSoldOut === '1';
         document.getElementById('edit-discount').checked = d.isDiscount === '1';
         document.getElementById('edit-discount-price').value = Math.round(Number(d.discountPrice || 0));
@@ -2108,6 +2133,9 @@ function autoExpandTextarea(el) {
         document.getElementById('edit-user-name').value = d.name;
         document.getElementById('edit-user-phone').value = d.phone;
         document.getElementById('edit-user-points').value = d.points || 0;
+        document.getElementById('edit-user-loaded-points').value = d.points || 0;
+        // 每次開啟都清空 PIN 欄位，避免瀏覽器自動帶入已儲存的密碼而在不知情下重設會員 PIN
+        document.getElementById('edit-user-pin').value = '';
         bootstrap.Modal.getOrCreateInstance(document.getElementById('editUserModal')).show();
     }
 
@@ -2211,7 +2239,8 @@ function autoExpandTextarea(el) {
                 renderUserCouponsBody(userName, data.coupons);
                 
                 // 2. 同步更新外層按鈕的 data-coupons，避免下次打開讀回舊狀態
-                const btns = document.querySelectorAll(`button[data-user-name="${userName}"]`);
+                // 不把姓名拼進 CSS 選擇器 (姓名含引號時 querySelectorAll 會直接丟例外)，改為逐一比對 dataset
+                const btns = [...document.querySelectorAll('button[data-user-name]')].filter(b => b.dataset.userName === userName);
                 btns.forEach(b => {
                     b.dataset.coupons = JSON.stringify(data.coupons);
                 });
@@ -2511,7 +2540,7 @@ function autoExpandTextarea(el) {
     }
     //  店家後台：即時同步今日訂單狀態與營運分析指標
     function syncAdminLiveOrders() {
-        fetch('/api/admin_live_orders')
+        fetch('/api/admin_live_orders?limit=' + RANKING_LIMIT)
             .then(res => {
                 if (res.status === 401) {
                     if (adminEventSource) adminEventSource.close();
@@ -2571,13 +2600,41 @@ function autoExpandTextarea(el) {
                     const elEta = document.getElementById('stat-eta-minutes');
                     const elCompleted = document.getElementById('stat-completed-today');
                     const elAvg = document.getElementById('stat-avg-order-value');
+        const elAvgTime = document.getElementById('stat-avg-order-time');
+        const elStale = document.getElementById('stat-stale-pending');
+        const elTop = document.getElementById('stat-top-items');
+        const elStaleN = document.getElementById('stat-stale-pending-n');
                     const elAiAdvice = document.getElementById('stat-ai-advice') || document.querySelector('#analytics-pane .border.border-secondary');
 
                     if (elPending) elPending.innerText = data.analytics.pending_count;
                     if (elOrders) elOrders.innerText = data.analytics.today_orders;
                     if (elRevenue) elRevenue.innerText = `$${data.analytics.today_revenue}`;
-                    if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
-                    if (elCompleted) elCompleted.innerText = data.analytics.completed_today;
+                    if (elTop && Array.isArray(data.analytics.top_items)) {
+            elTop.innerHTML = data.analytics.top_items.length === 0
+                ? '<div class="text-white-50">目前尚無銷售資料。</div>'
+                : data.analytics.top_items.map((it, idx) => `
+                    <div class="list-group-item bg-transparent border-secondary text-white d-flex justify-content-between align-items-center px-0 py-2">
+                        <div>
+                            <div class="fw-bold">${idx + 1}. ${escapeHtml(it.name)}</div>
+                            <small class="text-white-50">已售 ${Number(it.quantity) || 0} 份</small>
+                        </div>
+                        <span class="badge bg-warning text-dark">$${Number(it.revenue) || 0}</span>
+                    </div>`).join('');
+        }
+        if (elEta) elEta.innerText = `${data.analytics.eta_minutes} 分鐘`;
+        const elEtaBasis = document.getElementById('stat-eta-basis');
+        if (elEtaBasis) {
+            elEtaBasis.innerText = data.analytics.eta_based_on_samples
+                ? `依今日實際平均 ${data.analytics.eta_per_order_minutes} 分鐘/單 (已排除極端值)`
+                : `今日尚無出餐紀錄，暫以 ${data.analytics.eta_per_order_minutes} 分鐘/單估算`;
+        }
+                    if (elCompleted) elCompleted.innerText = data.analytics.completed_today ?? 0;
+        if (elAvgTime) elAvgTime.innerText = data.analytics.avg_order_time ? data.analytics.avg_order_time : '-';
+        if (elStale && elStaleN) {
+            const staleN = data.analytics.stale_pending_count || 0;
+            elStaleN.innerText = staleN;
+            elStale.style.display = staleN > 0 ? '' : 'none';
+        }
                     if (elAvg && data.analytics.avg_order_value !== undefined) elAvg.innerText = Math.round(data.analytics.avg_order_value);
                     if (elAiAdvice && data.analytics.ai_advice) {
                         elAiAdvice.innerText = data.analytics.ai_advice;

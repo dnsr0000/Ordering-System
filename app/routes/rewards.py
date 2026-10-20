@@ -4,7 +4,8 @@ from app.extensions import db
 from app.models.user import User, RewardRedemption
 from app.models.menu import MenuItem, ModifierOption
 from app.models.coupon import Coupon, UserCoupon
-from app.utils import safe_int
+from app.services.voucher_service import list_open_vouchers, try_refund_voucher
+from app.utils import safe_int, get_json_dict
 
 rewards_bp = Blueprint('rewards', __name__)
 
@@ -29,7 +30,7 @@ def redeem_reward():
     if not session.get('user_id'):
         return jsonify({'success': False, 'message': '請先登入會員！'}), 401
     user_id = session['user_id']
-    data = request.get_json() or {}
+    data = get_json_dict()
 
     coupon_id = data.get('coupon_id') or (data.get('id') if data.get('type') == 'coupon' else None)
     if coupon_id is not None:
@@ -56,6 +57,16 @@ def redeem_reward():
 
         user_coupon = UserCoupon(user_id=user_id, coupon_id=coupon.id, code=coupon.code, is_used=False)
         db.session.add(user_coupon)
+        db.session.flush()
+        # 領取上限二次確認：上面的次數檢查與寫入之間有空窗，同時送出多個請求會一起通過。
+        # 扣點的 UPDATE 已取得資料庫寫入鎖，因此這裡重新計數時其他請求的結果已可見；超過上限就整筆取消 (連同扣點一起 rollback)
+        if coupon.per_user_limit and coupon.per_user_limit > 0:
+            if UserCoupon.query.filter_by(user_id=user_id, coupon_id=coupon.id).count() > coupon.per_user_limit:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'message': f'❌ 您已達此優惠券的兌換上限（每位會員限兌換 {coupon.per_user_limit} 次）！'
+                }), 400
         db.session.commit()
         db.session.expire_all()
         refreshed_user = db.session.get(User, user_id)
@@ -143,7 +154,7 @@ def refund_reward_item():
     if not user_id:
         return jsonify({'success': False, 'message': '請先登入會員！'}), 401
 
-    data = request.get_json() or {}
+    data = get_json_dict()
     item_id = safe_int(data.get('item_id'), 0)
     raw_name = str(data.get('name', '')).strip()
     quantity = max(1, safe_int(data.get('quantity', 1), 1))
@@ -158,20 +169,23 @@ def refund_reward_item():
     if not menu_item or not menu_item.is_reward:
         return jsonify({'success': False, 'message': '查無此兌換商品或非有效兌換品項！'}), 400
 
-    # 嚴格檢查並核銷尚未使用的 RewardRedemption 憑證，防止無憑證或重複退點洗點數 (#5)
-    vouchers = RewardRedemption.query.filter_by(
-        user_id=user_id,
-        menu_item_id=menu_item.id,
-        is_used=False,
-        is_refunded=False
-    ).order_by(RewardRedemption.id.desc()).limit(quantity).all()
+    # 嚴格檢查並核銷尚未使用的 RewardRedemption 憑證，防止無憑證或重複退點洗點數 (#5)。
+    # 每張憑證以「原子條件式 UPDATE」退點：若同一時間已被結帳核銷或被另一個退點請求處理，這裡就搶不到，
+    # 搶到的張數不足就整筆取消 (rollback)，不會出現「餐點拿了、點數也退了」。
+    candidates = list_open_vouchers(g.tenant_id, user_id, menu_item.id)
+    candidates.reverse()  # 退點優先退最近兌換的 (與原行為一致)
+    refunded_ids = []
+    pts_to_refund = 0
+    for voucher_id, cost in candidates:
+        if len(refunded_ids) >= quantity:
+            break
+        if try_refund_voucher(g.tenant_id, user_id, voucher_id):
+            refunded_ids.append(voucher_id)
+            pts_to_refund += cost
 
-    if len(vouchers) < quantity:
+    if len(refunded_ids) < quantity:
+        db.session.rollback()
         return jsonify({'success': False, 'message': '查無可退還之有效兌換紀錄，無法重複退點！'}), 400
-
-    pts_to_refund = sum(v.points_cost for v in vouchers)
-    for v in vouchers:
-        v.is_refunded = True
 
     db.session.execute(
         db.text("UPDATE user SET points = points + :pts WHERE id = :id AND tenant_id = :tenant_id"),

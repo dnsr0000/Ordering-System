@@ -5,16 +5,16 @@ from app.models.user import User, RewardSetting
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.coupon import UserCoupon
-from app.services.order_service import update_popular_items, verify_promo_code, process_checkout
-from app.routes.common import clear_customer_session
-from app.utils import rate_limit
+from app.services.order_service import verify_promo_code, process_checkout
+from app.routes.common import clear_customer_session, get_or_create_reward_setting
+from app.services.idempotency import submit_order_cache, IdempotencyCache
+from app.utils import rate_limit, get_json_dict, safe_int
 
 customer_bp = Blueprint('customer', __name__)
 
 
 @customer_bp.route('/', endpoint='customer_index')
 def customer_index():
-    update_popular_items(force=False)
     items = MenuItem.query.all()
     categories = sorted(list(set(item.category for item in items if item.category)))
     user_points = 0
@@ -23,11 +23,7 @@ def customer_index():
     is_guest = session.get('is_guest', False)
     modifier_options = ModifierOption.query.filter_by(is_active=True).all()
 
-    reward_setting = RewardSetting.query.first()
-    if not reward_setting:
-        reward_setting = RewardSetting(is_enabled=True, points_per_dollar=1, max_discount_per_order=0, spend_per_point=100)
-        db.session.add(reward_setting)
-        db.session.commit()
+    reward_setting = get_or_create_reward_setting(g.tenant_id)
 
     if session.get('user_id'):
         user = db.session.get(User, session['user_id'])
@@ -103,8 +99,9 @@ def api_user_available_coupons():
     })
 
 @customer_bp.route('/api/verify_promo', methods=['POST'])
+@rate_limit(max_requests=30, window_seconds=60, key_prefix="customer_verify_promo", methods=('POST',))
 def verify_promo():
-    data = request.get_json() or {}
+    data = get_json_dict()
     code = data.get('promo_code', '')
     subtotal = data.get('subtotal', 0)
     user_id = session.get('user_id')
@@ -129,30 +126,46 @@ def tenant_storefront(tenant_slug):
 @customer_bp.route('/submit_order', methods=['POST'])
 @rate_limit(max_requests=20, window_seconds=60, key_prefix="customer_submit_order", methods=('POST',))
 def submit_order():
-    data = request.get_json() or {}
+    data = get_json_dict()
     user_id = session.get('user_id')
     user_name = session.get('user_name', '訪客')
     cust_log_id = session.get('customer_log_id')
     order_type = str(data.get('order_type', '內用')).strip()
     need_cutlery = bool(data.get('need_cutlery', True)) if order_type == '外帶' else False
 
-    result, status_code = process_checkout(
-        items_data=data.get('items', []),
-        payment_method=data.get('payment_method', 'Cash'),
-        order_type=order_type,
-        need_cutlery=need_cutlery,
-        note=data.get('note', ''),
-        promo_code=data.get('promo_code', ''),
-        use_points=data.get('use_points', 0),
-        table_input=user_name,
-        cash_received=0,
-        user_id=user_id,
-        order_source='Kiosk',
-        cashier_username='',
-        customer_log_id=cust_log_id,
-        client_ip=request.remote_addr or '127.0.0.1',
-        tenant_id=getattr(g, 'tenant_id', None) or session.get('tenant_id') or 1
-    )
+    tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id') or 1
+
+    def _do_checkout():
+        return process_checkout(
+            items_data=data.get('items', []),
+            payment_method=data.get('payment_method', 'Cash'),
+            order_type=order_type,
+            need_cutlery=need_cutlery,
+            note=data.get('note', ''),
+            promo_code=data.get('promo_code', ''),
+            use_points=data.get('use_points', 0),
+            table_input=user_name,
+            cash_received=0,
+            user_id=user_id,
+            order_source='Kiosk',
+            cashier_username='',
+            customer_log_id=cust_log_id,
+            client_ip=request.remote_addr or '127.0.0.1',
+            tenant_id=tenant_id
+        )
+
+    # 冪等保護：連按兩次「送出」或網路重送 (瀏覽器還沒收到第一次的回應)，內容相同的請求只會建立一張訂單。
+    # 鍵中帶入工作階段內的「已成功送單次數」order_seq：送單成功後次數 +1 並隨回應寫回 Cookie，
+    # 所以顧客之後「刻意再點一模一樣的餐」是新的鍵、不會被誤判為重複；只有還沒看到上一次結果的重送才會命中。
+    order_seq = safe_int(session.get('order_seq'), 0)
+    identity = cust_log_id or session.get('_csrf_token') or session.get('csrf_token') or request.remote_addr
+    payload_for_key = {k: v for k, v in data.items() if k != 'csrf_token'}
+    idem_key = IdempotencyCache.make_key(tenant_id, identity, user_id, order_seq, payload_for_key)
+    result, status_code, replayed = submit_order_cache.run(idem_key, _do_checkout)
+    if replayed and isinstance(result, dict):
+        result = dict(result, replayed=True)
+    if status_code == 200:
+        session['order_seq'] = order_seq + 1   # 重送的回應也寫入相同的值，避免瀏覽器最後收到的 Cookie 退回舊次數
 
     if status_code == 200:
         session['user_points'] = result.get('remaining_points', 0)
@@ -161,12 +174,14 @@ def submit_order():
 @customer_bp.route('/my_orders', endpoint='my_orders')
 def my_orders():
     user_id = session.get('user_id')
-    user_name = session.get('user_name')
+    cust_log_id = session.get('customer_log_id')
 
     if user_id:
         orders = Order.query.filter_by(user_id=user_id).order_by(Order.id.desc()).all()
-    elif user_name:
-        orders = Order.query.filter_by(table_number=user_name).order_by(Order.id.desc()).all()
+    elif cust_log_id:
+        # 訪客以「本次進場紀錄 (customer_log_id)」歸戶。舊版用 "訪客-1000~9999" 這種只有 9000 種的隨機代號比對，
+        # 不同訪客撞號就會看到彼此的訂單 (品項、金額、取餐號)。
+        orders = Order.query.filter_by(customer_log_id=cust_log_id, user_id=None).order_by(Order.id.desc()).all()
     else:
         return jsonify([])
 
