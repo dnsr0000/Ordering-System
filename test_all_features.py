@@ -82,6 +82,7 @@ Config.UPLOAD_FOLDER_MEMBER = TEST_UPLOAD_MEMBER_DIR
 Config.UPLOAD_FOLDER_MENU = TEST_UPLOAD_MENU_DIR
 Config.ADMIN_USERNAME = "admin_test"
 Config.ADMIN_PASSWORD = "AdminPass!2026"
+Config.ADMIN_CREDENTIALS_GENERATED = False
 Config.ADMIN_PASSWORD_HASH = generate_password_hash("AdminPass!2026")
 
 
@@ -93,6 +94,7 @@ class TestConfig(Config):
     UPLOAD_FOLDER_MENU = TEST_UPLOAD_MENU_DIR
     ADMIN_USERNAME = "admin_test"
     ADMIN_PASSWORD = "AdminPass!2026"
+    ADMIN_CREDENTIALS_GENERATED = False
     ADMIN_PASSWORD_HASH = Config.ADMIN_PASSWORD_HASH
     # 測試以 X-Forwarded-For 模擬不同來源 IP，等同「前面有一層反向代理」；正式環境預設為 0 (不信任)
     TRUSTED_PROXY_COUNT = 1
@@ -4630,9 +4632,11 @@ def run_all_tests():
             return "未設定時自動產生 64 字元隨機金鑰並持久化；.env 設定優先"
         runner.check("15.13", "SECRET_KEY 自動產生並持久化 (不再使用寫死金鑰)", t15_13)
 
-        # 15.14 預設負責人帳號：重啟不再洗掉已改的密碼；只有明確設定救援開關才重設
+        # 15.14 預設負責人帳號：驗證一般啟動、救援重設與缺少 .env 憑證時輪替
         def t15_14():
             from app.config import Config as _C
+            old_config = (_C.ADMIN_USERNAME, _C.ADMIN_PASSWORD, _C.ADMIN_PASSWORD_HASH,
+                          _C.ADMIN_CREDENTIALS_GENERATED, _C.RESET_ADMIN_PASSWORD_ON_START)
             with app.app_context():
                 acc = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username="admin_test").first()
                 acc.set_password("Changed!Pass1234")
@@ -4641,15 +4645,43 @@ def run_all_tests():
             with app.app_context():
                 acc = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username="admin_test").first()
                 assert acc.check_password("Changed!Pass1234"), "重啟 (遷移) 把負責人自行修改的密碼洗掉了"
-            _C.RESET_ADMIN_PASSWORD_ON_START = True
             try:
+                _C.RESET_ADMIN_PASSWORD_ON_START = True
                 run_database_migrations(app)
-            finally:
+                with app.app_context():
+                    acc = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username="admin_test").first()
+                    assert acc.check_password("AdminPass!2026"), "救援開關開啟時應重設為 .env 的密碼"
+
                 _C.RESET_ADMIN_PASSWORD_ON_START = False
+                _C.ADMIN_USERNAME = "owner-generated-test"
+                _C.ADMIN_PASSWORD = "Generated!Pass2026"
+                _C.ADMIN_PASSWORD_HASH = generate_password_hash(_C.ADMIN_PASSWORD)
+                _C.ADMIN_CREDENTIALS_GENERATED = True
+                run_database_migrations(app)
+                with app.app_context():
+                    rotated = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                        username="owner-generated-test"
+                    ).first()
+                    assert rotated is not None and rotated.role == "owner" and rotated.is_active
+                    assert rotated.check_password("Generated!Pass2026"), "產生的新密碼未寫入資料庫"
+                    assert StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                        username="admin_test"
+                    ).first() is None, "舊管理員帳號仍可使用"
+            finally:
+                with app.app_context():
+                    rotated = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                        username="owner-generated-test"
+                    ).first()
+                    if rotated:
+                        rotated.username = "admin_test"
+                        rotated.set_password("AdminPass!2026")
+                        db.session.commit()
+                (_C.ADMIN_USERNAME, _C.ADMIN_PASSWORD, _C.ADMIN_PASSWORD_HASH,
+                 _C.ADMIN_CREDENTIALS_GENERATED, _C.RESET_ADMIN_PASSWORD_ON_START) = old_config
             with app.app_context():
                 acc = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username="admin_test").first()
-                assert acc.check_password("AdminPass!2026"), "救援開關開啟時應重設為 .env 的密碼"
-            return "預設不重設已修改的密碼；RESET_ADMIN_PASSWORD_ON_START=1 才重設"
+                assert acc.check_password("AdminPass!2026"), "測試清理未恢復管理員憑證"
+            return "一般啟動保留密碼、救援開關可重設；缺少 .env 帳密時替換預設 owner 並使舊帳密失效"
         runner.check("15.14", "預設負責人密碼：重啟不被洗掉，救援開關才重設", t15_14)
 
         # 15.15 分散式鎖：Redis 中斷時降級為「依名稱區分」的本地鎖，結帳不受影響

@@ -75,14 +75,14 @@ class Config:
     LOCAL_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    ADMIN_USERNAME = (os.getenv("ADMIN_USERNAME") or "admin").strip().strip('"').strip("'")
+    ADMIN_USERNAME = (os.getenv("ADMIN_USERNAME") or "").strip().strip('"').strip("'")
     ADMIN_PASSWORD = (os.getenv("ADMIN_PASSWORD") or "").strip().strip('"').strip("'")
 
-    # 未設定 ADMIN_PASSWORD 時產生隨機密碼；僅在「首次建立」預設負責人帳號時才會使用並顯示 (見 migration_service)
-    ADMIN_PASSWORD_GENERATED = False
-    if not ADMIN_PASSWORD:
-        ADMIN_PASSWORD = secrets.token_urlsafe(12)
-        ADMIN_PASSWORD_GENERATED = True
+    # 帳號或密碼任一未設定時，都產生完整的新憑證並在啟動時輪替預設店家 owner。
+    ADMIN_CREDENTIALS_GENERATED = not (ADMIN_USERNAME and ADMIN_PASSWORD)
+    if ADMIN_CREDENTIALS_GENERATED:
+        ADMIN_USERNAME = f"owner-{secrets.token_urlsafe(9)}"
+        ADMIN_PASSWORD = secrets.token_urlsafe(24)
 
     ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
 

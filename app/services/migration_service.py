@@ -58,10 +58,15 @@ def _run_migrations_inner():
             ))
             db.session.commit()
 
-        # 建立或同步 .env 設定之預設管理員帳號與密碼 (#1)
-        bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
-            username=Config.ADMIN_USERNAME
-        ).first()
+        # 建立或更新預設店家的管理員帳號；未設定完整 .env 憑證時，每次啟動輪替該店 owner。
+        if getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False):
+            bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                tenant_id=default_tenant.id, role='owner'
+            ).order_by(StaffAccount.id.asc()).first()
+        else:
+            bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                username=Config.ADMIN_USERNAME
+            ).first()
         pwd_hash = getattr(Config, 'ADMIN_PASSWORD_HASH', None) or generate_password_hash(Config.ADMIN_PASSWORD)
         if not bootstrap_account:
             db.session.add(StaffAccount(
@@ -72,9 +77,19 @@ def _run_migrations_inner():
                 is_active=True
             ))
             db.session.commit()
-            if getattr(Config, 'ADMIN_PASSWORD_GENERATED', False):
-                print(f"\n⚠️  [安全警告] 未在 .env 設定 ADMIN_PASSWORD，已為預設負責人【{Config.ADMIN_USERNAME}】"
-                      f"自動生成初始密碼 (僅顯示這一次，請登入後立即修改): {Config.ADMIN_PASSWORD}\n")
+            if getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False):
+                print(f"\n⚠️ [安全警告] .env 未設定完整管理員帳密，已建立隨機憑證。"
+                      f"\n帳號: {Config.ADMIN_USERNAME}\n密碼: {Config.ADMIN_PASSWORD}"
+                      f"\n請立即登入並將帳密寫入安全位置。\n")
+        elif getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False):
+            bootstrap_account.username = Config.ADMIN_USERNAME
+            bootstrap_account.password_hash = pwd_hash
+            bootstrap_account.is_active = True
+            bootstrap_account.role = 'owner'
+            db.session.commit()
+            print(f"\n⚠️ [安全警告] .env 未設定完整管理員帳密，已輪替預設店家 owner 憑證。"
+                  f"\n帳號: {Config.ADMIN_USERNAME}\n密碼: {Config.ADMIN_PASSWORD}"
+                  f"\n請立即登入並將帳密寫入安全位置。\n")
         elif getattr(Config, 'RESET_ADMIN_PASSWORD_ON_START', False):
             # 忘記密碼的救援開關 (.env 設 RESET_ADMIN_PASSWORD_ON_START=1)：重設為 .env 的密碼並重新啟用。
             # 預設不重設，負責人自行修改的密碼、停用狀態不會被重啟洗掉。
