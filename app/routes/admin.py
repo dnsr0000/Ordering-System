@@ -218,6 +218,19 @@ def staff_accounts():
             db.session.commit()
             return js_alert_redirect(f'✅ 已成功重設員工【{acc.username}】的密碼！', url_for('admin.staff_accounts'), 200)
 
+        if action == 'delete_account':
+            target_id = safe_int(request.form.get('account_id'), 0)
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            if acc.id == g.staff_account.id:
+                return js_alert_redirect('❌ 無法刪除您目前登入的負責人帳號！', url_for('admin.staff_accounts'), 400)
+            record_staff_audit(
+                'STAFF_DELETE_ACCOUNT',
+                details=f"刪除員工帳號：{acc.username} ({acc.role})"
+            )
+            db.session.delete(acc)
+            db.session.commit()
+            return redirect(url_for('admin.staff_accounts'))
+
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         role = request.form.get('role', 'staff')
@@ -233,7 +246,12 @@ def staff_accounts():
         return redirect(url_for('admin.staff_accounts'))
 
     accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id).order_by(StaffAccount.id.asc()).all()
-    return render_template('staff_accounts.html', accounts=accounts, tenant=g.tenant)
+    return render_template(
+        'staff_accounts.html',
+        accounts=accounts,
+        tenant=g.tenant,
+        current_staff_id=g.staff_account.id
+    )
 
 # ==============================================================================
 # 菜單品項與加購品 CRUD

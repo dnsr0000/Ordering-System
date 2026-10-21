@@ -560,7 +560,7 @@ def run_all_tests():
         assert r_short.status_code == 400, f"短密碼未被攔截: {r_short.status_code}"
 
         # 2. 建立 manager / staff / kitchen 三種角色
-        for uname, role in [("mgr_user", "manager"), ("pos_user", "staff"), ("kds_user", "kitchen")]:
+        for uname, role in [("mgr_user", "manager"), ("pos_user", "staff"), ("kds_user", "kitchen"), ("delete_user", "staff")]:
             r = admin_client.post(
                 "/admin/staff",
                 data={"action": "create", "username": uname, "password": "StaffPass!2026", "role": role, "csrf_token": csrf},
@@ -577,8 +577,10 @@ def run_all_tests():
         with app.app_context():
             owner_acc = StaffAccount.query.filter_by(username="admin_test").first()
             pos_acc = StaffAccount.query.filter_by(username="pos_user").first()
+            delete_acc = StaffAccount.query.filter_by(username="delete_user").first()
             owner_id = owner_acc.id
             pos_id = pos_acc.id
+            delete_id = delete_acc.id
 
         # 4. 防自鎖保護：owner 嘗試停用自己必回 400
         r_self_lock = admin_client.post(
@@ -586,6 +588,11 @@ def run_all_tests():
             data={"action": "toggle_active", "account_id": owner_id, "csrf_token": csrf},
         )
         assert r_self_lock.status_code == 400, f"負責人停用自己未被攔截: {r_self_lock.status_code}"
+        r_self_delete = admin_client.post(
+            "/admin/staff",
+            data={"action": "delete_account", "account_id": owner_id, "csrf_token": csrf},
+        )
+        assert r_self_delete.status_code == 400, f"負責人刪除自己未被攔截: {r_self_delete.status_code}"
 
         # 5. 停用 pos_user -> 驗證無法登入 (401) -> 再重新啟用
         r_disable = admin_client.post(
@@ -614,11 +621,18 @@ def run_all_tests():
         )
         assert r_reset.status_code == 200, f"重設員工密碼失敗: {r_reset.status_code}"
 
+        r_delete = admin_client.post(
+            "/admin/staff",
+            data={"action": "delete_account", "account_id": delete_id, "csrf_token": csrf},
+        )
+        assert r_delete.status_code == 302, f"刪除員工帳號失敗: {r_delete.status_code}"
+
         with app.app_context():
+            assert db.session.get(StaffAccount, delete_id) is None, "已刪除的員工帳號仍存在"
             audits = {a.action_type for a in StaffAuditLog.query.all()}
-            assert {"STAFF_CREATE", "STAFF_TOGGLE_ACTIVE", "STAFF_RESET_PASSWORD"}.issubset(audits), f"員工管理稽核缺失: {audits}"
-        return "建立3角色、重複攔截(409)、防自鎖(400)、停用/啟用與重設密碼稽核通過"
-    runner.check("2.3", "員工帳號建立、停用/啟用切換、重設密碼、防自鎖與 StaffAuditLog 驗證", t2_3)
+            assert {"STAFF_CREATE", "STAFF_TOGGLE_ACTIVE", "STAFF_RESET_PASSWORD", "STAFF_DELETE_ACCOUNT"}.issubset(audits), f"員工管理稽核缺失: {audits}"
+        return "建立3角色、重複攔截(409)、自我停用/刪除攔截(400)、停用/啟用、重設密碼、刪除與稽核通過"
+    runner.check("2.3", "員工帳號建立、停用/啟用、重設/刪除、防自鎖與稽核驗證", t2_3)
 
     # 2.4 RBAC 四級角色權限矩陣與未授權存取 POS 攔截
     def t2_4():

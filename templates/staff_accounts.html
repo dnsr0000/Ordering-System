@@ -87,7 +87,7 @@
                             <th>角色</th>
                             <th>狀態</th>
                             <th>建立時間</th>
-                            <th class="text-end">密碼重設 / 狀態管理</th>
+                            <th class="text-end">帳號管理</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -123,6 +123,16 @@
                                         <input type="hidden" name="account_id" value="{{ account.id }}">
                                         <button type="submit" class="btn btn-sm {{ 'btn-outline-danger' if account.is_active else 'btn-outline-success' }}">
                                             {{ '停用' if account.is_active else '啟用' }}
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                    {% if account.id != current_staff_id %}
+                                    <form method="POST" class="d-inline" onsubmit="return confirm('確定永久刪除此員工帳號？刪除後無法復原。');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="action" value="delete_account">
+                                        <input type="hidden" name="account_id" value="{{ account.id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap" title="永久刪除帳號" aria-label="永久刪除帳號">
+                                            <i class="bi bi-trash" aria-hidden="true"></i> 刪除
                                         </button>
                                     </form>
                                     {% endif %}
