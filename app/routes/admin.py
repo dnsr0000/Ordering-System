@@ -1,5 +1,6 @@
 import os
 import re
+import secrets
 import time
 import uuid
 import pandas as pd
@@ -62,7 +63,7 @@ def admin_dashboard():
         password = request.form.get('password')
         staff = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username=username).first()
         tenant = Tenant.query.execution_options(skip_tenant_filter=True).filter_by(id=staff.tenant_id).first() if staff else None
-        if staff and staff.is_active and tenant and tenant.is_active and staff.check_password(password or ''):
+        if staff and staff.is_active and not staff.deleted_at and tenant and tenant.is_active and staff.check_password(password or ''):
             session.permanent = True
             session['admin_logged_in'] = True
             session['staff_account_id'] = staff.id
@@ -199,7 +200,7 @@ def staff_accounts():
         action = request.form.get('action', 'create')
         if action == 'toggle_active':
             target_id = safe_int(request.form.get('account_id'), 0)
-            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id, deleted_at=None).first_or_404()
             if acc.id == g.staff_account.id:
                 return js_alert_redirect('❌ 無法停用您目前登入的負責人帳號！', url_for('admin.staff_accounts'), 400)
             acc.is_active = not bool(acc.is_active)
@@ -212,7 +213,7 @@ def staff_accounts():
             new_pwd = request.form.get('new_password', '')
             if len(new_pwd) < 10:
                 return js_alert_redirect('❌ 新密碼長度至少需 10 個字元！', url_for('admin.staff_accounts'), 400)
-            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id, deleted_at=None).first_or_404()
             acc.set_password(new_pwd)
             record_staff_audit('STAFF_RESET_PASSWORD', details=f"重設員工帳號密碼：{acc.username}")
             db.session.commit()
@@ -220,14 +221,19 @@ def staff_accounts():
 
         if action == 'delete_account':
             target_id = safe_int(request.form.get('account_id'), 0)
-            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id).first_or_404()
+            acc = StaffAccount.query.filter_by(id=target_id, tenant_id=g.tenant_id, deleted_at=None).first_or_404()
             if acc.id == g.staff_account.id:
                 return js_alert_redirect('❌ 無法刪除您目前登入的負責人帳號！', url_for('admin.staff_accounts'), 400)
+            # 軟刪除：保留帳號列 (稽核可追溯、id 不會被重用)，但立即停用、使密碼失效並釋出帳號名稱
+            original_username = acc.username
             record_staff_audit(
                 'STAFF_DELETE_ACCOUNT',
-                details=f"刪除員工帳號：{acc.username} ({acc.role})"
+                details=f"刪除員工帳號：{original_username} ({acc.role})，帳號ID={acc.id}"
             )
-            db.session.delete(acc)
+            acc.is_active = False
+            acc.deleted_at = datetime.now()
+            acc.username = f"{original_username[:90]}#deleted-{acc.id}"
+            acc.set_password(secrets.token_urlsafe(32))
             db.session.commit()
             return redirect(url_for('admin.staff_accounts'))
 
@@ -245,7 +251,7 @@ def staff_accounts():
         db.session.commit()
         return redirect(url_for('admin.staff_accounts'))
 
-    accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id).order_by(StaffAccount.id.asc()).all()
+    accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id, deleted_at=None).order_by(StaffAccount.id.asc()).all()
     return render_template(
         'staff_accounts.html',
         accounts=accounts,

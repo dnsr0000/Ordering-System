@@ -652,10 +652,40 @@ def run_all_tests():
         assert r_delete.status_code == 302, f"刪除員工帳號失敗: {r_delete.status_code}"
 
         with app.app_context():
-            assert db.session.get(StaffAccount, delete_id) is None, "已刪除的員工帳號仍存在"
+            soft = db.session.get(StaffAccount, delete_id)
+            assert soft is not None, "軟刪除應保留帳號列 (稽核可追溯)"
+            assert soft.deleted_at is not None and soft.is_active is False, "已刪除帳號應標記 deleted_at 並停用"
+            assert soft.username != "delete_user" and f"#deleted-{delete_id}" in soft.username, "已刪除帳號名稱未釋出"
+            assert not soft.check_password("StaffPass!2026"), "已刪除帳號的舊密碼仍有效"
+            del_audit = StaffAuditLog.query.filter_by(action_type="STAFF_DELETE_ACCOUNT").order_by(StaffAuditLog.id.desc()).first()
+            assert del_audit is not None and f"ID={delete_id}" in (del_audit.details or "") and "delete_user" in del_audit.details, "刪除稽核未記錄帳號 ID 與原名稱"
+
+        d_client = app.test_client()
+        d_csrf = get_client_csrf(d_client, "/admin")
+        r_deleted_login = d_client.post(
+            "/admin",
+            data={"username": "delete_user", "password": "StaffPass!2026", "csrf_token": d_csrf},
+            headers={"X-Forwarded-For": "10.10.1.96"},
+        )
+        assert r_deleted_login.status_code == 401, f"已刪除員工仍可登入: {r_deleted_login.status_code}"
+
+        page_html = admin_client.get("/admin/staff").get_data(as_text=True)
+        assert f"#deleted-{delete_id}" not in page_html, "已刪除帳號不應出現在員工列表"
+        for act, extra in (("toggle_active", {}), ("reset_password", {"new_password": "AnotherPass!2026"})):
+            r_dead = admin_client.post("/admin/staff", data={"action": act, "account_id": delete_id, "csrf_token": csrf, **extra})
+            assert r_dead.status_code == 404, f"已刪除帳號不可再被 {act}: {r_dead.status_code}"
+
+        r_recreate = admin_client.post(
+            "/admin/staff",
+            data={"action": "create", "username": "delete_user", "password": "StaffPass!2026", "role": "staff", "csrf_token": csrf},
+        )
+        assert r_recreate.status_code == 302, f"刪除後帳號名稱應可重新使用: {r_recreate.status_code}"
+        with app.app_context():
+            again = StaffAccount.query.filter_by(username="delete_user").first()
+            assert again is not None and again.id != delete_id, "新帳號不應重用舊帳號 id"
             audits = {a.action_type for a in StaffAuditLog.query.all()}
             assert {"STAFF_CREATE", "STAFF_TOGGLE_ACTIVE", "STAFF_RESET_PASSWORD", "STAFF_DELETE_ACCOUNT"}.issubset(audits), f"員工管理稽核缺失: {audits}"
-        return "建立3角色、重複攔截(409)、自我停用/刪除攔截(400)、停用/啟用、重設密碼、刪除與稽核通過"
+        return "建立3角色、重複攔截(409)、自我停用/刪除攔截(400)、停用/啟用、重設密碼、軟刪除(停用/改名/保留稽核/名稱可重用)通過"
     runner.check("2.3", "員工帳號建立、停用/啟用、重設/刪除、防自鎖與稽核驗證", t2_3)
 
     # 2.4 RBAC 四級角色權限矩陣與未授權存取 POS 攔截
@@ -4695,7 +4725,17 @@ def run_all_tests():
                 _C.ADMIN_PASSWORD = "Generated!Pass2026"
                 _C.ADMIN_PASSWORD_HASH = generate_password_hash(_C.ADMIN_PASSWORD)
                 _C.ADMIN_CREDENTIALS_GENERATED = True
+                # 帳密自動產生 + 未開救援開關：一般重啟不可動既有 owner (密碼不被洗掉)
                 run_database_migrations(app)
+                with app.app_context():
+                    kept = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(username="admin_test").first()
+                    assert kept is not None and kept.check_password("AdminPass!2026"), "自動產生帳密模式下，一般重啟不應輪替既有 owner"
+                    assert StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
+                        username="owner-generated-test").first() is None, "一般重啟不應改動 owner 帳號名稱"
+                # 開啟救援開關後才輪替為新產生的帳密
+                _C.RESET_ADMIN_PASSWORD_ON_START = True
+                run_database_migrations(app)
+                _C.RESET_ADMIN_PASSWORD_ON_START = False
                 with app.app_context():
                     rotated = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
                         username="owner-generated-test"

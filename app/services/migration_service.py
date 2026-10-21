@@ -15,6 +15,12 @@ from app.config import Config
 def _run_migrations_inner():
     default_tenant = None
     try:
+        # 員工帳號軟刪除欄位：必須在任何 StaffAccount ORM 查詢之前補上 (舊資料庫沒有這個欄位)
+        staff_cols = {c[1] for c in db.session.execute(db.text('PRAGMA table_info("staff_account")')).fetchall()}
+        if staff_cols and 'deleted_at' not in staff_cols:
+            db.session.execute(db.text('ALTER TABLE staff_account ADD COLUMN deleted_at DATETIME'))
+            db.session.commit()
+
         # ======================================================================
         # 0. 建立預設店家並回填舊單店資料
         # ======================================================================
@@ -61,11 +67,11 @@ def _run_migrations_inner():
         # 建立或更新預設店家的管理員帳號；未設定完整 .env 憑證時，每次啟動輪替該店 owner。
         if getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False):
             bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
-                tenant_id=default_tenant.id, role='owner'
+                tenant_id=default_tenant.id, role='owner', deleted_at=None
             ).order_by(StaffAccount.id.asc()).first()
         else:
             bootstrap_account = StaffAccount.query.execution_options(skip_tenant_filter=True).filter_by(
-                username=Config.ADMIN_USERNAME
+                username=Config.ADMIN_USERNAME, deleted_at=None
             ).first()
         pwd_hash = getattr(Config, 'ADMIN_PASSWORD_HASH', None) or generate_password_hash(Config.ADMIN_PASSWORD)
         if not bootstrap_account:
@@ -81,7 +87,9 @@ def _run_migrations_inner():
                 print(f"\n⚠️ [安全警告] .env 未設定完整管理員帳密，已建立隨機憑證。"
                       f"\n帳號: {Config.ADMIN_USERNAME}\n密碼: {Config.ADMIN_PASSWORD}"
                       f"\n請立即登入並將帳密寫入安全位置。\n")
-        elif getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False):
+        elif getattr(Config, 'ADMIN_CREDENTIALS_GENERATED', False) and getattr(Config, 'RESET_ADMIN_PASSWORD_ON_START', False):
+            # 帳密為自動產生時，只有「尚無 owner」(上面的建立分支) 或明確開啟救援開關才輪替；
+            # 一般重啟不動既有 owner，負責人自行修改的密碼不會被洗掉，也不會每次重啟就被鎖在門外。
             bootstrap_account.username = Config.ADMIN_USERNAME
             bootstrap_account.password_hash = pwd_hash
             bootstrap_account.is_active = True

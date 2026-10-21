@@ -52,6 +52,10 @@ class StaffAccount(db.Model):
     # 帳號建立時間 (DATETIME，預設當前系統時間)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
+    # 軟刪除時間 (DATETIME，可為空)：非空代表帳號已被負責人刪除。
+    # 列不會真的移除，稽核紀錄 (StaffAuditLog.staff_account_id) 才能永遠對應到當時的帳號；id 也不會被新帳號重用。
+    deleted_at = db.Column(db.DateTime, nullable=True)
+
     # 關聯：所屬店家實體物件
     tenant = db.relationship('Tenant', backref=db.backref('staff_accounts', lazy=True))
 
