@@ -54,6 +54,7 @@ except Exception:
 
 import numpy as np
 import openpyxl
+import redis
 from PIL import Image
 from werkzeug.security import generate_password_hash
 # 1. 建立獨立測試資料庫與獨立暫存相片目錄，徹底防止污染實體 static 與 database
@@ -84,6 +85,7 @@ Config.ADMIN_USERNAME = "admin_test"
 Config.ADMIN_PASSWORD = "AdminPass!2026"
 Config.ADMIN_CREDENTIALS_GENERATED = False
 Config.ADMIN_PASSWORD_HASH = generate_password_hash("AdminPass!2026")
+Config.REDIS_URL = "redis://127.0.0.1:6379/15"
 
 
 class TestConfig(Config):
@@ -96,6 +98,7 @@ class TestConfig(Config):
     ADMIN_PASSWORD = "AdminPass!2026"
     ADMIN_CREDENTIALS_GENERATED = False
     ADMIN_PASSWORD_HASH = Config.ADMIN_PASSWORD_HASH
+    RATE_LIMIT_NAMESPACE = f"test-{uuid.uuid4().hex}"
     # 測試以 X-Forwarded-For 模擬不同來源 IP，等同「前面有一層反向代理」；正式環境預設為 0 (不信任)
     TRUSTED_PROXY_COUNT = 1
 
@@ -189,6 +192,7 @@ def run_all_tests():
 
     from app import create_app
     from app.extensions import db
+    import app.extensions as app_extensions
     from app.models.tenant import Tenant, StaffAccount
     import app.models.user as user_mod
     try:
@@ -209,6 +213,26 @@ def run_all_tests():
     import app.services.cv_service as cv_service_mod
     from app.services.migration_service import run_database_migrations
     import app.utils as utils_mod
+
+    previous_redis = app_extensions.redis_client
+    try:
+        isolated_redis = redis.from_url(
+            Config.REDIS_URL,
+            decode_responses=True,
+            protocol=2,
+            socket_connect_timeout=2,
+            socket_timeout=5,
+        )
+        isolated_redis.ping()
+        app_extensions.redis_client = isolated_redis
+        if previous_redis:
+            previous_redis.close()
+        if isolated_redis.connection_pool.connection_kwargs.get("db") != 15:
+            raise RuntimeError("測試 Redis 未連至 DB 15")
+        print("✅ 測試 Redis client 已隔離至 DB 15")
+    except Exception as exc:
+        app_extensions.redis_client = None
+        print(f"⚠️ 測試 Redis 無法連線 ({exc})，使用程序內限流與鎖備援。")
 
     # 確保無論本地 app/utils.py 是否已手動加入 DISABLE_RATE_LIMIT 判斷，皆能支援環境變數動態開關
     if hasattr(utils_mod, "_check_rate_limit_redis_or_local"):

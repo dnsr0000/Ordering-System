@@ -126,7 +126,9 @@ def rate_limit(max_requests=30, window_seconds=60, key_prefix="rl", methods=('PO
                 return f(*args, **kwargs)
             ip = get_client_ip()
             tid = getattr(g, 'tenant_id', None) or session.get('tenant_id') or '0'
-            b_key = f"ratelimit:{key_prefix}:{tid}:{ip}"
+            namespace = current_app.config.get('RATE_LIMIT_NAMESPACE', '')
+            namespace_prefix = f"{namespace}:" if namespace else ''
+            b_key = f"ratelimit:{namespace_prefix}{key_prefix}:{tid}:{ip}"
             allowed, retry_after = _check_rate_limit_redis_or_local(b_key, max_requests, window_seconds)
             if not allowed:
                 msg = f"請求過於頻繁，請於 {retry_after} 秒後再試！"
