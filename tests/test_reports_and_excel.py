@@ -232,6 +232,7 @@ def _order(status, minutes_to_done=None, age=30, **kw):
     return Order(total_price=kw.pop('total_price', 10), status=status, pickup_number=1, created_at=created, completed_at=done, **kw)
 
 
+@pytest.mark.usefixtures('noon_clock')
 def test_analytics_fields(app, admin_client):
     olds = [_order('Pending', age=60 * 48) for _ in range(5)]
     today = [_order('Completed', 6, age=10, total_price=100), _order('PickedUp', 2, age=8, total_price=0),
@@ -243,6 +244,7 @@ def test_analytics_fields(app, admin_client):
     assert {'completed_today', 'avg_order_time', 'stale_pending_count'} <= set(live)
 
 
+@pytest.mark.usefixtures('noon_clock')
 def test_eta_excludes_outliers():
     m, n = mean_without_outliers([4, 4, 5, 5, 4, 60])
     assert n == 5 and round(m, 1) == 4.4
@@ -257,6 +259,7 @@ def test_eta_excludes_outliers():
     assert build_order_analytics([_order('Completed', 4)])['eta_minutes'] == 0
 
 
+@pytest.mark.usefixtures('noon_clock')
 def test_top_items_with_revenue(app, admin_client):
     def with_items(items, status='Completed'):
         o = _order(status, 4, age=5)

@@ -2,6 +2,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 
+import pytest
+
 from app.extensions import db
 from app.models.coupon import Coupon, UserCoupon
 from app.models.menu import MenuItem
@@ -232,6 +234,7 @@ def test_cancel_clawback_is_capped_and_audited(app, admin_client):
         assert '無法追回' in audit.details and audit.points_delta == -left
 
 
+@pytest.mark.usefixtures('noon_clock')
 def test_daily_auto_close(app):
     tid = default_tenant_id(app)
     old = datetime.now() - timedelta(days=1, hours=2)

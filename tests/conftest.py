@@ -148,6 +148,36 @@ def reward_setting_snapshot(app):
         db.session.commit()
 
 
+@pytest.fixture
+def noon_clock(monkeypatch, request):
+    """
+    把「現在」固定在今天中午 12:00：營運分析、換日結案等以「今天」計算的測試，
+    在午夜前後執行時，「幾分鐘前」的訂單才不會被算成昨天。
+    固定 order_service、analytics_service 與測試模組本身的 date.today() / datetime.now()。
+    """
+    import datetime as dt
+    frozen = dt.datetime.combine(dt.date.today(), dt.time(12, 0))
+
+    class FrozenDate(dt.date):
+        @classmethod
+        def today(cls):
+            return frozen.date()
+
+    class FrozenDateTime(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen
+
+    import app.services.analytics_service as analytics_service
+    import app.services.order_service as order_service
+    for module in (order_service, analytics_service, request.module):
+        if isinstance(getattr(module, 'date', None), type):
+            monkeypatch.setattr(module, 'date', FrozenDate)
+        if isinstance(getattr(module, 'datetime', None), type):
+            monkeypatch.setattr(module, 'datetime', FrozenDateTime)
+    return frozen
+
+
 def _staff_client(app, username, role):
     from tests.support import login_staff
     return login_staff(app, username, role)
