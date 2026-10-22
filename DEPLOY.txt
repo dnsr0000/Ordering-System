@@ -1,0 +1,274 @@
+====================================================================
+部署說明：線上端 (Docker) 與本機門市端 (Windows)
+====================================================================
+
+架構
+- 本機門市端：Windows 電腦 + Waitress (serve_windows.py) + SQLite (database/menu.db)，可完全離線營業。
+- 線上端 (SYNC_ROLE=hub)：Linux 主機 + Docker：
+    caddy (自動 HTTPS 反向代理，80/443) → app (gunicorn gthread，多 worker) → postgres + redis
+  相關檔案：Dockerfile、docker-compose.yml、deploy/hub.env.example、deploy/gunicorn.conf.py、
+            deploy/entrypoint.sh、deploy/Caddyfile。
+
+
+一、線上端部署 (Docker)
+--------------------------------------------------------------------
+1. 準備
+   - Linux 主機，已安裝 Docker Engine 與 docker compose 外掛 (docker compose version 可執行)。
+   - 網域的 DNS A/AAAA 記錄指向這台主機；防火牆開放 80、443 (TCP) 與 443 (UDP，HTTP/3)。
+     Caddy 第一次啟動時會自動向 Let's Encrypt 申請憑證，80 埠必須能從外部連入。
+   - 主機時區不影響容器：容器內固定 TZ=Asia/Taipei (程式以台灣時間計算營業日)。
+
+2. 設定
+     cp deploy/hub.env.example .env.hub
+     chmod 600 .env.hub
+   編輯 .env.hub：
+   - SITE_DOMAIN：網域，例如 kiosk.example.com
+   - POSTGRES_PASSWORD 與 DATABASE_URL 中的密碼 (兩處要相同；請只用英數字)：
+       openssl rand -hex 24
+   - SECRET_KEY (必填，未設定時 app 容器會拒絕啟動)：
+       openssl rand -hex 32
+     多個 worker 共用這把金鑰；設定後不要再改 (改了所有人要重新登入)。
+   - ADMIN_USERNAME / ADMIN_PASSWORD：預設店家負責人 (平台管理者) 的帳密，只在第一次建立帳號時使用。
+   以下已由 docker-compose.yml 固定，不需設定：REDIS_URL、AUTO_MIGRATE=0、TRUSTED_PROXY_COUNT=1、
+   SESSION_COOKIE_SECURE=1、SYNC_ROLE=hub、上傳檔路徑。
+
+3. 啟動
+     docker compose up -d --build
+     docker compose ps                  (app、postgres、redis 顯示 healthy 即完成)
+     curl https://您的網域/healthz       (應回 {"database":"ok","status":"ok"})
+   app 容器啟動時會先執行 flask --app run setup (升級資料庫結構 + 建立預設資料)，再啟動 gunicorn；
+   資料庫遷移只在這一步執行一次，gunicorn 的 worker 不會各自遷移。
+
+4. 第一次登入
+   - 開啟 https://您的網域/admin，以 .env.hub 的 ADMIN_USERNAME / ADMIN_PASSWORD 登入。
+   - 若 .env.hub 沒有設定帳密，系統會產生一組隨機帳密並只在第一次啟動時寫入 log：
+       docker compose logs app | grep 預設負責人
+     請立即登入並記錄到安全的地方。
+   - 忘記密碼：.env.hub 設定 ADMIN_PASSWORD 與 RESET_ADMIN_PASSWORD_ON_START=1，
+     執行 docker compose up -d 重啟 app 一次，登入後改回 0 再 docker compose up -d。
+   - 員工帳號在後台「員工帳號」(/admin/staff) 建立。
+
+5. 查看 log
+     docker compose logs -f app         (gunicorn 存取記錄與程式訊息)
+     docker compose logs -f caddy       (HTTPS 憑證申請、反向代理)
+     docker compose logs --since 1h postgres
+   每個服務的 log 會自動輪替 (每檔 20MB、保留 5 檔)。
+   存取記錄第一欄是顧客真實 IP (X-Forwarded-For)，第二欄是 Caddy 的容器位址。
+
+6. 資料保存位置 (docker volume，docker compose down 不會刪除；down -v 才會刪除，請勿任意加 -v)
+   - kiosk-hub_pg_data       PostgreSQL 資料
+   - kiosk-hub_app_uploads   上傳檔 (uploads/member 會員人臉照片、uploads/menu 餐點照片)
+   - kiosk-hub_app_database  database/ (線上端主要資料在 PostgreSQL，此處只有備用金鑰等小檔)
+   - kiosk-hub_caddy_data    HTTPS 憑證
+
+7. 備份
+   注意：後台的「整庫備份/還原」只支援 SQLite，線上端請用以下方式。
+   (1) 資料庫 (pg_dump 自訂格式，可選擇性還原)：
+     mkdir -p backups
+     docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/kiosk-$(date +%F).dump
+   (2) 上傳檔：
+     docker compose exec -T app tar czf - -C /app uploads > backups/uploads-$(date +%F).tgz
+   (3) 排程建議：每天營業結束後 (例如凌晨 3 點) 自動備份，保留 14 天，並複製一份到其他主機或雲端儲存。
+     crontab -e 加入 (專案放在 /opt/kiosk 時；crontab 內的 % 必須寫成 \%)：
+       17 3 * * * cd /opt/kiosk && docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/kiosk-$(date +\%F).dump && docker compose exec -T app tar czf - -C /app uploads > backups/uploads-$(date +\%F).tgz && find backups -type f -mtime +14 -delete
+   (4) 還原 (會覆蓋現有資料，請先停止 app)：
+     docker compose stop app
+     docker compose exec -T postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < backups/kiosk-2026-10-22.dump
+     docker compose exec -T app tar xzf - -C /app < backups/uploads-2026-10-22.tgz   (app 停止時改用 docker compose run --rm -T app tar xzf - -C /app)
+     docker compose start app
+   建議每季實際演練一次還原 (可在另一台主機上做)，確認備份檔可用。
+
+8. 更新版本
+     (1) 先備份 (上一節的 (1)(2))
+     (2) docker tag kiosk-hub-app:latest kiosk-hub-app:previous      (保留舊版映像檔以便回復)
+     (3) 取得新版程式 (git pull 或覆蓋檔案)
+     (4) docker compose up -d --build
+         app 重啟時會自動執行資料庫遷移；期間約數秒無法連線，
+         各頁面的即時連線 (SSE) 會自動重連。
+     (5) docker compose ps 確認 healthy、docker compose logs app 確認沒有錯誤。
+   回復舊版：新版若已遷移資料庫結構，需先還原更新前的 pg_dump，再
+     docker tag kiosk-hub-app:previous kiosk-hub-app:latest && docker compose up -d --no-build app
+   清理舊映像檔：docker image prune
+
+9. 調整效能 (.env.hub，修改後 docker compose up -d)
+   - GUNICORN_WORKERS (預設 2)：worker 行程數，一般 2~4。
+   - GUNICORN_THREADS (預設 128)：每個 worker 的執行緒數。每條 SSE 長連線 (廚房、取餐、叫號看板、POS)
+     會一直占用一條執行緒，每個 worker 最多 85 條 SSE，請勿低於 100。
+   - 每個 worker 最多約 15 條資料庫連線，worker 數 × 15 不可超過 PostgreSQL 的 max_connections (預設 100)。
+   - gunicorn 的 timeout 是 worker 心跳逾時，不會中斷 SSE 長連線 (說明見 deploy/gunicorn.conf.py)。
+
+10. 疑難排解
+   - https://網域/ 顯示 502：app 尚未啟動完成或啟動失敗，查看 docker compose logs app。
+   - /healthz 回 503：app 連不到 PostgreSQL，查看 docker compose ps postgres 與 DATABASE_URL 密碼。
+   - 憑證申請失敗：確認 DNS 已指向本機、80/443 可從外部連入，查看 docker compose logs caddy。
+   - 時間不對：docker compose exec app date 應顯示 CST (台灣時間)。
+   - 進入容器執行指令：docker compose exec app flask --app run db current
+
+
+二、本機門市端部署 (Windows)
+--------------------------------------------------------------------
+1. 安裝
+   - 安裝 Python 3.13 (勾選 Add to PATH)，在專案資料夾 (例如 C:\kiosk) 執行：
+       python -m venv venv
+       venv\Scripts\pip install -r requirements.txt
+     (gunicorn 只用於 Linux，Windows 上會自動略過。)
+   - 從舊版升級時，OpenCV 已改用 opencv-python-headless，請先移除舊套件再安裝，避免兩個套件互相覆蓋：
+       venv\Scripts\pip uninstall -y opencv-python
+       venv\Scripts\pip install -r requirements.txt
+   - 複製 .env.example 為 .env，至少設定 ADMIN_USERNAME / ADMIN_PASSWORD。
+   - Windows 時區必須是「(UTC+08:00) 台北」並開啟自動校時 (營業日、換日結案都依電腦時間)。
+   - 先手動執行一次 venv\Scripts\python serve_windows.py，確認 http://127.0.0.1:5000/ 可開啟。
+
+2. 開機自動啟動 (以 Windows 服務執行 Waitress，二擇一)
+   (A) NSSM (建議；可在當機時自動重啟並保存 log)：
+       下載 nssm (https://nssm.cc/)，以系統管理員身分開啟命令提示字元：
+         nssm install KioskPOS C:\kiosk\venv\Scripts\python.exe C:\kiosk\serve_windows.py
+         nssm set KioskPOS AppDirectory C:\kiosk
+         nssm set KioskPOS AppStdout C:\kiosk\logs\service.log
+         nssm set KioskPOS AppStderr C:\kiosk\logs\service.log
+         nssm set KioskPOS AppRotateFiles 1
+         nssm set KioskPOS AppRotateBytes 10485760
+         nssm set KioskPOS Start SERVICE_AUTO_START
+         nssm start KioskPOS
+       (先建立 C:\kiosk\logs 資料夾。) 查看狀態：nssm status KioskPOS；重啟：nssm restart KioskPOS。
+   (B) 工作排程器：建立工作 →「不論使用者登入與否均執行」、「以最高權限執行」；
+       觸發程序「啟動時」；動作「啟動程式」C:\kiosk\venv\Scripts\python.exe，
+       引數 serve_windows.py，開始位置 C:\kiosk；設定頁勾選「如果工作失敗，重新啟動間隔 1 分鐘」。
+   - 防火牆只對「私人網路」開放 5000 埠給店內其他平板 / KDS 螢幕使用，不要直接開放到網際網路。
+   - 電源選項設定「永不睡眠」，避免營業中伺服器休眠。
+
+3. 定期備份 database/ 與 uploads/
+   - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。建議：
+     (1) 後台「整庫備份」(平台管理者)：一次下載資料庫 + 上傳檔的壓縮檔，適合手動備份。
+     (2) 排程自動備份：建立 C:\kiosk\backup.bat，內容例如：
+           @echo off
+           cd /d C:\kiosk
+           for /f %%i in ('venv\Scripts\python -c "import datetime;print(datetime.date.today())"') do set D=%%i
+           mkdir D:\KioskBackup\%D% 2>nul
+           venv\Scripts\python -c "import sqlite3;s=sqlite3.connect('database/menu.db');d=sqlite3.connect(r'D:\KioskBackup\%D%\menu.db');s.backup(d);d.close()"
+           copy /y database\.secret_key D:\KioskBackup\%D%\ >nul
+           robocopy uploads D:\KioskBackup\%D%\uploads /E /R:1 /W:1 >nul
+         再用工作排程器每天打烊後執行一次。(sqlite3 的 backup 在營業中執行也是一致的快照。)
+   - 備份請放在另一顆磁碟、USB 或雲端同步資料夾，並定期清除過舊的備份。
+   - 還原：停止服務 (nssm stop KioskPOS) → 把備份的 menu.db 放回 database\ (同時刪除 menu.db-wal、menu.db-shm)
+     與 uploads\ → 啟動服務；或使用後台的「整庫還原」。
+
+4. Kiosk 瀏覽器全螢幕
+   - 點餐機開機後自動以全螢幕開啟點餐頁：在「啟動」資料夾 (Win+R 輸入 shell:startup) 建立捷徑，目標例如：
+       "C:\Program Files\Google\Chrome\Application\chrome.exe" --kiosk --kiosk-printing --no-first-run
+         --disable-pinch --overscroll-history-navigation=0 --user-data-dir=C:\kiosk\chrome-kiosk
+         "http://127.0.0.1:5000/?shop=店家代碼"
+     Edge 可用：msedge.exe --kiosk "http://127.0.0.1:5000/?shop=店家代碼" --edge-kiosk-type=fullscreen --no-first-run
+     --kiosk-printing 會直接列印到預設印表機 (80mm 熱感應收據機請設為預設印表機)。
+     離開全螢幕：Alt+F4。
+   - 人臉登入需要相機：瀏覽器只允許 https 或 http://127.0.0.1 使用相機。
+     點餐機若不是伺服器本機 (以 http://區網IP:5000 連線)，Chrome 需加上
+       --unsafely-treat-insecure-origin-as-secure=http://區網IP:5000
+     (必須同時指定 --user-data-dir)，第一次開啟時允許相機權限。
+   - 專用點餐機可使用 Windows「指派的存取權」(Kiosk 模式) 鎖定只能使用瀏覽器。
+   - 關閉螢幕保護程式與自動睡眠、Windows Update 設定在非營業時間重新開機。
+   - 其他螢幕：廚房 KDS http://伺服器IP:5000/kitchen、取餐核銷 /pickup、叫號看板 /counter (公開，可用電視全螢幕顯示)。
+
+5. 桌邊掃碼點餐 (顧客用自己的手機)
+   - 顧客手機要連上店內 Wi-Fi，且能開啟門市伺服器：在路由器把伺服器電腦設為固定 IP (DHCP 保留)，
+     並允許 Windows 防火牆讓 5000 埠在「私人網路」連入 (第一次啟動 serve_windows.py 時的提示選「允許」)。
+   - 後台「桌位 QR」：確認「門市網址」(例如 http://192.168.1.10:5000，預設自動偵測) → 新增桌位 (A1-A10) →
+     列印桌卡放在桌上。用自己的手機連店內 Wi-Fi 掃一張實際點一次，確認廚房看板出現該桌的訂單。
+   - 顧客點餐後訂單直接送廚房 (標示桌號、未結帳)；用餐後在 POS「桌位結帳」一次結清該桌。
+   - 桌卡遺失或被拍照外流：在「桌位 QR」對該桌按「重新產生」並重新列印 (舊的 QR code 立即失效)。
+   - 門市網址或 IP 變更後要重新列印全部桌卡。店內 Wi-Fi 建議與收銀、伺服器所在的網路分開 (訪客網路)
+     時，需確認訪客網路可以連到伺服器的 5000 埠。
+
+
+三、同步設定 (門市 ↔ 線上)
+--------------------------------------------------------------------
+架構與合併規則請看 SYNC.txt。設定步驟：
+
+1. 線上端 (已依「一」部署完成)：以負責人登入後台 →「分店管理」→ 新增分店 (例如「台南店」)。
+   畫面會顯示一次權杖 (kn_ 開頭)，請立即複製；遺失時按「重新產生權杖」，舊權杖立即失效。
+   (也可在主機上執行：docker compose exec app flask --app run sync create-node --name 台南店)
+
+2. 門市端：在專案資料夾的 .env 加上
+     SYNC_ROLE=node
+     SYNC_HUB_URL=https://您的網域
+     SYNC_NODE_TOKEN=kn_……(上一步的權杖)
+   重新啟動 serve_windows.py。伺服器會在背景自動同步：
+   - 第一次連線時，本機店家改用線上店家的識別碼，並上傳門市既有的菜單、會員、訂單 (資料多時需要幾分鐘)。
+   - 之後本機有變更時立即上傳；線上點餐的新訂單以長輪詢接收，通常 1~2 秒內出現在廚房看板。
+   - 斷網時照常營業，後台「同步狀態」頁會顯示最後一次錯誤；恢復連線後自動補齊。
+   - 手動同步：後台「同步狀態」→「立即同步」，或在命令列執行 flask --app run sync now / sync status。
+
+3. 一個線上店家可以有多家分店 (每家一台門市伺服器、各自一組權杖)：
+   菜單、優惠券、紅利設定、員工帳號、會員與點數在所有分店共用；訂單只送到負責出餐的分店；
+   庫存各分店獨立 (線上端只保存各分店回報的庫存快照，用於線上點餐)。
+
+4. 注意事項
+   - SYNC_HUB_URL 必須是 https (權杖與會員資料經由此連線傳送)。
+   - 門市電腦的系統時間要正確 (開啟 Windows「自動設定時間」)：兩邊同時修改同一筆資料時以修改時間較新者為準。
+   - 第一家分店連線前，建議先在線上端或第一家分店建立好菜單，其他分店再連線，避免各自建立同名品項。
+     (加料選項、紅利設定、相同手機的會員、相同代碼的優惠券、相同帳號的員工會自動合併，其他品項不會。)
+   - 門市不要換用另一個線上店家的權杖；需要換店家時請先備份並重新建立門市資料庫。
+   - 分店超過 SYNC_NODE_OFFLINE_AFTER 秒 (預設 120) 沒有連線，線上端會暫停該分店的線上點餐。
+
+
+四、上線前檢查清單
+--------------------------------------------------------------------
+必做
+[ ] .env.hub：SECRET_KEY、POSTGRES_PASSWORD/DATABASE_URL、ADMIN_USERNAME/ADMIN_PASSWORD 都已設定且只有管理者可讀 (chmod 600)
+[ ] 網域 DNS 指向主機，https://網域/healthz 回應正常，憑證有效
+[ ] 線上端資料庫每日備份 (pg_dump 排程，見一-7)，並實際演練過一次還原
+[ ] 門市端每日備份 database/ 與 uploads/ (見二)，並複製一份到其他位置 (隨身碟/雲端)
+[ ] 門市 .env：ADMIN_PASSWORD 已改成自己的密碼；SYNC_* 已設定；serve_windows.py 設為開機自動啟動
+[ ] 門市電腦已開啟自動校時
+[ ] 以手機實際走一次線上點餐 → 門市廚房看板出現 → 出餐 → 線上看到狀態，並測試取消後庫存與點數回補
+[ ] 拔掉門市網路線測試：門市照常點餐/結帳；接回後「同步狀態」無錯誤、待上傳筆數歸零
+[ ] 後台建立正式使用的員工帳號 (owner / manager / staff / kitchen)，停用或刪除測試帳號
+[ ] 升級舊版門市：先 pip uninstall -y opencv-python，再 pip install -r requirements.txt
+
+業務 / 法規面
+[ ] 線上付款 (見第五節)：目前預設為綠界「測試環境」。正式收款前需向綠界申請正式特店 (需公司/商號資料)，
+    設定 ECPAY_STAGE=0 與正式的 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV，並用小額真卡測試一次
+[ ] 退款：後台訂單出現「需退款」(取消後才收到付款) 時，到綠界廠商後台辦理退刷 (程式未串接退款 API)
+[ ] 個人資料：後台「隱私權告知」填好營運者名稱與聯絡方式；告知頁內容是一般性範本，正式營運前請法律專業人士檢視
+[ ] 定期刪除停止使用的會員：在線上端排程每天執行 docker compose exec app flask --app run privacy purge-inactive --apply
+    (先不加 --apply 預覽名單)
+[ ] 線上註冊沒有簡訊驗證手機：任何人都能用別人的號碼註冊。若要防範，需另外串接簡訊 OTP (付費服務)
+
+建議
+[ ] 監控：用 UptimeRobot 等服務每分鐘檢查 https://網域/healthz，異常時通知
+[ ] 錯誤通知：docker compose logs 只保留在主機上，可另外接 Sentry 等服務
+[ ] 調整 GUNICORN_WORKERS / GUNICORN_THREADS：每個分店的長輪詢與每個開著的看板 (SSE) 都會占用一條執行緒
+
+
+五、線上付款 (綠界全方位金流)
+--------------------------------------------------------------------
+線上點餐的流程：會員選取餐分店 → 結帳 → 導到綠界付款頁刷卡 → 綠界通知線上端付款成功 → 訂單才送到分店廚房。
+逾時 (PAYMENT_TIMEOUT_MINUTES，預設 15 分鐘) 未付款：線上端先向綠界查詢確認，未付款就自動取消並回補庫存與點數。
+線上點餐只開放會員；門市 (含顧客用手機連門市網站) 仍可訪客點餐、到店付款。
+
+1. 測試環境 (預設，免註冊、不會真的扣款)
+   - 不需設定任何金鑰，使用綠界公開的測試特店 3002607。
+   - 測試卡號 4311-9522-2222-2222，有效期限填未來的月/年，安全碼任意三碼，3D 驗證簡訊碼 1234。
+   - 綠界要能連到 https://網域/payment/ecpay/notify 才會通知付款結果 (只接受 80/443 埠的公開網址)：
+     部署在有網域的線上主機即可；在自己電腦上練習時，可用 ngrok / Cloudflare Tunnel 把本機開放成 https 網址，
+     並在 .env 設定 PUBLIC_BASE_URL=該 https 網址。收不到通知時，訂單會在逾時前向綠界查詢補記。
+   - 測試後台：https://vendor-stage.ecpay.com.tw (帳號 stagetest3 / 密碼 test1234) 可查看測試訂單。
+
+2. 正式收款
+   - 向綠界申請正式特店，取得 MerchantID、HashKey、HashIV，於 .env.hub 設定：
+       ECPAY_STAGE=0
+       ECPAY_MERCHANT_ID=…
+       ECPAY_HASH_KEY=…
+       ECPAY_HASH_IV=…
+       PUBLIC_BASE_URL=https://您的網域
+   - 不想收線上付款 (改回到店付款)：ONLINE_PAYMENT=0。
+   - 取消已付款的訂單不會自動退款：到綠界廠商後台辦理退刷。
+
+3. 付款測試腳本 (tests/test_payment_ecpay_script.py，不會動到正式資料庫，一律使用綠界測試特店)
+     python tests/test_payment_ecpay_script.py            模擬模式：不需網路，模擬綠界通知走完 30 項付款情境
+     python tests/test_payment_ecpay_script.py live       實機模式：開瀏覽器到綠界測試付款頁，用測試卡刷卡，
+                                                          腳本確認訂單已付款並可同步給分店 (需網路與 playwright install chromium)
+     python tests/test_payment_ecpay_script.py live --public-url https://xxxx.ngrok-free.app
+                                                          另外驗證綠界伺服器通知 (需先用 ngrok 等把該網址指到本機 5055 埠)
+
+相關程式：app/services/payment_ecpay.py (檢查碼、付款通知、逾時處理)、app/routes/payment.py。

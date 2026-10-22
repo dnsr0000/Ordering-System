@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}桌位 QR code - {{ tenant.name }}{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tables.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="container py-4" id="tables-main">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <div>
+            <h1 class="h3 fw-bold mb-1">桌位與掃碼點餐</h1>
+            <div class="text-white-50">{{ tenant.name }}：顧客用手機掃桌上的 QR code 點餐，餐點送到桌上，用餐後在 POS「桌位結帳」收款</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-warning fw-bold text-dark" href="{{ url_for('tables.print_cards') }}" target="_blank" id="print-all-link">
+                <i class="bi bi-printer me-1"></i>列印全部桌卡
+            </a>
+            <a class="btn btn-outline-light" href="{{ url_for('admin.admin_dashboard') }}">回管理後台</a>
+        </div>
+    </div>
+
+    <section class="card rounded-4 p-4 mb-4">
+        <h2 class="h5 fw-bold text-info mb-2"><i class="bi bi-wifi me-2"></i>QR code 使用的門市網址</h2>
+        <p class="small text-white-50 mb-3">
+            顧客手機必須連上店內 Wi-Fi，並能用這個網址開啟本系統 (通常是這台電腦在區網的 IP 與埠號)。
+            建議在路由器把這台電腦設為固定 IP；網址變更後已印出的 QR code 需要重新列印。
+        </p>
+        <form method="POST" class="row g-2 align-items-end" id="baseUrlForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="base_url">
+            <div class="col-md-6">
+                <label class="form-label small fw-bold" for="base-url">門市網址</label>
+                <input class="form-control" id="base-url" name="base_url" value="{{ saved_base_url }}"
+                       placeholder="{{ suggested_base_url }}" autocomplete="off">
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-info fw-bold w-100" type="submit">儲存網址</button>
+            </div>
+            <div class="col-12 small text-white-50">
+                目前使用：<code id="current-base-url">{{ base_url }}</code>
+                {% if not saved_base_url %}(未設定，使用自動偵測的網址 {{ suggested_base_url }}){% endif %}
+            </div>
+        </form>
+    </section>
+
+    <section class="card rounded-4 p-4 mb-4">
+        <h2 class="h5 fw-bold text-warning mb-3"><i class="bi bi-plus-square me-2"></i>新增桌位</h2>
+        <form method="POST" class="row g-2 align-items-end" id="createTablesForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="create">
+            <div class="col-md-9">
+                <label class="form-label small fw-bold" for="table-names">桌號 (可用逗號分隔，或用範圍一次新增)</label>
+                <input class="form-control" id="table-names" name="names" placeholder="例如：A1-A10, B1-B5, 吧台1" autocomplete="off" required>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-warning fw-bold w-100 text-dark" type="submit">新增</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card rounded-4 p-4">
+        <h2 class="h5 fw-bold mb-3"><i class="bi bi-grid-3x3-gap-fill text-info me-2"></i>桌位列表 ({{ tables|length }})</h2>
+        <div class="table-responsive">
+            <table class="table table-dark table-striped align-middle mb-0" id="tablesTable">
+                <thead>
+                    <tr>
+                        <th>桌號</th>
+                        <th>狀態</th>
+                        <th>未結帳</th>
+                        <th>掃碼網址</th>
+                        <th class="text-end">管理</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in tables %}
+                    <tr data-table-id="{{ t.id }}">
+                        <td>
+                            <form method="POST" class="d-flex gap-1 align-items-center">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="rename">
+                                <input type="hidden" name="table_id" value="{{ t.id }}">
+                                <input class="form-control form-control-sm table-name-input" name="name" value="{{ t.name }}" maxlength="30" aria-label="桌號" required>
+                                <input class="form-control form-control-sm table-sort-input" name="sort_order" type="number" value="{{ t.sort_order }}" aria-label="排序" title="排序">
+                                <button class="btn btn-sm btn-outline-light text-nowrap" type="submit">儲存</button>
+                            </form>
+                        </td>
+                        <td>
+                            {% if t.is_active %}<span class="badge bg-success">開放點餐</span>{% else %}<span class="badge bg-secondary">已停用</span>{% endif %}
+                        </td>
+                        <td>
+                            {% set n = unpaid_counts.get(t.id, 0) %}
+                            {% if n %}<span class="badge bg-warning text-dark">{{ n }} 張</span>{% else %}<span class="text-white-50 small">—</span>{% endif %}
+                        </td>
+                        <td class="small"><code class="table-url">{{ urls[t.id] }}</code></td>
+                        <td class="text-end">
+                            <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
+                                <a class="btn btn-sm btn-outline-warning text-nowrap" href="{{ url_for('tables.print_cards', id=t.id) }}" target="_blank">
+                                    <i class="bi bi-qr-code"></i> QR
+                                </a>
+                                <form method="POST" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="toggle">
+                                    <input type="hidden" name="table_id" value="{{ t.id }}">
+                                    <button type="submit" class="btn btn-sm {{ 'btn-outline-danger' if t.is_active else 'btn-outline-success' }} text-nowrap">
+                                        {{ '停用' if t.is_active else '啟用' }}
+                                    </button>
+                                </form>
+                                <form method="POST" class="d-inline" data-confirm="重新產生 {{ t.name }} 桌的 QR code？舊的 QR code 會立即失效，需要重新列印。">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="rotate">
+                                    <input type="hidden" name="table_id" value="{{ t.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-info text-nowrap">重新產生</button>
+                                </form>
+                                <form method="POST" class="d-inline" data-confirm="確定刪除 {{ t.name }} 桌？">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="delete">
+                                    <input type="hidden" name="table_id" value="{{ t.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="刪除桌位" aria-label="刪除桌位">
+                                        <i class="bi bi-trash" aria-hidden="true"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-white-50">尚未建立桌位，請先在上方新增 (例如 A1-A10)</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+{% endblock %}

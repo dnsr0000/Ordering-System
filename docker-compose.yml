@@ -1,0 +1,111 @@
+# 線上端 (SYNC_ROLE=hub) 部署：app (gunicorn) + PostgreSQL + Redis + Caddy (自動 HTTPS)
+# 使用方式 (詳見 DEPLOY.txt)：
+#   cp deploy/hub.env.example .env.hub    # 填入網域、密碼、SECRET_KEY
+#   docker compose up -d --build
+# 所有服務都從 .env.hub 讀取設定；下方 environment 為線上端固定值 (優先於 .env.hub)。
+name: kiosk-hub
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  app:
+    build: .
+    image: kiosk-hub-app:latest
+    restart: unless-stopped
+    env_file:
+      - path: .env.hub
+        required: true
+    environment:
+      TZ: Asia/Taipei
+      REDIS_URL: redis://redis:6379/0
+      # 遷移只在容器啟動時由 deploy/entrypoint.sh 執行一次 (flask --app run setup)，worker 不自動遷移
+      AUTO_MIGRATE: "0"
+      # 前面有一層反向代理 (Caddy)：採信一層 X-Forwarded-For / X-Forwarded-Proto
+      TRUSTED_PROXY_COUNT: "1"
+      SESSION_COOKIE_SECURE: "1"
+      SYNC_ROLE: hub
+      UPLOAD_FOLDER_MEMBER: /app/uploads/member
+      UPLOAD_FOLDER_MENU: /app/uploads/menu
+    volumes:
+      - app_database:/app/database
+      - app_uploads:/app/uploads
+    expose:
+      - "8000"
+    networks: [frontend, backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # 大於 gunicorn 的 graceful_timeout (20 秒)，讓進行中的請求有時間完成
+    stop_grace_period: 30s
+    logging: *default-logging
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - path: .env.hub
+        required: true
+    environment:
+      TZ: Asia/Taipei
+      PGTZ: Asia/Taipei
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # 只用於頻率限制計數與 SSE 訂單通知 (Pub/Sub)，不需要持久化
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file:
+      - path: .env.hub
+        required: true
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [frontend]
+    depends_on:
+      - app
+    logging: *default-logging
+
+# 資料庫與 Redis 只在內部網路 (internal：不能連外，也不能被 Caddy 直接連到)；Caddy 只能連到 app
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  app_database:
+  app_uploads:
+  pg_data:
+  caddy_data:
+  caddy_config:

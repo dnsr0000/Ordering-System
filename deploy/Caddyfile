@@ -1,0 +1,30 @@
+# 線上端反向代理 (Caddy 會自動申請並續期 Let's Encrypt 憑證，HTTP 自動轉 HTTPS)
+# SITE_DOMAIN 由 .env.hub 提供；未設定時使用 localhost (Caddy 自簽憑證，僅供測試)
+# 要收到憑證到期通知可在檔案最前面加上全域設定：{ email 您的信箱 }
+
+{$SITE_DOMAIN:localhost} {
+	# 請求大小上限 (應用程式本身上限 50MB；線上端不提供整庫還原)，超過的請求在進到應用程式前就拒絕
+	request_body {
+		max_size 60MB
+	}
+
+	# SSE 即時通知：不壓縮、不緩衝，每個事件立即送到瀏覽器
+	handle /api/orders_stream {
+		reverse_proxy app:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy app:8000
+	}
+
+	# 不對外透露伺服器軟體
+	header -Server
+
+	log {
+		output stdout
+		format console
+	}
+}

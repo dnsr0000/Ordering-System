@@ -1,0 +1,161 @@
+/*
+ * 後台管理頁 (admin / staff_accounts / tenant_register) 共用樣式。
+ * 全站深色主題與對比修正已在 theme.css，這裡只放後台專屬的版面元件。
+ */
+.admin-page {
+    --admin-bg: #0f172a;
+    --admin-panel: #1e293b;
+    --admin-head: #151e32;
+    --admin-line: rgba(255, 255, 255, 0.08);
+    --admin-accent: #f59e0b;
+    background: var(--admin-bg);
+    color: #f8fafc;
+}
+
+/* ---------------------------------------------------------------- 表單 */
+.admin-page .form-control,
+.admin-page .form-select {
+    background-color: var(--admin-bg);
+    border: 1px solid var(--kiosk-border);
+    color: #f8fafc;
+    color-scheme: dark;
+}
+.admin-page .form-control:focus,
+.admin-page .form-select:focus {
+    background-color: var(--admin-panel);
+    border-color: var(--admin-accent);
+    color: #fff;
+    box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
+}
+.admin-page .form-control::placeholder { color: var(--kiosk-muted); opacity: 1; }
+.admin-page .form-label,
+.admin-page .form-check-label { color: #f1f5f9; }
+.admin-page .form-select option:disabled { color: #64748b; }
+.admin-page .form-control:-webkit-autofill,
+.admin-page .form-control:-webkit-autofill:hover,
+.admin-page .form-control:-webkit-autofill:focus {
+    -webkit-text-fill-color: #f8fafc;
+    caret-color: #f8fafc;
+    -webkit-box-shadow: 0 0 0 1000px var(--admin-bg) inset !important;
+    box-shadow: 0 0 0 1000px var(--admin-bg) inset !important;
+    transition: background-color 9999s ease-in-out 0s;
+}
+.admin-page .text-muted,
+.admin-page .text-secondary { color: var(--kiosk-muted) !important; }
+
+.auto-expand-desc {
+    resize: none;
+    overflow-y: hidden;
+    min-height: 42px;
+    line-height: 1.5;
+    transition: height 0.15s ease;
+}
+.switch-lg { cursor: pointer; transform: scale(1.15); }
+.hint-xs { font-size: 0.72rem; }
+.badge-xs { font-size: 0.65rem; }
+.panel-dim { background: rgba(0, 0, 0, 0.2); }
+.preview-img { max-height: 100px; }
+.btn-ai { font-size: 0.75rem; }
+
+/* ---------------------------------------------------------------- 登入 */
+.login-wrap { min-height: 100vh; padding: 20px; }
+.login-card {
+    max-width: 420px;
+    width: 100%;
+    background: var(--admin-panel);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------------------------------------------------------------- 版面 */
+.navbar-admin {
+    background: var(--admin-panel);
+    border-bottom: 1px solid var(--admin-line);
+}
+.admin-page .nav-pills .nav-link {
+    color: var(--kiosk-muted);
+    border-radius: 10px;
+    font-weight: 600;
+    padding: 0.6rem 1.2rem;
+    transition: all 0.2s;
+}
+.admin-page .nav-pills .nav-link.active {
+    background-color: var(--admin-accent);
+    color: var(--admin-bg);
+}
+.card-custom {
+    background: var(--admin-panel);
+    border: 1px solid var(--admin-line);
+    border-radius: 16px;
+    color: #f8fafc;
+}
+.reward-setting-card { background: #182234; }
+
+.table-dark-custom {
+    --bs-table-bg: var(--admin-panel);
+    --bs-table-color: #f8fafc;
+    --bs-table-border-color: var(--admin-line);
+    color: #f8fafc;
+}
+.table-dark-custom thead th {
+    background-color: var(--admin-head) !important;
+    color: #cbd5e1 !important;
+    border-bottom: 2px solid var(--kiosk-border) !important;
+    font-weight: 700;
+}
+.table-dark-custom tbody td {
+    background-color: var(--admin-panel) !important;
+    color: #f8fafc !important;
+}
+.col-thumb { width: 70px; }
+.col-avatar { width: 60px; }
+.col-actions { min-width: 140px; white-space: nowrap; }
+.scroll-55 { max-height: 55vh; overflow-y: auto; }
+.scroll-35 { max-height: 35vh; overflow-y: auto; }
+.audit-search { width: 220px; }
+.audit-filter { width: 170px; }
+.ranking-limit { width: 140px; }
+
+/* ---------------------------------------------------------------- 訂單看板 */
+.order-items-list { max-height: 180px; overflow-y: auto; }
+.order-items-list .item-custom,
+.order-meta { font-size: 0.75rem; }
+.order-status-select { min-width: 130px; }
+
+/* ---------------------------------------------------------------- 營運分析 */
+.ai-advice { white-space: pre-line; }
+/* 熱門排行的銷量比例長條 (純 CSS，不需圖表套件) */
+.top-item-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+.top-item-bar > span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--admin-accent), #fbbf24);
+    transition: width 0.3s ease;
+}
+
+/* ---------------------------------------------------------------- 圖片裁切 */
+.crop-stage { max-height: 450px; overflow: hidden; }
+.crop-stage img { display: block; max-width: 100%; }
+
+/* ---------------------------------------------------------------- 店家註冊 / 員工帳號 */
+.tenant-register-wrap {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 1rem 0;
+}
+.tenant-register-card {
+    width: min(100% - 2rem, 520px);
+    background: var(--admin-panel);
+    border: 1px solid var(--kiosk-border);
+    border-radius: 18px;
+}
+.staff-main { max-width: 960px; }
+.staff-main .card { background: var(--admin-panel); border: 1px solid var(--kiosk-border); }
+.staff-reset-input { width: 145px; }

@@ -1,0 +1,69 @@
+# 不放進映像檔的檔案 (資料、機敏設定、開發用檔案)；database/ 與 uploads/ 由 docker compose 的 volume 提供
+
+# ---- 版本控制 / 編輯器 ----
+.git
+.gitignore
+.vscode
+.idea
+*.swp
+*.swo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- 虛擬環境與 Python 快取 ----
+venv
+.venv
+env
+ENV
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# ---- 機敏設定 (app/config.py 以 override=True 載入 .env，映像檔內不可有 .env，否則會蓋掉容器環境變數) ----
+.env
+.env.*
+
+# ---- 資料庫與金鑰 (本機 SQLite、自動產生的 SECRET_KEY、還原前的備份) ----
+database/*
+
+# ---- 上傳檔 (會員人臉照片、餐點照片；新舊位置都排除) ----
+uploads
+static/member
+static/menu
+
+# ---- 測試、備份、匯出檔 (backups/ 含資料庫 dump 與會員照片，絕不可打包進映像) ----
+backups
+*.dump
+*.tgz
+chrome-kiosk
+tests
+test_menu.xlsx
+*.zip
+*.xlsx
+*.xls
+*.csv
+*.log
+repomix-output.xml
+
+# ---- 大型選用模型 (本地 Qwen GGUF，> 1GB；人臉辨識的 .onnx 模型需要保留) ----
+models/*.gguf
+
+# ---- 文件、門市專用與範例設定 (容器內不需要) ----
+README.txt
+DEPLOY.txt
+SYNC.txt
+pytest.ini
+serve_windows.py
+deploy/hub.env.example
+
+# ---- 部署設定本身不需要放進映像檔 ----
+docker-compose*.yml
+compose*.yml
+Dockerfile
+.dockerignore
+deploy/Caddyfile

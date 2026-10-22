@@ -1,9 +1,14 @@
+import logging
 import os
 import threading
+import warnings
+
 import cv2
 import numpy as np
 from PIL import Image, ImageOps
 from app.config import Config
+
+logger = logging.getLogger(__name__)
 
 cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 
@@ -11,6 +16,8 @@ cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
 MAX_UPLOAD_IMAGE_PIXELS = 25_000_000
 ALLOWED_UPLOAD_IMAGE_FORMATS = {'JPEG', 'PNG', 'WEBP', 'MPO'}  # MPO = 手機相機常見的 JPEG 變體
 Image.MAX_IMAGE_PIXELS = MAX_UPLOAD_IMAGE_PIXELS
+# Pillow 對「超過上限但未達 2 倍」的圖只發出警告仍照常開啟；改為直接拋錯，超過上限的圖一律拒收 (不在 log 留警告)
+warnings.filterwarnings('error', category=Image.DecompressionBombWarning)
 
 # 全域模型快取變數
 _detector = None
@@ -49,7 +56,7 @@ def save_and_fix_image(file_storage, dest_path):
         img.save(dest_path, "JPEG", quality=88)
         return True
     except Exception as e:
-        print(f"[!] 圖片讀取/壓縮失敗: {e}")
+        logger.info("圖片讀取/壓縮失敗: %s", e)
         if os.path.exists(dest_path):
             try:
                 os.remove(dest_path)
@@ -79,18 +86,8 @@ def extract_feature(image_path):
                 aligned_face = recognizer.alignCrop(img, largest_face)
                 return recognizer.feature(aligned_face)
     except Exception as e:
-        print(f"[!] 人臉特徵分析過程異常: {e}")
+        logger.warning("人臉特徵分析過程異常: %s", e)
     return None
-
-def compare_faces(feat1, feat2):
-    """保留單筆比對作為基礎相容介面"""
-    if feat1 is None or feat2 is None:
-        return 0.0
-    _, recognizer = get_face_models()
-    if recognizer is None:
-        return 0.0
-    with CV_LOCK:
-        return recognizer.match(feat1, feat2, cv2.FaceRecognizerSF_FR_COSINE)
 
 def find_best_match_vectorized(target_feature, candidate_users, threshold=0.363):
     """
@@ -129,7 +126,7 @@ def find_best_match_vectorized(target_feature, candidate_users, threshold=0.363)
             valid_users.append(u)
             rows.append(vec)
         if skipped:
-            print(f"[!] 人臉比對略過 {skipped} 筆維度不符或內容異常的會員特徵")
+            logger.warning("人臉比對略過 %d 筆維度不符或內容異常的會員特徵", skipped)
         if not rows:
             return None, 0.0
 
@@ -154,5 +151,5 @@ def find_best_match_vectorized(target_feature, candidate_users, threshold=0.363)
         return None, best_score
 
     except Exception as e:
-        print(f"[!] 矩陣向量比對異常: {e}")
-        return None, 0.0
+        logger.exception("矩陣向量比對異常: %s", e)
+        return None, 0.0

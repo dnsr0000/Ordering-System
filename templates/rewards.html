@@ -1,656 +1,220 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>回饋商城</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(135deg, #10141d 0%, #1a2232 100%);
-            color: #f8f9fa;
-            font-family: "Microsoft JhengHei", -apple-system, sans-serif;
-            min-height: 100vh;
-            padding-bottom: 60px;
-        }
-        .header {
-            background: rgba(15, 23, 42, 0.95);
-            backdrop-filter: blur(8px);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        }
-        .vip-card {
-            background: linear-gradient(135deg, #2b1f07 0%, #151109 50%, #3a2b0c 100%);
-            border: 1px solid rgba(245, 183, 56, 0.4);
-            border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
-            position: relative;
-            overflow: hidden;
-        }
-        .vip-card::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(245, 183, 56, 0.15) 0%, transparent 60%);
-            pointer-events: none;
-        }
-        .points-number {
-            font-size: 2.8rem;
-            font-weight: 800;
-            color: #f5b738;
-            text-shadow: 0 2px 10px rgba(245, 183, 56, 0.3);
-        }
-        .reward-card {
-            background: #182030;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
-            transition: all 0.2s ease;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-        }
-        .reward-card:hover {
-            transform: translateY(-4px);
-            border-color: #f5b738;
-            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
-        }
-        .reward-img-container {
-            width: 100%;
-            height: 155px;
-            position: relative;
-            overflow: hidden;
-            border-top-left-radius: 16px;
-            border-top-right-radius: 16px;
-            background: #0f172a;
-        }
-        .reward-img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .points-badge {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(0, 0, 0, 0.75);
-            border: 1px solid #f5b738;
-            color: #f5b738;
-            border-radius: 999px;
-            padding: 3px 10px;
-            font-weight: bold;
-            font-size: 0.85rem;
-            backdrop-filter: blur(4px);
-        }
-        .btn-redeem {
-            background: linear-gradient(135deg, #f5b738 0%, #e69c17 100%);
-            border: none;
-            color: #111;
-            font-weight: bold;
-            border-radius: 10px;
-        }
-        .btn-redeem:hover:not(:disabled) {
-            background: linear-gradient(135deg, #ffd05b 0%, #f5b738 100%);
-            color: #000;
-        }
-        .btn-redeem:disabled {
-            background: #2a3447;
-            color: #6b7280;
-            border: 1px solid rgba(255,255,255,0.05);
-        }
-    
-        /* === 配色與對比度修正 (防止背景與文字顏色融合) === */
-        .card:not(.text-dark):not(.light-card),
-        .card-custom,
-        .login-card,
-        .pos-panel,
-        .kds-card,
-        .pickup-card,
-        .number-card,
-        .reward-card,
-        .vip-card,
-        .modal-content:not(.text-dark) {
-            --bs-card-color: #f8fafc;
-            --bs-modal-color: #f8fafc;
-            color: #f8fafc;
-        }
-        .form-label,
-        .form-check-label,
-        .col-form-label {
-            color: #f1f5f9;
-        }
-        .text-dark .form-label,
-        .text-dark .form-check-label,
-        .bg-light .form-label,
-        .bg-light .form-check-label {
-            color: #1e293b !important;
-        }
-        .form-control:disabled,
-        .form-select:disabled,
-        .form-control[readonly] {
-            background-color: #1e293b !important;
-            color: #94a3b8 !important;
-            border-color: #334155 !important;
-            opacity: 0.85;
-        }
-        .form-select option,
-        select.form-select option,
-        select option {
-            background-color: #0f172a !important;
-            color: #f8fafc !important;
-        }
-        .form-select option:disabled,
-        select option:disabled {
-            background-color: #0f172a !important;
-            color: #64748b !important;
-        }
-        .text-muted {
-            color: #94a3b8 !important;
-        }
-        .text-secondary {
-            color: #94a3b8 !important;
-        }
-        .text-dark .text-muted,
-        .bg-light .text-muted,
-        .bg-white .text-muted,
-        .thermal-receipt .text-muted {
-            color: #475569 !important;
-        }
-        .text-dark .text-secondary,
-        .bg-light .text-secondary,
-        .bg-white .text-secondary {
-            color: #475569 !important;
-        }
+{% extends "base.html" %}
 
-        /* 確保白底確認兌換彈窗內的文字與下拉選單皆為深色字體、淺色背景 */
-        #redeemModal .modal-content {
-            background-color: #ffffff !important;
-            color: #0f172a !important;
-            --bs-modal-color: #0f172a !important;
-        }
-        #redeemModal .form-select,
-        #redeemModal .form-select option {
-            background-color: #ffffff !important;
-            color: #0f172a !important;
-            border-color: #cbd5e1 !important;
-        }
-        .btn-redeem:disabled {
-            background: #334155 !important;
-            color: #cbd5e1 !important;
-            border: 1px solid #475569 !important;
-        }
-    </style>
-</head>
-<body>
+{% block title %}紅利回饋商城 - 自助點餐系統{% endblock %}
 
-    <header class="header sticky-top py-3 mb-4">
-        <div class="container d-flex justify-content-between align-items-center">
-            <div class="d-flex align-items-center gap-2">
-                <i class="bi bi-gift-fill text-warning fs-3"></i>
-                <div>
-                    <h5 class="mb-0 fw-bold text-white">Points 紅利回饋商城</h5>
-                    <small class="text-white-50">積點兌換超值美食與專屬神券</small>
-                </div>
-            </div>
+{% block head %}
+{# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/rewards.css') }}">
+{% endblock %}
+
+{% block body_class %}rewards-page{% endblock %}
+
+{% block content %}
+{% set placeholder_img = url_for('static', filename='img/placeholder.svg') %}
+<header class="rewards-header sticky-top py-3 mb-4">
+    <div class="container d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-gift-fill text-warning fs-3"></i>
             <div>
-                <a href="/" class="btn btn-outline-warning btn-sm fw-bold px-3">
-                    <i class="bi bi-arrow-left"></i> 返回點餐
-                </a>
+                <h5 class="mb-0 fw-bold text-white">Points 紅利回饋商城</h5>
+                <small class="text-white-50">積點兌換超值美食與專屬神券</small>
             </div>
         </div>
-    </header>
-
-    <div class="container">
-        <!-- 🌟 VIP 會員卡 -->
-        <div class="vip-card p-4 mb-4">
-            <div class="row align-items-center">
-                <div class="col-md-7">
-                    <div class="d-flex align-items-center gap-3 mb-2">
-                        <img src="{{ url_for('static', filename='member/' + user.photo_path) if user.photo_path else 'https://dummyimage.com/60x60/333/fff&text=VIP' }}" class="rounded-circle object-fit-cover border border-warning" width="55" height="55" alt="會員頭像">
-                        <div>
-                            <span class="badge bg-warning text-dark fw-bold">VIP MEMBER</span>
-                            <h4 class="fw-bold mb-0 text-white mt-1">{{ user.name }}</h4>
-                        </div>
-                    </div>
-                    <small class="text-white-50"><i class="bi bi-phone"></i> 會員帳號：{{ user.phone }}</small>
-                </div>
-                <div class="col-md-5 text-md-end mt-3 mt-md-0">
-                    <div class="text-white-50 small">現有可用紅利</div>
-                    <div class="points-number">
-                        <i class="bi bi-star-fill text-warning fs-3 me-1"></i><span id="currentPoints">{{ user.points }}</span> <span class="fs-4 text-white-50">點</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 兌換商品清單 (餐點 + 動態優惠券) -->
-        <div class="row g-3" id="rewardsContainer">
-            
-            <!-- 1. 動態優惠券卡片列表 -->
-            {% for cp in reward_coupons %}
-            {% set actual_cp_points = cp.reward_discount_points if cp.reward_discount_points and cp.reward_discount_points > 0 else cp.reward_points %}
-            <!-- 計算當前會員已兌換此券的總張數 -->
-            {% set user_redeemed_count = (user.user_coupons | selectattr('coupon_id', 'equalto', cp.id) | list | length) if user.user_coupons else 0 %}
-            {% set is_limit_reached = (cp.per_user_limit and cp.per_user_limit > 0 and user_redeemed_count >= cp.per_user_limit) %}
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ actual_cp_points }}">
-                <div class="reward-card border-warning">
-                    <div class="reward-img-container" style="background: linear-gradient(135deg, #b45309, #78350f); display:flex; align-items:center; justify-content:center;">
-                        <i class="bi bi-cash-coin display-3 text-warning"></i>
-                        {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
-                        <span class="points-badge bg-danger text-white border-danger shadow-sm">
-                            <i class="bi bi-tag-fill"></i> 限時 {{ cp.reward_discount_points }} 點
-                        </span>
-                        {% else %}
-                        <span class="points-badge">
-                            <i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點
-                        </span>
-                        {% endif %}
-                    </div>
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">{{ cp.title }}</h6>
-                        <div class="mb-1">
-                            {% if cp.discount_type == 'fixed' %}
-                                <span class="badge bg-success text-white fs-6 px-2 py-1">
-                                    <i class="bi bi-cash me-1"></i>現折 ${{ cp.discount_value|int }} 元
-                                </span>
-                            {% else %}
-                                <span class="badge bg-danger text-white fs-6 px-2 py-1">
-                                    <i class="bi bi-percent me-1"></i>享 {{ (cp.discount_value * 10)|round(1) }} 折
-                                </span>
-                            {% endif %}
-                        </div>
-                        {% if cp.per_user_limit and cp.per_user_limit > 0 %}
-                        <div class="small text-warning mb-1" style="font-size: 0.72rem;">
-                            <i class="bi bi-person-lock"></i> 每人限換 {{ cp.per_user_limit }} 次（已兌換 {{ user_redeemed_count }}/{{ cp.per_user_limit }}）
-                        </div>
-                        {% endif %}
-                        <small class="text-white-50 mb-2">
-                            {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend|int }} 可用{% else %}無消費門檻限制{% endif %}
-                        </small>
-                        
-                        <div class="mb-3">
-                            {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
-                            <del class="text-white-50 small me-1">{{ cp.reward_points }}點</del>
-                            <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ cp.reward_discount_points }} 點</span>
-                            {% else %}
-                            <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
-                            {% endif %}
-                        </div>
-                        <!-- 傳遞 discount 資訊給彈窗 -->
-                        {% set discount_desc = ('現折 $' ~ (cp.discount_value|int) ~ ' 元') if cp.discount_type == 'fixed' else ('享 ' ~ ((cp.discount_value * 10)|round(1)) ~ ' 折優惠') %}
-                        {% if is_limit_reached %}
-                            <button class="btn btn-secondary w-100 mt-auto py-2" disabled>
-                                已達兌換上限
-                            </button>
-                        {% else %}
-                            <button class="btn btn-redeem w-100 mt-auto py-2" 
-                                    data-id="{{ cp.id }}" 
-                                    data-title="{{ cp.title }}" 
-                                    data-code="{{ cp.code }}" 
-                                    data-points="{{ actual_cp_points }}" 
-                                    data-discount="{{ discount_desc }}"
-                                    onclick="promptRedeemCouponFromData(this)">
-                                立即兌換
-                            </button>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-
-            <!-- 2. 動態餐點兌換卡片列表 -->
-            {% for item in reward_items %}
-            {% set actual_points = item.reward_discount_points if item.reward_discount_points and item.reward_discount_points > 0 else item.reward_points %}
-            <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ actual_points }}">
-                <div class="reward-card {% if item.reward_discount_points and item.reward_discount_points > 0 %}border-danger{% endif %}">
-                    <div class="reward-img-container">
-                        <img src="{{ url_for('static', filename='menu/' + item.image_path) if item.image_path else 'https://dummyimage.com/500x500/333/fff&text=No+Image' }}" class="reward-img" alt="{{ item.name }}">
-                        
-                        {% if item.reward_discount_points and item.reward_discount_points > 0 %}
-                        <span class="points-badge bg-danger text-white border-danger shadow-sm">
-                            <i class="bi bi-tag-fill"></i> 限時 {{ item.reward_discount_points }} 點
-                        </span>
-                        {% else %}
-                        <span class="points-badge">
-                            <i class="bi bi-star-fill"></i> {{ item.reward_points }} 點
-                        </span>
-                        {% endif %}
-                    </div>
-                    
-                    <div class="p-3 d-flex flex-column flex-grow-1">
-                        <h6 class="fw-bold text-white mb-1">
-                            {{ item.name }}
-                            {% if item.is_sold_out %}<span class="badge bg-secondary ms-1">已售完</span>{% endif %}
-                        </h6>
-                        <small class="text-white-50 mb-2">市價 ${{ item.price }} 元</small>
-                        
-                        <div class="mb-3">
-                            {% if item.reward_discount_points and item.reward_discount_points > 0 %}
-                            <del class="text-white-50 small me-1">{{ item.reward_points }}點</del>
-                            <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ item.reward_discount_points }} 點</span>
-                            {% else %}
-                            <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
-                            {% endif %}
-                        </div>
-
-                        <!--  售完防呆判斷 -->
-                        {% if item.is_sold_out %}
-                        <button class="btn btn-secondary w-100 mt-auto py-2" disabled>
-                            已售完 (缺貨中)
-                        </button>
-                        {% else %}
-                        <button class="btn btn-redeem w-100 mt-auto py-2" 
-                            data-id="{{ item.id }}" 
-                            data-name="{{ item.name }}" 
-                            data-points="{{ actual_points }}" 
-                            data-modifiers="{{ item.modifiers or 'none' }}"
-                            onclick="promptRedeemItemFromData(this)">
-                            立即兌換
-                        </button>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-
-            {% if not reward_items and not reward_coupons %}
-            <div class="col-12 text-center py-5">
-                <i class="bi bi-gift text-secondary display-1 mb-3"></i>
-                <h5 class="text-white-50">店家目前尚未開放任何點數兌換品項與優惠券</h5>
-            </div>
-            {% endif %}
-        </div>
+        <a href="{{ url_for('customer.customer_index') }}" class="btn btn-outline-warning btn-sm fw-bold px-3">
+            <i class="bi bi-arrow-left"></i> 返回點餐
+        </a>
     </div>
+</header>
 
-    <!-- 兌換確認 Modal -->
-    <div class="modal fade text-dark" id="redeemModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 shadow-lg" style="border-radius: 20px;">
-                <div class="modal-header bg-warning text-dark border-0">
-                    <h5 class="modal-title fw-bold"><i class="bi bi-stars"></i> 確認點數兌換</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+<main class="container">
+    <!-- VIP 會員卡 -->
+    <section class="vip-card p-4 mb-4">
+        <div class="row align-items-center">
+            <div class="col-md-7">
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <div class="vip-avatar rounded-circle border border-warning" aria-hidden="true"><i class="bi bi-person-fill"></i></div>
+                    <div>
+                        <span class="badge bg-warning text-dark fw-bold">VIP MEMBER</span>
+                        <h4 class="fw-bold mb-0 text-white mt-1" id="memberName">{{ user.name }}</h4>
+                    </div>
                 </div>
-                <div class="modal-body p-4 text-center">
+                <small class="text-white-50"><i class="bi bi-phone"></i> 會員帳號：{{ user.phone }}</small>
+            </div>
+            <div class="col-md-5 text-md-end mt-3 mt-md-0">
+                <div class="text-white-50 small">現有可用紅利</div>
+                <div class="points-number">
+                    <i class="bi bi-star-fill text-warning fs-3 me-1"></i><span id="currentPoints">{{ user.points }}</span> <span class="fs-4 text-white-50">點</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {% if open_vouchers %}
+    <!-- 已兌換、尚未結帳使用的商品 (可退回點數) -->
+    <section class="voucher-box p-3 mb-4" id="openVouchers">
+        <h6 class="fw-bold text-warning mb-2"><i class="bi bi-ticket-perforated me-1"></i> 已兌換、尚未使用的商品</h6>
+        <ul class="list-unstyled mb-0">
+            {% for v in open_vouchers %}
+            <li class="d-flex flex-wrap justify-content-between align-items-center gap-2 py-2 voucher-row" data-item-id="{{ v.item_id }}">
+                <span>
+                    <span class="fw-bold text-white voucher-name">{{ v.name }}</span>
+                    <span class="badge bg-secondary ms-1">x {{ v.quantity }}</span>
+                    <small class="text-white-50 ms-1">共 {{ v.points }} 點</small>
+                </span>
+                <button type="button" class="btn btn-outline-light btn-sm" data-action="refund-item"
+                        data-id="{{ v.item_id }}" data-name="{{ v.name }}">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> 退回 1 份
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
+
+    <!-- 兌換清單 (優惠券 + 餐點) -->
+    <div class="row g-3" id="rewardsContainer">
+        {% for cp in reward_coupons %}
+        {% set cp_points = cp.redeem_points %}
+        {% set has_sale = cp.reward_discount_points and cp.reward_discount_points > 0 %}
+        {% set redeemed_count = user.user_coupons | selectattr('coupon_id', 'equalto', cp.id) | list | length %}
+        {% set limit_reached = cp.per_user_limit and cp.per_user_limit > 0 and redeemed_count >= cp.per_user_limit %}
+        <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ cp_points }}">
+            <div class="reward-card border-warning">
+                <div class="reward-img-container coupon-cover">
+                    <i class="bi bi-cash-coin display-3 text-warning"></i>
+                    {% if has_sale %}
+                    <span class="points-badge bg-danger text-white border-danger shadow-sm"><i class="bi bi-tag-fill"></i> 限時 {{ cp.reward_discount_points }} 點</span>
+                    {% else %}
+                    <span class="points-badge"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
+                    {% endif %}
+                </div>
+                <div class="p-3 d-flex flex-column flex-grow-1">
+                    <h6 class="fw-bold text-white mb-1 reward-title">{{ cp.title }}</h6>
+                    <div class="mb-1">
+                        {% if cp.discount_type == 'fixed' %}
+                        <span class="badge bg-success text-white fs-6 px-2 py-1"><i class="bi bi-cash me-1"></i>{{ cp.discount_label }} 元</span>
+                        {% else %}
+                        <span class="badge bg-danger text-white fs-6 px-2 py-1"><i class="bi bi-percent me-1"></i>享 {{ cp.discount_label }}</span>
+                        {% endif %}
+                    </div>
+                    {% if cp.per_user_limit and cp.per_user_limit > 0 %}
+                    <div class="small text-warning mb-1 limit-note">
+                        <i class="bi bi-person-lock"></i> 每人限換 {{ cp.per_user_limit }} 次（已兌換 {{ redeemed_count }}/{{ cp.per_user_limit }}）
+                    </div>
+                    {% endif %}
+                    <small class="text-white-50 mb-2">
+                        {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend }} 可用{% else %}無消費門檻限制{% endif %}
+                    </small>
                     <div class="mb-3">
-                        <i class="bi bi-gift text-warning display-3"></i>
+                        {% if has_sale %}
+                        <del class="text-white-50 small me-1">{{ cp.reward_points }}點</del>
+                        <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ cp.reward_discount_points }} 點</span>
+                        {% else %}
+                        <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
+                        {% endif %}
                     </div>
-                    <h4 class="fw-bold mb-2" id="modalItemName">商品名稱</h4>
-                    <p class="text-muted">將從您的帳戶扣除 <strong class="text-danger fs-5" id="modalItemPoints">0</strong> 點紅利點數。</p>
-                    
-                    <!--  動態客製化選項區塊 -->
-                    <div id="modalModifierBox" class="text-start bg-light p-3 rounded mb-3 border border-secondary border-opacity-25" style="display: none;">
-                        <h6 class="fw-bold text-dark mb-2"><i class="bi bi-sliders me-1"></i> 請選擇：</h6>
-                        <div id="modalModifierContent"></div>
-                    </div>
-
-                    <div class="alert alert-warning small mb-0" id="modalAlertText">
-                        兌換成功後，此品項（$0 元）將直接加入您的購物車中！
-                    </div>
-                </div>
-                <div class="modal-footer bg-light border-0 justify-content-between">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="button" class="btn btn-warning fw-bold px-4" id="confirmRedeemBtn" onclick="executeRedeem()">確認兌換</button>
+                    {% if limit_reached %}
+                    <button type="button" class="btn btn-secondary w-100 mt-auto py-2" disabled>已達兌換上限</button>
+                    {% else %}
+                    <button type="button" class="btn btn-redeem w-100 mt-auto py-2" data-action="redeem-coupon"
+                            data-id="{{ cp.id }}" data-title="{{ cp.title }}" data-code="{{ cp.code }}"
+                            data-points="{{ cp_points }}"
+                            data-discount="{{ cp.discount_label ~ ' 元' if cp.discount_type == 'fixed' else '享 ' ~ cp.discount_label ~ '優惠' }}">
+                        立即兌換
+                    </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
+        {% endfor %}
+
+        {% for item in reward_items %}
+        {% set item_points = item.redeem_points %}
+        {% set has_sale = item.reward_discount_points and item.reward_discount_points > 0 %}
+        <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ item_points }}">
+            <div class="reward-card {{ 'border-danger' if has_sale }}">
+                <div class="reward-img-container">
+                    <img src="{{ url_for('media.menu_image', filename=item.image_path) if item.image_path else placeholder_img }}"
+                         data-fallback="{{ placeholder_img }}" class="reward-img" alt="{{ item.name }}" loading="lazy">
+                    {% if has_sale %}
+                    <span class="points-badge bg-danger text-white border-danger shadow-sm"><i class="bi bi-tag-fill"></i> 限時 {{ item.reward_discount_points }} 點</span>
+                    {% else %}
+                    <span class="points-badge"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
+                    {% endif %}
+                </div>
+                <div class="p-3 d-flex flex-column flex-grow-1">
+                    <h6 class="fw-bold text-white mb-1 reward-title">
+                        {{ item.name }}
+                        {% if not item.is_available %}<span class="badge bg-secondary ms-1">已售完</span>{% endif %}
+                    </h6>
+                    <small class="text-white-50 mb-2">市價 ${{ item.price }} 元</small>
+                    <div class="mb-3">
+                        {% if has_sale %}
+                        <del class="text-white-50 small me-1">{{ item.reward_points }}點</del>
+                        <span class="text-danger fw-bold"><i class="bi bi-star-fill"></i> {{ item.reward_discount_points }} 點</span>
+                        {% else %}
+                        <span class="text-warning fw-bold small"><i class="bi bi-star-fill"></i> {{ item.reward_points }} 點</span>
+                        {% endif %}
+                    </div>
+                    {% if not item.is_available %}
+                    <button type="button" class="btn btn-secondary w-100 mt-auto py-2" disabled>已售完 (缺貨中)</button>
+                    {% else %}
+                    <button type="button" class="btn btn-redeem w-100 mt-auto py-2" data-action="redeem-item"
+                            data-id="{{ item.id }}" data-name="{{ item.name }}" data-points="{{ item_points }}"
+                            data-modifiers="{{ item.modifiers or 'none' }}">
+                        立即兌換
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+
+        {% if not reward_items and not reward_coupons %}
+        <div class="col-12 text-center py-5">
+            <i class="bi bi-gift text-secondary display-1 mb-3"></i>
+            <h5 class="text-white-50">店家目前尚未開放任何點數兌換品項與優惠券</h5>
+        </div>
+        {% endif %}
     </div>
-<script id="modifier-options-data" type="application/json">
-[
-    {% for m in modifier_options %}
-    {
-        "id": {{ m.id }},
-        "category": {{ m.category | tojson }},
-        "name": {{ m.name | tojson }},
-        "price": {{ m.price }}
-    }{{ "," if not loop.last else "" }}
-    {% endfor %}
-]
-</script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-    const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-    const _origFetch = window.fetch;
-    window.fetch = function(input, init = {}) {
-        init.headers = init.headers || {};
-        if (CSRF_TOKEN) {
-            if (init.headers instanceof Headers) {
-                init.headers.set('X-CSRFToken', CSRF_TOKEN);
-            } else {
-                init.headers['X-CSRFToken'] = CSRF_TOKEN;
-            }
-        }
-        return _origFetch(input, init);
-    };
+</main>
 
-    function escapeHtml(str) {
-        if (str === null || str === undefined) return '';
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+<!-- 兌換確認 Modal (白底) -->
+<div class="modal fade" id="redeemModal" tabindex="-1" aria-hidden="true" aria-labelledby="modalItemName" data-bs-theme="light">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content text-dark border-0 shadow-lg redeem-modal-content">
+            <div class="modal-header bg-warning text-dark border-0">
+                <h5 class="modal-title fw-bold"><i class="bi bi-stars"></i> 確認點數兌換</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body p-4 text-center">
+                <div class="mb-3"><i class="bi bi-gift text-warning display-3"></i></div>
+                <h4 class="fw-bold mb-2" id="modalItemName">商品名稱</h4>
+                <p class="text-muted">將從您的帳戶扣除 <strong class="text-danger fs-5" id="modalItemPoints">0</strong> 點紅利點數。</p>
 
-    let currentPoints = Number('{{ user.points }}');
-    let selectedReward = null;
-    const modifierOptions = JSON.parse(document.getElementById('modifier-options-data').textContent || '[]');
-    function updateRedeemButtons() {
-        document.querySelectorAll('.reward-item').forEach(item => {
-            const reqPoints = Number(item.dataset.points);
-            const btn = item.querySelector('button.btn-redeem'); 
-            if (!btn) return; 
-
-            if (currentPoints < reqPoints) {
-                btn.disabled = true;
-                btn.innerText = '點數不足';
-            } else {
-                btn.disabled = false;
-                btn.innerText = item.dataset.code ? '兌換優惠券' : '立即兌換';
-            }
-        });
-    }
-
-    function promptRedeemItemFromData(btn) {
-        const id = btn.dataset.id;
-        const name = btn.dataset.name;
-        const points = Number(btn.dataset.points);
-        const modifiers = btn.dataset.modifiers || 'none';
-        promptRedeemItem(id, name, points, modifiers); 
-    }
-
-    function promptRedeemCouponFromData(btn) {
-        const id = btn.dataset.id;
-        const title = btn.dataset.title;
-        const code = btn.dataset.code;
-        const points = Number(btn.dataset.points);
-        const discount = btn.dataset.discount || '';
-        promptRedeemCoupon(id, title, code, points, discount); 
-    }
-
-    //  彈出餐點兌換確認（支援客製化選項渲染）
-    function promptRedeemItem(id, name, points, modifiers = 'none') {
-        selectedReward = { type: 'item', id, name, points, modifiers };
-        document.getElementById('modalItemName').innerText = name;
-        document.getElementById('modalItemPoints').innerText = points;
-        document.getElementById('modalAlertText').innerText = '兌換成功後，此品項（$0 元）將直接加入您的購物車中！';
-        
-        const modBox = document.getElementById('modalModifierBox');
-        const modContent = document.getElementById('modalModifierContent');
-        
-        if (modifiers === 'ice_sugar') {
-            modBox.style.display = 'block';
-            modContent.innerHTML = `
-                <div class="mb-2">
-                    <label class="form-label small fw-bold text-secondary mb-1">冰塊量</label>
-                    <select id="reward-mod-ice" class="form-select form-select-sm">
-                        <option value="正常冰">正常冰</option>
-                        <option value="少冰">少冰</option>
-                        <option value="去冰">去冰</option>
-                        <option value="熱飲">熱飲</option>
-                    </select>
+                <!-- 客製化選項 -->
+                <div id="modalModifierBox" class="text-start bg-light p-3 rounded mb-3 border border-secondary border-opacity-25 d-none">
+                    <h6 class="fw-bold text-dark mb-2"><i class="bi bi-sliders me-1"></i> 請選擇：</h6>
+                    <div id="modalModifierContent"></div>
                 </div>
-                <div>
-                    <label class="form-label small fw-bold text-secondary mb-1">甜度</label>
-                    <select id="reward-mod-sugar" class="form-select form-select-sm">
-                        <option value="全糖">全糖</option>
-                        <option value="半糖">半糖</option>
-                        <option value="微糖">微糖</option>
-                        <option value="無糖">無糖</option>
-                    </select>
-                </div>
-            `;
-        } else if (modifiers === 'spicy') {
-            modBox.style.display = 'block';
-            modContent.innerHTML = `
-                <div>
-                    <label class="form-label small fw-bold text-secondary mb-1">辣度調整</label>
-                    <select id="reward-mod-spicy" class="form-select form-select-sm">
-                        <option value="不辣">不辣</option>
-                        <option value="微辣">微辣</option>
-                        <option value="中辣">中辣</option>
-                        <option value="大辣">大辣</option>
-                    </select>
-                </div>
-            `;
-        }else if (modifiers === 'addons') {
-            const addons = modifierOptions.filter(m => m.category === 'addons');
-            modBox.style.display = 'block';
-            modContent.innerHTML = `
-                <label class="form-label small fw-bold text-secondary mb-1">加料選項</label>
-                <div class="d-flex flex-wrap gap-3">
-                    ${addons.map(m => `
-                        <div class="form-check">
-                            <input class="form-check-input reward-mod-addon" type="checkbox" 
-                                data-id="${m.id}" data-name="${m.name}" data-price="${m.price}" 
-                                id="rewAddon-${m.id}">
-                            <label class="form-check-label small text-dark" for="rewAddon-${m.id}">
-                                ${m.name} (+${m.price})
-                            </label>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        } else {
-            modBox.style.display = 'none';
-            modContent.innerHTML = '';
-        }
 
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
-    }
+                <div class="alert alert-warning small mb-0" id="modalAlertText"></div>
+            </div>
+            <div class="modal-footer bg-light border-0 justify-content-between">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-warning fw-bold px-4" id="confirmRedeemBtn" data-action="confirm-redeem">確認兌換</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
 
-    // 彈出優惠券兌換確認
-    function promptRedeemCoupon(id, title, code, points, discount = '') {
-        selectedReward = { type: 'coupon', id, name: title, code, points };
-        document.getElementById('modalItemName').innerText = title;
-        document.getElementById('modalItemPoints').innerText = points;
-        document.getElementById('modalModifierBox').style.display = 'none';
-        document.getElementById('modalAlertText').innerHTML = `
-            ${discount ? `<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
-            兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！
-        `;
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('redeemModal')).show();
-    }
+{% block page_data %}
+{% set modifier_data = [] %}
+{% for m in modifier_options %}{% set _ = modifier_data.append(m.to_dict()) %}{% endfor %}
+<script type="application/json" id="page-data">{{ {'points': user.points or 0, 'modifierOptions': modifier_data}|tojson }}</script>
+{% endblock %}
 
-    //  執行兌換（收集客製化資訊與加料金額）
-    function executeRedeem() {
-        if (!selectedReward) return;
-        let customization = '';
-        const selectedModifierIds = [];
-
-        if (selectedReward.type === 'item') {
-            const customTextArr = [];
-            const ice = document.getElementById('reward-mod-ice');
-            const sugar = document.getElementById('reward-mod-sugar');
-            const spicy = document.getElementById('reward-mod-spicy');
-            const addons = document.querySelectorAll('.reward-mod-addon:checked');
-
-            if (ice && sugar) customTextArr.push(`${ice.value} / ${sugar.value}`);
-            if (spicy) customTextArr.push(spicy.value);
-            if (addons.length > 0) {
-                addons.forEach(cb => {
-                    selectedModifierIds.push(Number(cb.dataset.id));
-                });
-            }
-            customization = customTextArr.join('、');
-        }
-
-        const btn = document.getElementById('confirmRedeemBtn');
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>兌換中...';
-
-        const payload = selectedReward.type === 'coupon' 
-            ? { coupon_id: selectedReward.id } 
-            : { item_id: selectedReward.id, customization: customization,modifier_ids: selectedModifierIds };
-
-        fetch('/api/redeem_reward', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(payload)
-        })
-        .then(r => r.json())
-        .then(data => {
-            btn.disabled = false;
-            btn.innerHTML = '確認兌換';
-
-            if (data.success) {
-                currentPoints = data.remaining_points;
-                document.getElementById('currentPoints').innerText = currentPoints;
-                bootstrap.Modal.getInstance(document.getElementById('redeemModal')).hide();
-
-                if (data.is_coupon) {
-                    alert(data.message);
-                    window.location.reload();
-                } else {
-                    let currentCart = JSON.parse(localStorage.getItem('kiosk_cart') || '[]');
-                    currentCart.push(data.redeemed_item);
-                    localStorage.setItem('kiosk_cart', JSON.stringify(currentCart));
-                    alert(`🎉 ${data.message}\n已直接加入您的點餐清單！`);
-                    window.location.reload();
-                }
-            } else {
-                alert(data.message);
-            }
-        })
-        .catch(err => {
-            console.error(err);
-            btn.disabled = false;
-            alert("伺服器連線失敗，請稍後再試！");
-        });
-    }
-
-    updateRedeemButtons();
-
-    // ==============================================================================
-// 顧客閒置 10 分鐘自動清空暫存並安全登出 (Kiosk Idle Auto-Logout)
-// ==============================================================================
-(function initIdleAutoLogout() {
-    const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 分鐘 (600,000 毫秒)
-    let idleTimer = null;
-
-    function resetIdleTimer() {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => {
-            // 1. 清空本地瀏覽器購物車暫存，避免下一位顧客看到舊餐點
-            localStorage.removeItem('kiosk_cart');
-            
-            // 2. 自動跳轉至後端登出路由清除 Session
-            window.location.href = '/logout';
-        }, IDLE_TIMEOUT_MS);
-    }
-
-    // 監聽點餐機常見互動事件 (觸控點擊、滑動、滑鼠移動、實體/虛擬鍵盤輸入)
-    const activityEvents = ['touchstart', 'click', 'mousemove', 'mousedown', 'keydown', 'scroll'];
-    activityEvents.forEach(evt => {
-        window.addEventListener(evt, resetIdleTimer, { passive: true });
-    });
-
-    // 頁面載入後立即啟動第一次倒數
-    resetIdleTimer();
-})();
-</script>
-</body>
-</html>
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/rewards.js') }}"></script>
+{% endblock %}

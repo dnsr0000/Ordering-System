@@ -1,118 +1,139 @@
-from datetime import datetime
+from datetime import date, datetime
+
 from app.extensions import db
-from app.models.user import User
-from app.models.tenant import TenantScoped
+from app.models.enums import OrderSource, OrderStatus, ORDER_STATUS_LABELS
+from app.models.mixins import TenantScoped
+
+REWARD_LABEL = '[點數兌換]'
 
 
 class Order(TenantScoped, db.Model):
     """
-    訂單主表:持久化紀錄點餐交易、取餐叫號、POS收銀金流明細、點數異動與生命週期狀態。
+    訂單。uuid 由前端在送單時產生 (client_order_id)：同一個 uuid 重送只會建立一張訂單，
+    之後同步到線上時也以 uuid 作為跨資料庫的訂單識別。
+    status：Pending (製作中) → Completed (已出餐) → PickedUp (已取餐)；任一階段可 Cancelled。
     """
     __tablename__ = 'order'
 
-    # 主鍵：系統訂單唯一流水編號 (Integer)
     id = db.Column(db.Integer, primary_key=True)
-
-    # 會員 ID (INTEGER，訪客點餐時為 Null)
-    user_id = db.Column(db.Integer, nullable=True)
-
-    # 桌號或顧客識別資訊 (VARCHAR(50)，預設 '訪客'，外帶時可標記取餐代號)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='SET NULL'), nullable=True)
     table_number = db.Column(db.String(50), default='訪客')
-
-    # 當日循環取餐號碼 (INTEGER，1~999 遞增循環)
     pickup_number = db.Column(db.Integer, default=1)
-
-    # 訂單實收總金額 (INTEGER，扣除所有優惠折抵後的應付金額，單位 NTD)
     total_price = db.Column(db.Integer, nullable=False)
-
-    # 付款方式 (VARCHAR(50)，受白名單約束，如：Cash, Credit Card, Line Pay, 街口支付)
     payment_method = db.Column(db.String(50), default='Cash')
-
-    # 用餐模式 (VARCHAR(50)，受白名單約束：'內用' 或 '外帶')
     order_type = db.Column(db.String(50), default='內用')
-
-    # 訂單來源通道 (VARCHAR(30)，例如：'Kiosk' 自助機 或 'POS' 櫃檯收銀機)
-    order_source = db.Column(db.String(30), default='Kiosk')
-
-    # 收銀經手人員帳號 (VARCHAR(100)，POS 訂單專用，用於結帳責任追溯)
+    order_source = db.Column(db.String(30), default=OrderSource.KIOSK)
     cashier_username = db.Column(db.String(100), default='')
-
-    # 現金實收金額 (INTEGER，單位 NTD，非現金結帳時等於 total_price)
     cash_received = db.Column(db.Integer, default=0)
-
-    # 現金找零金額 (INTEGER，單位 NTD)
     cash_change = db.Column(db.Integer, default=0)
-
-    # 是否需要免洗餐具 (BOOLEAN，外帶點餐時由顧客或櫃檯指定)
     need_cutlery = db.Column(db.Boolean, default=True)
-
-    # 整單備註說明 (VARCHAR(200)，例如：少油、分開包裝)
     note = db.Column(db.String(200), default='')
-
-    # 訂單狀態機 (VARCHAR(50)，狀態：Pending 製作中 -> Completed 待取餐 -> PickedUp 已取餐 / Cancelled 已取消)
-    status = db.Column(db.String(50), default='Pending')
-
-    # 本單使用折抵之紅利點數 (INTEGER)
+    status = db.Column(db.String(50), default=OrderStatus.PENDING, index=True)
     points_used = db.Column(db.Integer, default=0)
-
-    # 本單消費回饋獲得之紅利點數 (INTEGER)
     points_earned = db.Column(db.Integer, default=0)
-
-    # 優惠券與紅利點數合併折抵總金額 (INTEGER，單位 NTD)
     discount_amount = db.Column(db.Integer, default=0)
-
-    # 本單「實際套用成功」之優惠代碼 (VARCHAR(50))；輸入無效或未達門檻而沒有折抵時為空字串
+    # 實際套用成功的優惠代碼與核銷的會員持有券；取消時只還原這一張
     coupon_code = db.Column(db.String(50), default='')
-
-    # 本單核銷掉的會員持有券 (user_coupon.id)；取消訂單時只還原這一張。公開券或未使用券時為 Null
-    applied_user_coupon_id = db.Column(db.Integer, nullable=True)
-
-    # 廚房出餐/出單完成時間 (DATETIME，可為空)
+    applied_user_coupon_id = db.Column(db.Integer, db.ForeignKey('user_coupon.id', ondelete='SET NULL'), nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now, index=True)
+    customer_log_id = db.Column(db.Integer, db.ForeignKey('customer_log.id', ondelete='SET NULL'), nullable=True)
+    # 負責出餐的分店 (sync_node.uuid)：分店自己建立的訂單為本分店；線上點餐為顧客選的取餐分店；未啟用同步時為空
+    node_uuid = db.Column(db.String(36), nullable=True, index=True)
+    # 付款狀態：'' 已在點餐時處理 (點餐機 / POS) / unpaid 掃碼點餐尚未結帳 / settled 已於櫃檯結帳 /
+    # 線上付款 (線上端的線上點餐)：pending 待付款 / paid 已付款 / expired 逾時未付 /
+    # refund_required 已付款但訂單取消 (需人工退款)。待付款的訂單不會送到分店。
+    payment_status = db.Column(db.String(20), nullable=False, default='', server_default='')
+    paid_at = db.Column(db.DateTime, nullable=True)
+    payment_trade_no = db.Column(db.String(30), nullable=True)   # 金流商交易編號 (綠界 TradeNo)
+    payment_ref = db.Column(db.String(20), nullable=True, index=True)  # 最近一次送到金流商的特店訂單編號
+    # 掃桌上 QR code 點餐的桌位 (本機資料，不同步)；這類訂單 payment_status 為 unpaid (餐後至櫃檯結帳) → settled
+    dining_table_id = db.Column(db.Integer, db.ForeignKey('dining_table.id', ondelete='SET NULL', name='fk_order_dining_table_id'),
+                                nullable=True, index=True)
 
-    # 訂單送出建立時間 (DATETIME，預設為當前系統時間)
-    created_at = db.Column(db.DateTime, default=datetime.now)
-
-    # 關聯之顧客訪問日誌 ID (INTEGER，關聯 customer_log.id)
-    customer_log_id = db.Column(db.Integer, nullable=True)
-
-    # 關聯：此筆訂單包含的所有餐點細項，級聯刪除
-    items = db.relationship('OrderItem', backref='order', lazy=True, cascade="all, delete-orphan")
+    items = db.relationship('OrderItem', backref='order', lazy=True, cascade='all, delete-orphan', passive_deletes=True)
+    user = db.relationship('User', lazy='joined')
+    customer_log = db.relationship('CustomerLog')
 
     @property
-    def user(self):
-        """動態載入訂單關聯之會員 User 物件"""
-        if self.user_id:
-            return db.session.get(User, self.user_id)
-        return None
+    def subtotal(self):
+        return (self.total_price or 0) + (self.discount_amount or 0)
+
+    @property
+    def display_pickup_number(self):
+        return self.pickup_number if (self.pickup_number or 0) > 0 else self.id
+
+    @property
+    def status_label(self):
+        return ORDER_STATUS_LABELS.get(self.status, self.status)
+
+    def to_receipt(self, remaining_points=None):
+        """結帳回應 / 收據 (重送同一張訂單時也回傳同一份內容)"""
+        return {
+            'success': True,
+            'order_id': self.id,
+            'order_uuid': self.uuid,
+            'pickup_number': self.pickup_number,
+            'table_number': self.table_number,
+            'user_name': self.user.name if self.user else self.table_number,
+            'subtotal': self.subtotal,
+            'discount_amount': self.discount_amount or 0,
+            'points_used': self.points_used or 0,
+            'points_earned': self.points_earned or 0,
+            'total_price': self.total_price,
+            'cash_received': self.cash_received,
+            'cash_change': self.cash_change or 0,
+            'payment_method': self.payment_method,
+            'order_type': self.order_type,
+            'order_source': self.order_source,
+            'need_cutlery': bool(self.need_cutlery),
+            'note': self.note or '',
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else '',
+            'cashier': self.cashier_username or '',
+            'items': [i.to_dict() for i in self.items],
+            'remaining_points': remaining_points if remaining_points is not None else (self.user.points if self.user else 0),
+        }
 
 
 class OrderItem(TenantScoped, db.Model):
-    """
-    訂單餐點細項資料表:記錄各品項之實際計價、購買數量、客製化字串與關聯套餐。
-    """
+    """訂單明細：item_name / price 為下單當下的快照；is_reward 為紅利兌換品 (金額只含加料)"""
     __tablename__ = 'order_item'
 
-    # 主鍵：細項唯一識別碼 (Integer)
     id = db.Column(db.Integer, primary_key=True)
-
-    # 外鍵：所屬訂單 ID (關聯 order.id)
-    order_id = db.Column(db.Integer, db.ForeignKey('order.id'), nullable=False)
-
-    # 對應原始菜單品項 ID (INTEGER，可為空，避免刪除品項後破壞歷史訂單)
-    menu_item_id = db.Column(db.Integer, nullable=True)
-
-    # 對應升級之套餐選項 ID (INTEGER，單點為 Null)
-    combo_option_id = db.Column(db.Integer, nullable=True)
-
-    # 餐點快照名稱 (VARCHAR(100)，包含套餐或點數兌換標註，不可為空)
+    order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='CASCADE'), nullable=False, index=True)
+    menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_item.id', ondelete='SET NULL'), nullable=True)
+    combo_option_id = db.Column(db.Integer, db.ForeignKey('combo_option.id', ondelete='SET NULL'), nullable=True)
     item_name = db.Column(db.String(100), nullable=False)
-
-    # 結帳當下之單品計價金額 (INTEGER，含加價客製化與套餐加價，單位 NTD)
     price = db.Column(db.Integer, nullable=False)
-
-    # 購買份數 (INTEGER，預設 1)
     quantity = db.Column(db.Integer, default=1)
-
-    # 客製化規格文字記錄 (VARCHAR(200)，如：少冰半糖)
     customization = db.Column(db.String(200), default='')
+    is_reward = db.Column(db.Boolean, nullable=False, default=False)
+
+    @property
+    def display_name(self):
+        return f"{REWARD_LABEL} {self.item_name}" if self.is_reward else self.item_name
+
+    def to_dict(self):
+        return {
+            'name': self.display_name,
+            'item_name': self.item_name,
+            'is_reward': bool(self.is_reward),
+            'price': self.price,
+            'quantity': self.quantity,
+            'subtotal': self.price * self.quantity,
+            'customization': self.customization or '',
+        }
+
+
+class DailyCounter(db.Model):
+    """
+    每店每日的流水號計數 (目前用於取餐號 1~999 循環)。
+    以單一列的條件式 UPDATE 取號：SQLite 與 PostgreSQL 都會在交易內鎖住這一列，
+    同時結帳的請求自然排隊，不需要 Redis 或行程內的鎖。
+    """
+    __tablename__ = 'daily_counter'
+
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenant.id'), primary_key=True)
+    business_date = db.Column(db.Date, primary_key=True, default=date.today)
+    name = db.Column(db.String(30), primary_key=True)
+    value = db.Column(db.Integer, nullable=False, default=0)

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}同步狀態 - {{ tenant.name }}{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="container py-4 staff-main" id="sync-page">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <div>
+            <h1 class="h3 fw-bold mb-1"><i class="bi bi-arrow-repeat text-warning me-2"></i>同步狀態</h1>
+            <div class="text-white-50">{{ tenant.name }}・分店本機與線上端的資料同步 (查詢時間 {{ now }})</div>
+        </div>
+        <div class="d-flex gap-2">
+            <form method="POST" action="{{ url_for('sync_admin.sync_run') }}" id="syncRunForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-warning fw-bold text-dark" type="submit" {{ 'disabled' if not configured }}>
+                    <i class="bi bi-cloud-arrow-up-fill me-1"></i>立即同步
+                </button>
+            </form>
+            <a class="btn btn-outline-light" href="{{ url_for('sync_admin.sync_status') }}"><i class="bi bi-arrow-clockwise"></i> 重新整理</a>
+            <a class="btn btn-outline-light" href="{{ url_for('admin.admin_dashboard') }}">回管理後台</a>
+        </div>
+    </div>
+
+    {% if not configured %}
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i>
+        尚未設定 <code>SYNC_HUB_URL</code> / <code>SYNC_NODE_TOKEN</code>：請向總部取得分店權杖 (線上端「分店管理」產生)，設定後重新啟動伺服器。
+    </div>
+    {% endif %}
+
+    {% if status.last_error %}
+    <div class="alert alert-danger" id="sync-last-error">
+        <div class="fw-bold"><i class="bi bi-x-octagon-fill me-1"></i>最近一次同步失敗 ({{ status.last_error_at }})</div>
+        <div class="small mt-1">{{ status.last_error }}</div>
+        <div class="small mt-1 text-white-50">斷網期間門市可照常營業，恢復連線後會自動補齊。</div>
+    </div>
+    {% endif %}
+
+    <section class="card rounded-4 p-4 mb-4">
+        <div class="row g-3" id="sync-status-grid">
+            <div class="col-md-6">
+                <div class="small text-white-50">線上端網址</div>
+                <div class="fw-bold text-break">{{ status.hub_url or '未設定' }}</div>
+            </div>
+            <div class="col-md-6">
+                <div class="small text-white-50">本分店 (線上店家)</div>
+                <div class="fw-bold">
+                    {% if status.node_uuid %}
+                        {{ status.node_name }}{% if status.hub_tenant_name %} ({{ status.hub_tenant_name }}){% endif %}
+                        <div class="small text-white-50 font-monospace">{{ status.node_uuid }}</div>
+                    {% else %}
+                        <span class="text-warning">尚未完成第一次連線</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="small text-white-50">上次上傳</div>
+                <div class="fw-bold" id="sync-last-push">{{ status.last_push_at.replace('T', ' ') if status.last_push_at else '尚未上傳' }}</div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="small text-white-50">上次下載</div>
+                <div class="fw-bold" id="sync-last-pull">{{ status.last_pull_at.replace('T', ' ') if status.last_pull_at else '尚未下載' }}</div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="small text-white-50">待上傳筆數</div>
+                <div class="fw-bold fs-4 {{ 'text-warning' if status.pending_changes else 'text-success' }}" id="sync-pending">{{ status.pending_changes }}</div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="small text-white-50">等待編號的線上訂單</div>
+                <div class="fw-bold fs-4 {{ 'text-warning' if status.online_orders_waiting else 'text-success' }}" id="sync-waiting">{{ status.online_orders_waiting }}</div>
+            </div>
+            <div class="col-12 small text-white-50">
+                {% if background %}
+                背景同步執行中：本機有變更時立即上傳，並每 {{ interval }} 秒檢查一次；新的線上訂單會即時下載。
+                {% else %}
+                背景同步未啟動 (SYNC_AUTOSTART=0 或未設定連線資訊)：請按「立即同步」手動同步。
+                {% endif %}
+            </div>
+        </div>
+    </section>
+
+    <section class="card rounded-4 p-4">
+        <h2 class="h5 fw-bold mb-3"><i class="bi bi-exclamation-diamond-fill text-danger me-2"></i>線上端拒收的資料 (衝突)</h2>
+        <div class="table-responsive">
+            <table class="table table-dark table-striped align-middle mb-0" id="conflictsTable">
+                <thead>
+                    <tr><th>時間</th><th>資料表</th><th>資料 uuid</th><th>原因</th></tr>
+                </thead>
+                <tbody>
+                    {% for c in status.conflicts %}
+                    <tr>
+                        <td class="small text-nowrap">{{ c.created_at }}</td>
+                        <td>{{ c.table }}</td>
+                        <td class="small font-monospace">{{ c.uuid }}</td>
+                        <td>{{ c.reason }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4" class="text-center text-white-50">沒有衝突</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+{% endblock %}

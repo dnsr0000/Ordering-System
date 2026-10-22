@@ -1,0 +1,53 @@
+/* 櫃檯取餐核銷 */
+.header-pickup {
+    background: var(--kiosk-surface);
+    border-bottom: 2px solid var(--kiosk-border);
+}
+
+.quick-pickup {
+    width: 250px;
+}
+.quick-pickup .form-control::placeholder {
+    color: var(--kiosk-muted);
+    opacity: 1;
+}
+
+.pickup-card {
+    background: var(--kiosk-card);
+    color: var(--kiosk-text);
+    border: 2px solid var(--kiosk-success);
+    border-radius: 16px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+.pickup-items {
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+/* 核銷後淡出 */
+.pickup-col {
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.pickup-col.is-leaving {
+    opacity: 0;
+    transform: scale(0.95);
+}
+
+.btn-pickup-finish {
+    background-color: var(--kiosk-success);
+    color: var(--kiosk-bg);
+    font-weight: 800;
+    border: none;
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 1.15rem;
+    transition: all 0.2s;
+}
+.btn-pickup-finish:hover,
+.btn-pickup-finish:focus-visible {
+    background-color: #16a34a;
+    color: #fff;
+}

@@ -1,0 +1,252 @@
+/*
+ * 櫃檯 POS 收銀頁 (templates/pos.html) 專屬樣式。
+ * 深色主題與共用色票在 theme.css；這裡只放 POS 版面、商品卡片與 80mm 熱感應收據列印樣式。
+ */
+.pos-page {
+    overflow-x: hidden;
+}
+
+/* 小字級 (取代各元素上的行內 font-size) */
+.pos-xs { font-size: 0.75rem; }
+.pos-xxs { font-size: 0.68rem; }
+
+.header-pos {
+    background: var(--kiosk-surface);
+    border-bottom: 2px solid var(--kiosk-border);
+}
+
+.pos-panel {
+    background: var(--kiosk-card);
+    border: 1px solid var(--kiosk-border);
+    border-radius: 16px;
+    color: var(--kiosk-text);
+}
+
+/* 輸入框：比卡片更深的底色，聚焦時使用品牌橘色 */
+.pos-page .form-control,
+.pos-page .form-select {
+    background-color: #0f172a;
+    border: 1px solid var(--kiosk-border);
+    color: var(--kiosk-text);
+    color-scheme: dark;
+}
+.pos-page .form-control:focus,
+.pos-page .form-select:focus {
+    background-color: var(--kiosk-surface);
+    border-color: #f59e0b;
+    color: #fff;
+    box-shadow: 0 0 0 0.2rem rgba(245, 158, 11, 0.25);
+}
+.pos-page .form-control::placeholder {
+    color: var(--kiosk-muted);
+    opacity: 1;
+}
+.pos-page .form-control:disabled {
+    background-color: var(--kiosk-card);
+    color: var(--kiosk-muted);
+}
+.pos-page .form-label,
+.pos-page .form-check-label {
+    color: #f1f5f9;
+}
+
+/* 分類按鈕 */
+.cat-pill {
+    background: var(--kiosk-surface);
+    border: 1px solid var(--kiosk-border);
+    color: #cbd5e1;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 0.45rem 0.9rem;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+}
+.cat-pill:hover {
+    border-color: #f59e0b;
+    color: #fff;
+}
+.cat-pill.active {
+    background: #f59e0b;
+    border-color: #f59e0b;
+    color: #0f172a;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+/* 商品觸控卡片 */
+.pos-menu-grid {
+    max-height: 74vh;
+}
+.pos-item-card {
+    background: var(--kiosk-surface);
+    border: 2px solid var(--kiosk-border);
+    border-radius: 14px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    user-select: none;
+}
+.pos-item-card:hover:not(.pos-item-soldout) {
+    border-color: #f59e0b;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+.pos-item-card:active:not(.pos-item-soldout) {
+    transform: scale(0.98);
+}
+.pos-item-soldout {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: grayscale(85%);
+}
+.pos-item-img {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid #475569;
+    flex-shrink: 0;
+}
+.pos-item-name {
+    font-size: 0.95rem;
+    line-height: 1.25;
+    word-break: break-word;
+}
+
+/* 套餐選擇卡片 */
+.pos-combo-card {
+    background: var(--kiosk-surface);
+    border: 2px solid #475569;
+    cursor: pointer;
+}
+.pos-combo-card.is-combo {
+    border-color: #f59e0b;
+}
+.pos-combo-card.pos-item-soldout {
+    cursor: not-allowed;
+}
+
+/* 購物車 */
+.cart-list-box {
+    max-height: 28vh;
+    min-height: 150px;
+    overflow-y: auto;
+}
+.pos-cart-row + .pos-cart-row {
+    border-top: 1px solid rgba(51, 65, 85, 0.5);
+}
+.pos-cart-custom { font-size: 0.72rem; }
+
+.pos-summary .small { font-size: 0.78rem; }
+.pos-points-box { width: 110px; }
+
+.quick-cash-btn {
+    background: var(--kiosk-surface);
+    border: 1px solid #475569;
+    color: var(--kiosk-text);
+    font-weight: 700;
+    font-size: 0.8rem;
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+.quick-cash-btn:hover {
+    background: var(--kiosk-border);
+    border-color: #f59e0b;
+    color: #f59e0b;
+}
+
+.table-chip {
+    background: #0f172a;
+    border: 1px solid var(--kiosk-border);
+    color: var(--kiosk-muted);
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.table-chip:hover {
+    border-color: #f59e0b;
+    color: #f59e0b;
+}
+
+.pos-modal-scroll {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.pos-live-body {
+    max-height: 75vh;
+}
+.pos-live-items {
+    max-height: 130px;
+    overflow-y: auto;
+}
+
+/* 付款方式非現金時隱藏實收欄 (保留版面寬度) */
+.pos-invisible { visibility: hidden; }
+
+/* ------------------------------------------------------------------ 80mm 熱感應收據 */
+.thermal-receipt {
+    background: #ffffff;
+    color: #0f172a;
+    font-family: var(--kiosk-font), monospace;
+    border-radius: 12px;
+    padding: 20px;
+    max-width: 360px;
+    margin: 0 auto;
+    border: 1px dashed #94a3b8;
+}
+.thermal-receipt .rcpt-meta { line-height: 1.5; }
+.thermal-receipt .rcpt-custom { font-size: 0.75rem; }
+
+/* 白底收據內所有文字與表格皆為高對比深色，不繼承深色模式的白字 */
+.thermal-receipt,
+.thermal-receipt table,
+.thermal-receipt thead,
+.thermal-receipt tbody,
+.thermal-receipt tr,
+.thermal-receipt th,
+.thermal-receipt td,
+.thermal-receipt div,
+.thermal-receipt span,
+.thermal-receipt small,
+.thermal-receipt strong {
+    color: #0f172a !important;
+    --bs-table-color: #0f172a;
+    --bs-table-bg: transparent;
+}
+.thermal-receipt .bg-light {
+    background-color: #f1f5f9 !important;
+}
+
+@media print {
+    body * {
+        visibility: hidden !important;
+    }
+    #posReceiptModal,
+    #posReceiptModal * {
+        visibility: visible !important;
+    }
+    #posReceiptModal {
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .no-print {
+        display: none !important;
+    }
+    .modal-backdrop {
+        display: none !important;
+    }
+    .thermal-receipt {
+        border: none !important;
+        box-shadow: none !important;
+        max-width: 100% !important;
+        width: 78mm !important;
+        padding: 2mm !important;
+    }
+}

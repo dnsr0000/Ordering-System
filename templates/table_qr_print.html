@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block theme %}light{% endblock %}
+{% block title %}列印桌卡 - {{ tenant.name }}{% endblock %}
+{% block body_class %}table-print-page{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tables.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container py-3 no-print">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h1 class="h5 fw-bold mb-1">列印桌卡 ({{ cards|length }} 張)</h1>
+            <div class="small text-secondary">網址：{{ base_url }} • 每頁 6 張 (A4)，裁切後放在桌上或做成立牌</div>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-dark fw-bold" data-action="print"><i class="bi bi-printer me-1"></i>列印</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('tables.manage') }}">回桌位管理</a>
+        </div>
+    </div>
+</div>
+
+<main class="qr-sheet" id="qr-sheet">
+    {% for card in cards %}
+    <section class="qr-card" data-table="{{ card.table.name }}">
+        <div class="qr-shop">{{ tenant.name }}</div>
+        <div class="qr-table">{{ card.table.name }} <span>桌</span></div>
+        <img class="qr-image" src="{{ card.qr }}" alt="{{ card.table.name }} 桌點餐 QR code">
+        <div class="qr-hint">手機連上店內 Wi-Fi 後掃描點餐<br>餐點送到桌上，用餐後請至櫃檯結帳</div>
+        <div class="qr-url">{{ card.url }}</div>
+    </section>
+    {% else %}
+    <p class="text-center text-secondary py-5">沒有開放點餐的桌位</p>
+    {% endfor %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/tables.js') }}"></script>
+{% endblock %}

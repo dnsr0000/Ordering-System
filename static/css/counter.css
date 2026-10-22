@@ -1,0 +1,43 @@
+/* 公開取餐叫號看板 */
+.counter-page {
+    overflow-x: hidden;
+}
+
+.header-counter {
+    background: var(--kiosk-surface);
+    border-bottom: 2px solid var(--kiosk-border);
+}
+
+.ready-box {
+    background: var(--kiosk-surface);
+    border: 1px solid var(--kiosk-border);
+}
+
+.number-card {
+    background: var(--kiosk-card);
+    color: var(--kiosk-text);
+    border-radius: 20px;
+    border: 4px solid var(--kiosk-success);
+    box-shadow: 0 10px 25px rgba(34, 197, 94, 0.2);
+    transition: transform 0.2s ease;
+    container-type: inline-size;
+    overflow: hidden;
+}
+
+.order-number-display {
+    font-size: clamp(2rem, 18cqw, 4.5rem);
+    font-weight: 900;
+    color: var(--kiosk-success);
+    letter-spacing: 1px;
+    white-space: nowrap;
+    line-height: 1.1;
+}
+
+.preparing-box {
+    background: #1a2234;
+    border: 2px solid #475569;
+    border-radius: 16px;
+}
+.preparing-list {
+    max-height: 65vh;
+}

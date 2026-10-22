@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}付款結果 - 自助點餐系統{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 560px">
+    <div class="card p-4 text-center" id="payment-result" data-status="{{ order.payment_status }}">
+        {% if order.payment_status == 'paid' %}
+        <i class="bi bi-check-circle-fill text-success display-3"></i>
+        <h1 class="h4 fw-bold mt-3">付款完成</h1>
+        <p class="text-secondary">訂單已送到取餐分店，分店確認後會顯示取餐號碼，可在「我的訂單」查看。</p>
+        {% elif order.payment_status == 'pending' %}
+        <i class="bi bi-hourglass-split text-warning display-3"></i>
+        <h1 class="h4 fw-bold mt-3">尚未收到付款結果</h1>
+        <p class="text-secondary">如果剛完成付款，請稍候再到「我的訂單」查看；尚未付款可以重新付款。</p>
+        <a class="btn btn-warning fw-bold mb-2" href="{{ url_for('payment.pay', order_uuid=order.uuid) }}">重新付款</a>
+        {% else %}
+        <i class="bi bi-x-circle-fill text-danger display-3"></i>
+        <h1 class="h4 fw-bold mt-3">訂單已取消</h1>
+        {% if order.payment_status == 'refund_required' %}
+        <p class="text-secondary">訂單已取消，我們已收到款項，將由店家為您辦理退款。</p>
+        {% else %}
+        <p class="text-secondary">付款逾時，訂單已自動取消。</p>
+        {% endif %}
+        {% endif %}
+        <a class="btn btn-outline-light" href="{{ url_for('customer.customer_index') }}">回點餐頁</a>
+    </div>
+</main>
+{% endblock %}
