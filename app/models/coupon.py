@@ -1,83 +1,101 @@
 from datetime import datetime
+
 from app.extensions import db
-from app.models.tenant import TenantScoped
+from app.models.enums import DiscountType
+from app.models.mixins import TenantScoped
+
+
+def parse_discount_value(discount_type, raw):
+    """
+    把後台/匯入輸入的折扣值轉成存檔格式。
+    百分比折扣接受店家習慣的三種寫法：85、8.5、0.85 都代表「85 折」(存為 85，範圍 1~99)。
+    """
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return 0
+    if val != val or val in (float('inf'), float('-inf')):
+        return 0
+    if discount_type == DiscountType.PERCENT:
+        if val <= 1:
+            val *= 100
+        elif val <= 10:
+            val *= 10
+        return int(min(99, max(1, round(val))))
+    return max(0, int(round(val)))
+
 
 class Coupon(TenantScoped, db.Model):
     """
-    優惠券範本資料表:定義公開促銷代碼或紅利商城兌換券之規則、折抵金額與使用限制。
+    優惠券範本。
+    - discount_type = fixed：discount_value 為折抵元數。
+    - discount_type = percent：discount_value 為應付百分比 (85 代表 85 折)。
+    - reward_points > 0 (is_reward) 為紅利商城兌換券，0 點為公開促銷碼。
+    金額一律以整數元保存。
     """
     __tablename__ = 'coupon'
+    __table_args__ = (db.UniqueConstraint('tenant_id', 'code', name='uq_coupon_tenant_code'),)
 
-    # 約束條件：同店家下優惠券代碼 (code) 必須具備唯一性
-    __table_args__ = (
-        db.UniqueConstraint('tenant_id', 'code', name='uq_coupon_tenant_code'),
-    )
-
-    # 主鍵：優惠券範本識別碼 (Integer)
     id = db.Column(db.Integer, primary_key=True)
-
-    # 優惠券代碼 (VARCHAR(50)，如：OPEN20, VIP85，比對時自動大寫)
     code = db.Column(db.String(50), nullable=False)
-
-    # 優惠券標題名稱 (VARCHAR(100)，不可為空)
     title = db.Column(db.String(100), nullable=False)
-
-    # 折扣計算類型 (VARCHAR(20)，'fixed' 現金折抵 / 'percent' 折扣比例)
-    discount_type = db.Column(db.String(20), default='fixed')
-
-    # 折扣數值 (FLOAT；fixed 為折抵金額，percent 為折數如 0.85 代表 85 折)
-    discount_value = db.Column(db.Float, nullable=False)
-
-    # 最低消費門檻金額 (FLOAT，預設 0 代表無門檻限制)
-    min_spend = db.Column(db.Float, default=0)
-
-    # 兌換此券所需基準紅利點數 (INTEGER，若為 0 則代表免點數之公開券)
+    discount_type = db.Column(db.String(20), nullable=False, default=DiscountType.FIXED)
+    discount_value = db.Column(db.Integer, nullable=False, default=0)
+    min_spend = db.Column(db.Integer, nullable=False, default=0)
     reward_points = db.Column(db.Integer, default=0)
-
-    # 兌換特惠紅利點數 (INTEGER，大於 0 時優先以特惠點數扣除)
     reward_discount_points = db.Column(db.Integer, default=0)
-
-    # 是否為紅利專屬兌換券 (BOOLEAN，True 代表需於紅利商城以點數兌換)
     is_reward = db.Column(db.Boolean, default=True)
-
-    # 單一會員領取/兌換次數上限 (INTEGER，0 代表無兌換次數上限)
     per_user_limit = db.Column(db.Integer, default=0)
+
+    user_coupons = db.relationship('UserCoupon', back_populates='coupon', cascade='all, delete-orphan', passive_deletes=True)
+
+    @property
+    def redeem_points(self):
+        return self.reward_discount_points if (self.reward_discount_points or 0) > 0 else (self.reward_points or 0)
+
+    @property
+    def discount_label(self):
+        """顯示用：『現折 $20』或『85 折』"""
+        if self.discount_type == DiscountType.PERCENT:
+            pct = self.discount_value  # 應付百分比：90 → 9 折、85 → 85 折、5 → 0.5 折
+            return f"{pct // 10 if pct % 10 == 0 else (pct if pct > 10 else pct / 10)} 折"
+        return f"現折 ${self.discount_value}"
 
     @property
     def limit_display(self):
-        """後台介面展示領取次數上限文字"""
-        if not self.per_user_limit or self.per_user_limit <= 0:
-            return "無上限"
-        return f"{self.per_user_limit}次"
+        return "無上限" if not self.per_user_limit or self.per_user_limit <= 0 else f"{self.per_user_limit}次"
+
+    def discount_for(self, subtotal):
+        """套用到小計後的折抵金額 (百分比折扣可能有小數，最後在結帳時統一四捨五入)"""
+        if subtotal <= 0:
+            return 0
+        if self.discount_type == DiscountType.PERCENT:
+            return subtotal * (100 - self.discount_value) / 100
+        return min(self.discount_value, subtotal)
 
 
 class UserCoupon(TenantScoped, db.Model):
-    """
-    會員持有優惠券清單資料表:記錄會員透過紅利點數兌換或發送至其帳戶下的優惠券實體與核銷狀態。
-    """
+    """會員持有的優惠券 (由紅利商城兌換或後台發放)"""
     __tablename__ = 'user_coupon'
 
-    # 主鍵：會員持券唯一識別碼 (Integer)
     id = db.Column(db.Integer, primary_key=True)
-
-    # 外鍵：持有會員 ID (關聯 user.id)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-
-    # 外鍵：關聯優惠券範本 ID (關聯 coupon.id)
-    coupon_id = db.Column(db.Integer, db.ForeignKey('coupon.id'), nullable=False)
-
-    # 核銷代碼 (VARCHAR(50)，通常繼承 Coupon.code)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE'), nullable=False)
+    coupon_id = db.Column(db.Integer, db.ForeignKey('coupon.id', ondelete='CASCADE'), nullable=False)
     code = db.Column(db.String(50), nullable=False)
-
-    # 是否已核銷使用 (BOOLEAN，True 代表已於結帳折抵完畢)
     is_used = db.Column(db.Boolean, default=False)
-
-    # 兌換/領取時間 (DATETIME，預設當前系統時間)
     created_at = db.Column(db.DateTime, default=datetime.now)
-
-    # 實際核銷使用時間 (DATETIME，未核銷前為 Null)
     used_at = db.Column(db.DateTime, nullable=True)
 
-    # 關聯：持有會員與來源優惠券，級聯更新/刪除
-    user = db.relationship('User', backref=db.backref('user_coupons', lazy=True, cascade="all, delete-orphan"))
-    coupon = db.relationship('Coupon', backref=db.backref('user_coupons', lazy=True, cascade="all, delete-orphan"))
+    coupon = db.relationship('Coupon', back_populates='user_coupons')
+    user = db.relationship('User', backref=db.backref('user_coupons', lazy=True, cascade='all, delete-orphan', passive_deletes=True))
+
+    def to_dict(self):
+        cp = self.coupon
+        return {
+            'id': self.id,
+            'user_coupon_id': self.id,
+            'code': self.code,
+            'title': f"[{cp.discount_label}] {cp.title}" if cp else self.code,
+            'min_spend': cp.min_spend if cp else 0,
+            'is_used': bool(self.is_used),
+        }

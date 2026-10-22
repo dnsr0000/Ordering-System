@@ -1,0 +1,149 @@
+/* 會員註冊 / 人臉登入 */
+.register-page {
+    background: linear-gradient(135deg, #0b111e 0%, #152238 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.register-container {
+    width: 100%;
+    max-width: 850px;
+    background: #0f192c;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    overflow: hidden;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+}
+
+/* 左側裝飾面板 (取代外部圖片) */
+.cover-panel {
+    min-height: 540px;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #fff7e6;
+    background:
+        radial-gradient(circle at 25% 20%, rgba(255, 208, 91, 0.35) 0%, transparent 45%),
+        radial-gradient(circle at 80% 85%, rgba(239, 68, 68, 0.3) 0%, transparent 50%),
+        linear-gradient(160deg, #3a2208 0%, #7c2d12 55%, #1f1309 100%);
+}
+.cover-content {
+    padding: 2rem;
+}
+.cover-content p {
+    color: rgba(255, 247, 230, 0.75);
+}
+.cover-icons {
+    display: flex;
+    gap: 1.25rem;
+    justify-content: center;
+    font-size: 3.5rem;
+    color: #f3ba2f;
+    text-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.form-section {
+    padding: 2.5rem;
+}
+
+.form-input {
+    background-color: #1a2742;
+    border: 1px solid #283a5e;
+    color: #ffffff;
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+}
+.form-input:focus {
+    background-color: #203152;
+    color: #ffffff;
+    border-color: #f5b738;
+    box-shadow: 0 0 0 0.25rem rgba(245, 183, 56, 0.25);
+}
+.form-input::placeholder {
+    color: #9aabc7;
+    opacity: 1;
+}
+
+.btn-submit {
+    background-color: #f3ba2f;
+    border: none;
+    color: #111827;
+    border-radius: 12px;
+    transition: all 0.2s ease;
+}
+.btn-submit:hover,
+.btn-submit:focus-visible {
+    background-color: #ffd05b;
+    color: #111827;
+    transform: translateY(-2px);
+}
+
+.btn-camera {
+    background-color: #243556;
+    border: 1px solid #3b527e;
+    color: #f3ba2f;
+    border-radius: 10px;
+    transition: all 0.2s ease;
+}
+.btn-camera:hover,
+.btn-camera:focus-visible {
+    background-color: #314773;
+    color: #ffda79;
+}
+
+.camera-modal-content {
+    border-radius: 20px;
+}
+.camera-video-container {
+    width: 100%;
+    height: 280px;
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+}
+.camera-video-container video,
+.camera-video-container canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.face-guide-circle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 190px;
+    height: 190px;
+    border: 2px dashed #f3ba2f;
+    border-radius: 50%;
+    pointer-events: none;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+}
+.camera-status {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 12px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: #fde68a;
+    z-index: 1;
+}
+
+/* 登入方式切換頁籤 */
+.login-nav-tabs .nav-link {
+    color: #7e92b3;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-weight: bold;
+    padding: 0.5rem 1rem;
+}
+.login-nav-tabs .nav-link.active {
+    color: #f3ba2f;
+    border-bottom: 2px solid #f3ba2f;
+    background: transparent;
+}

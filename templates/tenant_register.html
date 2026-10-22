@@ -1,115 +1,25 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>建立店家帳號</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body { min-height: 100vh; display: grid; place-items: center; background: #0f172a; color: #f8fafc; font-family: "Microsoft JhengHei", sans-serif; }
-        .card { width: min(100% - 2rem, 520px); background: #1e293b; border: 1px solid #334155; border-radius: 18px; }
-        .form-control { background: #0f172a; border-color: #475569; color: #fff; }
-        .form-control:focus { background: #0f172a; color: #fff; }
-    
-        /* === 配色與對比度修正 (防止背景與文字顏色融合) === */
-        .card:not(.text-dark):not(.light-card),
-        .card-custom,
-        .login-card,
-        .pos-panel,
-        .kds-card,
-        .pickup-card,
-        .number-card,
-        .reward-card,
-        .vip-card,
-        .modal-content:not(.text-dark) {
-            --bs-card-color: #f8fafc;
-            --bs-modal-color: #f8fafc;
-            color: #f8fafc;
-        }
-        .form-label,
-        .form-check-label,
-        .col-form-label {
-            color: #f1f5f9;
-        }
-        .text-dark .form-label,
-        .text-dark .form-check-label,
-        .bg-light .form-label,
-        .bg-light .form-check-label {
-            color: #1e293b !important;
-        }
-        .form-control:disabled,
-        .form-select:disabled,
-        .form-control[readonly] {
-            background-color: #1e293b !important;
-            color: #94a3b8 !important;
-            border-color: #334155 !important;
-            opacity: 0.85;
-        }
-        .form-select option,
-        select.form-select option,
-        select option {
-            background-color: #0f172a !important;
-            color: #f8fafc !important;
-        }
-        .form-select option:disabled,
-        select option:disabled {
-            background-color: #0f172a !important;
-            color: #64748b !important;
-        }
-        .text-muted {
-            color: #94a3b8 !important;
-        }
-        .text-secondary {
-            color: #94a3b8 !important;
-        }
-        .text-dark .text-muted,
-        .bg-light .text-muted,
-        .bg-white .text-muted,
-        .thermal-receipt .text-muted {
-            color: #475569 !important;
-        }
-        .text-dark .text-secondary,
-        .bg-light .text-secondary,
-        .bg-white .text-secondary {
-            color: #475569 !important;
-        }
-    
-        /* === 輸入框提示文字 / 下拉選單 / 自動填入 對比度修正 (防止文字與輸入框背景融合) === */
-        .form-control, .form-select { color-scheme: dark; }
-        .form-control::placeholder,
-        .form-control::-webkit-input-placeholder { color: #94a3b8 !important; opacity: 1; }
-        .form-select { --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
-        .form-select option { background-color: #0f172a; color: #f8fafc; }
-        .form-select option:disabled { color: #8b98ad; }
-        .form-control:-webkit-autofill,
-        .form-control:-webkit-autofill:hover,
-        .form-control:-webkit-autofill:focus {
-            -webkit-text-fill-color: #f8fafc;
-            caret-color: #f8fafc;
-            -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
-            box-shadow: 0 0 0 1000px #0f172a inset !important;
-            transition: background-color 9999s ease-in-out 0s;
-        }
-        .form-control.bg-dark:-webkit-autofill {
-            -webkit-box-shadow: 0 0 0 1000px #212529 inset !important;
-            box-shadow: 0 0 0 1000px #212529 inset !important;
-        }
-</style>
-</head>
-<body>
-    <main class="card p-4 p-md-5 shadow">
+{% extends "base.html" %}
+{% block title %}建立店家帳號 - 自助點餐系統{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}
+    {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="tenant-register-wrap">
+    <main class="card tenant-register-card p-4 p-md-5 shadow">
         <h1 class="h3 fw-bold text-warning mb-2">建立店家雲端帳號</h1>
         <p class="text-white-50 mb-4">建立後會自動建立專屬店家資料空間及負責人帳號。</p>
-        <form method="POST" action="{{ url_for('admin.tenant_register') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <form method="POST" action="{{ url_for('admin.tenant_register') }}" id="tenantRegisterForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="mb-3">
                 <label for="shop-name" class="form-label">店家名稱</label>
                 <input id="shop-name" class="form-control" name="shop_name" maxlength="120" required>
             </div>
             <div class="mb-3">
                 <label for="shop-slug" class="form-label">店家網址代號</label>
-                <input id="shop-slug" class="form-control" name="slug" pattern="[A-Za-z0-9-]+" placeholder="例如：sunny-cafe" required>
+                <input id="shop-slug" class="form-control" name="slug" pattern="[A-Za-z0-9\-]+" placeholder="例如：sunny-cafe" required>
                 <div class="form-text text-white-50">顧客入口：/shop/網址代號</div>
             </div>
             <div class="mb-3">
@@ -122,7 +32,7 @@
             </div>
             <button class="btn btn-warning fw-bold w-100" type="submit">建立店家並登入</button>
         </form>
-        <a class="text-center text-white-50 mt-3" href="{{ url_for('admin.admin_dashboard') }}">返回員工登入</a>
+        <a class="d-block text-center text-white-50 mt-3" href="{{ url_for('admin.admin_dashboard') }}">返回員工登入</a>
     </main>
-</body>
-</html>
+</div>
+{% endblock %}

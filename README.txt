@@ -1,238 +1,361 @@
 ====================================================================
-智慧自助點餐、POS收銀、人臉辨識與多租戶營運系統 (Kiosk & POS System)
+智慧自助點餐、POS 收銀、人臉辨識與多店家營運系統 (Kiosk & POS)
 ====================================================================
 
-📝 專案簡介 (Project Overview)
-本專案為一套專為現代餐飲連鎖與單店打造的全方位智慧門市營運系統。
-系統架構全面支援「多租戶 (Multi-Tenant) 實體隔離」，整合了四大營運場景：
-1. 顧客自助點餐機 (Kiosk)：支援 YuNet + SFace 近景最大人臉刷臉秒級登入、手機安全 PIN 碼登入、套餐客製化與三種加購配額池化管理。
-2. 實體櫃檯 POS 收銀系統 (/pos)：觸控快速入單、暫存掛單 (F4)、會員手機模糊搜尋候選綁定、實收/找零對帳 (F2)、會員現場設 PIN 與 80mm 熱感應收據列印。
-3. 廚房即時出單看板 (KDS /kitchen) 與 取餐叫號核銷 (/pickup, /counter)：多端長連線即時事件串流 (SSE) 同步，內建 Web Speech API 語音叫號。
-4. 店家安全管理後台 (/admin)：RBAC 四級權限矩陣、即時營運分析 (預估出餐依實際平均出餐時間、熱門餐點排行含銷售額)、AI 營運顧問、菜單與套餐 CRUD、員工帳號管理、Excel 10 工作表匯入匯出、稽核日誌，以及每日換日自動結案前一日未處理的訂單。
+一套給單店與連鎖餐飲使用的門市系統：顧客自助點餐機、櫃台 POS、廚房出單看板、取餐叫號、
+店家後台，以及總部的線上點餐網站。門市斷網照常營業，連線後與線上端雙向同步。
 
-🚀 核心技術與架構 (Technologies & Architecture)
-- Backend: Flask 3.1+ (Application Factory 搭配 Blueprint 藍圖模組化職責分離設計)
-- Multi-Tenancy: 租戶隔離中介層 (TenantScoped Mixin、ORM do_orm_execute 全域自動攔截、跨店 404 防禦)
-- Concurrency & Locking: Redis 分散式互斥鎖 (acquire_distributed_lock) + 本地執行緒鎖安全降級 (啟動時沒有 Redis、或執行中 Redis 中斷都會自動改用「依鎖名稱區分」的本地鎖，結帳不受影響)，保障結帳時庫存扣減與取餐流水號 (1~999，接續當日最後一張訂單遞增，達 999 後回繞為 1) 之原子性；訂單狀態變更、兌換憑證核銷/退點皆以 SQL 條件式更新 (CAS) 防止併發重複處理；顧客送單另有冪等保護 (連按/重送只建一張單)
-- Real-time Stream: SSE (Server-Sent Events) 搭配狀態簽章 (State Signature) 髒檢查與分級配額防護 (單 IP 10 條 / 公開 25 條 / 員工 60 條)；超過配額被淘汰的連線會收到結束訊號並釋放伺服器執行緒，瀏覽器自動重連
-- Computer Vision: OpenCV (YuNet 最大人臉鎖定 + SFace 深度特徵提取 + NPF32v1 安全二進位特徵儲存 + NumPy 矩陣向量化比對)
-- Security & RBAC: 全域 CSRF 雙向驗證、IP 頻率限制 (@rate_limit 429，來源 IP 預設不信任 X-Forwarded-For)、PIN 碼三層鎖定 (裝置/帳號/IP)、會員照片存取保護 (路徑正規化 + 跨店隔離)、安全標頭與內容安全政策 (CSP)、純 POST 狀態變更防護、訂單狀態 API 權限優先於狀態判斷 (403 先於 409，無權限者無法探測訂單資訊)
-- Edge & Cloud AI: Google Gemini 3.6 Flash (API 金鑰只放在請求標頭，不出現在網址) / 本地端 Qwen2.5 SLM (llama-cpp-python，選用) / 啟發式規則引擎三層無縫降級
-- Database: SQLite (SQLAlchemy 2.0，開啟 PRAGMA WAL 模式高並行讀寫分離、安全型別 SafeFeatureType、自動無失真遷移)
-- Web Servers: Waitress (生產伺服器 serve_windows.py，預設 128 執行緒，可用 WAITRESS_THREADS 調整；每條 SSE 長連線占用 1 條執行緒，必須大於 SSE 連線上限) / Flask 內建伺服器 (開發除錯 run.py)
+相關文件
+- README.txt   (本檔) 功能、安裝、設定、指令、開發慣例
+- SYNC.txt     門市 ↔ 線上端同步的設計與合併規則
+- DEPLOY.txt   線上端 Docker 部署、門市 Windows 部署、同步設定、線上付款、上線前檢查清單
+- MANUAL_TEST.txt  人工實測步驟 (全功能，每項含步驟與預期結果)
 
-📂 專案架構圖 (Project Structure)
+
+一、系統角色 (環境變數 SYNC_ROLE)
+--------------------------------------------------------------------
+  standalone (預設)  單機門市：SQLite，不同步。
+  node               門市分店：SQLite，可完全離線營業；背景與線上端同步。
+  hub                線上端：PostgreSQL + Docker；線上點餐網站與總部後台，所有分店資料的匯集點。
+
+    [門市 A (node)]──┐  HTTPS + 分店權杖
+    [門市 B (node)]──┼──── [線上端 (hub)] ──── 顧客手機 (線上點餐、綠界付款)
+    [門市 C (node)]──┘
+
+  - 菜單、優惠券、紅利設定、員工帳號、會員與點數：同一店家的所有分店共用 (雙向同步)。
+  - 訂單：分店自己的訂單上傳到線上端；線上訂單付款後只送到顧客選的取餐分店。
+  - 庫存：各分店獨立；線上端用分店回報的庫存快照接受線上訂單。
+
+
+二、功能
+--------------------------------------------------------------------
+顧客
+- 自助點餐 (/)：菜單分類與搜尋、套餐配餐、客製化 (冰塊/甜度/辣度/加料)、條件加購、優惠券、紅利折抵、我的訂單。
+- 會員：手機 + PIN 登入；門市另可人臉登入 (YuNet + SFace，選填並須另行同意)；紅利商城 (/rewards) 兌換優惠券與商品。
+- 訪客點餐：門市 (點餐機或顧客用手機連門市網站) 可以；線上點餐只限會員。
+- 桌邊掃碼點餐 (門市)：顧客手機連店內 Wi-Fi 掃桌上的 QR code (/t/<代碼>)，以訪客或會員身分點餐；
+  固定內用、訂單標記桌號並直接送廚房，用餐後到櫃檯結帳。
+- 線上點餐 (線上端)：選取餐分店 → 綠界信用卡付款 → 付款後訂單送到分店廚房；取餐號由分店收單時編號。
+- 隱私權告知 (/privacy)：個資法第 8 條告知事項；會員可在此撤回人臉同意並刪除人臉資料。
+
+門市員工
+- POS (/pos)：觸控點餐、掛單 (F4)、結帳 (F2)、會員查詢與設定 PIN、找零、80mm 熱感應收據、當日訂單、
+  桌位結帳 (一次結清某桌所有掃碼點餐的訂單)。
+- 廚房 KDS (/kitchen)、取餐核銷 (/pickup)、叫號看板 (/counter，公開、會員姓名遮罩、語音叫號)：SSE 即時更新。
+
+店家後台 (/admin)
+- 營運分析 (今日營收、預估出餐時間、熱門排行)、AI 商品文案與營運建議 (Gemini → 本地 Qwen → 規則引擎)。
+- 菜單 / 套餐 / 加料 / 優惠券 / 紅利設定 / 會員管理、稽核日誌、Excel 匯出與智慧匯入。
+- 員工帳號 (/admin/staff)、隱私權告知設定 (/admin/privacy)。
+- 桌位 QR (/admin/tables，門市)：新增桌位 (可用 A1-A10 範圍)、改名、停用、重新產生 QR code (舊的立即失效)、
+  設定 QR code 使用的門市網址、列印桌卡 (A4 每頁 6 張)。
+- 整庫備份 / 還原 (只限平台管理者，只支援 SQLite)。
+- 線上端：分店管理與分店權杖 (/admin/nodes)；門市：同步狀態與立即同步 (/admin/sync)。
+- 換日自動結案：前一天仍在製作中的訂單於隔天自動改為已出餐。
+
+
+三、快速開始 (Windows 門市 / 單機)
+--------------------------------------------------------------------
+1. 安裝 Python 3.10 以上 (目前以 3.13 / 3.14 測試)。
+2. 建立虛擬環境並安裝套件 (專案資料夾中只保留一個虛擬環境 .venv)：
+     python -m venv .venv
+     .venv\Scripts\activate                        (PowerShell；Linux / macOS：source .venv/bin/activate)
+     pip uninstall -y opencv-python                 (舊版安裝過才需要；本專案改用 opencv-python-headless)
+     pip install -r requirements.txt
+3. 設定：複製 .env.example 為 .env，至少填 ADMIN_USERNAME / ADMIN_PASSWORD (負責人帳號，只在第一次建立時使用)。
+   未填會自動產生一組隨機帳密並只在啟動畫面顯示一次。
+4. 啟動：
+     python serve_windows.py      正式營業 (Waitress，預設 0.0.0.0:5000，區網內的看板與 POS 可連線)
+     python run.py                開發除錯 (FLASK_DEBUG=1 開啟除錯模式)
+   前台 http://127.0.0.1:5000/   後台 http://127.0.0.1:5000/admin
+5. 啟動時會自動升級資料庫 (AUTO_MIGRATE=1)；舊版資料庫會先整理成基準結構再升級，舊的 static/member、
+   static/menu 上傳檔會搬到 uploads/。升級前請先備份 database/ 與 uploads/ (或舊的 static/member、static/menu)。
+6. 後台「隱私權告知」填寫營運者名稱與聯絡方式。
+
+門市連到線上端：線上端後台「分店管理」新增分店取得權杖，在門市 .env 設定
+  SYNC_ROLE=node、SYNC_HUB_URL=https://線上端網址、SYNC_NODE_TOKEN=kn_…，重新啟動即可 (DEPLOY.txt 第三節)。
+線上端部署：Docker (PostgreSQL + Redis + Caddy 自動 HTTPS)，步驟見 DEPLOY.txt 第一節。
+
+本機模擬線上端 (同一台電腦同時跑線上端與門市)：
+  1. cp deploy/hub.env.example .env.hub，設定 SITE_DOMAIN=localhost、PUBLIC_BASE_URL=https://localhost，
+     填 POSTGRES_PASSWORD (DATABASE_URL 裡的密碼要相同) 與 SECRET_KEY → docker compose up -d --build。
+     第一次的負責人帳密在 docker compose logs app；後台 https://localhost/admin (自簽憑證，瀏覽器警告按繼續)。
+  2. 線上端後台「分店管理」新增分店 (或 docker compose exec app flask --app run sync create-node --name 台南店) 取得權杖。
+  3. 匯出 Caddy 的本機憑證讓門市信任：
+       docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt database\caddy-root.crt
+  4. 門市 .env (先備份 database\menu.db)：SYNC_ROLE=node、SYNC_HUB_URL=https://localhost、SYNC_NODE_TOKEN=kn_…、
+     REQUESTS_CA_BUNDLE=<專案路徑>\database\caddy-root.crt → python serve_windows.py，後台「同步狀態」確認已連線。
+  - 綠界伺服器通知連不到 localhost：付款結果改由付款後瀏覽器回到本站與每分鐘向綠界查詢來確認。
+  - REQUESTS_CA_BUNDLE 只用於本機模擬 (會讓門市只信任這張憑證)；正式上線前刪除。
+
+
+四、環境變數
+--------------------------------------------------------------------
+門市 / 單機寫在專案根目錄的 .env (範例 .env.example)；線上端寫在 .env.hub (範例 deploy/hub.env.example)。
+.env 的值優先於系統環境變數。
+
+  一般
+    ADMIN_USERNAME / ADMIN_PASSWORD   預設店家負責人 (第一次建立時使用)
+    RESET_ADMIN_PASSWORD_ON_START     1 = 重啟時把負責人密碼重設為 ADMIN_PASSWORD (忘記密碼時用，用完改回 0)
+    SECRET_KEY                        Session 簽章金鑰；留空自動產生並存於 database/.secret_key (線上端必填)
+    DATABASE_URL                      留空 = database/menu.db (SQLite)；線上端為 postgresql://…
+    AUTO_MIGRATE                      1 = 啟動時升級資料庫；0 = 需先執行 flask --app run setup
+    UPLOAD_FOLDER_MEMBER / _MENU      上傳檔位置 (預設 uploads/member、uploads/menu)
+    HOST / PORT                       serve_windows.py、run.py 的監聽位址與埠號 (預設 0.0.0.0:5000)
+    WAITRESS_THREADS                  Waitress 執行緒數 (每條 SSE 看板連線占 1 條，預設 128)
+  安全
+    TRUSTED_PROXY_COUNT               前面有幾層反向代理 (直接對外 0；Nginx / Cloudflare / Caddy 後面 1)
+    SESSION_COOKIE_SECURE             全站 HTTPS 時 1 (門市以 http://區網IP 使用時維持 0)
+    CSP_MODE                          enforce / report-only / off
+    RATELIMIT_ENABLED                 1 = 啟用 IP 頻率限制
+    REDIS_URL                         選用：多行程部署時共用頻率限制計數與 SSE 通知
+  同步 (說明見 SYNC.txt)
+    SYNC_ROLE                         standalone / node / hub
+    SYNC_HUB_URL / SYNC_NODE_TOKEN    分店：線上端網址 (https) 與分店權杖
+    SYNC_INTERVAL / SYNC_LONG_POLL    分店：上傳檢查間隔、等待線上新訂單的長輪詢秒數
+    SYNC_TENANT_SLUG / SYNC_AUTOSTART 分店：要同步的本機店家、啟動時是否自動同步
+    SYNC_NODE_OFFLINE_AFTER           線上端：分店超過幾秒沒連線就暫停該分店的線上點餐
+  線上付款 (線上端；說明見 DEPLOY.txt 第五節)
+    ONLINE_PAYMENT                    1 = 線上點餐需先付款 (付款後才送分店)
+    ECPAY_STAGE                       1 = 綠界測試環境 (預設，免註冊、不扣款)；0 = 正式收款 (需填下面三項)
+    ECPAY_MERCHANT_ID / _HASH_KEY / _HASH_IV   綠界正式特店資料
+    PUBLIC_BASE_URL                   綠界付款通知用的公開網址 (留空使用目前網址)
+    PAYMENT_TIMEOUT_MINUTES           逾時未付款自動取消 (預設 15 分鐘)
+  選用
+    GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議)
+
+
+五、常用指令
+--------------------------------------------------------------------
+  flask --app run setup                              升級資料庫並建立預設資料 (可重複執行)
+  flask --app run db migrate -m "說明"                修改 app/models/ 後產生遷移檔 (檢查後再 setup)
+  flask --app run sync create-node --name 台南店      (線上端) 新增分店並顯示權杖
+  flask --app run sync now / sync status             (分店) 立即同步 / 顯示同步狀態
+  flask --app run payments expire                    (線上端) 取消逾時未付款的訂單 (背景也會每分鐘執行)
+  flask --app run privacy purge-inactive [--apply]   刪除停止使用超過設定月數的會員 (多分店時在線上端執行)
+  flask --app run tables check [--fix]               檢查桌邊點餐的資料衝突 (沒有桌位的未結帳訂單、已取消卻已收款、
+                                                     久未結帳)；--fix 把「已取消卻已收款」改為需退款
+  python tests/test_payment_ecpay_script.py [live]   線上付款測試 (見「七、測試」)
+  docker compose up -d --build                       (線上端) 部署 / 更新
+
+
+六、專案結構
+--------------------------------------------------------------------
 Project Root/
-├── app/                                    # 核心應用程式套件 (Flask Package)
-│   ├── __init__.py                         # 工廠函式 (create_app)、WAL Pragma 監聽、CSRF 全域攔截、照片 403 保護 (路徑正規化 + 跨店隔離)、安全標頭與 CSP、反向代理信任設定 (TRUSTED_PROXY_COUNT)、每日首個請求觸發的換日自動結案 (before_request)
-│   ├── config.py                           # 集中設定檔 (環境變數、模型路徑、上傳目錄、資料庫 URI、SECRET_KEY 自動產生並持久化、Cookie/CSP/執行緒數設定)
-│   ├── extensions.py                       # 單例擴充元件 (db、Redis Client、分散式互斥鎖管理器：Redis 中斷自動降級為依名稱區分的本地鎖、LLM_LOCK)
-│   ├── tenant_context.py                   # 多租戶隔離中介層 (TenantScoped 請求解析、上下文注入與防跨店修改)
-│   ├── utils.py                            # RBAC 角色裝飾器 (@role_required、@platform_admin_required)、@rate_limit 限流器、safe_int/safe_float/safe_round 安全轉換、get_json_dict、姓名遮罩 (mask_name)、js_alert_redirect (已跳脫 </script>)
-│   ├── models/                             # 資料庫 ORM 模型層 (具備 TenantScoped 隔離)
-│   │   ├── __init__.py                     # 模型匯出模組
-│   │   ├── tenant.py                       # 店家租戶 (Tenant)、員工帳號 (StaffAccount)
-│   │   ├── user.py                         # 會員 (User，特徵向量固定 128 維並驗證)、管理員日誌 (AdminLog)、員工操作稽核 (StaffAuditLog)、顧客日誌 (CustomerLog)、紅利設定 (RewardSetting，每店唯一)、紅利憑證 (RewardRedemption)
-│   │   ├── menu.py                         # 菜單品項 (MenuItem)、套餐組合 (ComboOption)、客製化選項 (ModifierOption)
-│   │   ├── order.py                        # 訂單總覽 (Order，記錄實際套用的優惠碼與核銷的會員券 ID)、訂單明細 (OrderItem)
-│   │   └── coupon.py                       # 優惠券模板 (Coupon)、會員持有券 (UserCoupon)
-│   ├── services/                           # 商業邏輯與演算法服務層
-│   │   ├── __init__.py                     # 服務層匯出模組
-│   │   ├── cv_service.py                   # 近景最大人臉偵測、特徵提取與矩陣向量化餘弦相似度比對 (略過維度不符的壞資料)、上傳圖片像素/格式限制
-│   │   ├── ai_service.py                   # Gemini 3.6 Flash、Qwen2.5 SLM 推論 (選用) 與三層降級兜底演算法
-│   │   ├── order_service.py                # 統一結帳 process_checkout (Kiosk/POS 共用，擋售完餐點、金額四捨五入一致)、促銷碼驗證、訂單狀態機 change_order_status (流轉表 + 角色矩陣 + CAS + 全量回滾)、紅利上下架、營運分析 build_order_analytics (預估出餐、平均出餐時間排除極端值 mean_without_outliers、熱門排行含銷售額)、換日自動結案 auto_close_stale_orders / ensure_daily_auto_close
-│   │   ├── voucher_service.py              # 紅利兌換憑證的原子狀態轉換 (核銷/退點皆為條件式 UPDATE，杜絕「餐點拿了、點數也退了」)
-│   │   ├── idempotency.py                  # 送單冪等快取 (連按/網路重送只建立一張訂單)
-│   │   ├── backup_service.py               # 完整系統備份包/還原 (SQLite 一致性快照、還原前驗證與自動另存、還原後即時遷移、Windows 檔案占用時原地還原)、Excel 報表匯出 (防公式注入)、菜單匯入共用解析 (upsert_menu_items_from_df) 與欄位對映
-│   │   ├── migration_service.py            # 資料庫遷移引擎 (舊 Pickle 特徵轉 NPF32v1 且無法解析者保留原始資料、重複電話帳號自動合併、舊單補值、紅利設定去重與唯一索引)
-│   │   └── event_bus.py                    # 即時事件總線 (OrderEventBus，支援配額淘汰 (淘汰時送結束訊號) 與狀態特徵簽章)
-│   └── routes/                             # 模組化路由控制器藍圖 (Blueprints)
-│       ├── __init__.py                     # 路由藍圖模組
-│       ├── customer.py                     # 前台自助點餐、優惠券驗證 (/api/verify_promo，含限流)、送單 (/submit_order，委派 order_service.process_checkout，含冪等保護)、我的訂單 (訪客以進場紀錄歸戶)
-│       ├── auth.py                         # 會員註冊 (路徑穿越檔名清洗、擋重複人臉、手機重複競態處理)、人臉登入 (/face_login)、手機 PIN 登入 (防列舉、裝置/帳號/IP 三層鎖定)
-│       ├── pos.py                          # 櫃檯收銀 POS 專用介面、結帳 (委派 process_checkout，附實收/找零/收銀員)、會員候選清單、設 PIN、優惠碼驗證
-│       ├── rewards.py                      # 紅利商城、商品兌換憑證發放、單券限領驗證與防洗點全額退點
-│       ├── kitchen.py                      # 廚房 KDS 出單看板、配餐明細合併、一鍵全部出餐 API (含稽核；單筆出餐改走 /api/orders/<id>/status)
-│       ├── pickup.py                       # 取餐核銷介面、大螢幕即時叫號看板 (/counter，公開，會員姓名遮罩) 與 SSE 串流推播 (核銷改走 /api/orders/<id>/status)
-│       ├── orders.py                       # 訂單狀態統一端點 POST /api/orders/<id>/status (廚房/櫃檯/POS/後台共用，角色矩陣 + CAS 併發防護)
-│       ├── admin.py                        # 店家管理後台、員工帳號 CRUD、菜單/套餐/紅利設定 (編輯庫存/點數以差額套用)、Excel 報表匯出、智慧匯入 (/admin/import_smart)、系統備份 (/admin/backup_system，僅平台管理者) 與還原
-│       └── common.py                       # 顧客工作階段追蹤、登入/登出自動退點 (原子)、StaffAuditLog 員工操作日誌記錄器、紅利設定 get_or_create
-├── database/                               # 資料庫專屬資料夾 (menu.db / WAL / SHM / 還原前自動另存的 menu.db.bak-* / 自動產生的 .secret_key)
-├── models/                                 # AI 模型專屬資料夾
-│   ├── face_detection_yunet_2023mar.onnx   # 人臉偵測模型 (YuNet)
-│   ├── face_recognition_sface_2021dec.onnx # 人臉特徵比對模型 (SFace)
-│   └── qwen2.5-1.5b-instruct-q4_k_m.gguf   # 本地邊緣語言模型 (選配)
-├── static/                                 # 靜態資源 (上傳之餐點圖；member/ 目錄受權限保護禁止未授權讀取)
-├── templates/                              # 前端 HTML 模板 (admin, pos, customer, register, rewards, kitchen, counter, pickup, staff_accounts, tenant_register)
-├── .env                                    # 環境變數設定檔 (REDIS_URL, API Key, 初始帳密、反向代理層數、Cookie/CSP/執行緒設定等，詳見下方「環境變數配置」)
-├── .gitignore                              # 版控排除清單 (.env、資料庫與 WAL、database/.secret_key、上傳相片、備份/匯出檔、模型權重)
-├── requirements.txt                        # 依賴套件清單 (版本鎖定；llama-cpp-python 為選用，預設註解)
-├── serve_windows.py                        # Windows 生產環境啟動入口 (Waitress 高併發伺服器，執行緒數由 WAITRESS_THREADS 決定，預設 128)
-├── run.py                                  # 開發除錯啟動腳本 (Flask Debug Server)
-└── test_all_features.py                    # 涵蓋 16 大模組、116 項功能細節、資安修補回歸與並發安全自動化驗證測試腳本
+├── app/
+│   ├── __init__.py            create_app：設定、擴充元件、安全標頭 / CSP、錯誤處理、多店家、啟動遷移、背景工作
+│   ├── config.py              所有設定 (讀取 .env)
+│   ├── cli.py                 flask CLI 指令 (setup、sync、payments、privacy)
+│   ├── extensions.py          db、migrate、csrf、login_manager、limiter
+│   ├── errors.py              AppError 與統一錯誤處理
+│   ├── tenant_context.py      多店家隔離 (查詢自動加店家條件、寫入防跨店)
+│   ├── utils.py               role_required、platform_admin_required、輸入驗證
+│   ├── models/                ORM 模型
+│   │   ├── mixins.py          uuid / updated_at / sync_rev / tenant_id
+│   │   ├── enums.py           訂單狀態、來源、付款方式、憑證狀態
+│   │   ├── tenant.py          店家、員工帳號
+│   │   ├── table.py           門市桌位 (掃碼點餐的 QR code 代碼)
+│   │   ├── user.py            會員、紅利設定、兌換憑證、日誌、隱私權告知設定
+│   │   ├── menu.py、order.py、coupon.py
+│   │   ├── sync.py            同步序號、刪除紀錄、點數異動帳、分店、庫存快照
+│   │   └── system.py          PIN 登入鎖定
+│   ├── services/              商業邏輯
+│   │   ├── order_service.py   結帳 (Kiosk / POS / 線上共用)、訂單狀態機、取餐號、換日結案
+│   │   ├── points_service.py  會員點數 (異動帳)
+│   │   ├── reward_service.py、voucher_service.py   紅利兌換
+│   │   ├── payment_ecpay.py   綠界金流 (檢查碼、付款通知、逾時處理)
+│   │   ├── privacy_service.py 隱私權告知、同意紀錄、撤回人臉、刪除停用會員
+│   │   ├── table_service.py   桌位管理、QR code、掃碼綁定桌位、桌位結帳
+│   │   ├── upload_paths.py    上傳檔路徑檢查與刪除 (限制在上傳資料夾內)
+│   │   ├── cv_service.py      人臉偵測與特徵比對
+│   │   ├── ai_service.py、analytics_service.py
+│   │   ├── backup_service.py、excel_service.py、menu_service.py
+│   │   ├── event_bus.py       SSE 訂單通知 (可選 Redis)
+│   │   ├── auth_throttle.py、customer_session.py、audit.py
+│   │   └── db_migrate.py、bootstrap.py、legacy_upgrade.py、baseline_schema.py   資料庫升級與預設資料
+│   ├── sync/                  門市 ↔ 線上同步
+│   │   ├── registry.py        同步的資料表、方向、本機欄位、自然鍵
+│   │   ├── tracking.py        變更序號 (sync_rev) 與刪除紀錄
+│   │   ├── engine.py          編碼、讀取變更、合併規則
+│   │   ├── hub.py             線上端同步 API (/api/sync/v1)
+│   │   ├── node.py            分店背景同步
+│   │   ├── nodes.py           分店登記與權杖 (線上端)
+│   │   └── runtime.py         目前的同步角色與相關工具
+│   └── routes/                Blueprint
+│       ├── customer.py        點餐頁、結帳、我的訂單、取餐分店
+│       ├── auth.py            註冊 (含個資同意)、人臉 / 手機登入、訪客、登出
+│       ├── rewards.py、pos.py、kitchen.py、pickup.py (含 SSE)、orders.py (訂單狀態 API)
+│       ├── admin.py           後台、員工帳號、備份還原、匯出匯入
+│       ├── payment.py         綠界付款頁、付款通知、付款結果
+│       ├── privacy.py         隱私權告知、同意、撤回人臉、後台設定
+│       ├── tables.py          桌位管理、列印桌卡、掃碼入口 /t/<代碼> (門市)
+│       ├── sync_admin.py      分店管理 (線上端)、同步狀態 (分店)
+│       ├── media.py           /media/menu、/media/member (會員照片需員工權限)
+│       └── health.py          /healthz
+├── migrations/versions/       0001 舊版基準、0002 重構、0003 同步引擎、0004 線上付款與個資同意、
+│                              0005 門市桌位與掃碼點餐
+├── templates/                 頁面樣板 (全部繼承 base.html)
+├── static/
+│   ├── css/、js/              各頁面樣式與程式 (theme.css、common.js 為共用)
+│   ├── img/                   預設圖片
+│   └── vendor/                Bootstrap、Bootstrap Icons、Cropper.js (離線使用)
+├── uploads/                   會員照片 (member/)、餐點照片 (menu/)；不放在 static/，由 /media/ 控管讀取 [不進版控]
+├── database/                  menu.db、.secret_key、還原前另存的 menu.db.bak-*、本機模擬用的 caddy-root.crt [不進版控]
+├── models/                    人臉辨識模型 (YuNet、SFace)；選用的 Qwen2.5 GGUF [GGUF 不進版控]
+├── tests/                     所有測試 (含可直接執行的付款測試腳本)，檔名即測試主題
+├── deploy/                    線上端部署：gunicorn.conf.py、entrypoint.sh、Caddyfile、hub.env.example
+├── Dockerfile、docker-compose.yml、.dockerignore
+├── .env.example               門市 / 單機設定範例 (複製為 .env)
+├── .env、.env.hub             門市設定、線上端設定 [不進版控]
+├── .gitignore
+├── README.txt、SYNC.txt、DEPLOY.txt、MANUAL_TEST.txt
+├── pytest.ini                 測試設定 (預設略過 e2e、stress)
+├── requirements.txt
+├── test_menu.xlsx             菜單匯入範例 (後台「智慧匯入」可直接使用)
+├── serve_windows.py           正式營業啟動 (Waitress)
+└── run.py                     開發用啟動
 
-💻 安裝與執行環境 (Environment & Setup)
-1. 作業系統：Windows 11 / 10 / Linux (Ubuntu 22.04+) / macOS
-2. Python 版本：Python 3.10+
-3. 安裝相依套件：
-   打開終端機執行：
-   pip install -r requirements.txt
 
-4. 啟動本機伺服器：
-   - 【生產環境模式 (推薦)】：
-     python serve_windows.py
-   - 【日常開發除錯模式】：
-     python run.py
-   伺服器啟動後開啟瀏覽器訪問：http://127.0.0.1:5000/
+七、測試
+--------------------------------------------------------------------
+測試一律使用暫存資料庫與暫存資料夾，不讀 .env，不會動到 database/、uploads/ 與 static/。
 
-5. 執行全功能與高併發安全自動化測試：
-   python test_all_features.py
-   (支援自訂壓測參數：python test_all_features.py --browse-users 60 --sse-streams 8 --checkout-users 30 --stock 10)
-   (全部約 20~100 秒，視機器而定；測試使用暫存資料庫與暫存相片目錄，不會動到實際的 database/ 與 static/)
-   測試涵蓋 16 大模組、共 116 項：
-     模組 1  系統初始化、資料庫遷移與多租戶隔離 (6)    模組 8  櫃檯 POS 收銀 (5)
-     模組 2  資安防線、CSRF、RBAC、相片保護 (6)         模組 9  KDS、核銷、狀態機、角色矩陣、併發取消 (11)
-     模組 3  菜單 CRUD、紅利上下架、加購規則 (3)        模組 10 營運分析、AI 降級、Excel 匯出與智慧匯入 (7)
-     模組 4  套餐組合 (2)                               模組 11 頻率限制與 SSE 連線配額 (2)
-     模組 5  會員註冊、人臉比對、PIN 鎖定 (5)           模組 12 高併發搶購與 HTTP/SSE 壓力測試 (5)
-     模組 6  顧客端結帳、白名單、取餐號流水 (4)         模組 13 補強覆蓋：未測路由、越權、跨店隔離、CSRF 掃描 (18)
-     模組 7  優惠券、紅利兌換、重複退點、複合折抵 (4)   模組 14 高風險修補回歸：特徵維度、IP 偽造與帳號鎖定、備份隔離與還原安全、XSS、憑證原子性 (9)
-     模組 15 中低風險修補回歸：結帳取消、冪等、後台表單、隱私、註冊上傳、安全標頭、鎖與設定、稽核精確記錄、營運分析口徑、換日自動結案、預估出餐排除極端值、熱門排行銷售額 (27)
-     模組 16 舊版備份還原後即時升級 (含 Windows 檔案占用備援) (2)  ※ 會以舊結構資料庫取代目前資料庫，因此固定最後執行
+  pytest                              後端測試 (SQLite)
+  set TEST_DATABASE_URL=postgresql://kiosk:kiosk@127.0.0.1/kiosk_test
+  pytest                              同一套測試改在 PostgreSQL 上跑 (該資料庫會被清空)
+  playwright install chromium         (第一次)
+  pytest -m e2e                       瀏覽器端對端測試 (實際操作各頁面；JS 錯誤或違反 CSP 都會失敗)
+  pytest -m stress                    真實 HTTP 壓力測試
+  set TEST_SYNC_HUB_DATABASE_URL=postgresql://kiosk:kiosk@127.0.0.1/kiosk_sync_test
+  pytest tests/test_sync_hub_node.py  同步測試的線上端改用 PostgreSQL
+  pytest tests/test_pos_checkout.py   只跑一個主題 (有情境依賴的檔案會自動加入前置檔，開頭會列出)
+  python tests/test_payment_ecpay_script.py       線上付款：模擬綠界通知走完 30 項情境 (不需網路)
+  python tests/test_payment_ecpay_script.py live  線上付款：到綠界測試環境用測試卡實際付款
+                                      (卡號 4311-9522-2222-2222、未來的有效期限、任意安全碼、3D 驗證碼 1234)
 
-6. 換行格式：專案文字檔統一使用 Windows 換行 (CRLF)。
+測試檔 (tests/，檔名即測試主題；新的測試一律放這裡並照此命名)
+  啟動與升級    test_startup_defaults           預設店家 / 負責人 / 加料、SECRET_KEY、預設帳密重設規則
+                test_legacy_database_upgrade    舊版資料庫升級、舊上傳資料夾搬移
+  權限與安全    test_staff_login_and_roles      員工登入、帳號管理、角色權限矩陣、未登入一律擋下
+                test_web_security               CSRF (全路由掃描)、安全標頭、訊息跳脫、錯誤輸入不出 500
+                test_rate_limits_and_lockout    登入頻率限制、PIN 鎖定、X-Forwarded-For 信任
+                test_tenants_and_isolation      新店家註冊、店家入口、跨店資料隔離
+                test_backup_restore             整庫備份 / 還原、惡意備份檔、舊版備份還原
+  菜單與會員    test_menu_admin                 菜單、套餐、手動售完
+                test_member_accounts            會員註冊、欄位驗證、後台編輯 / 刪除與稽核
+                test_member_face_and_photos     人臉特徵與登入、重複註冊、上傳圖片限制、照片權限
+  點餐與訂單    test_kiosk_checkout             自助點餐結帳 (計價、加料、冪等、取餐號)
+                test_coupons_and_rewards        優惠券、紅利商品與兌換憑證、紅利設定
+                test_pos_checkout               POS 櫃檯結帳
+                test_pos_today_orders_api       POS 當日訂單輕量 API
+                test_order_status_and_cancel    訂單狀態流轉、取消回補、換日自動結案
+                test_concurrency_stock_points   併發：不超賣、點數不雙花、同時結帳與取消
+                test_live_updates_sse           SSE 即時更新、連線配額、看板遮蔽姓名
+  報表          test_reports_and_excel          營運分析、Excel 匯出 / 匯入、儀表板與稽核
+  部署與前端    test_deploy_config              /healthz、反向代理標頭、部署設定檔
+                test_frontend_static_files      前端靜態檢查 (CSP、外部網址、XSS)
+  同步          test_sync_hub_node              一個線上端 + 兩家分店的完整同步情境
+                test_sync_admin_pages           分店管理、同步狀態、線上點餐選分店
+                test_sync_security              分店權杖外流時的限制 (負責人帳號、路徑、跨店、上傳上限)
+                test_sync_invariants            全部測試跑完後檢查同步不變量
+  付款與個資    test_payment_ecpay              綠界檢查碼、付款通知、逾時取消
+                test_payment_ecpay_script       付款測試腳本 (pytest 跑模擬模式，也可直接執行)
+                test_privacy_pdpa               隱私權告知、同意紀錄、撤回人臉、清除久未使用會員
+  桌位點餐      test_table_qr_ordering          桌位管理、掃碼點餐、失效 QR code、POS 桌位結帳
+                test_table_concurrency          同時操作的衝突 (多台 POS 結同一桌、結帳與取消、送單與刪桌、同名桌位、
+                                                換 QR code、線上端取消與分店結帳)；輪數 TABLE_CONFLICT_ROUNDS
+  瀏覽器        test_e2e_*                      端對端 (後台、顧客點餐、廚房取餐、會員、POS、所有頁面)
+  壓力          test_stress_http                真實 HTTP 壓力測試
 
-🛡️ 安全防護與權限控制架構 (Security & Access Control)
-1. RBAC 四級權限矩陣：
-   - owner (負責人)：全門市完整權限，專屬存取員工帳號建立、停用切換與密碼重設 (/admin/staff)；預設店家 (default) 的 owner 另為「平台管理者」，才可使用完整系統備份下載 (/admin/backup_system) 與還原 (/admin/restore_backup)。
-   - manager (店長)：後台管理主介面、菜單/套餐/優惠券維護、紅利設定、Excel 報表匯出與智慧匯入、POS 收銀、出餐、取餐核銷與訂單取消 (含已取餐訂單之授權取消)。不可下載或還原完整系統備份。
-   - staff (櫃檯收銀員)：專屬 POS 收銀點餐 (/pos)、協助會員設定 PIN、門市取餐核銷 (/pickup)、查閱當日即時訂單，可出餐與取消尚未取餐的訂單，但不可取消已取餐訂單。禁止進入後台更改菜單與價格。
-   - kitchen (廚房人員)：專屬 KDS 廚房製作看板 (/kitchen)，僅可執行出餐 (Pending → Completed)，不可取餐核銷或取消訂單。禁止存取 POS 收銀與後台設定。
-2. 全域 CSRF 防護：所有狀態變更 (POST/PUT/DELETE) 強制校驗 Session Token，無 Token 或偽造 Token 一律回傳 HTTP 403。
-3. 嚴格純 POST 狀態變更：刪除品項 (/admin/delete)、刪除套餐 (/admin/delete_combo)、下架紅利 (/admin/remove_reward)、刪除優惠券 (/admin/delete_coupon)、刪除會員 (/admin/delete_user) 僅允許 POST 呼叫，GET 呼叫一律回傳 405 Method Not Allowed。
-4. 隱私與敏感檔案保護：
-   - /static/member/* 會員註冊人臉照片受中介層保護：路徑先正規化再比對 (./、大小寫變體都無法繞過)；未登入一律 403，已登入的員工也只能讀取「自己店家」會員的照片。
-   - 公開叫號看板 (/counter、/api/counter_orders) 不需登入，會員姓名一律遮罩 (王小明 → 王○明)；訪客的「我的訂單」以本次進場紀錄歸戶，不會因訪客代號撞號看到別人的訂單。
-   - 註冊/刷臉等免登入上傳端點限制圖片像素數 (2,500 萬) 與格式 (JPEG/PNG/WEBP)，防止大圖耗盡記憶體。
-5. 頻率限制 (Rate Limit) 與防暴力破解：
-   - 來源 IP 預設以實際連線位址為準，不信任 X-Forwarded-For (見 .env 的 TRUSTED_PROXY_COUNT)，因此無法偽造 IP 繞過限流。
-   - 會員 PIN 碼三層鎖定 (HTTP 429)：同一裝置對同一手機連續錯 5 次鎖 15 分鐘；同一手機「不分來源 IP」累計錯 10 次鎖定，且每次再鎖時間加倍 (上限 24 小時)；同一 IP 對任意手機累計錯 30 次鎖定。空號與已註冊號碼採相同計數，無法藉鎖定行為列舉會員。櫃檯協助設定/重設 PIN 時會一併解除該會員的鎖定。
-   - 會員登入 (/phone_login, /face_login)、註冊、優惠碼驗證 (/api/verify_promo、/api/pos/verify_promo) 與送單路由內建 IP 速率限制。
-6. 分散式原子保護與防雙花 (Anti-Double-Spending)：
-   - 結帳臨界區 (庫存扣減、取餐號發放) 使用 acquire_distributed_lock 互斥保護，杜絕庫存超賣與負數庫存。
-   - 訂單狀態變更使用 SQL 條件式更新 (CAS：UPDATE ... WHERE status=當前狀態)：同一張訂單被同時操作時只有一次成功，其餘回 409，庫存與點數不會重複回補。
-   - 紅利商品兌換憑證 (RewardRedemption) 採用單次核銷制：結帳核銷、手動退點、登入/登出自動退點全部是「單一條件式 UPDATE」，同一張憑證只有一方能成功，不會出現「餐點拿了、點數也退了」。
-   - 顧客送單具備冪等保護：連按兩次「送出」或網路重送 (瀏覽器尚未收到第一次回應) 只會建立一張訂單；成功後刻意再點同樣的餐則是新訂單。
-   - 取消訂單只還原「本單實際核銷」的那一張會員券 (訂單記錄 applied_user_coupon_id)；點數以原子 SQL 回沖，會員餘額不足以追回贈點時餘額最低到 0，並把追不回的點數寫入稽核紀錄。
-7. 訂單狀態變更權限與錯誤碼：詳見下方「訂單狀態 API 與權限矩陣」。
-8. 輸出與瀏覽器端防護：
-   - 所有 HTML 回應帶 Content-Security-Policy (只允許本站、jsDelivr、Google Fonts、Unsplash)、X-Content-Type-Options、X-Frame-Options、Referrer-Policy、Permissions-Policy (僅本站可用相機)；HTTPS 連線另帶 HSTS。CSP 模式可由 .env 的 CSP_MODE 調整 (enforce / report-only / off)。
-   - 廚房、取餐、叫號、顧客端畫面的動態內容一律 escapeHtml；後台警示頁面 (js_alert_redirect) 會跳脫 </script>。
-   - Excel 匯出不會把以 "=" 開頭的姓名/備註當成公式。
-9. 帳號與金鑰：
-   - SECRET_KEY 未設定時，首次啟動自動產生 64 字元隨機金鑰存入 database/.secret_key (已列入 .gitignore)，重啟沿用同一把；不再使用寫死在原始碼的公開金鑰。
-   - 預設負責人帳號只在「首次建立」時使用 .env 的 ADMIN_PASSWORD (未設定則產生隨機密碼並只顯示一次)；之後重啟不會洗掉負責人自行修改的密碼或停用狀態。忘記密碼時可暫時設定 RESET_ADMIN_PASSWORD_ON_START=1 重啟一次重設。
-   - 稽核日誌涵蓋：POS 建單、取消訂單、取餐核銷、會員編輯 (只記錄真正變動的欄位：姓名/手機/點數/重設 PIN，沒有異動就不寫)/刪除、設定 PIN、菜單/員工異動，以及優惠券異動、套餐異動、紅利設定異動、會員券核銷切換、廚房一鍵出餐、系統換日自動結案。稽核紀錄一定歸屬明確的店家，缺租戶資訊時直接報錯而不是記到別家。
+測試共用同一個暫存資料庫，有先後依賴 (例如 POS 測試使用菜單測試建立的餐點)：
+執行順序寫在 tests/conftest.py 的 RUN_ORDER，前置依賴寫在 NEEDS (新增測試檔時一併維護)。
 
-🔑 核心功能指南 (Features Guide)
 
-【顧客自助點餐端 - Kiosk & CV】
-- 矩陣向量秒級登入：SFace 提取特徵向量以自訂 NPF32v1 安全二進位封裝存庫，登入時透過 NumPy 矩陣點積一次性計算餘弦相似度，避免迴圈比對延遲。
-- 雙軌登入：支援人臉辨識登入、手機號碼 + 4~6 碼 PIN 碼登入，亦支援訪客快速免登點餐。註冊時會擋下「已註冊過的同一張臉」(相似度 ≥ 0.45)，避免用不同手機重複領註冊禮點數或造成同臉多帳號。
-- 人臉特徵資料驗證：特徵向量固定 128 維且須為有限數值；匯入的舊資料庫或損毀的資料只會被略過，不會讓全店人臉比對失效。
-- 售完與庫存：店員手動標示「售完」的餐點，即使庫存大於 0 也不可下單 (含套餐配餐)；取消訂單回補庫存時不會自動解除手動售完。
-- 金額計算：百分比優惠產生小數時，應付金額四捨五入到整數元，並以「小計 − 應付」反推折扣總額，保證 小計 = 應付 + 折扣；點數折抵只折整數元。
-- 深度客製化與套餐：支援飲料冰塊甜度、辣度與加料，並能升級雙配餐套餐；後端具備防竄改驗證，自動清洗偽造之加價標籤。
-- 條件加購配額池化：支援任意品項 (any)、指定分類 (category) 與指定餐點 (item) 三種解鎖規則，並嚴格依主餐數量計算加購上限。
+八、開發慣例
+--------------------------------------------------------------------
+- 換行格式：專案文字檔統一使用 Windows 換行 (CRLF)。
+- 前端 (CSP 強制，tests/test_frontend_static_files.py 自動檢查)：
+  - 不寫行內 <script> 或 onclick；事件用 data-action="名稱" 搭配 Kiosk.on(root, 'click', {名稱: fn})。
+  - 頁面資料以 <script type="application/json" id="page-data"> 嵌入，用 Kiosk.pageData() 讀取。
+  - 不引用外部網址，第三方套件放 static/vendor/。
+  - 動態 HTML 一律用 Kiosk.html`...` (自動跳脫) 或 textContent。
+  - API 用 Kiosk.api(url, {json})：自動帶 CSRF Token，失敗時丟出含後端訊息的錯誤。
+  - 刪除確認用 <form data-confirm="…">；圖片備援用 <img data-fallback="預設圖網址">。
+- 後端：
+  - 錯誤一律 raise AppError(訊息, 狀態碼)：API 回 {"success": false, "message": …}；表單的 400/409 flash 後導回。
+  - 權限用 @role_required('owner', 'manager')；整庫備份等用 @platform_admin_required。
+  - 查詢自動加上目前店家條件；系統工作需要跨店時用 with tenant_bypass():。
+  - 結帳一律走 order_service.process_checkout，訂單狀態一律走 order_service.change_order_status。
+  - 加減會員點數一律用 points_service.change_points (寫入點數異動帳)。
+  - 修改資料表：改 app/models/ → flask --app run db migrate → 檢查遷移檔 → 測試。
+  - 新資料表要同步：繼承 TenantScoped 並加入 app/sync/registry.py 的 SPECS (依外鍵順序)；本機欄位放 local_only。
 
-【櫃檯 POS 收銀系統 - POS Terminal (/pos)】
-- 會員快速模糊搜尋：支援手機號碼或姓名片段查詢，符合多筆時彈出候選清單供店員點選綁定；提供店員現場核對身分並為會員設定/重設安全 PIN 碼。
-- 交易找零與快速鍵：支援實收現金防呆 (實收不足禁止送單)、自動找零試算 ($100/$500/$1000/+100 快捷鍵)、80mm 熱感應收據列印。
-- 暫存掛單夾 (Hold/Recall)：可於尖峰時期暫存目前點餐內容 (快捷鍵 F4)，並可隨時取回接續結帳 (快捷鍵 F2)。
-- 完整帳務追責：持久化記錄 order_source='POS'、收銀員帳號 (cashier_username)、實收金額與找零，並同步寫入 StaffAuditLog 稽核日誌。
-- POS 同樣不會讓被標示售完的餐點入單，優惠碼只記錄「實際套用成功」的代碼。
 
-【廚房出單 KDS、取餐叫號與跨端即時通訊】
-- KDS 製作看板 (/kitchen)：依訂單建立時間依序排單，自動聚合相同配餐客製規格，支援單筆出餐與「一鍵全部出餐」。
-- 叫號即時看板 (/counter)：提供大字體號碼牌與製作中清單，新單出餐時由瀏覽器 Web Speech API 自動播放中文叫號語音。
-- 狀態機防禦與全量回滾：Pending 禁止越級取餐、Cancelled 禁止復活、任何狀態不可倒退回 Pending；取消訂單時在同一交易內回補主餐庫存與各配餐庫存、退還折抵點數與兌換商品點數、還原優惠券並扣回贈點，且只會回補一次 (CAS 防重複)。
+九、權限與安全
+--------------------------------------------------------------------
+1. 角色：
+   - owner (負責人)：全部權限，含員工帳號。預設店家 (default) 的 owner 為平台管理者，才可整庫備份 / 還原。
+   - manager (店長)：後台、菜單 / 優惠券 / 紅利、隱私權告知設定、匯出匯入、POS、出餐、核銷、取消訂單。
+   - staff (櫃台)：POS、會員設定 PIN、取餐核銷、當日訂單、出餐、取消未取餐的訂單。登入後直接進 POS (看不到後台)。
+   - kitchen (廚房)：KDS，只能出餐。登入後直接進 KDS，看不到會員照片。
+2. CSRF：所有表單與 API 的 POST 都需要 CSRF Token；例外只有以權杖驗證的同步 API 與以檢查碼驗證的綠界通知。
+   登出、訪客登入只接受 POST (其他網站無法用連結或圖片讓人登出)。
+3. 會員照片：只能經 /media/member/ 讀取，需登入同店員工 (廚房除外)；/static/member 一律 404。
+   上傳檔路徑一律檢查格式並限制在上傳資料夾內 (app/services/upload_paths.py)，/media/menu 只提供圖片。
+4. 頻率限制：登入、註冊、優惠碼、送單有 IP 頻率限制；員工登入與註冊新店家只以 IP 計數 (切換店家繞不過)。
+   反向代理之後請設 TRUSTED_PROXY_COUNT=1。
+5. 鎖定：
+   - 會員 PIN：同裝置對同手機連錯 5 次鎖 15 分鐘；同手機累計錯 10 次鎖定 (每次加倍，上限 24 小時)；同 IP 累計錯 30 次鎖定。
+   - 員工密碼：同 IP 對同帳號連錯 5 次、同帳號累計錯 10 次 → 鎖 15 分鐘。
+   - 帳號 / 手機不存在時同樣計數且回應時間相同，無法藉此列舉帳號。
+   - 新設定的 PIN 不可太簡單 (0000、1234、1212、手機末幾碼)。
+6. 工作階段：登入時換新的工作階段；員工改密碼或角色後，舊的登入自動失效。
+7. 安全標頭：CSP (script-src 'self')、X-Content-Type-Options、X-Frame-Options、Referrer-Policy、
+   Permissions-Policy；HTTPS 時加 HSTS。付款頁只放寬 form-action 到綠界網域。
+8. 個資：註冊須同意隱私權告知並記錄版本與時間；人臉另行同意、可撤回 (各分店的照片經同步一併刪除)；
+   停用會員可定期刪除 (訂單去識別化保留)。
+9. 同步：HTTPS + 分店權杖 (只存雜湊)。分店只能修改自己負責的訂單、不能建立 / 修改 / 刪除負責人帳號、
+   不能讀寫其他店家的圖片或資料；單次上傳有筆數上限 (詳見 SYNC.txt)。
+10. 線上付款：已付款的訂單被取消 (店員、分店或逾時後才付款) 一律標記「需退款」，由店家到綠界後台退刷。
+11. 整庫備份 / 還原：只限平台管理者；大檔案上限只對已登入的平台管理者放寬；含觸發程序或檢視表的備份檔拒絕還原。
+12. 匯入：Excel 解壓後超過 30MB 或超過 2 萬列拒絕 (防壓縮炸彈)；匯出時公式一律轉成文字。
+13. 開發模式：FLASK_DEBUG=1 只監聽本機 (除錯頁可執行程式碼)。
 
-【店家後台管理 - Admin Dashboard (/admin)】
-- 營運分析儀表板：即時統計待製作單數、預估等待時間 (ETA)、客單價、營業額與區間熱銷排行榜。儀表板與即時訂單 API 只載入「今天 + 尚未出餐」的訂單並預載明細，資料量成長後不會越來越慢。待製作數只計入「今天」的待製作訂單 (與廚房看板一致)。預估出餐 = 待製作張數 × 今日實際平均出餐時間 (建單到出餐完成)，平均值會排除極端值：先丟掉超過 90 分鐘或負數的紀錄 (例如忘了按出餐)，樣本數 ≥ 4 時再以四分位距 (IQR) 法排除離群值；今天還沒有可用的出餐紀錄時暫以 3 分鐘/單估算，頁面會註明估算依據。
-- 熱門餐點排行：顯示份數與銷售額 (單價 × 份數，點數兌換的免費品項為 $0，已取消的訂單不計入)，筆數可自訂，並隨即時更新刷新，不必按 F5。
-- 換日自動結案：每天跨日後的第一個請求 (以及每次啟動) 會把「今天 00:00 以前建立、卻還停在製作中」的訂單一律改為已出餐 (Completed)，涵蓋所有店家。使用條件式更新，不會與店員同時操作互相覆蓋；不填 completed_at，所以不會汙染平均出餐時間；庫存與點數不動；每家有結案的店會寫一筆系統稽核 (換日自動結案，列出訂單編號)。已出餐、已取餐、已取消的訂單不受影響，今天的訂單也不會被動到。「已完成今日訂單」含已出餐與已取餐，「平均每單時間」為建單到出餐完成的平均分鐘數，「平均每單」排除實付 0 元的純點數訂單。
-- 編輯保護：編輯餐點庫存、會員點數時，表單會帶開啟視窗當下的數值 (loaded_stock / loaded_points)，後端只套用「差額」，不會用過期的表單值蓋掉編輯期間顧客買走的庫存或賺到/花掉的點數；餐點圖片檔名使用隨機 UUID，圖片損毀時會明確報錯，不會把原本的圖弄丟。
-- AI 智慧文案與三層韌性降級：菜單新增/編輯支援 Gemini 3.6 Flash 一鍵生成繁中商品描述；遇配額限制時自動降級為本地 Qwen2.5 SLM 推論，若無權重則走美食辭庫規則引擎。
-- 報表匯出 (/admin/export_excel)：涵蓋 10 張工作表 (含訂單對帳、區間營運、熱銷排行與員工稽核日誌)，支援自適應中文字元欄寬；本端點只負責報表，不含備份。
-- 智慧匯入 (/admin/import_smart，唯一匯入入口)：可上傳單一 CSV 菜單，或含會員/菜單/優惠券的多工作表 Excel，自動辨識工作表與中英文欄位並 Upsert (會員工作表若有點數欄位則照填，包含 0 點；整份檔案沒有點數欄位才給新會員預設 20 點)；採單一交易，任一工作表解析失敗即整批 rollback；既有品項在檔案未提供庫存欄位時不覆蓋庫存與售完狀態，庫存恆不大於總量；紅利兌換點數高於單價、點數為 0 或特惠點數不合法時自動修正。
-- 系統備份與還原 (僅平台管理者 = 預設店家 default 的 owner)：/admin/backup_system 下載含 SQLite 資料庫一致性快照與會員/餐點照片 (保留 static/menu/<店家ID>/ 結構) 的完整備份包；
-  備份包含「所有店家」的資料，因此其他店家的 owner 不可使用 (請改用 Excel 匯出自己店家的資料)。
-  /admin/restore_backup 還原前會先驗證備份包 (SQLite 完整性、系統資料表、相片副檔名與容量上限)，
-  覆蓋前自動把現有資料庫另存為 database/menu.db.bak-<時間>，還原後立即執行資料庫遷移，舊版備份即刻升級。
-- 租戶註冊入口 (/tenant/register)：提供新分店自主申請專屬空間與代號 (Slug)，並自動初始化預設加料品項與紅利設定。
+十、API 摘要
+--------------------------------------------------------------------
+訂單狀態  POST /api/orders/<id>/status   {"status": "Completed" | "PickedUp" | "Cancelled"}
+  流轉：Pending → Completed → PickedUp；非終態都可轉為 Cancelled (終態)。
+  權限：             owner  manager  staff  kitchen
+    Pending→Completed  O      O       O      O
+    Pending→Cancelled  O      O       O      X
+    Completed→PickedUp O      O       O      X
+    Completed→Cancelled O     O       O      X
+    PickedUp→Cancelled O      O       X      X
+  回應：200 成功、400 狀態值錯誤、401 未登入、403 權限不足 (先於訂單是否存在判斷)、404 查無訂單、409 非法轉換或已被變更。
+  取消會在同一交易內回補庫存、退還點數、還原會員券、扣回贈點，只執行一次。
 
-【訂單狀態 API 與權限矩陣】
-- 唯一端點：POST /api/orders/<order_id>/status    (需登入員工帳號與 CSRF Token)
-  請求內容 (JSON)：{"status": "Completed" | "PickedUp" | "Cancelled"}
-  廚房 KDS、櫃檯取餐、POS 與後台的狀態操作都使用此端點；另有 POST /api/kitchen_complete_all 供廚房一鍵全部出餐。
-- 狀態流轉：Pending → Completed → PickedUp；Pending / Completed / PickedUp 皆可轉為 Cancelled；
-  Cancelled 為終態，不可倒退，且沒有任何流程可以轉回 Pending。
-- 系統自動流轉 (不經此端點)：每日換日自動結案會把前一日(含更早)還停在 Pending 的訂單改為 Completed (不填出餐時間，並寫入系統稽核)，其餘狀態不受影響。
-- 角色轉換權限 (O 允許 / X 禁止)：
+結帳  POST /submit_order (點餐頁)、POST /api/pos/checkout (POS)
+  {"client_order_id": "<UUID，重送沿用>",
+   "items": [{"menu_item_id": 1, "quantity": 2, "modifier_ids": [3], "combo_option_id": null,
+              "is_add_on": false, "is_reward": false, "customization": "備註"}],
+   "payment_method": "Cash", "order_type": "內用", "promo_code": "", "use_points": 0, "note": ""}
+  (POS 另有 user_id、cash_received、table_number)
+  價格一律由後端計算；replayed: true 表示是重送的同一張訂單；線上端另回傳 payment_url (前往付款)。
 
-  狀態轉換                    owner   manager   staff   kitchen 
-  Pending → Completed           O        O        O        O    
-  Pending → Cancelled           O        O        O        X    
-  Completed → PickedUp          O        O        O        X    
-  Completed → Cancelled         O        O        O        X    
-  PickedUp → Cancelled          O        O        X        X    
+其他
+  GET  /api/pos/today_orders       POS 當日訂單 (含未結帳桌位)   GET /api/kitchen_orders、/api/pickup_orders、/api/counter_orders
+  POST /api/pos/tables/<id>/settle  桌位結帳 {"payment_method": "Cash", "cash_received": 600}
+  GET  /api/orders_stream          SSE 訂單通知          GET /healthz   健康檢查 (資料庫連線)
+  /pay/<訂單>、/payment/ecpay/notify、/payment/ecpay/result   綠界付款 (線上端)
+  /api/sync/v1/hello、push、pull、media/menu/<路徑>          同步 API (分店權杖，詳見 SYNC.txt)
 
-- 回應碼：
-    200  成功
-    400  不支援的狀態值
-    401  尚未登入
-    403  權限不足：該角色無權執行此轉換。訊息不帶出訂單目前狀態；無權限者不論訂單是否存在、處於何種狀態，回應皆相同
-    404  查無此訂單 (含他店訂單，跨店隔離)
-    409  非法轉換 (重複操作、Cancelled 復活、無任何流程可轉入的狀態)，或訂單已被其他操作者變更 (CAS 併發保護)
-- 判定順序：400 (狀態值) → 409 (目標不可達) → 403 (角色) → 404 (訂單) → 409 (重複/非法轉換) → 403 (細部轉換權限) → 409 (CAS)。
 
-【重構與 API 遷移備註 (供維護與串接參考)】
-- 共用邏輯：Kiosk (/submit_order) 與 POS (/api/pos/checkout) 共用 order_service.process_checkout；促銷碼驗證共用 verify_promo_code；
-  PIN 規則集中於 app.utils.validate_pin 與 User.set_pin；紅利上下架 (新增、下架、編輯) 集中於 set_item_reward_status。
-- 已移除的舊端點與替代方式：
-    /api/kitchen_update_status/<id>、/api/mark_picked_up/<id>、/api/pos/order_status/<id>、/admin/update_order_status/<id>
-        → POST /api/orders/<id>/status
-    /admin/import_excel                                  → /admin/import_smart
-    /admin/export_excel (export_type=backup_zip)         → /admin/backup_system (僅 owner)
-- 取餐號：接續當日最後一張訂單遞增 ((最後號碼 % 999) + 1)。舊版以當日最大值計算，達 999 後會永遠卡在 1。
-- 營運分析欄位約定：後台模板讀取的 analytics.* 與 top_items[].revenue 必須都由 build_order_analytics 提供 (測試模組 15 會掃描模板驗證)，新增畫面欄位時請同步補上。
-- 已移除的無作用程式：order_service.update_popular_items (實際上不做任何事)、Redis Pub/Sub 發佈 (沒有任何訂閱者；多行程部署請自行評估即時通知機制)。
-
-⚙️ 環境變數配置 (.env)
-在專案根目錄建立 `.env` 檔案並填入以下內容：
-REDIS_URL="redis://127.0.0.1:6379/0"      # Redis 伺服器位址 (未啟動時系統自動降級使用本地 Process 執行緒鎖)
-GEMINI_API_KEY="你的_GEMINI_API_金鑰"      # Google AI Studio API Key (留空則自動降級為本地 SLM 或規則引擎)
-SECRET_KEY="請使用_secrets_token_hex_產生長字串"   # Session 簽章金鑰；留空則首次啟動自動產生並存到 database/.secret_key (之後沿用)
-ADMIN_USERNAME="admin_test"               # 預設負責人帳號
-ADMIN_PASSWORD="AdminPass!2026"           # 預設負責人密碼 (至少 10 碼)，只在「首次建立」該帳號時使用；留空則產生隨機密碼並只顯示一次
-RESET_ADMIN_PASSWORD_ON_START="0"         # 忘記負責人密碼時，改為 1 重啟一次，把密碼重設成上面的 ADMIN_PASSWORD 並重新啟用帳號；用完請改回 0
-DISABLE_RATE_LIMIT="0"                    # 設為 1 可於測試時停用 IP 限流 (預設 0 開啟保護)
-TRUSTED_PROXY_COUNT="0"                   # 前面有幾層反向代理 (預設 0 = 不信任 X-Forwarded-For，直接對外連線請維持 0)
-                                          # 部署在 Nginx / Cloudflare 等「單層」反向代理之後，請改為 1，
-                                          # 否則所有請求都會被視為來自代理本身的 IP (限流、鎖定與稽核 IP 都會失準)。
-                                          # 直接對外連線卻設成 1，等於讓任何人都能偽造來源 IP 繞過所有限流與 PIN 鎖定。
-SESSION_COOKIE_SECURE="0"                 # 全站使用 HTTPS (例如經 Cloudflare/Nginx 終結 TLS) 時改為 1，Cookie 才限制只經 HTTPS 傳送；
-                                          # 門市內網若是 http://區網IP 存取，設 1 會讓瀏覽器不儲存 Cookie 而無法登入，請維持 0。
-CSP_MODE="enforce"                        # 內容安全政策：enforce 強制 / report-only 只回報不攔截 (畫面異常時排查用) / off 關閉
-WAITRESS_THREADS="128"                    # Waitress 工作執行緒數；每條 SSE 長連線占用 1 條 (上限 25 公開 + 60 員工)，請勿低於 100
-
-⬆️ 升級注意事項 (從舊版升級時請先看)
-1. 來源 IP：預設不再信任 X-Forwarded-For。如果站台在 Nginx / Cloudflare 後面，務必在 .env 設定 TRUSTED_PROXY_COUNT=1。
-2. 整庫備份/還原僅限平台管理者 (預設店家 default 的 owner)。其他店家的 owner 看不到也無法呼叫，請改用 Excel 匯出自己店家的資料。
-3. 預設負責人密碼重啟時不再被重設。若過去習慣「改 .env 再重啟來重設密碼」，請改用 RESET_ADMIN_PASSWORD_ON_START=1。
-4. 若 .env 沒有 SECRET_KEY，升級後第一次啟動會換成新產生的金鑰，所有人 (含員工) 需要重新登入一次。
-5. 資料庫會在啟動時自動升級：訂單新增 applied_user_coupon_id 欄位、紅利設定去重並建立唯一索引、無法解析的舊人臉特徵保留原始資料並於啟動時列出會員 ID (需重新註冊人臉)。
-6. 內容安全政策預設強制。如果自行在頁面加了其他外部資源 (新的 CDN、字型、地圖等)，請把網域加進 app/__init__.py 的 _CSP_POLICY，或先用 CSP_MODE=report-only 觀察。
-7. llama-cpp-python (本地 Qwen2.5 SLM) 已改為選用，requirements.txt 預設註解；需要時取消註解後再安裝。
-8. 換日自動結案：升級後第一次啟動，會把過去所有還停在「製作中」的舊訂單改為「已出餐」。如果有需要保留為製作中的舊單，請在升級前先處理。
-9. 電話 + PIN 登入新增帳號層級鎖定：他人可能故意連續輸錯來鎖住某位會員，被鎖的會員可改用人臉登入，或請櫃檯重設 PIN 立即解除。
+十一、從舊版升級
+--------------------------------------------------------------------
+1. 先備份 database/menu.db 與舊的 static/member、static/menu。
+2. pip uninstall -y opencv-python 後 pip install -r requirements.txt (新增 Flask-Migrate、Flask-WTF、Flask-Login、
+   Flask-Limiter、psycopg、opencv-python-headless、segno (桌位 QR code) 等)。
+3. 第一次啟動自動完成：升級資料庫 (0001 → 0005)、舊上傳檔搬到 uploads/、會員現有點數記為「期初」點數異動。
+4. 舊檔案已不使用：app/routes/common.py、app/services/idempotency.py、app/services/migration_service.py、test_all_features.py。
+5. 環境變數 DISABLE_RATE_LIMIT 改為 RATELIMIT_ENABLED (0 = 停用)；門市不需要 Redis (只有線上端多行程部署使用)。
+6. 升級前註冊的會員沒有個資同意紀錄：登入後點餐頁上方會請他閱讀並同意；原有人臉資料仍可使用，可在 /privacy 刪除。

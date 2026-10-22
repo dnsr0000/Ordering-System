@@ -1,0 +1,185 @@
+/* 顧客自助點餐 (Kiosk) 頁面專屬樣式；共用深色主題見 theme.css */
+body.customer-page {
+    background: linear-gradient(150deg, #101010 0%, #1f1f1f 100%);
+    color: #f8f9fa;
+}
+
+.customer-page .header {
+    background: rgba(10, 10, 10, 0.88);
+    backdrop-filter: blur(3px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.customer-page main { padding-top: 90px; }
+
+/* 主視覺 (原本使用外部圖片，改為純 CSS 漸層以支援離線) */
+.customer-page .hero {
+    min-height: 50vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    margin-bottom: 25px;
+    background:
+        radial-gradient(circle at 20% 25%, rgba(245, 165, 0, 0.28), transparent 45%),
+        radial-gradient(circle at 80% 70%, rgba(239, 68, 68, 0.22), transparent 50%),
+        linear-gradient(135deg, rgba(0, 0, 0, 0.65), rgba(10, 10, 10, 0.95)),
+        #1a1a1a;
+}
+.customer-page .hero-landing { border-radius: 14px; }
+
+/* 菜單卡片 */
+.menu-card {
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    transition: transform .15s ease, border-color .15s ease;
+}
+.menu-card:hover { transform: translateY(-2px); border-color: #ffbf00; }
+.menu-img {
+    width: 80px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 2px solid #343434;
+    background: #2a2a2a;
+}
+.menu-desc { font-size: 0.75rem; }
+
+.add-to-cart-btn { background-color: #f5a500; border: none; color: #111; }
+.add-to-cart-btn:hover { background-color: #ffc964; color: #111; }
+.btn-login { background-color: #2d9cdb; color: #fff; }
+.btn-register { background-color: #28a745; color: #fff; }
+.btn-login:hover, .btn-register:hover { color: #fff; filter: brightness(1.1); }
+
+/* 熱門推薦 / 常點餐點的快速加入卡片 */
+.quick-card {
+    background: #181f2c;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+}
+.quick-card.quick-favorite { background: #141f33; border-color: rgba(245, 183, 56, 0.4); }
+.quick-card.card-available { cursor: pointer; }
+.quick-card.card-available:hover { border-color: #f5a500; transform: translateY(-2px); }
+.quick-plus { width: 28px; height: 28px; }
+.favorite-empty { background: rgba(255, 255, 255, 0.03); border-style: dashed !important; }
+
+.card-sold-out {
+    opacity: 0.55 !important;
+    cursor: not-allowed !important;
+    filter: grayscale(80%) !important;
+}
+.menu-card-sold-out { opacity: 0.65 !important; border-color: rgba(255, 255, 255, 0.04) !important; }
+.img-sold-out { filter: grayscale(80%) !important; }
+
+/* 篩選與排序 */
+.customer-page .form-control,
+.customer-page .form-select {
+    background-color: #222;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    color-scheme: dark;
+}
+.customer-page .form-control::placeholder { color: #a9a9a9; opacity: 1; }
+.customer-page .form-control:focus,
+.customer-page .form-select:focus {
+    background-color: #2b2b2b;
+    color: #fff;
+    box-shadow: 0 0 0 0.2rem rgba(245, 165, 0, 0.2);
+    border-color: #f5a500;
+}
+.customer-page .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255, 255, 255, 0.16); }
+.customer-page .form-label,
+.customer-page .form-check-label { color: #f1f5f9; }
+.customer-page .text-muted,
+.customer-page .text-secondary { color: #94a3b8 !important; }
+
+.sort-btn, .price-sort-btn {
+    position: relative;
+    transition: all 0.2s ease;
+    background-color: #242b38;
+    color: #f1f5f9;
+    border: 1px solid #3b465c;
+}
+.sort-btn:hover, .price-sort-btn:hover { background-color: #313b4d; color: #fff; border-color: #f5a500; }
+.sort-btn.active,
+.price-sort-btn.active {
+    background-color: #f5a500 !important;
+    color: #111 !important;
+    font-weight: bold;
+    border-color: #f5a500 !important;
+    box-shadow: 0 0 10px rgba(245, 165, 0, 0.4);
+}
+.sort-btn.active::after {
+    content: "\F26B";
+    font-family: "bootstrap-icons";
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    background-color: #198754;
+    color: #fff;
+    font-size: 13px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #1a1a1a;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+/* 購物車側邊欄 */
+#cart-sidebar { width: 440px; }
+#cart-items {
+    min-height: 140px;
+    max-height: 28vh;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+.cart-small { font-size: 0.78rem; }
+.cart-tiny { font-size: 0.7rem; }
+.addon-strip { white-space: nowrap; }
+.addon-card { width: 135px; white-space: normal; }
+
+/* 套餐選擇卡片 */
+.combo-modal-content {
+    background: #181f2c;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 18px;
+    box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+}
+.combo-card {
+    background: #101726;
+    border: 2px solid rgba(255, 255, 255, 0.08);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.combo-card:not(.card-sold-out):hover { border-color: #f5a500; transform: translateY(-3px); }
+
+/* 收據與歷史訂單彈窗 (白底黑字) */
+#receiptModal .modal-content,
+#historyModal .modal-content {
+    background-color: #fff !important;
+    color: #0f172a !important;
+    --bs-modal-color: #0f172a;
+}
+#receiptModal .table, #receiptModal th, #receiptModal td,
+#historyModal .table, #historyModal th, #historyModal td {
+    color: #0f172a !important;
+    --bs-table-color: #0f172a;
+    --bs-table-bg: transparent;
+}
+#historyModal .card {
+    background-color: #fff !important;
+    color: #0f172a !important;
+    --bs-card-color: #0f172a;
+}
+#receiptModal .bg-light,
+#historyModal .bg-light { background-color: #f1f5f9 !important; color: #0f172a !important; }
+#receiptModal .text-muted,
+#historyModal .text-muted { color: #475569 !important; }
+#history-modal-body { max-height: 70vh; overflow-y: auto; }
+.receipt-points { color: #b45309; }
+
+@media (max-width: 576px) {
+    #cart-sidebar { width: 100%; }
+}

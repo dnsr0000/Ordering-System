@@ -1,0 +1,33 @@
+/* 桌位管理 (admin_tables.html) 與列印桌卡 (table_qr_print.html) */
+.table-name-input { max-width: 9rem; }
+.table-sort-input { max-width: 5rem; }
+.table-url { word-break: break-all; }
+
+body.table-print-page { background: #fff; color: #111; }
+.qr-sheet {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(62mm, 1fr));
+    gap: 6mm;
+    padding: 6mm;
+}
+.qr-card {
+    border: 1px dashed #999;
+    border-radius: 4mm;
+    padding: 5mm;
+    text-align: center;
+    break-inside: avoid;
+    page-break-inside: avoid;
+}
+.qr-shop { font-size: 12pt; font-weight: 700; }
+.qr-table { font-size: 30pt; font-weight: 800; line-height: 1.1; margin: 2mm 0; }
+.qr-table span { font-size: 14pt; font-weight: 600; }
+.qr-image { width: 48mm; height: 48mm; image-rendering: pixelated; }
+.qr-hint { font-size: 9pt; margin-top: 2mm; }
+.qr-url { font-size: 7pt; color: #666; word-break: break-all; margin-top: 1mm; }
+
+@media print {
+    @page { size: A4; margin: 8mm; }
+    .no-print, .flash-stack { display: none !important; }
+    .qr-sheet { grid-template-columns: repeat(2, 1fr); padding: 0; gap: 6mm; }
+    .qr-card { height: 88mm; }
+}

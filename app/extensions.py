@@ -1,73 +1,26 @@
-import threading
-import redis
-from contextlib import contextmanager
+from flask import g, request, session
+from flask_limiter import Limiter
+from flask_login import LoginManager
+from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
-from app.config import Config
+from flask_wtf.csrf import CSRFProtect
 
 db = SQLAlchemy()
-
-# 本地備援鎖：依鎖名稱各自獨立 (不同店家/不同用途互不阻塞)；注意為非可重入鎖，同一執行緒不可巢狀取得同名鎖
-_LOCAL_LOCKS = {}
-_LOCAL_LOCKS_GUARD = threading.Lock()
-LLM_LOCK = threading.Lock()
+migrate = Migrate()
+csrf = CSRFProtect()
+login_manager = LoginManager()
 
 
-def _get_local_lock(name):
-    with _LOCAL_LOCKS_GUARD:
-        lock = _LOCAL_LOCKS.get(name)
-        if lock is None:
-            lock = _LOCAL_LOCKS[name] = threading.Lock()
-        return lock
+def rate_limit_key():
+    """頻率限制以「店家 + 來源 IP」計數 (來源 IP 是否採信代理標頭由 TRUSTED_PROXY_COUNT 決定)"""
+    tenant_id = getattr(g, 'tenant_id', None) or session.get('tenant_id') or 0
+    return f"{tenant_id}:{request.remote_addr or '-'}"
 
-# 初始化 Redis Client
-redis_client = None
-try:
-    redis_client = redis.from_url(
-        Config.REDIS_URL, 
-        decode_responses=True,
-        protocol=2,
-        socket_connect_timeout=2,
-        socket_timeout=5
-    )
-    redis_client.ping()
-    print("✅ Redis 連線成功，啟用分散式互斥鎖！")
-except Exception as e:
-    print(f"⚠️ Redis 未連線 ({e})，降級使用本地 Process 執行緒鎖（僅限單行程開發環境）。")
-    redis_client = None
 
-@contextmanager
-def acquire_distributed_lock(lock_name="lock:order_checkout", timeout=10, blocking_timeout=5):
-    """
-    分散式互斥鎖 (Distributed Mutex Lock)
-    - timeout: 鎖持有最長秒數 (防止伺服器 Crash 導致 Deadlock)
-    - blocking_timeout: 搶鎖最大等待時間
-    Redis 連線中斷 (啟動時連得上、執行中掛掉) 時，自動降級為「依名稱區分的本地執行緒鎖」，
-    不會讓所有結帳因 Redis 異常而全部失敗。
-    """
-    redis_lock = None
-    if redis_client:
-        try:
-            redis_lock = redis_client.lock(name=lock_name, timeout=timeout, blocking_timeout=blocking_timeout)
-            if not redis_lock.acquire():
-                raise TimeoutError(f"取得分散式鎖 [{lock_name}] 逾時，系統繁忙中！")
-        except redis.exceptions.RedisError as e:
-            print(f"[!] Redis 鎖異常 ({e})，本次降級使用本地執行緒鎖。")
-            redis_lock = None
+def ip_key():
+    """只以來源 IP 計數：員工登入、註冊新店家等不分店家的入口 (避免切換店家繞過限制)"""
+    return f"ip:{request.remote_addr or '-'}"
 
-    if redis_lock is not None:
-        try:
-            yield redis_lock
-        finally:
-            try:
-                redis_lock.release()
-            except redis.exceptions.RedisError:
-                pass  # 鎖已逾時自動釋放 / Redis 暫時失聯：忽略，避免蓋掉原本的結果或例外
-        return
 
-    local_lock = _get_local_lock(lock_name)
-    if not local_lock.acquire(timeout=blocking_timeout):
-        raise TimeoutError(f"取得本地鎖 [{lock_name}] 逾時！")
-    try:
-        yield None
-    finally:
-        local_lock.release()
+# storage_uri 由 RATELIMIT_STORAGE_URI 設定：本機為 memory://，線上多行程時設為 Redis
+limiter = Limiter(key_func=rate_limit_key)

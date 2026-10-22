@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}隱私權告知 - {{ p.operator_name }}{% endblock %}
+{% block content %}
+<main class="container py-4 privacy-page" style="max-width: 860px">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 fw-bold mb-0"><i class="bi bi-shield-check text-warning me-2"></i>會員個人資料蒐集告知與隱私權政策</h1>
+        <a class="btn btn-outline-light btn-sm" href="{{ url_for('customer.customer_index') }}">回點餐頁</a>
+    </div>
+    <p class="text-secondary small">版本：{{ p.version }}。依個人資料保護法第 8 條，於蒐集您的個人資料前告知下列事項。</p>
+
+    {% if member %}
+    <section class="card p-3 mb-4" id="my-privacy">
+        <h2 class="h5 fw-bold">您的資料 ({{ member.name }})</h2>
+        {% if needs_consent %}
+        <div class="alert alert-warning small mb-2">本告知內容已更新，請閱讀後按「我已閱讀並同意」。</div>
+        <form method="POST" action="{{ url_for('privacy.consent') }}" class="mb-2">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="next" value="{{ url_for('privacy.notice') }}">
+            <button class="btn btn-warning btn-sm fw-bold" type="submit">我已閱讀並同意</button>
+        </form>
+        {% else %}
+        <div class="small text-secondary mb-2">您已於 {{ member.privacy_consented_at.strftime('%Y-%m-%d %H:%M') }} 同意本告知。</div>
+        {% endif %}
+        {% if member.feature is not none %}
+        <div class="small mb-2">人臉辨識登入：<span class="text-success fw-bold">已啟用</span>
+            {% if member.face_consented_at %}(同意時間 {{ member.face_consented_at.strftime('%Y-%m-%d %H:%M') }}){% endif %}</div>
+        <form method="POST" action="{{ url_for('privacy.delete_face') }}" data-confirm="確定刪除人臉辨識資料？刪除後需以手機號碼 + PIN 登入。">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-danger btn-sm" type="submit" id="btn-delete-face"><i class="bi bi-trash"></i> 撤回同意並刪除人臉資料</button>
+        </form>
+        {% else %}
+        <div class="small text-secondary">人臉辨識登入：未啟用 (未保存您的人臉資料)。</div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">一、蒐集者名稱與聯絡方式</h2>
+        <p class="mb-0">{{ p.operator_name }}{% if p.contact_email %}<br>Email：{{ p.contact_email }}{% endif %}{% if p.contact_phone %}<br>電話：{{ p.contact_phone }}{% endif %}{% if p.contact_address %}<br>地址：{{ p.contact_address }}{% endif %}
+        {% if not (p.contact_email or p.contact_phone) %}<br>如需聯絡，請洽各門市櫃台人員。{% endif %}</p>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">二、蒐集之目的</h2>
+        <ul class="mb-0">
+            <li>〇九〇 消費者、客戶管理與服務：會員身分辨識、紅利點數與優惠券、訂單與取餐通知、客服。</li>
+            <li>〇六九 契約、類似契約或其他法律關係事務：會員權益與交易之履行。</li>
+            <li>一四八 網路購物及其他電子商務服務：線上點餐與線上付款。</li>
+            <li>一三六 資(通)訊與資料庫管理：系統安全、防止盜用 (例如登入錯誤次數限制)、資料備份與同步。</li>
+        </ul>
+        <p class="small text-secondary mb-0 mt-2">本店不會將您的資料用於上述目的以外之用途；如日後需寄送行銷訊息，將另外取得您的同意，並提供隨時拒絕的方式。</p>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">三、個人資料之類別</h2>
+        <ul class="mb-0">
+            <li>識別資料：姓名、手機號碼、安全 PIN 碼 (僅保存無法還原的雜湊值)。</li>
+            <li>人臉資料 (僅限您另行同意使用人臉辨識登入時)：註冊照片及由照片計算出的人臉特徵值。</li>
+            <li>消費資料：訂單內容、金額、付款方式、紅利點數與優惠券使用紀錄。線上付款的信用卡資料由金流服務商直接蒐集，本店不保存卡號。</li>
+            <li>使用紀錄：登入時間、操作時間、連線 IP 位址。</li>
+        </ul>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">四、利用之期間、地區、對象及方式</h2>
+        <ul class="mb-0">
+            <li>期間：會員資格存續期間。最後一次登入、消費或點數異動後滿 {{ p.retention_months }} 個月未再使用，即刪除會員資料
+                (訂單紀錄保留但移除姓名)；依商業會計法等法令須保存之交易紀錄，於法定保存期限屆滿後刪除。</li>
+            <li>地區：本店各門市之系統，以及本店使用之雲端主機所在地。</li>
+            <li>對象：本店及所屬分店 (會員與點數可於各分店共用)；線上付款時之金流服務商 (綠界科技，僅提供訂單編號、金額與品名)；
+                依法令規定得向本店要求提供之機關。</li>
+            <li>方式：以電子方式蒐集、處理、利用，並於門市與雲端主機之間加密傳輸 (HTTPS)。</li>
+        </ul>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">五、您的權利及行使方式</h2>
+        <p class="mb-1">依個人資料保護法第 3 條，您可就您的個人資料：(1) 查詢或請求閱覽、(2) 請求製給複製本、(3) 請求補充或更正、
+            (4) 請求停止蒐集、處理或利用、(5) 請求刪除。</p>
+        <p class="mb-0">請以第一點的聯絡方式或至門市櫃台提出，本店確認身分後儘速處理。人臉辨識資料可隨時於本頁上方自行刪除。</p>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">六、不提供個人資料之影響</h2>
+        <ul class="mb-0">
+            <li>姓名、手機號碼與 PIN 碼為加入會員所必需；不提供將無法加入會員、累積點數及線上點餐，但仍可於門市以訪客身分點餐。</li>
+            <li>人臉資料為自由選擇：不提供不影響任何會員權益，可改以手機號碼 + PIN 登入。</li>
+        </ul>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">七、人臉辨識資料的特別說明</h2>
+        <ul class="mb-0">
+            <li>僅用於門市點餐機的會員登入比對，不用於其他目的，也不提供給第三人。</li>
+            <li>為讓您在各分店都能刷臉登入，人臉特徵值會同步至本店其他分店與雲端主機；註冊照片只保存在註冊的門市。</li>
+            <li>您可隨時撤回同意，本店將刪除您的人臉特徵值與照片 (各分店於下次同步時一併刪除)。</li>
+        </ul>
+    </section>
+
+    <section class="card p-3 mb-3">
+        <h2 class="h6 fw-bold">八、資料安全</h2>
+        <p class="mb-0">本店以存取權限控管 (僅授權員工可查看會員資料)、密碼雜湊、加密傳輸、登入錯誤次數限制、操作稽核紀錄與定期備份保護您的資料。
+            如發生個人資料被竊取、洩漏、竄改或其他侵害事故，本店將於查明後以適當方式通知您。</p>
+    </section>
+</main>
+{% endblock %}

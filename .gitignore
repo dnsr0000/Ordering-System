@@ -1,94 +1,66 @@
 # ==============================================================================
-# 1. 環境變數與機敏設定 (Environment & Secrets)
+# 1. 機敏設定：門市 .env、線上端 .env.hub (只提交範例檔)
 # ==============================================================================
 .env
 .env.*
 !.env.example
 
 # ==============================================================================
-# 2. 資料庫檔案 (Database)
+# 2. 執行時資料 (含個資，不可提交；程式啟動時會自動建立這些資料夾)
 # ==============================================================================
-database/*.db
-database/*.db-wal
-database/*.db-shm
-database/*.bak-*
+# 資料庫、WAL、還原前備份、自動產生的 .secret_key、本機模擬用的 caddy-root.crt
+database/*
 *.db
 *.sqlite3
-instance/
-
-# 自動產生的 Session 簽章金鑰 (SECRET_KEY 未設定時使用)
-database/.secret_key
-
-# 保留 database 目錄結構
-!database/.gitkeep
+# 上傳檔 (會員人臉照片、餐點照片)；static/member、static/menu 是舊版位置，啟動時會自動搬到 uploads/
+uploads/
+static/member/
+static/menu/
 
 # ==============================================================================
-# 3. 店家與會員上傳之靜態相片 (Uploaded Static Media)
+# 3. 備份與匯出檔
 # ==============================================================================
-# 會員註冊相片
-static/member/*
-!static/member/.gitkeep
-
-# 店家上傳之餐點照片
-static/menu/*
-!static/menu/.gitkeep
-
-# 臨時擷取相片快照
-static/temp/
-
-# ==============================================================================
-# 4. 系統備份壓縮檔與 Excel 匯出/匯入報表 (Backups & Exports)
-# ==============================================================================
+# 後台整庫備份 (.zip)、Excel 匯出 / 匯入檔、線上端 pg_dump 與上傳檔備份
 *.zip
 *.xlsx
 *.xls
 *.csv
-Kiosk_Backup_*.zip
-Kiosk_Export_*.xlsx
+!test_menu.xlsx
+backups/
+*.dump
+*.tgz
 
 # ==============================================================================
-# 5. 大型 AI 模型權重檔 (Large Model Weights)
+# 4. 大型選用模型 (本地 Qwen GGUF，> 1GB；人臉辨識的 .onnx 模型需要提交)
 # ==============================================================================
-# 本地 GGUF 邊緣語言模型 (通常 > 1GB)
 models/*.gguf
 
-# 保留 models 目錄結構
-!models/.gitkeep
-
 # ==============================================================================
-# 6. Python 編譯快取與虛擬環境 (Python Runtime & Virtual Environments)
+# 5. Python 快取、虛擬環境、測試與工具產生的檔案
 # ==============================================================================
 __pycache__/
-app/__pycache__/
-app/**/__pycache__/
 *.py[cod]
 *$py.class
-*.so
 .pytest_cache/
-
-# 虛擬環境
-venv/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 .venv/
-env/
-ENV/
-
-# 日誌檔
+venv/
 *.log
 
 # ==============================================================================
-# 7. 開發工具與作業系統暫存檔 (IDE & OS Specific)
+# 6. 編輯器、作業系統、其他工具
 # ==============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Windows
 Thumbs.db
 ehthumbs.db
 Desktop.ini
-
-# macOS
 .DS_Store
-
 repomix-output.xml
+# 門市點餐機 Chrome 的使用者資料夾 (含登入 Cookie)
+chrome-kiosk/

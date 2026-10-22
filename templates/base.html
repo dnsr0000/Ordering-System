@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-bs-theme="{% block theme %}dark{% endblock %}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" href="{{ url_for('static', filename='img/favicon.svg') }}">
+    <title>{% block title %}自助點餐系統{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    {% include "_flashes.html" %}
+    {% block content %}{% endblock %}
+
+    {# 頁面資料以 JSON 嵌入 (不會被執行，不受 CSP 限制)，由 Kiosk.pageData() 讀取 #}
+    {% block page_data %}{% endblock %}
+    <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

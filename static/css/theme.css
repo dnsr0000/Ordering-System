@@ -1,0 +1,82 @@
+/*
+ * 全站共用的深色主題。頁面搭配 <html data-bs-theme="dark"> 使用 Bootstrap 5.3 內建深色模式，
+ * 這裡只放品牌色與 Bootstrap 沒處理到的對比修正；頁面專屬樣式放在 static/css/<頁面>.css。
+ */
+:root,
+[data-bs-theme="dark"] {
+    --kiosk-bg: #0b0f19;
+    --kiosk-surface: #151e32;
+    --kiosk-card: #1e293b;
+    --kiosk-border: #334155;
+    --kiosk-text: #f8fafc;
+    --kiosk-muted: #94a3b8;
+    --kiosk-accent: #f5a500;
+    --kiosk-success: #22c55e;
+    --kiosk-warning: #eab308;
+    --kiosk-danger: #ef4444;
+    --kiosk-font: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", -apple-system, "Segoe UI", sans-serif;
+
+    --bs-body-bg: var(--kiosk-bg);
+    --bs-body-color: var(--kiosk-text);
+    --bs-body-font-family: var(--kiosk-font);
+    --bs-secondary-color: var(--kiosk-muted);
+    --bs-border-color: var(--kiosk-border);
+    --bs-card-bg: var(--kiosk-card);
+    --bs-tertiary-bg: var(--kiosk-surface);
+}
+
+body {
+    min-height: 100vh;
+    font-family: var(--kiosk-font);
+}
+
+/* 深色卡片 / 對話框內的文字一律使用淺色，避免與背景融合 */
+.card:not(.text-dark):not(.light-card),
+.modal-content:not(.text-dark) {
+    --bs-card-color: var(--kiosk-text);
+    --bs-modal-color: var(--kiosk-text);
+    color: var(--kiosk-text);
+}
+
+.form-control:disabled,
+.form-select:disabled,
+.form-control[readonly] {
+    background-color: var(--kiosk-card);
+    color: var(--kiosk-muted);
+    border-color: var(--kiosk-border);
+    opacity: 0.85;
+}
+
+select option {
+    background-color: #0f172a;
+    color: var(--kiosk-text);
+}
+
+/* 淺色區塊 (收據、白底卡片) 內的次要文字使用深灰 */
+.text-dark .text-muted, .bg-light .text-muted, .bg-white .text-muted, .thermal-receipt .text-muted,
+.text-dark .text-secondary, .bg-light .text-secondary, .bg-white .text-secondary {
+    color: #475569 !important;
+}
+
+/* 提示訊息 (flash) 固定在畫面上方 */
+.flash-stack {
+    position: fixed;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    width: min(92vw, 560px);
+}
+.flash-stack .flash-text { white-space: pre-line; }
+
+/* 共用小元件 */
+.clock {
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.cursor-pointer { cursor: pointer; }
+.hover-lift { transition: transform .15s ease, border-color .15s ease; }
+.hover-lift:hover { transform: translateY(-2px); border-color: var(--kiosk-accent) !important; }
+
+@media print {
+    .flash-stack { display: none; }
+}

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}隱私權告知設定{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 staff-main" style="max-width: 760px">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h3 fw-bold mb-0"><i class="bi bi-shield-lock text-warning me-2"></i>隱私權告知設定</h1>
+        <div class="d-flex gap-2">
+            <a class="btn btn-outline-light" href="{{ url_for('privacy.notice') }}" target="_blank" rel="noopener">預覽告知頁</a>
+            <a class="btn btn-outline-light" href="{{ url_for('admin.admin_dashboard') }}">回管理後台</a>
+        </div>
+    </div>
+    {% if not p.configured %}
+    <div class="alert alert-warning"><i class="bi bi-exclamation-triangle-fill me-1"></i>
+        個資法第 8 條要求告知「蒐集者名稱」與當事人行使權利的方式：請填寫營運者名稱與至少一種聯絡方式。</div>
+    {% endif %}
+    <form method="POST" class="card p-4" id="privacySettingForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+            <label class="form-label fw-bold" for="operator_name">營運者名稱 (公司或商號全名)</label>
+            <input class="form-control" id="operator_name" name="operator_name" maxlength="120"
+                   value="{{ setting.operator_name if setting else '' }}" placeholder="例如：○○餐飲有限公司">
+        </div>
+        <div class="row g-3 mb-3">
+            <div class="col-md-6">
+                <label class="form-label fw-bold" for="contact_email">聯絡 Email</label>
+                <input class="form-control" type="email" id="contact_email" name="contact_email" maxlength="120"
+                       value="{{ setting.contact_email if setting else '' }}">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-bold" for="contact_phone">聯絡電話</label>
+                <input class="form-control" id="contact_phone" name="contact_phone" maxlength="50"
+                       value="{{ setting.contact_phone if setting else '' }}">
+            </div>
+        </div>
+        <div class="mb-3">
+            <label class="form-label fw-bold" for="contact_address">聯絡地址 (選填)</label>
+            <input class="form-control" id="contact_address" name="contact_address" maxlength="200"
+                   value="{{ setting.contact_address if setting else '' }}">
+        </div>
+        <div class="mb-3">
+            <label class="form-label fw-bold" for="retention_months">會員停止使用幾個月後刪除資料</label>
+            <input class="form-control" type="number" min="6" max="120" id="retention_months" name="retention_months"
+                   value="{{ p.retention_months }}">
+            <div class="form-text text-secondary">實際刪除請在線上端 (或單機) 定期執行
+                <code>flask --app run privacy purge-inactive --apply</code> (先不加 --apply 可預覽名單)。</div>
+        </div>
+        <button class="btn btn-warning fw-bold text-dark" type="submit">儲存</button>
+    </form>
+    <p class="small text-secondary mt-3">告知頁內容依個資法第 8 條撰寫，為一般性範本；正式營運前建議請法律專業人士檢視是否符合您的實際作業。</p>
+</main>
+{% endblock %}

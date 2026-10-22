@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}分店管理 - {{ tenant.name }}{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+{% endblock %}
+
+{% block content %}
+<main class="container py-4 staff-main" id="nodes-page">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <div>
+            <h1 class="h3 fw-bold mb-1"><i class="bi bi-diagram-3-fill text-warning me-2"></i>分店管理</h1>
+            <div class="text-white-50">{{ tenant.name }}・線上端 (顧客線上點餐與總部後台)</div>
+        </div>
+        <a class="btn btn-outline-light" href="{{ url_for('admin.admin_dashboard') }}">回管理後台</a>
+    </div>
+
+    {% if new_token %}
+    <section class="card rounded-4 p-4 mb-4 border border-warning" id="new-token-card">
+        <h2 class="h5 fw-bold text-warning mb-2"><i class="bi bi-key-fill me-2"></i>【{{ new_token.name }}】的分店權杖</h2>
+        <div class="alert alert-warning py-2 small mb-3">
+            <i class="bi bi-exclamation-triangle-fill me-1"></i>
+            權杖<strong>只會顯示這一次</strong>，離開或重新整理本頁後就無法再查看 (系統只保存雜湊)。遺失時請按「重新產生權杖」。
+        </div>
+        <label class="form-label small fw-bold" for="new-node-token">權杖</label>
+        <input class="form-control font-monospace mb-3" id="new-node-token" value="{{ new_token.token }}" readonly>
+        <div class="small text-white-50 mb-1">在該分店的本機伺服器設定以下環境變數 (例如 .env)，重新啟動後即會自動連線同步：</div>
+        <pre class="bg-black bg-opacity-50 rounded p-3 small mb-0" id="new-node-env">SYNC_ROLE=node
+SYNC_HUB_URL={{ hub_url }}
+SYNC_NODE_TOKEN={{ new_token.token }}</pre>
+        <div class="small text-white-50 mt-2">分店本機若不是使用預設店家 (default)，另外設定 <code>SYNC_TENANT_SLUG</code>。</div>
+    </section>
+    {% endif %}
+
+    <section class="card rounded-4 p-4 mb-4">
+        <h2 class="h5 fw-bold text-warning mb-3"><i class="bi bi-plus-circle-fill me-2"></i>新增分店</h2>
+        <form method="POST" action="{{ url_for('sync_admin.nodes_action') }}" class="row g-3 align-items-end" id="createNodeForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="action" value="create">
+            <div class="col-md-6">
+                <label class="form-label small fw-bold" for="node-name">分店名稱</label>
+                <input class="form-control" id="node-name" name="name" maxlength="100" autocomplete="off" placeholder="例如：台南中西店" required>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="node-online" name="accepts_online_orders" value="1" checked>
+                    <label class="form-check-label small" for="node-online">開放線上點餐取餐</label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-warning fw-bold w-100 text-dark" type="submit">新增並產生權杖</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card rounded-4 p-4">
+        <h2 class="h5 fw-bold mb-3"><i class="bi bi-shop text-info me-2"></i>分店列表</h2>
+        <div class="table-responsive">
+            <table class="table table-dark table-striped align-middle mb-0" id="nodesTable">
+                <thead>
+                    <tr>
+                        <th>分店</th>
+                        <th>最後連線</th>
+                        <th>庫存回報</th>
+                        <th>線上點餐</th>
+                        <th>狀態</th>
+                        <th class="text-end">管理</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for n in nodes %}
+                    <tr data-node-id="{{ n.id }}" data-node-uuid="{{ n.uuid }}">
+                        <td>
+                            <div class="fw-bold node-name">{{ n.name }}</div>
+                            <div class="small text-white-50 font-monospace">{{ n.uuid }}</div>
+                            <div class="small text-white-50">建立於 {{ n.created_at }}</div>
+                        </td>
+                        <td class="small">
+                            {% if n.last_seen_at %}
+                                {{ n.last_seen_at }}<div class="text-white-50">{{ n.last_ip }}</div>
+                            {% else %}
+                                <span class="text-white-50">尚未連線</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            {% if n.stock_reported_at %}
+                                {{ n.stock_reported_at }}<div class="text-white-50">{{ n.stock_items }} 項餐點</div>
+                            {% else %}
+                                <span class="text-white-50">尚未回報 (線上點餐視為全部售完)</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if n.accepts_online_orders %}
+                            <span class="badge bg-success">開放中</span>
+                            {% else %}
+                            <span class="badge bg-secondary">暫停</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if n.is_active %}
+                            <span class="badge bg-success">啟用中</span>
+                            {% else %}
+                            <span class="badge bg-danger">已停用</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                <form method="POST" action="{{ url_for('sync_admin.nodes_action') }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="toggle_online">
+                                    <input type="hidden" name="node_id" value="{{ n.id }}">
+                                    <button type="submit" class="btn btn-sm {{ 'btn-outline-secondary' if n.accepts_online_orders else 'btn-outline-success' }} text-nowrap">
+                                        {{ '暫停線上點餐' if n.accepts_online_orders else '開放線上點餐' }}
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('sync_admin.nodes_action') }}" class="d-inline"
+                                      data-confirm="{{ '停用後此分店的權杖無法再同步，線上也不能選它取餐。確定停用？' if n.is_active else '確定重新啟用此分店？' }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="toggle_active">
+                                    <input type="hidden" name="node_id" value="{{ n.id }}">
+                                    <button type="submit" class="btn btn-sm {{ 'btn-outline-danger' if n.is_active else 'btn-outline-success' }}">
+                                        {{ '停用' if n.is_active else '啟用' }}
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('sync_admin.nodes_action') }}" class="d-inline"
+                                      data-confirm="重新產生後舊權杖立即失效，該分店必須改用新權杖才能繼續同步。確定重新產生？">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="rotate_token">
+                                    <input type="hidden" name="node_id" value="{{ n.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap">重新產生權杖</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6" class="text-center text-white-50">尚未登記任何分店</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+{% endblock %}

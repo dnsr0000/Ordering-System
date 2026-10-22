@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} - 自助點餐系統{% endblock %}
+{% block content %}
+<main class="container py-5 text-center">
+    <div class="display-1 fw-bold text-warning">{{ status }}</div>
+    <p class="lead mt-3">{{ message }}</p>
+    <div class="d-flex justify-content-center gap-2 mt-4">
+        <a class="btn btn-outline-light" href="{{ request.referrer or url_for('customer.customer_index') }}">返回上一頁</a>
+        <a class="btn btn-warning" href="{{ url_for('customer.customer_index') }}">回首頁</a>
+    </div>
+</main>
+{% endblock %}

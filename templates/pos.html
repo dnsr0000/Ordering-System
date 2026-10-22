@@ -1,302 +1,50 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>櫃檯 POS 收銀系統 - {{ tenant.name }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
-    <style>
-        body {
-            background-color: #0b0f19;
-            color: #f8fafc;
-            font-family: "Microsoft JhengHei", -apple-system, sans-serif;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-        .header-pos {
-            background: #151e32;
-            border-bottom: 2px solid #334155;
-        }
-        .pos-panel {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 16px;
-        }
-        .cat-pill {
-            background: #151e32;
-            border: 1px solid #334155;
-            color: #cbd5e1;
-            font-weight: 700;
-            border-radius: 10px;
-            padding: 0.45rem 0.9rem;
-            white-space: nowrap;
-            transition: all 0.15s ease;
-        }
-        .cat-pill:hover {
-            border-color: #f59e0b;
-            color: #fff;
-        }
-        .cat-pill.active {
-            background: #f59e0b;
-            border-color: #f59e0b;
-            color: #0f172a;
-            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-        }
-        .pos-item-card {
-            background: #151e32;
-            border: 2px solid #334155;
-            border-radius: 14px;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            user-select: none;
-        }
-        .pos-item-card:hover:not(.pos-item-soldout) {
-            border-color: #f59e0b;
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
-        }
-        .pos-item-card:active:not(.pos-item-soldout) {
-            transform: scale(0.98);
-        }
-        .pos-item-soldout {
-            opacity: 0.45;
-            cursor: not-allowed;
-            filter: grayscale(85%);
-        }
-        .pos-item-img {
-            width: 56px;
-            height: 56px;
-            object-fit: cover;
-            border-radius: 10px;
-            border: 1px solid #475569;
-            flex-shrink: 0;
-        }
-        .form-control, .form-select {
-            background-color: #0f172a;
-            border: 1px solid #334155;
-            color: #f8fafc;
-        }
-        .form-control:focus, .form-select:focus {
-            background-color: #151e32;
-            border-color: #f59e0b;
-            color: #fff;
-            box-shadow: 0 0 0 0.2rem rgba(245, 158, 11, 0.25);
-        }
-        .form-control::placeholder {
-            color: #94a3b8;
-            opacity: 1;
-        }
-        .cart-list-box {
-            max-height: 28vh;
-            min-height: 150px;
-            overflow-y: auto;
-        }
-        .quick-cash-btn {
-            background: #151e32;
-            border: 1px solid #475569;
-            color: #f8fafc;
-            font-weight: 700;
-            font-size: 0.8rem;
-            border-radius: 8px;
-            padding: 4px 8px;
-        }
-        .quick-cash-btn:hover {
-            background: #334155;
-            border-color: #f59e0b;
-            color: #f59e0b;
-        }
-        .table-chip {
-            background: #0f172a;
-            border: 1px solid #334155;
-            color: #94a3b8;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        .table-chip:hover {
-            border-color: #f59e0b;
-            color: #f59e0b;
-        }
+{% extends "base.html" %}
 
-        /* 80mm 熱感應出單列印專用樣式 */
-        .thermal-receipt {
-            background: #ffffff;
-            color: #000000;
-            font-family: "Microsoft JhengHei", monospace;
-            border-radius: 12px;
-            padding: 20px;
-            max-width: 360px;
-            margin: 0 auto;
-            border: 1px dashed #94a3b8;
-        }
-        @media print {
-            body * {
-                visibility: hidden !important;
-            }
-            #posReceiptModal, #posReceiptModal * {
-                visibility: visible !important;
-            }
-            #posReceiptModal {
-                position: absolute !important;
-                left: 0 !important;
-                top: 0 !important;
-                width: 100% !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            .no-print {
-                display: none !important;
-            }
-            .thermal-receipt {
-                border: none !important;
-                box-shadow: none !important;
-                max-width: 100% !important;
-                width: 78mm !important;
-                padding: 2mm !important;
-            }
-        }
-    
-        .card:not(.text-dark):not(.light-card),
-        .card-custom,
-        .login-card,
-        .pos-panel,
-        .kds-card,
-        .pickup-card,
-        .number-card,
-        .reward-card,
-        .vip-card,
-        .modal-content:not(.text-dark) {
-            --bs-card-color: #f8fafc;
-            --bs-modal-color: #f8fafc;
-            color: #f8fafc;
-        }
-        .form-label,
-        .form-check-label,
-        .col-form-label {
-            color: #f1f5f9;
-        }
-        .text-dark .form-label,
-        .text-dark .form-check-label,
-        .bg-light .form-label,
-        .bg-light .form-check-label {
-            color: #1e293b !important;
-        }
-        .form-control:disabled,
-        .form-select:disabled,
-        .form-control[readonly] {
-            background-color: #1e293b !important;
-            color: #94a3b8 !important;
-            border-color: #334155 !important;
-            opacity: 0.85;
-        }
-        .form-select option,
-        select.form-select option,
-        select option {
-            background-color: #0f172a !important;
-            color: #f8fafc !important;
-        }
-        .form-select option:disabled,
-        select option:disabled {
-            background-color: #0f172a !important;
-            color: #64748b !important;
-        }
-        .text-muted {
-            color: #94a3b8 !important;
-        }
-        .text-secondary {
-            color: #94a3b8 !important;
-        }
-        .text-dark .text-muted,
-        .bg-light .text-muted,
-        .bg-white .text-muted,
-        .thermal-receipt .text-muted {
-            color: #475569 !important;
-        }
-        .text-dark .text-secondary,
-        .bg-light .text-secondary,
-        .bg-white .text-secondary {
-            color: #475569 !important;
-        }
+{% block title %}櫃檯 POS 收銀系統 - {{ tenant.name }}{% endblock %}
 
-        /* 確保白底熱感應收據內所有文字與表格皆為高對比深黑色，不繼承深色模式的白字 */
-        .thermal-receipt,
-        .thermal-receipt table,
-        .thermal-receipt thead,
-        .thermal-receipt tbody,
-        .thermal-receipt tr,
-        .thermal-receipt th,
-        .thermal-receipt td,
-        .thermal-receipt div,
-        .thermal-receipt span,
-        .thermal-receipt small,
-        .thermal-receipt strong {
-            color: #0f172a !important;
-            --bs-table-color: #0f172a !important;
-            --bs-table-bg: transparent !important;
-        }
-        .thermal-receipt .bg-light {
-            background-color: #f1f5f9 !important;
-        }
-    
-        /* === 輸入框提示文字 / 下拉選單 / 自動填入 對比度修正 (防止文字與輸入框背景融合) === */
-        .form-control, .form-select { color-scheme: dark; }
-        .form-select { --bs-form-select-bg-img: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e"); }
-        .form-select option { background-color: #0f172a; color: #f8fafc; }
-        .form-select option:disabled { color: #8b98ad; }
-        .form-control:-webkit-autofill,
-        .form-control:-webkit-autofill:hover,
-        .form-control:-webkit-autofill:focus {
-            -webkit-text-fill-color: #f8fafc;
-            caret-color: #f8fafc;
-            -webkit-box-shadow: 0 0 0 1000px #0f172a inset !important;
-            box-shadow: 0 0 0 1000px #0f172a inset !important;
-            transition: background-color 9999s ease-in-out 0s;
-        }
-        .form-control.bg-dark:-webkit-autofill {
-            -webkit-box-shadow: 0 0 0 1000px #212529 inset !important;
-            box-shadow: 0 0 0 1000px #212529 inset !important;
-        }
-</style>
-</head>
-<body>
+{% block head %}
+{# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pos.css') }}">
+{% endblock %}
 
+{% block body_class %}pos-page{% endblock %}
+
+{% block content %}
     <!-- 頂部導覽列 -->
     <header class="header-pos py-2 px-3 sticky-top no-print">
         <div class="container-fluid d-flex flex-wrap justify-content-between align-items-center gap-2">
-            <div class="d-flex align-items-center gap-3">
-                <div class="d-flex align-items-center gap-2">
-                    <i class="bi bi-pc-display-horizontal text-warning fs-3"></i>
-                    <div>
-                        <div class="d-flex align-items-center gap-2">
-                            <h5 class="mb-0 fw-bold text-white">櫃檯 POS 收銀系統</h5>
-                            <span class="badge bg-warning text-dark fw-bold">{{ tenant.name }}</span>
-                        </div>
-                        <small class="text-white-50" style="font-size: 0.75rem;">
-                            收銀員：<strong class="text-info">{{ staff.username if staff else session.get('admin_username', 'Admin') }}</strong>
-                            • <span id="sse-status-dot" class="text-success">● 即時連線中</span>
-                        </small>
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-pc-display-horizontal text-warning fs-3"></i>
+                <div>
+                    <div class="d-flex align-items-center gap-2">
+                        <h5 class="mb-0 fw-bold text-white">櫃檯 POS 收銀系統</h5>
+                        <span class="badge bg-warning text-dark fw-bold">{{ tenant.name }}</span>
                     </div>
+                    <small class="text-white-50 pos-xs">
+                        收銀員：<strong class="text-info">{{ current_user.username }}</strong>
+                        • <span id="sse-status-dot" class="text-success">● 即時連線中</span>
+                    </small>
                 </div>
             </div>
 
             <div class="d-flex align-items-center flex-wrap gap-2">
                 <!-- 掛單夾按鈕 -->
-                <button type="button" class="btn btn-outline-warning btn-sm fw-bold position-relative" onclick="openHoldModal()">
+                <button type="button" class="btn btn-outline-warning btn-sm fw-bold position-relative" data-action="openHold">
                     <i class="bi bi-pause-circle me-1"></i> 掛單夾
                     <span id="holdCountBadge" class="badge bg-danger ms-1">0</span>
                 </button>
 
                 <!-- 當日訂單管理與快速核銷 -->
-                <button type="button" class="btn btn-outline-success btn-sm fw-bold" onclick="openLiveOrdersModal()">
+                <button type="button" class="btn btn-outline-success btn-sm fw-bold" data-action="openLiveOrders">
                     <i class="bi bi-receipt-cutoff me-1"></i> 當日訂單 (<span id="topTodayOrderCount">0</span>)
                 </button>
+
+                {% if sync_role != 'hub' %}
+                <!-- 桌邊掃碼點餐：餐後在此結帳 -->
+                <button type="button" class="btn btn-outline-info btn-sm fw-bold" data-action="openTables" id="posOpenTablesBtn">
+                    <i class="bi bi-qr-code me-1"></i> 桌位結帳 (<span id="topUnpaidTableCount">0</span>)
+                </button>
+                {% endif %}
 
                 <a href="/kitchen" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
                     <i class="bi bi-fire text-danger me-1"></i> 廚房 KDS
@@ -311,9 +59,7 @@
                     <i class="bi bi-gear-fill me-1"></i> 後台管理
                 </a>
 
-                <div class="bg-dark px-3 py-1 rounded border border-secondary text-warning fw-bold small" style="font-family: monospace;" id="pos-clock">
-                    00:00:00
-                </div>
+                <div class="bg-dark px-3 py-1 rounded border border-secondary text-warning fw-bold small clock" id="pos-clock">00:00:00</div>
             </div>
         </div>
     </header>
@@ -330,8 +76,8 @@
                         <div class="col-md-5">
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text bg-dark border-secondary text-warning"><i class="bi bi-search"></i></span>
-                                <input type="text" id="posSearchInput" class="form-control" placeholder="搜尋餐點名稱或分類 (ESC 清除)..." oninput="filterPosMenu()">
-                                <button class="btn btn-outline-secondary text-white" type="button" onclick="document.getElementById('posSearchInput').value=''; filterPosMenu();">
+                                <input type="text" id="posSearchInput" class="form-control" placeholder="搜尋餐點名稱或分類 (ESC 清除)..." autocomplete="off">
+                                <button class="btn btn-outline-secondary text-white" type="button" data-action="clearSearch" aria-label="清除搜尋">
                                     <i class="bi bi-x-lg"></i>
                                 </button>
                             </div>
@@ -345,119 +91,62 @@
 
                     <!-- 分類按鈕橫向捲軸 -->
                     <div class="d-flex gap-2 overflow-x-auto pb-2 mb-3 border-bottom border-secondary" id="posCategoryBar">
-                        <button type="button" class="cat-pill active" data-cat="all" onclick="selectPosCategory('all', this)">
+                        <button type="button" class="cat-pill active" data-action="category" data-cat="all">
                             <i class="bi bi-grid-fill me-1"></i>全部餐點
                         </button>
-                        <button type="button" class="cat-pill" data-cat="__popular__" onclick="selectPosCategory('__popular__', this)">
-                            🔥 熱門推薦
-                        </button>
-                        <button type="button" class="cat-pill" data-cat="__discount__" onclick="selectPosCategory('__discount__', this)">
-                            🏷️ 限時特價
-                        </button>
-                        <button type="button" class="cat-pill" data-cat="__reward__" onclick="selectPosCategory('__reward__', this)">
-                            🎁 紅利兌換
-                        </button>
+                        <button type="button" class="cat-pill" data-action="category" data-cat="__popular__">🔥 熱門推薦</button>
+                        <button type="button" class="cat-pill" data-action="category" data-cat="__discount__">🏷️ 限時特價</button>
+                        <button type="button" class="cat-pill" data-action="category" data-cat="__reward__">🎁 紅利兌換</button>
                         {% for cat in categories %}
-                        <button type="button" class="cat-pill" data-cat="{{ cat }}" onclick="selectPosCategory(this.dataset.cat, this)">
-                            {{ cat }}
-                        </button>
+                        <button type="button" class="cat-pill" data-action="category" data-cat="{{ cat }}">{{ cat }}</button>
                         {% endfor %}
                     </div>
 
-                    <!-- 商品觸控網格 -->
-                    <div class="row g-2 overflow-y-auto pe-1" id="posMenuGrid" style="max-height: 74vh;">
+                    <!-- 商品觸控網格 (餐點細節由 page-data 提供，卡片只帶 ID) -->
+                    <div class="row g-2 overflow-y-auto pe-1 pos-menu-grid" id="posMenuGrid">
                         {% for item in items %}
-                        {% set is_item_sold_out = item.is_sold_out or (item.stock is not none and item.stock <= 0) %}
-                        {% set actual_price = item.discount_price if (item.is_discount and item.discount_price > 0) else item.price %}
-                        {% set actual_reward_pts = item.reward_discount_points if (item.reward_discount_points and item.reward_discount_points > 0) else item.reward_points %}
-
-                        {% set combos = [] %}
-                        {% for c in item.combo_options %}
-                            {% set desc_parts = [] %}
-                            {% if c.item1 %} {% set _ = desc_parts.append(c.item1.name) %} {% endif %}
-                            {% if c.item2 %} {% set _ = desc_parts.append(c.item2.name) %} {% endif %}
-                            {% if c.item3 %} {% set _ = desc_parts.append(c.item3.name) %} {% endif %}
-                            {% set auto_desc = desc_parts | join(' + ') %}
-                            {% set final_desc = c.description if c.description else auto_desc %}
-
-                            {% set s1_sold = c.item1 and (c.item1.is_sold_out or (c.item1.stock is not none and c.item1.stock <= 0)) %}
-                            {% set s2_sold = c.item2 and (c.item2.is_sold_out or (c.item2.stock is not none and c.item2.stock <= 0)) %}
-                            {% set s3_sold = c.item3 and (c.item3.is_sold_out or (c.item3.stock is not none and c.item3.stock <= 0)) %}
-                            {% set is_combo_sold = (s1_sold or s2_sold or s3_sold) %}
-
-                            {% set sides_info = [] %}
-                            {% if c.item1 and c.item1_customizable and c.item1.modifiers and c.item1.modifiers != 'none' %}
-                                {% set _ = sides_info.append({'name': c.item1.name, 'modifiers': c.item1.modifiers, 'key': 'side1'}) %}
-                            {% endif %}
-                            {% if c.item2 and c.item2_customizable and c.item2.modifiers and c.item2.modifiers != 'none' %}
-                                {% set _ = sides_info.append({'name': c.item2.name, 'modifiers': c.item2.modifiers, 'key': 'side2'}) %}
-                            {% endif %}
-                            {% if c.item3 and c.item3_customizable and c.item3.modifiers and c.item3.modifiers != 'none' %}
-                                {% set _ = sides_info.append({'name': c.item3.name, 'modifiers': c.item3.modifiers, 'key': 'side3'}) %}
-                            {% endif %}
-
-                            {% set _ = combos.append({
-                                'id': c.id,
-                                'name': c.name,
-                                'price': c.additional_price,
-                                'desc': final_desc,
-                                'sides': sides_info,
-                                'is_sold': 1 if is_combo_sold else 0,
-                                'can_addon': 1 if (c.can_addon is none or c.can_addon) else 0
-                            }) %}
-                        {% endfor %}
-
+                        {% set sold_out = not item.is_available %}
                         <div class="col-6 col-sm-4 col-xl-3 pos-menu-col"
-                             id="pos-col-{{ item.id }}"
                              data-id="{{ item.id }}"
                              data-name="{{ item.name }}"
-                             data-category="{{ item.category or '未分類' }}"
+                             data-category="{{ (item.category or '未分類')|trim }}"
                              data-popular="{{ 1 if (item.is_recommended or item.is_manual_popular) else 0 }}"
                              data-discount="{{ 1 if (item.is_discount and item.discount_price > 0) else 0 }}"
                              data-reward="{{ 1 if item.is_reward else 0 }}">
-                            <div class="pos-item-card p-2.5 p-3 {{ 'pos-item-soldout' if is_item_sold_out else '' }}"
-                                 id="pos-card-{{ item.id }}"
-                                 data-item-id="{{ item.id }}"
-                                 data-item-name="{{ item.name }}"
-                                 data-item-price="{{ actual_price }}"
-                                 data-item-modifiers="{{ item.modifiers or 'none' }}"
-                                 data-item-category="{{ item.category or '未分類' }}"
-                                 data-item-is-reward="{{ 1 if item.is_reward else 0 }}"
-                                 data-item-reward-pts="{{ actual_reward_pts or 0 }}"
-                                 data-item-soldout="{{ 1 if is_item_sold_out else 0 }}"
-                                 data-item-combos='{{ combos | tojson | safe }}'
-                                 onclick="handlePosItemClick(this)">
+                            <div class="pos-item-card p-3 {{ 'pos-item-soldout' if sold_out }}"
+                                 id="pos-card-{{ item.id }}" data-action="pickItem" data-item-id="{{ item.id }}"
+                                 data-soldout="{{ 1 if sold_out else 0 }}">
                                 <div>
                                     <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
                                         {% if item.image_path %}
-                                        <img src="{{ url_for('static', filename='menu/' + item.image_path) }}" class="pos-item-img" alt="{{ item.name }}">
+                                        <img src="{{ url_for('media.menu_image', filename=item.image_path) }}" class="pos-item-img" alt="{{ item.name }}">
                                         {% else %}
                                         <div class="pos-item-img d-flex align-items-center justify-content-center bg-dark text-white-50 small">
                                             <i class="bi bi-cup-hot fs-5"></i>
                                         </div>
                                         {% endif %}
                                         <div class="text-end">
-                                            <span id="pos-stock-badge-{{ item.id }}" class="badge {% if is_item_sold_out %}bg-danger{% elif item.stock <= 5 %}bg-warning text-dark{% else %}bg-dark border border-secondary text-white-50{% endif %}" style="font-size: 0.7rem;">
-                                                {% if is_item_sold_out %}已售完{% else %}庫存 {{ item.stock }}{% endif %}
+                                            <span id="pos-stock-badge-{{ item.id }}" class="badge pos-xxs {% if sold_out %}bg-danger{% elif (item.stock or 0) <= 5 %}bg-warning text-dark{% else %}bg-dark border border-secondary text-white-50{% endif %}">
+                                                {% if sold_out %}已售完{% else %}庫存 {{ item.stock }}{% endif %}
                                             </span>
                                             <div class="mt-1">
-                                                {% if combos|length > 0 %}
-                                                <span class="badge bg-info text-dark" style="font-size: 0.65rem;">可升套餐</span>
+                                                {% if item.combo_options %}
+                                                <span class="badge bg-info text-dark pos-xxs">可升套餐</span>
                                                 {% endif %}
-                                                {% if item.modifiers and item.modifiers != 'none' %}
-                                                <span class="badge bg-secondary" style="font-size: 0.65rem;">客製</span>
+                                                {% if item.has_modifiers %}
+                                                <span class="badge bg-secondary pos-xxs">客製</span>
                                                 {% endif %}
                                             </div>
                                         </div>
                                     </div>
-                                    <div class="fw-bold text-white mb-1" style="font-size: 0.95rem; line-height: 1.25;">{{ item.name }}</div>
+                                    <div class="fw-bold text-white mb-1 pos-item-name">{{ item.name }}</div>
                                     <div class="d-flex flex-wrap gap-1 mb-1">
-                                        <span class="badge bg-dark border border-secondary text-white-50" style="font-size: 0.68rem;">{{ item.category }}</span>
+                                        <span class="badge bg-dark border border-secondary text-white-50 pos-xxs">{{ item.category }}</span>
                                         {% if item.is_recommended or item.is_manual_popular %}
-                                        <span class="badge bg-danger" style="font-size: 0.68rem;">熱門</span>
+                                        <span class="badge bg-danger pos-xxs">熱門</span>
                                         {% endif %}
                                         {% if item.is_reward %}
-                                        <span class="badge bg-warning text-dark" style="font-size: 0.68rem;"><i class="bi bi-star-fill me-1"></i>{{ actual_reward_pts }}點可換</span>
+                                        <span class="badge bg-warning text-dark pos-xxs"><i class="bi bi-star-fill me-1"></i>{{ item.redeem_points }}點可換</span>
                                         {% endif %}
                                     </div>
                                 </div>
@@ -465,15 +154,15 @@
                                 <div class="d-flex justify-content-between align-items-end pt-2 mt-1 border-top border-secondary border-opacity-50">
                                     <div>
                                         {% if item.is_discount and item.discount_price > 0 %}
-                                        <del class="text-white-50" style="font-size: 0.75rem;">${{ item.price }}</del>
+                                        <del class="text-white-50 pos-xs">${{ item.price }}</del>
                                         <span class="fw-bold text-danger fs-5 ms-1">${{ item.discount_price }}</span>
                                         {% else %}
                                         <span class="fw-bold text-warning fs-5">${{ item.price }}</span>
                                         {% endif %}
                                     </div>
                                     {% if item.is_reward %}
-                                    <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2 fw-bold" style="font-size: 0.72rem;"
-                                            onclick="event.stopPropagation(); handlePosRewardRedeem(this.closest('.pos-item-card'));"
+                                    <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2 fw-bold pos-xs"
+                                            data-action="redeemItem" data-item-id="{{ item.id }}"
                                             title="使用綁定會員之紅利點數免費兌換">
                                         🎁 兌換
                                     </button>
@@ -492,14 +181,14 @@
 
                     <div>
                         <!-- 1. 會員快速查詢與綁定 -->
-                        <div class="p-2.5 rounded bg-dark border border-secondary mb-2">
+                        <div class="p-2 rounded bg-dark border border-secondary mb-2">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <small class="fw-bold text-warning"><i class="bi bi-person-badge me-1"></i>會員查詢 / 綁定</small>
-                                <span id="posMemberStatusBadge" class="badge bg-secondary" style="font-size: 0.7rem;">未綁定 (一般訪客)</span>
+                                <span id="posMemberStatusBadge" class="badge bg-secondary pos-xxs">未綁定 (一般訪客)</span>
                             </div>
                             <div class="input-group input-group-sm" id="posMemberSearchBox">
-                                <input type="text" id="posMemberQuery" class="form-control" placeholder="輸入手機號碼或姓名按 Enter..." onkeydown="if(event.key==='Enter') lookupPosMember()">
-                                <button class="btn btn-warning fw-bold text-dark" type="button" onclick="lookupPosMember()">
+                                <input type="text" id="posMemberQuery" class="form-control" placeholder="輸入手機號碼或姓名按 Enter..." autocomplete="off">
+                                <button class="btn btn-warning fw-bold text-dark" type="button" data-action="lookupMember" id="posMemberLookupBtn">
                                     <i class="bi bi-search"></i> 查詢
                                 </button>
                             </div>
@@ -511,10 +200,10 @@
                                     <span class="badge bg-warning text-dark ms-1"><i class="bi bi-star-fill text-danger me-1"></i><span id="posMemberPoints">0</span> 點</span>
                                 </div>
                                 <div class="d-flex gap-1">
-                                    <button type="button" class="btn btn-sm btn-outline-info py-0 px-2" style="font-size: 0.72rem;" onclick="promptSetPosMemberPin()" title="當面核對身分後協助設定/重設手機登入PIN碼">
+                                    <button type="button" class="btn btn-sm btn-outline-info py-0 px-2 pos-xs" data-action="openPinModal" title="當面核對身分後協助設定/重設手機登入PIN碼">
                                         🔑 設PIN
                                     </button>
-                                    <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size: 0.72rem;" onclick="clearPosMember()">
+                                    <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 pos-xs" data-action="clearMember">
                                         解除
                                     </button>
                                 </div>
@@ -522,38 +211,34 @@
                         </div>
 
                         <!-- 2. 用餐方式、桌號與備註 -->
-                        <div class="p-2.5 rounded bg-dark border border-secondary mb-2">
+                        <div class="p-2 rounded bg-dark border border-secondary mb-2">
                             <div class="row g-1 align-items-center mb-1">
                                 <div class="col-5">
                                     <div class="btn-group btn-group-sm w-100" role="group">
-                                        <input type="radio" class="btn-check" name="posOrderType" id="posTypeDineIn" value="內用" checked onchange="onPosOrderTypeChange()">
+                                        <input type="radio" class="btn-check" name="posOrderType" id="posTypeDineIn" value="內用" checked>
                                         <label class="btn btn-outline-warning fw-bold" for="posTypeDineIn">內用</label>
-                                        <input type="radio" class="btn-check" name="posOrderType" id="posTypeTakeout" value="外帶" onchange="onPosOrderTypeChange()">
+                                        <input type="radio" class="btn-check" name="posOrderType" id="posTypeTakeout" value="外帶">
                                         <label class="btn btn-outline-warning fw-bold" for="posTypeTakeout">外帶</label>
                                     </div>
                                 </div>
                                 <div class="col-7">
-                                    <input type="text" id="posTableInput" class="form-control form-control-sm" placeholder="桌號或顧客稱呼 (如: A1)">
+                                    <input type="text" id="posTableInput" class="form-control form-control-sm" placeholder="桌號或顧客稱呼 (如: A1)" maxlength="40">
                                 </div>
                             </div>
                             <!-- 快速桌號標籤 -->
                             <div class="d-flex flex-wrap gap-1 mb-1">
-                                <span class="table-chip" onclick="setPosTable('A1')">A1</span>
-                                <span class="table-chip" onclick="setPosTable('A2')">A2</span>
-                                <span class="table-chip" onclick="setPosTable('A3')">A3</span>
-                                <span class="table-chip" onclick="setPosTable('B1')">B1</span>
-                                <span class="table-chip" onclick="setPosTable('B2')">B2</span>
-                                <span class="table-chip" onclick="setPosTable('外帶客')">外帶客</span>
-                                <span class="table-chip" onclick="setPosTable('電話預訂')">電話預訂</span>
+                                {% for t in ['A1', 'A2', 'A3', 'B1', 'B2', '外帶客', '電話預訂'] %}
+                                <span class="table-chip" data-action="setTable" data-value="{{ t }}">{{ t }}</span>
+                                {% endfor %}
                             </div>
                             <div class="row g-1 align-items-center">
                                 <div class="col-8">
-                                    <input type="text" id="posOrderNote" class="form-control form-control-sm" placeholder="整單備註 (如: 少油、分開裝)...">
+                                    <input type="text" id="posOrderNote" class="form-control form-control-sm" placeholder="整單備註 (如: 少油、分開裝)..." maxlength="200">
                                 </div>
-                                <div class="col-4 text-end" id="posCutleryBox" style="display: none;">
+                                <div class="col-4 text-end d-none" id="posCutleryBox">
                                     <div class="form-check form-switch d-inline-block mb-0">
                                         <input class="form-check-input" type="checkbox" id="posNeedCutlery" checked>
-                                        <label class="form-check-label small text-white-50" for="posNeedCutlery" style="font-size: 0.75rem;">附餐具</label>
+                                        <label class="form-check-label small text-white-50 pos-xs" for="posNeedCutlery">附餐具</label>
                                     </div>
                                 </div>
                             </div>
@@ -562,7 +247,7 @@
                         <!-- 3. 點餐購物車清單 -->
                         <div class="d-flex justify-content-between align-items-center mb-1 px-1">
                             <span class="small fw-bold text-warning"><i class="bi bi-cart3 me-1"></i>收銀點餐明細 (<span id="posCartCount">0</span>)</span>
-                            <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0" style="font-size: 0.75rem;" onclick="clearPosCart()">
+                            <button type="button" class="btn btn-link btn-sm text-danger text-decoration-none p-0 pos-xs" data-action="clearCart">
                                 <i class="bi bi-trash"></i> 清空
                             </button>
                         </div>
@@ -579,48 +264,45 @@
                         <!-- 優惠碼與點數折抵 -->
                         <div class="row g-1 mb-2">
                             <div class="col-6">
-                                <select id="posMemberCouponSelect" class="form-select form-select-sm text-warning" style="font-size: 0.75rem;" onchange="onSelectPosCoupon(this.value)">
+                                <select id="posMemberCouponSelect" class="form-select form-select-sm text-warning pos-xs" aria-label="選擇優惠券">
                                     <option value="">-- 選擇優惠券 --</option>
-                                    {% for cp in coupons if not cp.is_reward and cp.reward_points == 0 %}
-                                    <option value="{{ cp.code }}">[公開券] {{ cp.title }} ({{ cp.code }})</option>
-                                    {% endfor %}
                                 </select>
                             </div>
                             <div class="col-6">
                                 <div class="input-group input-group-sm">
-                                    <input type="text" id="posPromoInput" class="form-control" style="font-size: 0.75rem;" placeholder="優惠代碼">
-                                    <button class="btn btn-outline-warning fw-bold" type="button" onclick="applyPosPromo()">套用</button>
+                                    <input type="text" id="posPromoInput" class="form-control pos-xs" placeholder="優惠代碼" autocomplete="off">
+                                    <button class="btn btn-outline-warning fw-bold" type="button" data-action="applyPromo" id="posPromoApplyBtn">套用</button>
                                 </div>
                             </div>
                         </div>
-                        <div id="posPromoMsg" class="small mb-1" style="font-size: 0.72rem;"></div>
+                        <div id="posPromoMsg" class="small mb-1 pos-xs"></div>
 
                         {% if reward_setting.is_enabled %}
                         <div id="posPointsRedeemRow" class="d-none justify-content-between align-items-center bg-dark border border-secondary rounded px-2 py-1 mb-2">
                             <div class="form-check form-switch mb-0">
-                                <input class="form-check-input" type="checkbox" id="posUsePointsToggle" onchange="togglePosPoints()">
-                                <label class="form-check-label small text-white fw-bold" for="posUsePointsToggle" style="font-size: 0.75rem;">
+                                <input class="form-check-input" type="checkbox" id="posUsePointsToggle">
+                                <label class="form-check-label small text-white fw-bold pos-xs" for="posUsePointsToggle">
                                     點數折抵 ({{ reward_setting.points_per_dollar }}點=$1)
                                 </label>
                             </div>
-                            <div class="d-flex align-items-center gap-1" style="width: 110px;">
-                                <input type="number" id="posPointsInput" class="form-control form-control-sm text-end py-0" min="0" value="0" oninput="recalcPosTotals()" disabled>
+                            <div class="d-flex align-items-center gap-1 pos-points-box">
+                                <input type="number" id="posPointsInput" class="form-control form-control-sm text-end py-0" min="0" value="0" disabled>
                                 <span class="small text-white-50">點</span>
                             </div>
                         </div>
                         {% endif %}
 
                         <!-- 金額彙總 -->
-                        <div class="bg-dark rounded border border-secondary p-2 mb-2">
-                            <div class="d-flex justify-content-between small text-white-50" style="font-size: 0.78rem;">
+                        <div class="bg-dark rounded border border-secondary p-2 mb-2 pos-summary">
+                            <div class="d-flex justify-content-between small text-white-50">
                                 <span>商品小計</span>
                                 <span>$<span id="posSubtotal">0</span></span>
                             </div>
-                            <div class="d-flex justify-content-between small text-info" style="font-size: 0.78rem;">
+                            <div class="d-flex justify-content-between small text-info">
                                 <span>優惠券折抵</span>
                                 <span>-$<span id="posPromoDiscount">0</span></span>
                             </div>
-                            <div class="d-flex justify-content-between small text-success" style="font-size: 0.78rem;">
+                            <div class="d-flex justify-content-between small text-success">
                                 <span>紅利點數折抵</span>
                                 <span>-$<span id="posPointsDiscount">0</span></span>
                             </div>
@@ -633,7 +315,7 @@
                         <!-- 付款方式與現金找零計算機 -->
                         <div class="row g-1 align-items-center mb-2">
                             <div class="col-5">
-                                <select id="posPaymentMethod" class="form-select form-select-sm fw-bold text-warning" onchange="onPosPaymentChange()">
+                                <select id="posPaymentMethod" class="form-select form-select-sm fw-bold text-warning" aria-label="付款方式">
                                     <option value="Cash">💵 現金 Cash</option>
                                     <option value="Credit Card">💳 信用卡</option>
                                     <option value="Line Pay">📱 Line Pay</option>
@@ -643,30 +325,30 @@
                             <div class="col-7" id="posCashInputCol">
                                 <div class="input-group input-group-sm">
                                     <span class="input-group-text bg-dark border-secondary text-white-50">實收 $</span>
-                                    <input type="number" id="posCashReceived" class="form-control fw-bold text-white" min="0" placeholder="0" oninput="updatePosCashChange()">
-                                    <span class="input-group-text bg-dark border-secondary text-success fw-bold" id="posChangeDisplay">找零 $0</span>
+                                    <input type="number" id="posCashReceived" class="form-control fw-bold text-white" min="0" placeholder="0">
+                                    <span class="input-group-text bg-dark border-secondary text-white-50 fw-bold" id="posChangeDisplay">找零 $0</span>
                                 </div>
                             </div>
                         </div>
 
                         <!-- 現金快速鍵 -->
                         <div id="posQuickCashRow" class="d-flex flex-wrap gap-1 mb-2">
-                            <button type="button" class="quick-cash-btn flex-grow-1" onclick="setQuickCash('exact')">剛好</button>
-                            <button type="button" class="quick-cash-btn flex-grow-1" onclick="setQuickCash(100)">$100</button>
-                            <button type="button" class="quick-cash-btn flex-grow-1" onclick="setQuickCash(500)">$500</button>
-                            <button type="button" class="quick-cash-btn flex-grow-1" onclick="setQuickCash(1000)">$1000</button>
-                            <button type="button" class="quick-cash-btn" onclick="setQuickCash('+100')">+100</button>
+                            <button type="button" class="quick-cash-btn flex-grow-1" data-action="quickCash" data-mode="exact">剛好</button>
+                            <button type="button" class="quick-cash-btn flex-grow-1" data-action="quickCash" data-mode="100">$100</button>
+                            <button type="button" class="quick-cash-btn flex-grow-1" data-action="quickCash" data-mode="500">$500</button>
+                            <button type="button" class="quick-cash-btn flex-grow-1" data-action="quickCash" data-mode="1000">$1000</button>
+                            <button type="button" class="quick-cash-btn" data-action="quickCash" data-mode="+100">+100</button>
                         </div>
 
                         <!-- 底部操作按鈕 -->
                         <div class="row g-2">
                             <div class="col-4">
-                                <button type="button" class="btn btn-outline-info w-100 fw-bold py-2" onclick="holdCurrentOrder()" title="暫存此筆訂單 (F4)">
+                                <button type="button" class="btn btn-outline-info w-100 fw-bold py-2" data-action="holdOrder" title="暫存此筆訂單 (F4)">
                                     <i class="bi bi-pause-fill"></i> 掛單
                                 </button>
                             </div>
                             <div class="col-8">
-                                <button type="button" id="posSubmitBtn" class="btn btn-warning w-100 fw-bold py-2 text-dark fs-5 shadow" onclick="submitPosOrder()">
+                                <button type="button" id="posSubmitBtn" class="btn btn-warning w-100 fw-bold py-2 text-dark fs-5 shadow" data-action="submitOrder">
                                     <i class="bi bi-cash-stack me-1"></i> 收銀結帳 (F2)
                                 </button>
                             </div>
@@ -685,10 +367,32 @@
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title fw-bold text-warning"><i class="bi bi-people-fill me-2"></i>找到多筆符合會員，請確認選擇</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
-                <div class="modal-body p-3" id="posMemberSelectModalBody" style="max-height: 60vh; overflow-y: auto;"></div>
+                <div class="modal-body p-3 pos-modal-scroll" id="posMemberSelectModalBody"></div>
             </div>
+        </div>
+    </div>
+
+    <!-- 0-1. 協助會員設定 PIN Modal -->
+    <div class="modal fade no-print" id="posPinModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <form class="modal-content pos-panel text-white shadow-lg" id="posPinForm" autocomplete="off">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-info">🔑 設定會員 PIN 碼</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <p class="small text-white-50 mb-2">請當面核對身分後，為會員【<span id="posPinMemberLabel" class="text-warning"></span>】設定新的 4~6 位數字手機登入 PIN 碼：</p>
+                    <input type="password" id="posPinInput" class="form-control text-center fs-4 fw-bold" inputmode="numeric"
+                           pattern="\d{4,6}" maxlength="6" autocomplete="new-password" placeholder="••••" required>
+                    <div id="posPinMsg" class="small text-danger mt-2"></div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-info fw-bold text-dark" id="posPinSubmitBtn">確認設定</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -698,7 +402,7 @@
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title fw-bold text-warning" id="posComboModalTitle">選擇單點或升級套餐</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body p-4">
                     <div class="row g-3" id="posComboCardsContainer"></div>
@@ -713,12 +417,12 @@
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title fw-bold text-warning" id="posModifierModalTitle">客製化規格</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body p-3" id="posModifierModalBody"></div>
                 <div class="modal-footer border-secondary">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
-                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" onclick="confirmPosModifier()">確認入單</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" data-action="confirmModifier" id="posModifierConfirmBtn">確認入單</button>
                 </div>
             </div>
         </div>
@@ -730,7 +434,7 @@
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title fw-bold text-warning"><i class="bi bi-pause-circle me-2"></i>暫存掛單夾</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body p-3" id="posHoldModalBody"></div>
             </div>
@@ -742,20 +446,35 @@
         <div class="modal-dialog modal-dialog-centered modal-xl">
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary d-flex justify-content-between align-items-center">
-                    <div class="d-flex align-items-center gap-3">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
                         <h5 class="modal-title fw-bold text-warning mb-0"><i class="bi bi-receipt-cutoff me-2"></i>當日即時訂單管理</h5>
-                        <div class="btn-group btn-group-sm" role="group">
-                            <button type="button" class="btn btn-outline-light active" onclick="filterLiveOrdersModal('all', this)">全部</button>
-                            <button type="button" class="btn btn-outline-warning" onclick="filterLiveOrdersModal('Pending', this)">⏳ 製作中</button>
-                            <button type="button" class="btn btn-outline-success" onclick="filterLiveOrdersModal('Completed', this)">✅ 待取餐</button>
-                            <button type="button" class="btn btn-outline-secondary" onclick="filterLiveOrdersModal('PickedUp', this)">📦 已取餐</button>
-                            <button type="button" class="btn btn-outline-danger" onclick="filterLiveOrdersModal('Cancelled', this)">❌ 已取消</button>
+                        <div class="btn-group btn-group-sm" role="group" id="posLiveFilterGroup">
+                            <button type="button" class="btn btn-outline-light active" data-action="liveFilter" data-status="all">全部</button>
+                            <button type="button" class="btn btn-outline-warning" data-action="liveFilter" data-status="Pending">⏳ 製作中</button>
+                            <button type="button" class="btn btn-outline-success" data-action="liveFilter" data-status="Completed">✅ 待取餐</button>
+                            <button type="button" class="btn btn-outline-secondary" data-action="liveFilter" data-status="PickedUp">📦 已取餐</button>
+                            <button type="button" class="btn btn-outline-danger" data-action="liveFilter" data-status="Cancelled">❌ 已取消</button>
                         </div>
                     </div>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
-                <div class="modal-body p-3 overflow-y-auto" style="max-height: 75vh;">
+                <div class="modal-body p-3 overflow-y-auto pos-live-body">
                     <div class="row g-3" id="posLiveOrdersGrid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4-1. 桌位結帳 (桌邊掃碼點餐的未結帳訂單) Modal -->
+    <div class="modal fade no-print" id="posTablesModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-xl">
+            <div class="modal-content pos-panel text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-info mb-0"><i class="bi bi-qr-code me-2"></i>桌位結帳 (掃碼點餐未結帳)</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-3 overflow-y-auto pos-live-body">
+                    <div class="row g-3" id="posTablesGrid"></div>
                 </div>
             </div>
         </div>
@@ -766,8 +485,8 @@
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content bg-dark text-white border-secondary">
                 <div class="modal-header border-secondary no-print">
-                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-check-circle-fill me-2"></i>結帳成功 • 收據預覽</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-check-circle-fill me-2"></i><span id="rcpt-title">結帳成功 • 收據預覽</span></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body p-3">
                     <div class="thermal-receipt" id="posReceiptPrintArea">
@@ -779,15 +498,15 @@
                                 <div class="fw-bold display-5" id="rcpt-pickup-no">#001</div>
                             </div>
                         </div>
-                        <div class="small mb-2" style="line-height: 1.5;">
+                        <div class="small mb-2 rcpt-meta">
                             <div class="d-flex justify-content-between"><span>系統單號：</span><strong id="rcpt-order-id">#0</strong></div>
                             <div class="d-flex justify-content-between"><span>桌號/顧客：</span><strong id="rcpt-customer">櫃檯POS</strong></div>
                             <div class="d-flex justify-content-between"><span>用餐方式：</span><strong id="rcpt-order-type">內用</strong></div>
                             <div class="d-flex justify-content-between"><span>收銀人員：</span><span id="rcpt-cashier">POS</span></div>
                             <div class="d-flex justify-content-between"><span>交易時間：</span><span id="rcpt-time"></span></div>
                         </div>
-                        <div id="rcpt-note-box" class="small fw-bold border-top border-bottom border-dark py-1 mb-2" style="display:none;"></div>
-                        <table class="table table-sm table-borderless small mb-2" style="color:#000;">
+                        <div id="rcpt-note-box" class="small fw-bold border-top border-bottom border-dark py-1 mb-2 d-none"></div>
+                        <table class="table table-sm table-borderless small mb-2">
                             <thead class="border-bottom border-dark">
                                 <tr>
                                     <th>品項</th>
@@ -810,7 +529,7 @@
                             <div class="d-flex justify-content-between fw-bold">
                                 <span>找零金額：</span><span>$<span id="rcpt-change">0</span></span>
                             </div>
-                            <div id="rcpt-points-box" class="mt-2 pt-1 border-top border-dark" style="display:none;">
+                            <div id="rcpt-points-box" class="mt-2 pt-1 border-top border-dark d-none">
                                 <div class="d-flex justify-content-between"><span>本次新增紅利：</span><span id="rcpt-earned-pts">+0 點</span></div>
                                 <div class="d-flex justify-content-between"><span>會員剩餘紅利：</span><span id="rcpt-remain-pts">0 點</span></div>
                             </div>
@@ -821,1495 +540,20 @@
                     </div>
                 </div>
                 <div class="modal-footer border-secondary justify-content-between no-print">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉 (Enter)</button>
-                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" onclick="window.print()">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="rcpt-close-btn">關閉 (Enter)</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" data-action="printReceipt">
                         <i class="bi bi-printer-fill me-1"></i> 列印收據
                     </button>
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- 後端設定資料容器 -->
-    <script id="pos-reward-config" type="application/json">
-    {{ {
-        "tenantId": (tenant.id if tenant else 1),
-        "isEnabled": (reward_setting.is_enabled if reward_setting else True),
-        "pointsPerDollar": (reward_setting.points_per_dollar if reward_setting else 1),
-        "maxDiscount": (reward_setting.max_discount_per_order if reward_setting else 0),
-        "spendPerPoint": (reward_setting.spend_per_point if reward_setting else 100)
-    } | tojson | safe }}
-    </script>
-
-    <script id="pos-addons-data" type="application/json">
-    [
-        {% for item in items if item.can_be_add_on and not item.is_sold_out and (item.stock is none or item.stock > 0) %}
-        {
-            "id": {{ item.id }},
-            "name": {{ item.name | tojson }},
-            "category": {{ (item.category or "未分類") | trim | tojson }},
-            "price": {{ item.add_on_price }},
-            "original_price": {{ (item.discount_price if (item.is_discount and item.discount_price > 0) else item.price) }},
-            "modifiers": {{ (item.modifiers or "none") | tojson }},
-            "trigger_type": {{ (item.addon_trigger_type or "any") | tojson }},
-            "trigger_target": {{ (item.addon_trigger_target or "") | trim | tojson }}
-        }{{ "," if not loop.last else "" }}
-        {% endfor %}
-    ]
-    </script>
-
-    <script id="pos-modifiers-data" type="application/json">
-    [
-        {% for m in modifier_options %}
-        {
-            "id": {{ m.id }},
-            "category": {{ m.category | tojson }},
-            "name": {{ m.name | tojson }},
-            "price": {{ m.price }}
-        }{{ "," if not loop.last else "" }}
-        {% endfor %}
-    ]
-    </script>
-
-    <script id="pos-category-map" type="application/json">
-    {
-        {% for it in items %}
-        {{ it.id | string | tojson }}: {{ (it.category or "未分類") | trim | tojson }},
-        {{ it.name | tojson }}: {{ (it.category or "未分類") | trim | tojson }}{{ "," if not loop.last else "" }}
-        {% endfor %}
-    }
-    </script>
-
-    <script id="pos-public-coupons" type="application/json">
-    [
-        {% for cp in coupons if not cp.is_reward and cp.reward_points == 0 %}
-        {
-            "code": {{ cp.code | tojson }},
-            "title": {{ cp.title | tojson }},
-            "min_spend": {{ cp.min_spend or 0 }}
-        }{{ "," if not loop.last else "" }}
-        {% endfor %}
-    ]
-    </script>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
-        const _origFetch = window.fetch;
-        window.fetch = function(input, init = {}) {
-            init.headers = init.headers || {};
-            if (CSRF_TOKEN) {
-                if (init.headers instanceof Headers) {
-                    init.headers.set('X-CSRFToken', CSRF_TOKEN);
-                } else {
-                    init.headers['X-CSRFToken'] = CSRF_TOKEN;
-                }
-            }
-            return _origFetch(input, init);
-        };
-
-        function escapeHtml(str) {
-            if (str === null || str === undefined) return '';
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        const posRewardConfig = JSON.parse(document.getElementById('pos-reward-config').textContent || '{}');
-        const availableAddons = JSON.parse(document.getElementById('pos-addons-data').textContent || '[]');
-        const modifierOptions = JSON.parse(document.getElementById('pos-modifiers-data').textContent || '[]');
-        const itemCategoryMap = JSON.parse(document.getElementById('pos-category-map').textContent || '{}');
-        const publicCoupons = JSON.parse(document.getElementById('pos-public-coupons').textContent || '[]');
-
-        const HOLD_STORAGE_KEY = `pos_held_orders_tenant_${posRewardConfig.tenantId || 1}`;
-        let posCart = [];
-        let posMember = null; // { id, name, phone, points, coupons }
-        let activeCategory = 'all';
-        let activePromoCode = '';
-        let appliedPromoDiscount = 0;
-        let pendingComboItem = null;
-        let currentSelectedItem = null;
-        let currentAddonFlag = false;
-        let liveOrdersCache = [];
-        let liveOrdersFilter = 'all';
-
-        // 1. 時鐘
-        function updatePosClock() {
-            const el = document.getElementById('pos-clock');
-            if (el) el.innerText = new Date().toTimeString().split(' ')[0];
-        }
-        setInterval(updatePosClock, 1000);
-        updatePosClock();
-
-        // 2. 分類與搜尋過濾
-        function selectPosCategory(cat, btnEl) {
-            activeCategory = cat;
-            document.querySelectorAll('#posCategoryBar .cat-pill').forEach(b => b.classList.remove('active'));
-            if (btnEl) btnEl.classList.add('active');
-            filterPosMenu();
-        }
-
-        function filterPosMenu() {
-            const q = (document.getElementById('posSearchInput').value || '').trim().toLowerCase();
-            document.querySelectorAll('.pos-menu-col').forEach(col => {
-                const name = (col.dataset.name || '').toLowerCase();
-                const cat = col.dataset.category || '';
-                const matchSearch = !q || name.includes(q) || cat.toLowerCase().includes(q);
-
-                let matchCat = true;
-                if (activeCategory === '__popular__') matchCat = (col.dataset.popular === '1');
-                else if (activeCategory === '__discount__') matchCat = (col.dataset.discount === '1');
-                else if (activeCategory === '__reward__') matchCat = (col.dataset.reward === '1');
-                else if (activeCategory !== 'all') matchCat = (cat === activeCategory);
-
-                col.style.display = (matchSearch && matchCat) ? '' : 'none';
-            });
-        }
-
-        // 3. 點擊商品卡片或紅利兌換
-        function handlePosItemClick(cardEl) {
-            if (cardEl.dataset.itemSoldout === '1') return;
-
-            // 若當前在「🎁 紅利兌換」分頁，點擊直接走紅利兌換
-            if (activeCategory === '__reward__' && cardEl.dataset.itemIsReward === '1') {
-                handlePosRewardRedeem(cardEl);
-                return;
-            }
-
-            const id = Number(cardEl.dataset.itemId);
-            const name = cardEl.dataset.itemName;
-            const price = Number(cardEl.dataset.itemPrice || 0);
-            const modifiers = (cardEl.dataset.itemModifiers || 'none').toLowerCase();
-            const category = cardEl.dataset.itemCategory || '未分類';
-            let combos = [];
-            try {
-                combos = JSON.parse(cardEl.dataset.itemCombos || '[]');
-            } catch (e) {
-                combos = [];
-            }
-
-            currentAddonFlag = false;
-            pendingComboItem = { id, name, price, modifiers, category, combos, isReward: false, pointsCost: 0 };
-
-            if (combos && combos.length > 0) {
-                renderPosComboModal(pendingComboItem);
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('posComboModal')).show();
-            } else {
-                dispatchPosToModifiersOrCart(name, price, '', [], true);
-            }
-        }
-
-        function handlePosRewardRedeem(cardEl) {
-            if (cardEl.dataset.itemSoldout === '1') return;
-            if (!posMember) {
-                alert('⚠️ 請先於右側「會員查詢 / 綁定」輸入顧客手機號碼或姓名綁定會員，才能使用紅利兌換！');
-                document.getElementById('posMemberQuery').focus();
-                return;
-            }
-            const reqPts = Number(cardEl.dataset.itemRewardPts || 0);
-            const usedRewardPts = getCartRewardPointsTotal();
-            if ((posMember.points - usedRewardPts) < reqPts) {
-                alert(`⚠️ 會員可用紅利點數不足！\n目前剩餘可用：${posMember.points - usedRewardPts} 點，此商品需要：${reqPts} 點。`);
-                return;
-            }
-
-            const id = Number(cardEl.dataset.itemId);
-            const name = `🎁 [點數兌換] ${cardEl.dataset.itemName}`;
-            const modifiers = (cardEl.dataset.itemModifiers || 'none').toLowerCase();
-            const category = cardEl.dataset.itemCategory || '未分類';
-
-            currentAddonFlag = false;
-            pendingComboItem = { id, name, price: 0, modifiers, category, combos: [], isReward: true, pointsCost: reqPts };
-            dispatchPosToModifiersOrCart(name, 0, '紅利免費兌換', [], false);
-        }
-
-        function getCartRewardPointsTotal() {
-            return posCart
-                .filter(i => i.is_reward)
-                .reduce((sum, i) => sum + (Number(i.points_cost || 0) * i.quantity), 0);
-        }
-
-        // 4. 套餐與客製化 Modal
-        function renderPosComboModal(item) {
-            document.getElementById('posComboModalTitle').innerText = `【${item.name}】選擇單點或套餐`;
-            const container = document.getElementById('posComboCardsContainer');
-
-            let html = `
-            <div class="col-md-6">
-                <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between"
-                     style="background:#151e32; border:2px solid #475569; cursor:pointer;"
-                     onclick="selectPosCombo(false, '', 0, [], true)">
-                    <div>
-                        <div class="d-flex justify-content-between mb-2">
-                            <span class="badge bg-secondary">單點主餐</span>
-                            <span class="fw-bold text-warning fs-5">$${Number(item.price)}</span>
-                        </div>
-                        <h6 class="fw-bold text-white">${escapeHtml(item.name)} (單點)</h6>
-                        <small class="text-white-50">僅單點主餐，不附配餐。</small>
-                    </div>
-                    <div class="text-end mt-3">
-                        <span class="btn btn-sm btn-outline-light fw-bold">選擇單點 <i class="bi bi-chevron-right"></i></span>
-                    </div>
-                </div>
-            </div>`;
-
-            item.combos.forEach(c => {
-                const isSold = (c.is_sold === 1);
-                const sidesEncoded = encodeURIComponent(JSON.stringify(c.sides || []));
-                html += `
-                <div class="col-md-6">
-                    <div class="p-3 rounded-3 h-100 d-flex flex-column justify-content-between ${isSold ? 'pos-item-soldout' : ''}"
-                         style="background:#151e32; border:2px solid #f59e0b; ${isSold ? '' : 'cursor:pointer;'}"
-                         data-combo-name="${escapeHtml(c.name)}"
-                         data-combo-price="${Number(c.price)}"
-                         data-combo-sides="${sidesEncoded}"
-                         data-combo-addon="${c.can_addon !== 0 ? '1' : '0'}"
-                         ${!isSold ? 'onclick="selectPosComboFromCard(this)"' : ''}>
-                        <div>
-                            <div class="d-flex justify-content-between mb-2">
-                                <span class="badge ${isSold ? 'bg-danger' : 'bg-warning text-dark fw-bold'}">${isSold ? '配餐售罄' : '升級套餐'}</span>
-                                <span class="fw-bold text-danger fs-5">+$${Number(c.price)} <small class="text-white-50 fs-6">($${Number(item.price + c.price)})</small></span>
-                            </div>
-                            <h6 class="fw-bold text-warning">${escapeHtml(c.name)}</h6>
-                            <small class="text-white-50">${escapeHtml(c.desc || '')}</small>
-                        </div>
-                        <div class="text-end mt-3">
-                            <span class="btn btn-sm ${isSold ? 'btn-secondary' : 'btn-warning text-dark'} fw-bold">${isSold ? '配餐缺貨' : '升級此套餐'}</span>
-                        </div>
-                    </div>
-                </div>`;
-            });
-            container.innerHTML = html;
-        }
-
-        function selectPosComboFromCard(el) {
-            const comboName = el.dataset.comboName || '';
-            const extraPrice = Number(el.dataset.comboPrice || 0);
-            const sides = JSON.parse(decodeURIComponent(el.dataset.comboSides || '%5B%5D'));
-            const canAddon = el.dataset.comboAddon === '1';
-            selectPosCombo(true, comboName, extraPrice, sides, canAddon);
-        }
-
-        function selectPosCombo(isCombo, comboName, extraPrice, sides, canAddon) {
-            const modal = bootstrap.Modal.getInstance(document.getElementById('posComboModal'));
-            if (modal) modal.hide();
-
-            const prefix = isCombo ? `[套餐: ${comboName}]` : '';
-            const finalPrice = pendingComboItem.price + extraPrice;
-            dispatchPosToModifiersOrCart(pendingComboItem.name, finalPrice, prefix, sides || [], canAddon);
-        }
-
-        function buildPosModifierHtml(prefix, title, modifiers) {
-            const safePrefix = escapeHtml(prefix);
-            let html = `<div class="p-3 mb-2 rounded bg-dark border border-secondary">
-                <div class="fw-bold text-warning small mb-2 border-bottom border-secondary pb-1">${escapeHtml(title)}</div>`;
-            if (modifiers === 'ice_sugar') {
-                html += `
-                <div class="row g-2">
-                    <div class="col-6">
-                        <label class="form-label small text-white-50 mb-1">冰塊</label>
-                        <select id="pos-mod-ice-${safePrefix}" class="form-select form-select-sm">
-                            <option value="正常冰">正常冰</option>
-                            <option value="少冰">少冰</option>
-                            <option value="去冰">去冰</option>
-                            <option value="熱飲">熱飲</option>
-                        </select>
-                    </div>
-                    <div class="col-6">
-                        <label class="form-label small text-white-50 mb-1">甜度</label>
-                        <select id="pos-mod-sugar-${safePrefix}" class="form-select form-select-sm">
-                            <option value="全糖">全糖</option>
-                            <option value="半糖">半糖</option>
-                            <option value="微糖">微糖</option>
-                            <option value="無糖">無糖</option>
-                        </select>
-                    </div>
-                </div>`;
-            } else if (modifiers === 'spicy') {
-                html += `
-                <div>
-                    <label class="form-label small text-white-50 mb-1">辣度</label>
-                    <select id="pos-mod-spicy-${safePrefix}" class="form-select form-select-sm">
-                        <option value="不辣">不辣</option>
-                        <option value="微辣">微辣</option>
-                        <option value="中辣">中辣</option>
-                        <option value="大辣">大辣</option>
-                    </select>
-                </div>`;
-            } else if (modifiers === 'addons') {
-                const addons = modifierOptions.filter(m => m.category === 'addons');
-                html += `<div class="d-flex flex-wrap gap-3">
-                    ${addons.map(m => `
-                        <div class="form-check">
-                            <input class="form-check-input pos-mod-addon-${safePrefix}" type="checkbox"
-                                   data-id="${Number(m.id)}" data-name="${escapeHtml(m.name)}" data-price="${Number(m.price)}"
-                                   id="pos-addon-${Number(m.id)}-${safePrefix}">
-                            <label class="form-check-label small text-white" for="pos-addon-${Number(m.id)}-${safePrefix}">
-                                ${escapeHtml(m.name)} (+$${Number(m.price)})
-                            </label>
-                        </div>
-                    `).join('')}
-                </div>`;
-            }
-            html += `</div>`;
-            return html;
-        }
-
-        function dispatchPosToModifiersOrCart(mainName, finalPrice, comboPrefix, sides = [], canAddon = true) {
-            const mainMods = pendingComboItem.modifiers;
-            const hasMainMods = (mainMods && mainMods !== 'none' && mainMods !== 'undefined');
-            const hasSideMods = (sides && sides.length > 0);
-
-            if (!hasMainMods && !hasSideMods) {
-                addPosCartItem({
-                    id: pendingComboItem.id,
-                    menu_item_id: pendingComboItem.id,
-                    name: mainName,
-                    price: finalPrice,
-                    customization: comboPrefix,
-                    is_add_on: false,
-                    is_reward: Boolean(pendingComboItem.isReward),
-                    points_cost: Number(pendingComboItem.pointsCost || 0),
-                    category: pendingComboItem.category,
-                    can_addon: canAddon,
-                    modifier_ids: []
-                });
-                return;
-            }
-
-            currentSelectedItem = {
-                id: pendingComboItem.id,
-                name: mainName,
-                price: finalPrice,
-                modifiers: mainMods,
-                comboPrefix: comboPrefix,
-                category: pendingComboItem.category,
-                sides: sides,
-                canAddon: canAddon,
-                isReward: Boolean(pendingComboItem.isReward),
-                pointsCost: Number(pendingComboItem.pointsCost || 0)
-            };
-
-            document.getElementById('posModifierModalTitle').innerText = `客製化 - ${mainName}`;
-            let html = '';
-            if (hasMainMods) {
-                html += buildPosModifierHtml('main', mainName, mainMods);
-            }
-            sides.forEach(s => {
-                html += buildPosModifierHtml(s.key, `配餐：${s.name}`, s.modifiers);
-            });
-            document.getElementById('posModifierModalBody').innerHTML = html;
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('posModifierModal')).show();
-        }
-
-        function confirmPosModifier() {
-            if (!currentSelectedItem) return;
-            const customArr = [];
-            let extraPrice = 0;
-            const selectedModifierIds = [];
-
-            if (currentSelectedItem.comboPrefix && currentSelectedItem.comboPrefix !== '紅利免費兌換') {
-                customArr.push(currentSelectedItem.comboPrefix);
-            }
-
-            const mainMods = currentSelectedItem.modifiers;
-            if (mainMods && mainMods !== 'none') {
-                if (mainMods === 'ice_sugar') {
-                    const ice = document.getElementById('pos-mod-ice-main')?.value;
-                    const sugar = document.getElementById('pos-mod-sugar-main')?.value;
-                    if (ice && sugar) customArr.push(`${ice}/${sugar}`);
-                } else if (mainMods === 'spicy') {
-                    const sp = document.getElementById('pos-mod-spicy-main')?.value;
-                    if (sp) customArr.push(sp);
-                } else if (mainMods === 'addons') {
-                    document.querySelectorAll('.pos-mod-addon-main:checked').forEach(cb => {
-                        selectedModifierIds.push(Number(cb.dataset.id));
-                        extraPrice += Number(cb.dataset.price || 0);
-                        customArr.push(`${cb.dataset.name}(+${cb.dataset.price})`);
-                    });
-                }
-            }
-
-            (currentSelectedItem.sides || []).forEach(side => {
-                const sideParts = [];
-                if (side.modifiers === 'ice_sugar') {
-                    const ice = document.getElementById(`pos-mod-ice-${side.key}`)?.value;
-                    const sugar = document.getElementById(`pos-mod-sugar-${side.key}`)?.value;
-                    if (ice && sugar) sideParts.push(`${ice}/${sugar}`);
-                } else if (side.modifiers === 'spicy') {
-                    const sp = document.getElementById(`pos-mod-spicy-${side.key}`)?.value;
-                    if (sp) sideParts.push(sp);
-                } else if (side.modifiers === 'addons') {
-                    document.querySelectorAll(`.pos-mod-addon-${side.key}:checked`).forEach(cb => {
-                        selectedModifierIds.push(Number(cb.dataset.id));
-                        extraPrice += Number(cb.dataset.price || 0);
-                        sideParts.push(`${cb.dataset.name}(+${cb.dataset.price})`);
-                    });
-                }
-                if (sideParts.length > 0) {
-                    customArr.push(`${side.name}(${sideParts.join('、')})`);
-                }
-            });
-
-            if (currentSelectedItem.isReward && customArr.length === 0) {
-                customArr.push('紅利免費兌換');
-            }
-
-            addPosCartItem({
-                id: currentSelectedItem.id,
-                menu_item_id: currentSelectedItem.id,
-                name: currentSelectedItem.name,
-                price: Number(currentSelectedItem.price || 0) + extraPrice,
-                customization: customArr.join('、'),
-                is_add_on: currentAddonFlag,
-                is_reward: Boolean(currentSelectedItem.isReward),
-                points_cost: Number(currentSelectedItem.pointsCost || 0),
-                category: currentSelectedItem.category,
-                can_addon: currentSelectedItem.canAddon,
-                modifier_ids: selectedModifierIds
-            });
-
-            currentAddonFlag = false;
-            bootstrap.Modal.getInstance(document.getElementById('posModifierModal'))?.hide();
-        }
-
-        // 5. 購物車與條件加購管理
-        function getCartItemCategory(item) {
-            if (item.category && item.category !== '未分類') return item.category.trim();
-            if (item.id && itemCategoryMap[String(item.id)]) return itemCategoryMap[String(item.id)].trim();
-            return '未分類';
-        }
-
-        function getAddonTargetCategory(addonDef) {
-            const triggerType = addonDef.trigger_type || 'any';
-            const target = (addonDef.trigger_target || '').trim().toLowerCase();
-            if (triggerType === 'category') return target || (addonDef.category || '').trim().toLowerCase();
-            // 指定單品觸發：每個目標餐點使用獨立配額池，避免與「全單主餐 (any)」共用而互相排擠
-            if (triggerType === 'item') return 'item:' + target;
-            return '主餐';
-        }
-
-        function isItemQualifyingForAddon(cartItem, addonDef) {
-            if (!cartItem || cartItem.is_add_on || cartItem.is_reward || cartItem.can_addon === false) return false;
-            const cat = getCartItemCategory(cartItem);
-            const triggerType = addonDef.trigger_type || 'any';
-            const target = (addonDef.trigger_target || '').trim().toLowerCase();
-            if (triggerType === 'category') {
-                return cat.toLowerCase() === (target || (addonDef.category || '').trim().toLowerCase());
-            }
-            if (triggerType === 'item') {
-                // 後台下拉選單存餐點名稱，舊資料/API 可能存餐點 ID；兩種都接受 (與後端 _addon_qualifies 一致)
-                return String(cartItem.id) === target || cartItem.name.trim().toLowerCase() === target;
-            }
-            const nonMain = ['飲料', '點心', '副餐', '配餐'];
-            return !nonMain.includes(cat);
-        }
-
-        function getQualifyingCountForAddon(addonDef) {
-            return posCart.filter(i => isItemQualifyingForAddon(i, addonDef)).reduce((s, i) => s + i.quantity, 0);
-        }
-
-        // 加購配額採「二分圖配對」：每一份合格正價餐點最多搭配一份加購，且加購品必須符合該餐點的觸發條件。
-        // (取代舊的「依類別分池」計數：分池無法同時處理 any / category / item 三種觸發互相重疊的情況)
-        function getPosMainUnits() {
-            const units = [];
-            posCart.forEach(i => {
-                if (i.is_add_on || i.is_reward || i.can_addon === false) return;
-                for (let k = 0; k < i.quantity; k++) units.push(i);
-            });
-            return units;
-        }
-
-        function posAddonUnitsFeasible(addonDefs) {
-            const mains = getPosMainUnits();
-            if (addonDefs.length > mains.length) return false;
-            const owner = new Array(mains.length).fill(-1);
-            const tryAssign = (a, seen) => {
-                for (let m = 0; m < mains.length; m++) {
-                    if (seen[m] || !isItemQualifyingForAddon(mains[m], addonDefs[a])) continue;
-                    seen[m] = true;
-                    if (owner[m] === -1 || tryAssign(owner[m], seen)) {
-                        owner[m] = a;
-                        return true;
-                    }
-                }
-                return false;
-            };
-            for (let a = 0; a < addonDefs.length; a++) {
-                if (!tryAssign(a, new Array(mains.length).fill(false))) return false;
-            }
-            return true;
-        }
-
-        function getPosCartAddonDefs() {
-            const defs = [];
-            posCart.filter(i => i.is_add_on).forEach(i => {
-                const def = availableAddons.find(a => String(a.id) === String(i.id));
-                if (!def) return;
-                for (let k = 0; k < i.quantity; k++) defs.push(def);
-            });
-            return defs;
-        }
-
-        // 此加購品目前還能再加幾份 (在不破壞既有加購配對的前提下)
-        function getRemainingQuotaForAddon(addonDef) {
-            const current = getPosCartAddonDefs();
-            let n = 0;
-            while (posAddonUnitsFeasible(current.concat(new Array(n + 1).fill(addonDef)))) n++;
-            return n;
-        }
-
-        function triggerPosAddonFromBtn(btn) {
-            const id = Number(btn.dataset.id);
-            const name = btn.dataset.name || '';
-            const price = Number(btn.dataset.price || 0);
-            const modifiers = (btn.dataset.modifiers || 'none').toLowerCase();
-            const category = btn.dataset.category || '未分類';
-
-            const addonDef = availableAddons.find(a => Number(a.id) === id);
-            if (!addonDef || getRemainingQuotaForAddon(addonDef) <= 0) {
-                alert('⚠️ 加購名額已達上限！');
-                return;
-            }
-
-            if (!modifiers || modifiers === 'none') {
-                addPosCartItem({
-                    id: id,
-                    menu_item_id: id,
-                    name: name,
-                    price: price,
-                    customization: '',
-                    is_add_on: true,
-                    is_reward: false,
-                    points_cost: 0,
-                    category: category,
-                    can_addon: false,
-                    modifier_ids: []
-                });
-                return;
-            }
-
-            currentAddonFlag = true;
-            currentSelectedItem = {
-                id: id,
-                name: name,
-                price: price,
-                modifiers: modifiers,
-                comboPrefix: '',
-                category: category,
-                sides: [],
-                canAddon: false,
-                isReward: false,
-                pointsCost: 0
-            };
-            document.getElementById('posModifierModalTitle').innerText = `加購客製化 - ${name}`;
-            document.getElementById('posModifierModalBody').innerHTML = buildPosModifierHtml('main', `加購：${name}`, modifiers);
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('posModifierModal')).show();
-        }
-
-        function addPosCartItem(newItem) {
-            const existing = posCart.find(i =>
-                Number(i.id) === Number(newItem.id) &&
-                i.customization === newItem.customization &&
-                Boolean(i.is_add_on) === Boolean(newItem.is_add_on) &&
-                Boolean(i.is_reward) === Boolean(newItem.is_reward) &&
-                JSON.stringify(i.modifier_ids || []) === JSON.stringify(newItem.modifier_ids || [])
-            );
-            if (existing) {
-                existing.quantity += 1;
-            } else {
-                posCart.push({ ...newItem, quantity: 1 });
-            }
-            renderPosCart();
-        }
-
-        function changePosCartQty(idx, delta) {
-            const item = posCart[idx];
-            if (!item) return;
-
-            if (delta > 0 && item.is_reward) {
-                const usedPts = getCartRewardPointsTotal();
-                if (!posMember || (posMember.points - usedPts) < Number(item.points_cost || 0)) {
-                    alert('⚠️ 會員剩餘紅利點數不足，無法再增加兌換數量！');
-                    return;
-                }
-            }
-            if (delta > 0 && item.is_add_on) {
-                const addonDef = availableAddons.find(a => Number(a.id) === Number(item.id));
-                if (!addonDef || getRemainingQuotaForAddon(addonDef) <= 0) {
-                    alert('⚠️ 加購名額已達上限！');
-                    return;
-                }
-            }
-
-            item.quantity += delta;
-            if (item.quantity <= 0) {
-                posCart.splice(idx, 1);
-            }
-            renderPosCart();
-        }
-
-        function clearPosCart() {
-            if (posCart.length === 0) return;
-            posCart = [];
-            resetPosPromo();
-            renderPosCart();
-        }
-
-        function renderPosCart() {
-            // 自動校驗加購配額：依購物車順序逐份保留，無法配對到合格餐點的加購自動減量
-            const keptAddonDefs = [];
-            posCart.forEach(item => {
-                if (!item.is_add_on) return;
-                const addonDef = availableAddons.find(a => Number(a.id) === Number(item.id));
-                if (!addonDef) {
-                    item.quantity = 0;
-                    return;
-                }
-                let allowed = 0;
-                for (let k = 0; k < item.quantity; k++) {
-                    if (!posAddonUnitsFeasible(keptAddonDefs.concat([addonDef]))) break;
-                    keptAddonDefs.push(addonDef);
-                    allowed++;
-                }
-                item.quantity = allowed;
-            });
-            posCart = posCart.filter(i => i.quantity > 0);
-
-            const listEl = document.getElementById('posCartList');
-            const countEl = document.getElementById('posCartCount');
-            const addonBox = document.getElementById('posAddonRecommendBox');
-
-            const totalQty = posCart.reduce((s, i) => s + i.quantity, 0);
-            if (countEl) countEl.innerText = totalQty;
-
-            if (posCart.length === 0) {
-                listEl.innerHTML = '<div class="text-center text-white-50 py-4 small">尚未點選任何餐點</div>';
-                if (addonBox) addonBox.innerHTML = '';
-                recalcPosTotals();
-                return;
-            }
-
-            listEl.innerHTML = posCart.map((item, idx) => `
-                <div class="d-flex justify-content-between align-items-center py-1.5 border-bottom border-secondary border-opacity-50">
-                    <div class="pe-2">
-                        <div class="fw-bold text-white small">
-                            ${escapeHtml(item.name)}
-                            ${item.is_add_on ? '<span class="badge bg-info text-dark ms-1" style="font-size:0.65rem;">加購</span>' : ''}
-                            ${item.is_reward ? `<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;">-${Number(item.points_cost)}點</span>` : ''}
-                        </div>
-                        ${item.customization ? `<div class="text-info" style="font-size: 0.72rem;">${escapeHtml(item.customization)}</div>` : ''}
-                        <div class="text-white-50" style="font-size: 0.75rem;">$${Number(item.price)} x ${Number(item.quantity)} = <strong class="text-warning">$${Number(item.price * item.quantity)}</strong></div>
-                    </div>
-                    <div class="btn-group btn-group-sm flex-shrink-0">
-                        <button type="button" class="btn btn-outline-secondary text-white px-2 py-0" onclick="changePosCartQty(${idx}, -1)">-</button>
-                        <button type="button" class="btn btn-outline-secondary text-white px-2 py-0" onclick="changePosCartQty(${idx}, 1)">+</button>
-                        <button type="button" class="btn btn-outline-danger px-2 py-0" onclick="changePosCartQty(${idx}, -999)"><i class="bi bi-x"></i></button>
-                    </div>
-                </div>
-            `).join('');
-
-            // 渲染可用加購品
-            const eligibleAddons = availableAddons
-                .map(a => ({ ...a, quota: getRemainingQuotaForAddon(a) }))
-                .filter(a => a.quota > 0);
-
-            if (eligibleAddons.length > 0) {
-                addonBox.innerHTML = `
-                <div class="p-2 rounded bg-dark border border-secondary mb-2">
-                    <div class="small fw-bold text-info mb-1" style="font-size: 0.72rem;"><i class="bi bi-stars me-1"></i>可加購優惠品</div>
-                    <div class="d-flex gap-1 overflow-x-auto pb-1">
-                        ${eligibleAddons.map(a => `
-                            <button type="button" class="btn btn-sm btn-outline-info py-0.5 px-2 flex-shrink-0 text-start"
-                                    style="font-size: 0.72rem;"
-                                    data-id="${Number(a.id)}"
-                                    data-name="${escapeHtml(a.name)}"
-                                    data-price="${Number(a.price)}"
-                                    data-modifiers="${escapeHtml(a.modifiers)}"
-                                    data-category="${escapeHtml(a.category)}"
-                                    onclick="triggerPosAddonFromBtn(this)">
-                                + ${escapeHtml(a.name)} <strong class="text-warning">$${Number(a.price)}</strong> <small>(餘${a.quota})</small>
-                            </button>
-                        `).join('')}
-                    </div>
-                </div>`;
-            } else {
-                addonBox.innerHTML = '';
-            }
-
-            recalcPosTotals();
-            revalidatePosPromo();
-        }
-
-        // 6. 會員查詢、多筆候選清單確認、PIN 設定與金額計算
-        function lookupPosMember() {
-            const q = (document.getElementById('posMemberQuery').value || '').trim();
-            if (!q) return;
-
-            fetch('/api/pos/member_lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: q })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (!data.success) {
-                    alert(data.message || '查無會員');
-                    return;
-                }
-                if (data.multiple && Array.isArray(data.candidates)) {
-                    const body = document.getElementById('posMemberSelectModalBody');
-                    body.innerHTML = data.candidates.map(c => `
-                        <div class="p-2.5 rounded bg-dark border border-secondary mb-2 d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="fw-bold text-white">${escapeHtml(c.name)} <span class="text-warning ms-1">${escapeHtml(c.phone)}</span></div>
-                                <small class="text-white-50">可用紅利：${Number(c.points)} 點 • 可用券：${(c.coupons || []).length} 張 ${c.has_pin ? '' : '• <span class="text-danger">尚未設PIN</span>'}</small>
-                            </div>
-                            <button type="button" class="btn btn-sm btn-warning fw-bold text-dark" onclick="selectPosMemberById(${Number(c.id)})">
-                                選擇此會員
-                            </button>
-                        </div>
-                    `).join('');
-                    bootstrap.Modal.getOrCreateInstance(document.getElementById('posMemberSelectModal')).show();
-                    return;
-                }
-                bindPosMember(data.member);
-            })
-            .catch(() => alert('查詢會員失敗，請稍後再試！'));
-        }
-
-        function selectPosMemberById(memberId) {
-            fetch('/api/pos/member_lookup', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ member_id: memberId })
-            })
-            .then(r => r.json())
-            .then(data => {
-                bootstrap.Modal.getInstance(document.getElementById('posMemberSelectModal'))?.hide();
-                if (data.success && data.member) {
-                    bindPosMember(data.member);
-                } else {
-                    alert(data.message || '讀取會員失敗');
-                }
-            });
-        }
-
-        function promptSetPosMemberPin() {
-            if (!posMember) return;
-            const pin = prompt(`請為會員【${posMember.name} (${posMember.phone})】設定新的 4~6 位數字手機登入 PIN 碼：`);
-            if (pin === null) return;
-            const cleanPin = pin.trim();
-            if (!/^\d{4,6}$/.test(cleanPin)) {
-                alert('⚠️ PIN 碼格式不正確，請輸入 4 至 6 位純數字！');
-                return;
-            }
-            fetch('/api/pos/set_member_pin', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: posMember.id, pin: cleanPin })
-            })
-            .then(r => r.json())
-            .then(data => {
-                alert(data.message || (data.success ? '設定成功' : '設定失敗'));
-            })
-            .catch(() => alert('設定 PIN 碼連線失敗'));
-        }
-
-        function bindPosMember(member) {
-            posMember = member;
-            document.getElementById('posMemberStatusBadge').className = 'badge bg-success';
-            document.getElementById('posMemberStatusBadge').innerText = '已綁定會員';
-            document.getElementById('posMemberSearchBox').classList.add('d-none');
-
-            const boundBox = document.getElementById('posMemberBoundBox');
-            boundBox.classList.remove('d-none');
-            boundBox.classList.add('d-flex');
-
-            document.getElementById('posMemberName').innerText = member.name;
-            document.getElementById('posMemberPhone').innerText = `(${member.phone})`;
-            document.getElementById('posMemberPoints').innerText = member.points;
-
-            const ptsRow = document.getElementById('posPointsRedeemRow');
-            if (ptsRow) {
-                ptsRow.classList.remove('d-none');
-                ptsRow.classList.add('d-flex');
-            }
-
-            populatePosCouponSelect();
-            recalcPosTotals();
-        }
-
-        function clearPosMember() {
-            posMember = null;
-            // 移除購物車中的紅利兌換商品
-            posCart = posCart.filter(i => !i.is_reward);
-            document.getElementById('posMemberQuery').value = '';
-            document.getElementById('posMemberStatusBadge').className = 'badge bg-secondary';
-            document.getElementById('posMemberStatusBadge').innerText = '未綁定 (一般訪客)';
-            document.getElementById('posMemberSearchBox').classList.remove('d-none');
-
-            const boundBox = document.getElementById('posMemberBoundBox');
-            boundBox.classList.add('d-none');
-            boundBox.classList.remove('d-flex');
-
-            const ptsRow = document.getElementById('posPointsRedeemRow');
-            if (ptsRow) {
-                ptsRow.classList.add('d-none');
-                ptsRow.classList.remove('d-flex');
-            }
-            const toggle = document.getElementById('posUsePointsToggle');
-            if (toggle) toggle.checked = false;
-            const ptsInput = document.getElementById('posPointsInput');
-            if (ptsInput) {
-                ptsInput.value = 0;
-                ptsInput.disabled = true;
-            }
-
-            populatePosCouponSelect();
-            renderPosCart();
-        }
-
-        function populatePosCouponSelect() {
-            const sel = document.getElementById('posMemberCouponSelect');
-            if (!sel) return;
-            let html = '<option value="">-- 選擇優惠券 --</option>';
-            if (posMember && posMember.coupons && posMember.coupons.length > 0) {
-                posMember.coupons.forEach(c => {
-                    const minTxt = c.min_spend > 0 ? ` (滿$${Math.round(c.min_spend)})` : '';
-                    html += `<option value="${escapeHtml(c.code)}">${escapeHtml(c.title)}${minTxt}</option>`;
-                });
-            }
-            publicCoupons.forEach(c => {
-                const minTxt = c.min_spend > 0 ? ` (滿$${Math.round(c.min_spend)})` : '';
-                html += `<option value="${escapeHtml(c.code)}">[公開] ${escapeHtml(c.title)}${minTxt}</option>`;
-            });
-            sel.innerHTML = html;
-        }
-
-        function onSelectPosCoupon(code) {
-            document.getElementById('posPromoInput').value = code || '';
-            applyPosPromo();
-        }
-
-        // 優惠券驗證請求序號：購物車連續變動或掛單/清單時，只採用「最新一次」請求的結果，舊回應一律丟棄
-        let posPromoSeq = 0;
-
-        // 一次清掉優惠券狀態 (代碼、折抵金額、輸入框、訊息、會員券下拉)，並讓進行中的驗證請求失效
-        function resetPosPromo() {
-            posPromoSeq++;
-            activePromoCode = '';
-            appliedPromoDiscount = 0;
-            const inputEl = document.getElementById('posPromoInput');
-            const msgEl = document.getElementById('posPromoMsg');
-            const selEl = document.getElementById('posMemberCouponSelect');
-            if (inputEl) inputEl.value = '';
-            if (msgEl) msgEl.innerHTML = '';
-            if (selEl) selEl.value = '';
-        }
-
-        function applyPosPromo() {
-            const code = (document.getElementById('posPromoInput').value || '').trim();
-            if (!code) {
-                posPromoSeq++;
-                activePromoCode = '';
-                appliedPromoDiscount = 0;
-                document.getElementById('posPromoMsg').innerHTML = '';
-                recalcPosTotals();
-                return;
-            }
-            runPosPromoCheck(code);
-        }
-
-        // 購物車內容變動後重新驗證已套用的優惠券 (最低消費門檻、百分比折扣金額都會隨小計改變)
-        function revalidatePosPromo() {
-            if (!activePromoCode || posCart.length === 0) return;
-            runPosPromoCheck(activePromoCode);
-        }
-
-        function runPosPromoCheck(code) {
-            const subtotal = posCart.reduce((s, i) => s + i.price * i.quantity, 0);
-            const msgEl = document.getElementById('posPromoMsg');
-            const seq = ++posPromoSeq;
-
-            fetch('/api/pos/verify_promo', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    promo_code: code,
-                    subtotal: subtotal,
-                    user_id: posMember ? posMember.id : 0
-                })
-            })
-            .then(r => r.json())
-            .then(res => {
-                if (seq !== posPromoSeq) return;  // 已有更新的請求或已被重置，丟棄過期結果
-                if (res.valid) {
-                    activePromoCode = code;
-                    appliedPromoDiscount = res.discount;
-                    msgEl.className = 'small mb-1 text-success';
-                    msgEl.innerHTML = `<i class="bi bi-check-circle me-1"></i>${escapeHtml(res.message)}`;
-                } else {
-                    activePromoCode = '';
-                    appliedPromoDiscount = 0;
-                    msgEl.className = 'small mb-1 text-danger';
-                    msgEl.innerHTML = `<i class="bi bi-x-circle me-1"></i>${escapeHtml(res.message)}`;
-                }
-                recalcPosTotals();
-            })
-            .catch(err => {
-                // 網路異常時保留原狀；結帳時後端仍會重新驗證優惠券
-                console.error('優惠券驗證失敗:', err);
-            });
-        }
-
-        function togglePosPoints() {
-            const toggle = document.getElementById('posUsePointsToggle');
-            const input = document.getElementById('posPointsInput');
-            if (!toggle || !input) return;
-
-            if (toggle.checked && posMember) {
-                input.disabled = false;
-                const subtotal = posCart.reduce((s, i) => s + i.price * i.quantity, 0);
-                const remaining = Math.max(0, subtotal - appliedPromoDiscount);
-                const ppd = Math.max(1, Number(posRewardConfig.pointsPerDollar || 1));
-                let maxCash = remaining;
-                if (posRewardConfig.maxDiscount > 0) maxCash = Math.min(maxCash, posRewardConfig.maxDiscount);
-
-                const availPts = Math.max(0, posMember.points - getCartRewardPointsTotal());
-                const maxPts = Math.min(availPts, maxCash * ppd);
-                input.value = Math.floor(maxPts / ppd) * ppd;
-            } else {
-                input.disabled = true;
-                input.value = 0;
-            }
-            recalcPosTotals();
-        }
-
-        function recalcPosTotals() {
-            const subtotal = posCart.reduce((s, i) => s + i.price * i.quantity, 0);
-            const remainingAfterPromo = Math.max(0, subtotal - appliedPromoDiscount);
-
-            let pointsDiscount = 0;
-            const toggle = document.getElementById('posUsePointsToggle');
-            const input = document.getElementById('posPointsInput');
-
-            if (posMember && posRewardConfig.isEnabled && toggle && toggle.checked && input) {
-                const ppd = Math.max(1, Number(posRewardConfig.pointsPerDollar || 1));
-                let maxCash = remainingAfterPromo;
-                if (posRewardConfig.maxDiscount > 0) maxCash = Math.min(maxCash, posRewardConfig.maxDiscount);
-
-                const availPts = Math.max(0, posMember.points - getCartRewardPointsTotal());
-                const maxAllowedPts = Math.min(availPts, maxCash * ppd);
-                let val = Math.max(0, Number(input.value || 0));
-                if (val > maxAllowedPts) val = maxAllowedPts;
-                input.value = val;
-
-                pointsDiscount = Math.min(Math.floor(val / ppd), maxCash);
-            }
-
-            if (posMember) {
-                const availAfterReward = Math.max(0, posMember.points - getCartRewardPointsTotal());
-                document.getElementById('posMemberPoints').innerText = availAfterReward;
-            }
-
-            const finalTotal = Math.max(0, remainingAfterPromo - pointsDiscount);
-            document.getElementById('posSubtotal').innerText = Math.round(subtotal);
-            document.getElementById('posPromoDiscount').innerText = Math.round(appliedPromoDiscount);
-            document.getElementById('posPointsDiscount').innerText = Math.round(pointsDiscount);
-            document.getElementById('posFinalTotal').innerText = Math.round(finalTotal);
-
-            updatePosCashChange();
-        }
-
-        // 7. 現金收銀找零計算
-        function onPosOrderTypeChange() {
-            const isTakeout = document.getElementById('posTypeTakeout').checked;
-            document.getElementById('posCutleryBox').style.display = isTakeout ? 'block' : 'none';
-        }
-
-        function setPosTable(val) {
-            document.getElementById('posTableInput').value = val;
-            if (val === '外帶客') {
-                document.getElementById('posTypeTakeout').checked = true;
-                onPosOrderTypeChange();
-            }
-        }
-
-        function onPosPaymentChange() {
-            const isCash = document.getElementById('posPaymentMethod').value === 'Cash';
-            document.getElementById('posCashInputCol').style.visibility = isCash ? 'visible' : 'hidden';
-            document.getElementById('posQuickCashRow').style.display = isCash ? 'flex' : 'none';
-        }
-
-        function setQuickCash(mode) {
-            const finalTotal = Number(document.getElementById('posFinalTotal').innerText || 0);
-            const input = document.getElementById('posCashReceived');
-            if (mode === 'exact') {
-                input.value = finalTotal;
-            } else if (mode === '+100') {
-                input.value = Number(input.value || 0) + 100;
-            } else {
-                input.value = Number(mode);
-            }
-            updatePosCashChange();
-        }
-
-        function updatePosCashChange() {
-            const finalTotal = Number(document.getElementById('posFinalTotal').innerText || 0);
-            const received = Number(document.getElementById('posCashReceived').value || 0);
-            const badge = document.getElementById('posChangeDisplay');
-            if (!badge) return;
-
-            if (received <= 0) {
-                badge.className = 'input-group-text bg-dark border-secondary text-white-50 fw-bold';
-                badge.innerText = '找零 $0';
-            } else if (received < finalTotal) {
-                badge.className = 'input-group-text bg-dark border-secondary text-danger fw-bold';
-                badge.innerText = `差 $${finalTotal - received}`;
-            } else {
-                badge.className = 'input-group-text bg-dark border-secondary text-success fw-bold';
-                badge.innerText = `找零 $${received - finalTotal}`;
-            }
-        }
-
-        // 8. 結帳送出與收據列印
-        function submitPosOrder() {
-            if (posCart.length === 0) {
-                alert('⚠️ 收銀點餐清單為空，請先點選餐點！');
-                return;
-            }
-
-            const finalTotal = Number(document.getElementById('posFinalTotal').innerText || 0);
-            const payMethod = document.getElementById('posPaymentMethod').value;
-            const rawReceived = Number(document.getElementById('posCashReceived').value || 0);
-
-            if (payMethod === 'Cash' && rawReceived > 0 && rawReceived < finalTotal) {
-                alert(`⚠️ 實收現金 ($${rawReceived}) 小於應收總額 ($${finalTotal})！`);
-                return;
-            }
-
-            const orderType = document.getElementById('posTypeTakeout').checked ? '外帶' : '內用';
-            const needCutlery = orderType === '外帶' ? document.getElementById('posNeedCutlery').checked : false;
-            const tableNumber = (document.getElementById('posTableInput').value || '').trim();
-            const note = (document.getElementById('posOrderNote').value || '').trim();
-            const toggle = document.getElementById('posUsePointsToggle');
-            const ptsInput = document.getElementById('posPointsInput');
-            const pointsUsed = (posMember && toggle && toggle.checked) ? Number(ptsInput.value || 0) : 0;
-
-            const btn = document.getElementById('posSubmitBtn');
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>結帳處理中...';
-
-            fetch('/api/pos/checkout', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    items: posCart,
-                    user_id: posMember ? posMember.id : 0,
-                    table_number: tableNumber,
-                    order_type: orderType,
-                    payment_method: payMethod,
-                    need_cutlery: needCutlery,
-                    note: note,
-                    promo_code: activePromoCode,
-                    use_points: pointsUsed,
-                    cash_received: rawReceived > 0 ? rawReceived : finalTotal
-                })
-            })
-            .then(r => r.json())
-            .then(data => {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-cash-stack me-1"></i> 收銀結帳 (F2)';
-
-                if (!data.success) {
-                    alert(`❌ ${data.error || '結帳失敗'}`);
-                    syncPosLiveState();
-                    return;
-                }
-
-                showPosReceipt(data);
-                // 重置收銀台準備下一筆
-                posCart = [];
-                clearPosMember();
-                document.getElementById('posTableInput').value = '';
-                document.getElementById('posOrderNote').value = '';
-                document.getElementById('posCashReceived').value = '';
-                resetPosPromo();
-                renderPosCart();
-                syncPosLiveState();
-            })
-            .catch(err => {
-                console.error(err);
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-cash-stack me-1"></i> 收銀結帳 (F2)';
-                alert('伺服器連線異常，請重試！');
-            });
-        }
-
-        function showPosReceipt(data) {
-            document.getElementById('rcpt-pickup-no').innerText = `#${String(data.pickup_number || data.order_id).padStart(3, '0')}`;
-            document.getElementById('rcpt-order-id').innerText = `#${data.order_id}`;
-            document.getElementById('rcpt-customer').innerText = data.table_number || data.user_name || '櫃檯POS';
-            document.getElementById('rcpt-order-type').innerText = data.order_type + (data.order_type === '外帶' ? (data.need_cutlery ? ' (附餐具)' : ' (免餐具)') : '');
-            document.getElementById('rcpt-cashier').innerText = data.cashier || 'POS';
-            document.getElementById('rcpt-time').innerText = data.created_at || new Date().toLocaleString();
-
-            const noteBox = document.getElementById('rcpt-note-box');
-            if (data.note) {
-                noteBox.style.display = 'block';
-                noteBox.innerText = `備註：${data.note}`;
-            } else {
-                noteBox.style.display = 'none';
-            }
-
-            const tbody = document.getElementById('rcpt-items-tbody');
-            tbody.innerHTML = (data.items || []).map(it => `
-                <tr>
-                    <td>
-                        <div class="fw-bold">${escapeHtml(it.name || it.item_name)}</div>
-                        ${it.customization ? `<div style="font-size:0.75rem;">${escapeHtml(it.customization)}</div>` : ''}
-                    </td>
-                    <td class="text-center">x${Number(it.quantity)}</td>
-                    <td class="text-end">$${Number((it.price || 0) * (it.quantity || 1))}</td>
-                </tr>
-            `).join('');
-
-            document.getElementById('rcpt-subtotal').innerText = Math.round(data.subtotal || data.total_price || 0);
-            document.getElementById('rcpt-discount').innerText = Math.round(data.discount_amount || 0);
-            document.getElementById('rcpt-total').innerText = Math.round(data.total_price || 0);
-            document.getElementById('rcpt-pay-method').innerText = data.payment_method || 'Cash';
-            document.getElementById('rcpt-received').innerText = Math.round(data.cash_received !== undefined ? data.cash_received : data.total_price);
-            document.getElementById('rcpt-change').innerText = Math.round(data.cash_change || 0);
-
-            const ptsBox = document.getElementById('rcpt-points-box');
-            if (data.points_earned > 0 || data.remaining_points > 0) {
-                ptsBox.style.display = 'block';
-                document.getElementById('rcpt-earned-pts').innerText = `+${data.points_earned || 0} 點`;
-                document.getElementById('rcpt-remain-pts').innerText = `${data.remaining_points || 0} 點`;
-            } else {
-                ptsBox.style.display = 'none';
-            }
-
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('posReceiptModal')).show();
-        }
-
-        // 9. 掛單 / 取單 (Hold / Recall Orders)
-        function getHeldOrders() {
-            try {
-                return JSON.parse(localStorage.getItem(HOLD_STORAGE_KEY) || '[]');
-            } catch (e) {
-                return [];
-            }
-        }
-
-        function saveHeldOrders(list) {
-            localStorage.setItem(HOLD_STORAGE_KEY, JSON.stringify(list));
-            document.getElementById('holdCountBadge').innerText = list.length;
-        }
-
-        // 把「目前畫面上的單據」打包成掛單物件 (含優惠碼；折抵金額取回時一律重新驗證，不沿用舊值)
-        function buildHeldSnapshot(list) {
-            const tableVal = (document.getElementById('posTableInput').value || '').trim();
-            const label = tableVal || (posMember ? posMember.name : `掛單 #${list.length + 1}`);
-            return {
-                id: Date.now(),
-                label: label,
-                time: new Date().toTimeString().split(' ')[0],
-                cart: posCart,
-                member: posMember,
-                table: tableVal,
-                orderType: document.getElementById('posTypeTakeout').checked ? '外帶' : '內用',
-                note: (document.getElementById('posOrderNote').value || '').trim(),
-                promoCode: activePromoCode || ''
-            };
-        }
-
-        function holdCurrentOrder() {
-            if (posCart.length === 0) {
-                alert('⚠️ 目前沒有餐點可掛單！');
-                return;
-            }
-            const list = getHeldOrders();
-            list.push(buildHeldSnapshot(list));
-            saveHeldOrders(list);
-            posCart = [];
-            // 先重置優惠券，下一位顧客才不會繼承上一單的折扣 (必須在 clearPosMember/renderPosCart 之前)
-            resetPosPromo();
-            clearPosMember();
-            document.getElementById('posTableInput').value = '';
-            document.getElementById('posOrderNote').value = '';
-            renderPosCart();
-        }
-
-        function openHoldModal() {
-            const list = getHeldOrders();
-            const body = document.getElementById('posHoldModalBody');
-            if (list.length === 0) {
-                body.innerHTML = '<div class="text-center text-white-50 py-4">目前沒有任何暫存掛單</div>';
-            } else {
-                body.innerHTML = list.map((h, idx) => `
-                    <div class="p-3 rounded bg-dark border border-secondary mb-2 d-flex justify-content-between align-items-center">
-                        <div>
-                            <div class="fw-bold text-warning">${escapeHtml(h.label)} <small class="text-white-50 ms-2">${escapeHtml(h.time)}</small></div>
-                            <div class="small text-white-50">${h.cart.map(i => `${escapeHtml(i.name)} x${Number(i.quantity)}`).join('、')}</div>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-sm btn-warning fw-bold text-dark" onclick="recallHeldOrder(${idx})">取回結帳</button>
-                            <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeHeldOrder(${idx})"><i class="bi bi-trash"></i></button>
-                        </div>
-                    </div>
-                `).join('');
-            }
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('posHoldModal')).show();
-        }
-
-        function recallHeldOrder(idx) {
-            const list = getHeldOrders();
-            const target = list[idx];
-            if (!target) return;
-
-            // 目前購物車還有餐點時一律拒絕取單，避免畫面上的餐點被覆蓋遺失；請先結帳、掛單或清空
-            if (posCart.length > 0) {
-                alert('⚠️ 目前購物車尚有餐點，請先結帳、掛單或清空後再取回掛單！');
-                return;
-            }
-
-            resetPosPromo();
-            posCart = target.cart || [];
-            if (target.member) bindPosMember(target.member);
-            else clearPosMember();
-            document.getElementById('posTableInput').value = target.table || '';
-            document.getElementById('posOrderNote').value = target.note || '';
-            if (target.orderType === '外帶') document.getElementById('posTypeTakeout').checked = true;
-            else document.getElementById('posTypeDineIn').checked = true;
-            onPosOrderTypeChange();
-
-            // 還原優惠碼：先填入代碼，由 renderPosCart() 內的 revalidatePosPromo() 依目前小計與會員重新驗證
-            if (target.promoCode) {
-                activePromoCode = target.promoCode;
-                const inputEl = document.getElementById('posPromoInput');
-                if (inputEl) inputEl.value = target.promoCode;
-            }
-
-            list.splice(idx, 1);
-            saveHeldOrders(list);
-            renderPosCart();
-            bootstrap.Modal.getInstance(document.getElementById('posHoldModal'))?.hide();
-        }
-
-        function removeHeldOrder(idx) {
-            const list = getHeldOrders();
-            list.splice(idx, 1);
-            saveHeldOrders(list);
-            openHoldModal();
-        }
-
-        // 10. 即時庫存與當日訂單管理 (SSE 同步)
-        function syncPosLiveState() {
-            fetch('/api/admin_live_orders')
-                .then(r => r.json())
-                .then(data => {
-                    if (!data || !data.success) return;
-
-                    // A. 更新商品卡片即時庫存
-                    if (data.menu_items) {
-                        data.menu_items.forEach(it => {
-                            const card = document.getElementById(`pos-card-${it.id}`);
-                            const badge = document.getElementById(`pos-stock-badge-${it.id}`);
-                            const soldOut = it.is_sold_out || (it.stock <= 0);
-                            if (card) {
-                                card.dataset.itemSoldout = soldOut ? '1' : '0';
-                                if (soldOut) card.classList.add('pos-item-soldout');
-                                else card.classList.remove('pos-item-soldout');
-                            }
-                            if (badge) {
-                                badge.innerText = soldOut ? '已售完' : `庫存 ${it.stock}`;
-                                badge.className = 'badge ' + (soldOut ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-dark border border-secondary text-white-50'));
-                            }
-                        });
-                    }
-
-                    // B. 更新當日訂單快取與數量
-                    if (data.orders) {
-                        liveOrdersCache = data.orders;
-                        const activeCount = liveOrdersCache.filter(o => o.status !== 'Cancelled').length;
-                        document.getElementById('topTodayOrderCount').innerText = activeCount;
-                        renderLiveOrdersGrid();
-                    }
-                })
-                .catch(err => console.warn('POS 同步略過:', err));
-        }
-
-        function openLiveOrdersModal() {
-            syncPosLiveState();
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('posLiveOrdersModal')).show();
-        }
-
-        function filterLiveOrdersModal(status, btnEl) {
-            liveOrdersFilter = status;
-            if (btnEl && btnEl.parentElement) {
-                btnEl.parentElement.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
-                btnEl.classList.add('active');
-            }
-            renderLiveOrdersGrid();
-        }
-
-        function renderLiveOrdersGrid() {
-            const grid = document.getElementById('posLiveOrdersGrid');
-            if (!grid) return;
-
-            const filtered = liveOrdersFilter === 'all'
-                ? liveOrdersCache
-                : liveOrdersCache.filter(o => o.status === liveOrdersFilter);
-
-            if (filtered.length === 0) {
-                grid.innerHTML = '<div class="col-12 text-center text-white-50 py-5">目前沒有符合篩選條件的當日訂單</div>';
-                return;
-            }
-
-            grid.innerHTML = filtered.map(o => {
-                let badgeHtml = '<span class="badge bg-warning text-dark">⏳ 製作中</span>';
-                if (o.status === 'Completed') badgeHtml = '<span class="badge bg-success">✅ 待取餐</span>';
-                else if (o.status === 'PickedUp') badgeHtml = '<span class="badge bg-secondary">📦 已取餐</span>';
-                else if (o.status === 'Cancelled') badgeHtml = '<span class="badge bg-danger">❌ 已取消</span>';
-
-                return `
-                <div class="col-md-6 col-lg-4">
-                    <div class="p-3 rounded bg-dark border border-secondary h-100 d-flex flex-column justify-content-between">
-                        <div>
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h5 class="fw-bold text-warning mb-0">#${escapeHtml(String(o.pickup_number || o.id).padStart(3, '0'))} <small class="text-white-50 fs-6">(單號 #${Number(o.id)})</small></h5>
-                                ${badgeHtml}
-                            </div>
-                            <div class="small text-white-50 mb-2 d-flex justify-content-between">
-                                <span><i class="bi bi-person me-1"></i>${escapeHtml(o.user_name)} • ${escapeHtml(o.order_type)}</span>
-                                <span>${escapeHtml(o.created_at)}</span>
-                            </div>
-                            <div class="border-top border-bottom border-secondary py-2 mb-2" style="max-height:130px; overflow-y:auto;">
-                                ${o.items.map(it => `
-                                    <div class="d-flex justify-content-between small">
-                                        <span class="text-white">${escapeHtml(it.item_name)} x${Number(it.quantity)}</span>
-                                        <span class="text-white-50">$${Math.round(it.price * it.quantity)}</span>
-                                    </div>
-                                    ${it.customization ? `<div class="text-danger" style="font-size:0.72rem;">${escapeHtml(it.customization)}</div>` : ''}
-                                `).join('')}
-                            </div>
-                        </div>
-                        <div class="d-flex justify-content-between align-items-center pt-1">
-                            <div>
-                                <span class="fw-bold text-white fs-5">$${Math.round(o.total_price)}</span>
-                                <small class="text-white-50 ms-1">(${escapeHtml(o.payment_method)})</small>
-                            </div>
-                            <div class="d-flex gap-1">
-                                <button type="button" class="btn btn-sm btn-outline-light" onclick="reprintOrderReceipt(${Number(o.id)})" title="補印收據">
-                                    <i class="bi bi-printer"></i>
-                                </button>
-                                ${o.status === 'Pending' ? `
-                                    <button type="button" class="btn btn-sm btn-success fw-bold" onclick="updatePosOrderStatus(${Number(o.id)}, 'Completed')">出餐</button>
-                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="updatePosOrderStatus(${Number(o.id)}, 'Cancelled')">取消</button>
-                                ` : ''}
-                                ${o.status === 'Completed' ? `
-                                    <button type="button" class="btn btn-sm btn-info fw-bold text-dark" onclick="updatePosOrderStatus(${Number(o.id)}, 'PickedUp')">核銷取餐</button>
-                                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="updatePosOrderStatus(${Number(o.id)}, 'Cancelled')">取消</button>
-                                ` : ''}
-                            </div>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function updatePosOrderStatus(orderId, newStatus) {
-            if (newStatus === 'Cancelled' && !confirm(`確定要取消訂單 #${orderId} 並全額回滾庫存與紅利點數嗎？`)) {
-                return;
-            }
-            fetch(`/api/orders/${orderId}/status`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status: newStatus })
-            })
-            .then(r => r.json().then(d => ({ status: r.status, ok: r.ok, data: d })))
-            .then(({ status, ok, data }) => {
-                if (!ok || !data.success) {
-                    alert(`❌ ${data.error || data.message || '更新狀態失敗'}`);
-                }
-                syncPosLiveState();
-            })
-            .catch(() => alert('更新狀態連線失敗'));
-        }
-
-        function reprintOrderReceipt(orderId) {
-            const o = liveOrdersCache.find(x => Number(x.id) === Number(orderId));
-            if (!o) return;
-            const sub = o.items.reduce((s, i) => s + (i.price * i.quantity), 0);
-            showPosReceipt({
-                order_id: o.id,
-                pickup_number: o.pickup_number || o.id,
-                table_number: o.user_name,
-                order_type: o.order_type,
-                need_cutlery: o.need_cutlery,
-                note: o.note,
-                created_at: o.created_at,
-                cashier: '補印收據',
-                subtotal: sub,
-                discount_amount: o.discount_amount || 0,
-                total_price: o.total_price,
-                payment_method: o.payment_method,
-                cash_received: o.total_price,
-                cash_change: 0,
-                items: o.items
-            });
-        }
-
-        // 11. 啟動 SSE 即時監聽與鍵盤快捷鍵
-        let posLastSig = null;
-        function initPosSSE() {
-            if (!window.EventSource) {
-                setInterval(syncPosLiveState, 5000);
-                return;
-            }
-            const sse = new EventSource('/api/orders_stream');
-            const dot = document.getElementById('sse-status-dot');
-            sse.onmessage = function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (posLastSig === null || posLastSig !== data.state_signature) {
-                        posLastSig = data.state_signature;
-                        syncPosLiveState();
-                    }
-                } catch (e) {}
-            };
-            sse.onopen = function() {
-                if (dot) { dot.className = 'text-success'; dot.innerText = '● 即時連線中'; }
-            };
-            sse.onerror = function() {
-                if (dot) { dot.className = 'text-warning'; dot.innerText = '● 輪詢同步中'; }
-            };
-        }
-
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'F2') {
-                e.preventDefault();
-                submitPosOrder();
-            } else if (e.key === 'F4') {
-                e.preventDefault();
-                holdCurrentOrder();
-            } else if (e.key === 'Escape') {
-                const s = document.getElementById('posSearchInput');
-                if (document.activeElement === s) {
-                    s.value = '';
-                    filterPosMenu();
-                }
-            }
-        });
-
-        saveHeldOrders(getHeldOrders());
-        syncPosLiveState();
-        initPosSSE();
-    </script>
-</body>
-</html>
+{% endblock %}
+
+{% block page_data %}
+<script type="application/json" id="page-data">{{ dict(menu_data, tenantId=tenant.id, cashier=current_user.username)|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/pos.js') }}"></script>
+{% endblock %}
