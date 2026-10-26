@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}團購已建立 - {{ g.tenant.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="groupCreatedPage" style="max-width: 560px">
+    <h1 class="h4 fw-bold mb-3"><i class="bi bi-check-circle text-success me-2"></i>團購「{{ group.title }}」已建立</h1>
+    <section class="card rounded-4 p-3 mb-3">
+        <div class="fw-bold mb-1">分享連結 (傳給同事點餐)</div>
+        <code class="user-select-all text-break" id="groupShareUrl">{{ share_url }}</code>
+        <button class="btn btn-sm btn-outline-light mt-2" type="button" data-action="copy-text" data-text="{{ share_url }}">複製分享連結</button>
+    </section>
+    <section class="card rounded-4 p-3 mb-3 border-warning">
+        <div class="fw-bold mb-1 text-warning">主揪管理連結 (請自己保存，不要分享；只顯示這一次)</div>
+        <code class="user-select-all text-break" id="groupManageUrl">{{ manage_url }}</code>
+        <button class="btn btn-sm btn-outline-warning mt-2" type="button" data-action="copy-text" data-text="{{ manage_url }}">複製管理連結</button>
+        <div class="small text-white-50 mt-2">用管理連結可查看每個人點了什麼、移除、提前送單或取消。這個瀏覽器已記住，之後直接開分享連結也能進入管理。</div>
+    </section>
+    <div class="small text-white-50 mb-3">取餐：{{ group.pickup_at.strftime('%m/%d %H:%M') }}　截止收單：{{ group.deadline.strftime('%m/%d %H:%M') }}
+        {{ '(截止時自動送單)' if group.auto_submit else '(截止後請主揪按「送單」)' }}</div>
+    <a class="btn btn-warning fw-bold text-dark" href="{{ url_for('group_orders.join', shop=shop, token=group.token) }}">我也要點餐</a>
+    <a class="btn btn-outline-light" href="{{ url_for('group_orders.manage', shop=shop, token=group.token) }}">管理團購</a>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

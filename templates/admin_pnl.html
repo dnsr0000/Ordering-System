@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}損益表{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% macro money(v) %}{{ '-' if v < 0 }}${{ '{:,}'.format(v|abs) }}{% endmacro %}
+{% block content %}
+<main class="container py-4" id="pnlPage">
+    {% call page_header('損益表', 'bi-graph-up-arrow', '營業收入 − 原料成本 − 人事成本 − 手續費 − 營業費用 = 營業淨利') %}
+    <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('pnl.statement', month=month, node=node, start=request.args.get('start'), end=request.args.get('end'), format='xlsx') }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel</a>
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('pnl.expenses', month=month) }}">登錄費用</a>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='pnl') }}">手續費率</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3 no-print" method="GET">
+        <input class="form-control form-control-sm" type="month" name="month" value="{{ month }}" aria-label="月份" style="width: 11rem">
+        {% if nodes %}<select class="form-select form-select-sm" name="node" aria-label="分店" style="width: 10rem"><option value="">全部 (含總部)</option>
+            {% for n in nodes %}<option value="{{ n.uuid }}" {{ 'selected' if node == n.uuid }}>{{ n.name }}</option>{% endfor %}</select>{% endif %}
+        <button class="btn btn-outline-info btn-sm" type="submit">查看</button>
+        <button class="btn btn-outline-light btn-sm" type="button" data-action="print-page">列印</button>
+    </form>
+    <div class="row g-3 mb-3">
+        {% for label, value, cls in [('營業收入淨額', money(cur.revenue), ''), ('營業毛利', money(cur.gross_profit), 'text-info'),
+                                     ('營業淨利', money(cur.net), 'text-success' if cur.net >= 0 else 'text-danger'),
+                                     ('淨利率', cur.net_margin ~ '%', 'text-success' if cur.net >= 0 else 'text-danger')] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {% endfor %}
+    </div>
+    {% if not cur.labor_available %}<div class="alert alert-info small py-2" id="pnlNoLabor">人事成本未列入：打卡紀錄與員工時薪只在各門市主機 (線上端或依分店檢視時淨利會偏高，請到各門市的損益表查看人事成本)。</div>{% endif %}
+    {% if cur.labor_missing_wage %}<div class="alert alert-warning small py-2">以下員工沒有設定時薪，人事成本會低估：{{ cur.labor_missing_wage|join('、') }}</div>{% endif %}
+    <div class="row g-4">
+        <section class="col-lg-7"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">{{ cur.start }} ~ {{ cur.end }} <span class="small text-white-50">(上期 {{ prev.start }} ~ {{ prev.end }})</span></h2>
+            <table class="table table-dark table-sm align-middle mb-0" id="pnlTable">
+                <thead><tr><th>項目</th><th class="text-end">本期</th><th class="text-end">上期</th><th class="text-end">增減</th></tr></thead>
+                <tbody>
+                {% for label, key in rows %}
+                <tr class="{{ 'fw-bold' if key in ('revenue', 'gross_profit', 'opex', 'net') }}" data-pnl="{{ key }}">
+                    <td>{{ label }}</td><td class="text-end">{{ money(cur[key]) }}</td><td class="text-end">{{ money(prev[key]) }}</td>
+                    <td class="text-end {{ 'text-success' if cur[key] - prev[key] > 0 else ('text-danger' if cur[key] - prev[key] < 0) }}">{{ money(cur[key] - prev[key]) }}</td></tr>
+                {% if key == 'fee_total' %}{% for fkey, flabel in fee_labels.items() if cur.fees[fkey] or prev.fees[fkey] %}
+                <tr class="small text-white-50"><td class="ps-4">{{ flabel }}</td><td class="text-end">{{ money(cur.fees[fkey]) }}</td><td class="text-end">{{ money(prev.fees[fkey]) }}</td><td></td></tr>{% endfor %}{% endif %}
+                {% if key == 'expense_total' %}{% for ckey, clabel in categories.items() if cur.expenses[ckey] or prev.expenses[ckey] %}
+                <tr class="small text-white-50"><td class="ps-4">{{ clabel }}</td><td class="text-end">{{ money(cur.expenses[ckey]) }}</td><td class="text-end">{{ money(prev.expenses[ckey]) }}</td><td></td></tr>{% endfor %}{% endif %}
+                {% endfor %}
+                <tr><td>毛利率 / 淨利率</td><td class="text-end">{{ cur.gross_margin }}% / {{ cur.net_margin }}%</td><td class="text-end">{{ prev.gross_margin }}% / {{ prev.net_margin }}%</td><td></td></tr>
+                <tr class="small text-white-50"><td>原料成本率 / 人事成本率</td><td class="text-end">{{ cur.cogs_ratio }}% / {{ cur.labor_ratio }}%</td><td class="text-end">{{ prev.cogs_ratio }}% / {{ prev.labor_ratio }}%</td><td></td></tr>
+                </tbody>
+            </table>
+        </div></section>
+        <section class="col-lg-5"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">近六個月營業淨利</h2>
+            {% for m in months %}
+            <div class="bar-row mb-1" data-month="{{ m.month }}"><span>{{ m.month }}</span>
+                <div class="bar-track"><div class="bar-fill {{ 'bg-danger' if m.net < 0 }}" style="width: {{ (m.net|abs / max_abs * 100)|round(1) }}%"></div></div>
+                <span class="text-end {{ 'text-danger' if m.net < 0 }}">{{ money(m.net) }}</span></div>
+            {% endfor %}
+            <div class="small text-white-50 mt-2">銷貨成本以目前的配方與原料成本估算；手續費依「損益表手續費」設定的費率估算；分店篩選時不含人事成本 (打卡紀錄在各門市)。</div>
+        </div></section>
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

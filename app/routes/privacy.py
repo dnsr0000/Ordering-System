@@ -1,7 +1,10 @@
-"""隱私權告知 (個資法第 8 條)、會員同意紀錄、撤回人臉辨識，以及後台的營運者資訊設定"""
-from flask import Blueprint, flash, g, redirect, render_template, request, url_for
+"""隱私權告知 (個資法第 8 條)、會員同意紀錄、撤回人臉辨識、會員自助下載資料 / 刪除帳號，以及後台的營運者資訊設定"""
+import json
 
-from app.extensions import db
+from flask import Blueprint, Response, flash, g, redirect, render_template, request, url_for
+
+from app.errors import AppError
+from app.extensions import db, limiter
 from app.services import privacy_service
 from app.services.audit import record_staff_audit
 from app.services.customer_session import current_member
@@ -30,6 +33,38 @@ def consent():
     if not target.startswith('/') or target.startswith('//') or '\\' in target:
         target = url_for('customer.customer_index')
     return redirect(target)
+
+
+@privacy_bp.route('/privacy/my_data', endpoint='my_data')
+@limiter.limit('10/minute')
+def my_data():
+    """會員下載自己的個人資料 (JSON)"""
+    member = current_member()
+    if member is None:
+        return redirect(url_for('auth.member_login'))
+    body = json.dumps(privacy_service.export_member_data(member), ensure_ascii=False, indent=2)
+    return Response(body, mimetype='application/json',
+                    headers={'Content-Disposition': 'attachment; filename="my_member_data.json"',
+                             'Cache-Control': 'no-store'})
+
+
+@privacy_bp.route('/privacy/delete_account', methods=['POST'], endpoint='delete_account')
+@limiter.limit('5/minute')
+def delete_account():
+    """會員刪除帳號：需再次輸入 PIN 並輸入「刪除」確認"""
+    from app.services.customer_session import close_customer_session
+    member = current_member()
+    if member is None:
+        return redirect(url_for('auth.member_login'))
+    if (request.form.get('confirm') or '').strip() != '刪除':
+        raise AppError('請在確認欄輸入「刪除」兩個字')
+    if not member.check_pin(request.form.get('pin')):
+        raise AppError('PIN 碼不正確', 403)
+    privacy_service.delete_member_account(member)
+    db.session.commit()
+    close_customer_session()   # 會員已刪除：只結束進場紀錄並清除登入狀態
+    flash('您的會員帳號與個人資料已刪除，歷史訂單已去識別化保存 (帳務依法保存)。謝謝您的支持！', 'info')
+    return redirect(url_for('customer.customer_index'))
 
 
 @privacy_bp.route('/privacy/face/delete', methods=['POST'], endpoint='delete_face')

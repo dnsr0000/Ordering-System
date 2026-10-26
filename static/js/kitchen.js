@@ -13,7 +13,11 @@
     const soundToggleBtn = document.getElementById('soundToggleBtn');
     const soundStatusText = document.getElementById('soundStatusText');
 
-    let audioEnabled = true;
+    const cfg = Kiosk.pageData();
+    const stationId = cfg.stationId || null;
+    const warnMinutes = Number(cfg.warnMinutes) || 8;
+    const lateMinutes = Number(cfg.lateMinutes) || 15;
+    let audioEnabled = cfg.sound !== false;
     let audioCtx = null;
     let isFirstLoad = true;
     let currentOrders = [];
@@ -75,8 +79,8 @@
     const pad = (n) => String(n).padStart(3, '0');
 
     function waitStyle(minutes) {
-        if (minutes >= 10) return { border: 'border-time-danger', badge: 'bg-danger' };
-        if (minutes >= 5) return { border: 'border-time-warning', badge: 'bg-warning text-dark' };
+        if (minutes >= lateMinutes) return { border: 'border-time-danger', badge: 'bg-danger', late: true };
+        if (minutes >= warnMinutes) return { border: 'border-time-warning', badge: 'bg-warning text-dark' };
         return { border: 'border-time-normal', badge: 'bg-success' };
     }
 
@@ -89,11 +93,13 @@
                 ${o.note ? html`<div class="small text-warning mt-1 kds-note">備註：${o.note}</div>` : ''}
             </div>` : '';
         const items = o.items.map((item) => html`
-            <div class="item-row py-2">
+            <div class="item-row py-2 ${item.done || !Number(item.quantity) ? 'opacity-50 text-decoration-line-through' : ''}">
                 <div class="d-flex justify-content-between align-items-center gap-2">
-                    <span class="fs-5 fw-bold text-white kds-item-name">${item.name}</span>
+                    <span class="fs-5 fw-bold text-white kds-item-name">${item.name}
+                        ${item.station && !stationId ? html`<span class="badge bg-dark border border-secondary small ms-1">${item.station}</span>` : ''}</span>
                     <span class="badge bg-light text-dark fs-6 px-2">x ${Number(item.quantity) || 0}</span>
                 </div>
+                ${Number(item.voided) ? html`<div class="badge bg-danger mt-1 kds-voided"><i class="bi bi-x-octagon me-1"></i>已作廢 ${Number(item.voided)} 份</div>` : ''}
                 ${item.customization ? html`
                     <div class="text-danger fw-bold small mt-1">
                         <i class="bi bi-arrow-return-right me-1"></i>${item.customization}
@@ -102,7 +108,9 @@
 
         return html`
             <div class="col-12 col-md-6 col-lg-4 col-xl-3" data-order-id="${o.id}">
-                <div class="kds-card p-3 h-100 shadow-lg ${style.border}">
+                <div class="kds-card p-3 h-100 shadow-lg ${style.border} ${o.is_rush ? 'kds-rush' : ''}">
+                    ${o.is_rush ? html`<div class="badge bg-danger w-100 fs-6 mb-2 kds-rush-badge"><i class="bi bi-lightning-charge-fill me-1"></i>加急</div>` : ''}
+                    ${o.pickup_at ? html`<div class="badge bg-info text-dark w-100 fs-6 mb-2 kds-pickup-at"><i class="bi bi-clock me-1"></i>預約 ${o.pickup_at} 取餐</div>` : ''}
                     <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
                         <div>
                             <h3 class="fw-bold text-warning mb-0 kds-pickup-number">#${pad(o.pickup_number)}</h3>
@@ -110,14 +118,16 @@
                         </div>
                         <div class="text-end">
                             <span class="badge bg-primary mb-1">${o.order_type}</span><br>
-                            <span class="badge ${style.badge}"><i class="bi bi-clock me-1"></i>已等 ${waitMinutes} 分鐘</span>
+                            <span class="badge ${style.badge}"><i class="bi bi-clock me-1"></i>${style.late ? '逾時 ' : '已等 '}${waitMinutes} 分鐘</span>
                         </div>
                     </div>
                     ${takeOut}
                     <div class="flex-grow-1 my-2 kds-items">${items}</div>
-                    <div class="pt-2 mt-auto">
-                        <button type="button" class="btn btn-complete w-100 shadow" data-action="complete-order" data-id="${o.id}">
-                            <i class="bi bi-check-circle-fill me-1"></i> 完成出餐
+                    <div class="pt-2 mt-auto d-flex gap-2">
+                        <button type="button" class="btn btn-outline-danger btn-sm" data-action="toggle-rush" data-id="${o.id}" data-rush="${o.is_rush ? 1 : 0}"
+                                title="${o.is_rush ? '取消加急' : '設為加急'}" aria-label="加急"><i class="bi bi-lightning-charge"></i></button>
+                        <button type="button" class="btn btn-complete flex-grow-1 shadow" data-action="complete-order" data-id="${o.id}">
+                            <i class="bi bi-check-circle-fill me-1"></i> ${stationId ? '本站完成' : '完成出餐'}
                         </button>
                     </div>
                 </div>
@@ -151,7 +161,7 @@
 
     async function loadOrders() {
         try {
-            const data = await Kiosk.api('/api/kitchen_orders');
+            const data = await Kiosk.api(stationId ? `/api/kitchen_orders?station=${stationId}` : '/api/kitchen_orders');
             applyOrders(data.orders || []);
         } catch (err) {
             console.warn('KDS 載入失敗:', err.message);
@@ -164,7 +174,11 @@
         const orderId = Number(btn.dataset.id);
         btn.disabled = true;
         try {
-            await Kiosk.api(`/api/orders/${orderId}/status`, { json: { status: 'Completed' } });
+            if (stationId) {
+                await Kiosk.api(`/api/kitchen/orders/${orderId}/station_done`, { json: { station_id: stationId } });
+            } else {
+                await Kiosk.api(`/api/orders/${orderId}/status`, { json: { status: 'Completed' } });
+            }
             knownOrderIds.delete(orderId);
         } catch (err) {
             alert(`❌ ${err.message}`);
@@ -195,8 +209,18 @@
         }
     }
 
+    async function toggleRush(btn) {
+        try {
+            await Kiosk.api(`/api/kitchen/orders/${btn.dataset.id}/rush`, { json: { is_rush: btn.dataset.rush !== '1' } });
+        } catch (err) {
+            alert(`❌ ${err.message}`);
+        }
+        loadOrders();
+    }
+
     Kiosk.on(document, 'click', {
         'complete-order': (el) => completeOrder(el),
+        'toggle-rush': (el) => toggleRush(el),
         'complete-all': () => completeAll(),
         'toggle-sound': () => toggleSound(),
     });

@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}顧客評價 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="feedbackPage">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h1 class="h4 fw-bold mb-0"><i class="bi bi-star-half me-2 text-warning"></i>顧客評價</h1>
+        <a class="btn btn-sm btn-outline-light" href="{{ url_for('settings_admin.index') }}">回系統設定</a>
+    </div>
+    <form class="d-flex gap-2 align-items-end mb-3" method="GET">
+        <div><label class="form-label small mb-0" for="fb-days">最近幾天</label>
+            <input class="form-control form-control-sm" type="number" min="1" max="365" id="fb-days" name="days" value="{{ days }}"></div>
+        <button class="btn btn-sm btn-outline-info" type="submit">查詢</button>
+        <a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ url_for('settings_admin.edit', key='feedback') }}">評分設定</a>
+    </form>
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">平均星數</div><div class="stat-value text-warning" id="fbAverage">{{ s.average }}</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">評價筆數</div><div class="stat-value" id="fbCount">{{ s.count }}</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">低分 (≤2 星)</div><div class="stat-value text-danger">{{ s.low }}</div></div></div>
+    </div>
+    <section class="card rounded-4 p-3 mb-3">
+        {% for n, c in s.distribution.items() %}
+        <div class="bar-row mb-1"><span>{{ '★' * n }}</span>
+            <div class="bar-track"><div class="bar-fill" style="width: {{ (c * 100 / s.count) | round(1) if s.count else 0 }}%"></div></div>
+            <span>{{ c }}</span></div>
+        {% endfor %}
+    </section>
+    <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle" id="feedbackTable">
+            <thead><tr><th>時間</th><th>訂單</th><th>星數</th><th>意見</th></tr></thead>
+            <tbody>
+            {% for r in s.rows %}
+            <tr class="{{ 'table-danger' if r.rating <= 2 }}"><td class="text-nowrap">{{ r.created_at.strftime('%m-%d %H:%M') }}</td>
+                <td class="text-nowrap">{{ order_label(r) }}</td>
+                <td class="text-warning text-nowrap">{{ '★' * r.rating }}<span class="text-white-50">{{ '☆' * (5 - r.rating) }}</span></td>
+                <td>{{ r.comment }}</td></tr>
+            {% else %}
+            <tr><td colspan="4" class="text-center text-white-50 py-4">這段期間沒有評價</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}

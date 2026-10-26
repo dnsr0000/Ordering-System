@@ -116,6 +116,9 @@ class Config:
     ECPAY_MERCHANT_ID = _env("ECPAY_MERCHANT_ID")             # 留空 = 綠界公開的測試特店
     ECPAY_HASH_KEY = _env("ECPAY_HASH_KEY")
     ECPAY_HASH_IV = _env("ECPAY_HASH_IV")
+    # ---- Webhook：只送 https 且不送內網位址；自架內網整合才開啟 (見 app/services/webhook_service.py) ----
+    WEBHOOK_ALLOW_PRIVATE = _env_flag("WEBHOOK_ALLOW_PRIVATE", False)
+    WEBHOOK_ALLOW_HTTP = _env_flag("WEBHOOK_ALLOW_HTTP", False)
     # 綠界付款結果要通知的公開網址 (例如 https://shop.example.com)；留空則使用目前請求的網址
     PUBLIC_BASE_URL = _env("PUBLIC_BASE_URL").rstrip("/")
     PAYMENT_TIMEOUT_MINUTES = max(5, _env_int("PAYMENT_TIMEOUT_MINUTES", 15))  # 逾時未付款自動取消
@@ -161,6 +164,11 @@ class Config:
     WTF_CSRF_TIME_LIMIT = None
     # 內容安全政策：enforce (預設) / report-only (排查用) / off
     CSP_MODE = _env("CSP_MODE", "enforce").lower()
+
+    # 交易提交後的工作 (開發票、列印、推播) 直接在請求中執行 (測試用；正式環境交給背景執行緒)
+    DEFERRED_INLINE = _env_flag("DEFERRED_INLINE", False)
+    # 背景排程 (發票重送、列印佇列、生日禮、定期報表、自動備份、監控通知)；測試與 CLI 不啟動
+    BACKGROUND_JOBS = _env_flag("BACKGROUND_JOBS", True)
 
     # Waitress 執行緒數：每條 SSE 長連線占用一條 (公開 25 + 員工 60 = 85)，必須明顯大於 SSE 上限
     WAITRESS_THREADS = max(16, _env_int("WAITRESS_THREADS", 128))

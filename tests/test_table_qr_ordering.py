@@ -149,7 +149,7 @@ def test_table_with_unpaid_orders_cannot_be_deleted(app, admin_client, staff_cli
     admin_client.post('/admin/tables', data={'action': 'delete', 'table_id': t4['id']})
     assert_flash(admin_client, '未結帳')
     assert _table(app, 'T4') is not None
-    staff_client.post(f"/api/pos/tables/{t4['id']}/settle", json={'payment_method': 'Credit Card'})
+    staff_client.post(f"/api/pos/tables/{t4['id']}/settle", json={'payment_method': 'Credit Card', 'auth_code': 'A12345'})
     admin_client.post('/admin/tables', data={'action': 'delete', 'table_id': t4['id']})
     assert _table(app, 'T4') is None
 

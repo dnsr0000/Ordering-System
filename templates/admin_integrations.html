@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}API 與 Webhook{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="integrationsPage">
+    {% call page_header('API 與 Webhook', 'bi-plug', '讓 ERP、會計軟體或自建 App 讀取訂單 / 菜單 / 會員，並在訂單成立、付款、狀態改變時即時收到通知') %}{% endcall %}
+    {% if new_key %}
+    <div class="alert alert-warning" id="newApiKey">「{{ new_key.name }}」的 API 金鑰 (只顯示這一次，請妥善保存)：
+        <code class="user-select-all fs-6">{{ new_key.key }}</code>
+        <button class="btn btn-sm btn-outline-dark ms-2" type="button" data-action="copy-text" data-text="{{ new_key.key }}">複製</button></div>
+    {% endif %}
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">API 金鑰</h2>
+        <div class="small text-white-50 mb-2">呼叫方式：<code>Authorization: Bearer 金鑰</code>，例如 <code>GET {{ base_url }}/api/v1/orders?since=2026-10-01T00:00:00</code>。
+            端點：/api/v1/orders、/api/v1/orders/&lt;uuid&gt;、/api/v1/menu、POST /api/v1/menu/&lt;id&gt;/availability、/api/v1/members/&lt;手機&gt;、/api/v1/reports/daily。每把金鑰每分鐘 120 次。完整說明、欄位與線上試打：<a class="link-warning" href="{{ url_for('integrations.docs') }}" target="_blank" rel="noopener">API 說明文件</a>。</div>
+        <table class="table table-dark table-sm align-middle" id="apiKeyTable">
+            <thead><tr><th>名稱</th><th>金鑰開頭</th><th>權限</th><th>最後使用</th><th>狀態</th><th></th></tr></thead>
+            <tbody>
+            {% for k in keys %}
+            <tr data-key-id="{{ k.id }}"><td>{{ k.name }}<div class="small text-white-50">{{ k.created_by }} {{ k.created_at.strftime('%Y-%m-%d') }}</div></td>
+                <td><code>{{ k.prefix }}…</code></td><td class="small">{% for s in k.scope_list %}{{ scopes[s] }}{{ '、' if not loop.last }}{% endfor %}</td>
+                <td class="small">{{ k.last_used_at.strftime('%m/%d %H:%M') if k.last_used_at else '-' }} {{ k.last_ip }}</td>
+                <td>{% if k.is_active %}<span class="badge bg-success">使用中</span>{% else %}<span class="badge bg-secondary">已停用</span>{% endif %}</td>
+                <td>{% if k.is_active %}<form method="POST" data-confirm="停用後使用此金鑰的系統會立即無法存取，確定？">{{ csrf() }}<input type="hidden" name="action" value="revoke_key"><input type="hidden" name="key_id" value="{{ k.id }}">
+                    <button class="btn btn-sm btn-outline-danger">停用</button></form>{% endif %}</td></tr>
+            {% else %}<tr><td colspan="6" class="text-white-50">尚未建立 API 金鑰</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        <form method="POST" class="row g-2 align-items-end" id="apiKeyForm">{{ csrf() }}<input type="hidden" name="action" value="create_key">
+            <div class="col-md-4"><label class="form-label small" for="akName">名稱 (用途)</label><input class="form-control form-control-sm" id="akName" name="name" maxlength="60" required placeholder="會計系統"></div>
+            <div class="col-md-6">{% for s, label in scopes.items() %}<div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="scopes" value="{{ s }}" id="sc-{{ loop.index }}"><label class="form-check-label small" for="sc-{{ loop.index }}">{{ label }}</label></div>{% endfor %}</div>
+            <div class="col-md-2"><button class="btn btn-warning btn-sm fw-bold w-100" type="submit">建立金鑰</button></div>
+        </form>
+    </section>
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">Webhook</h2>
+        <div class="small text-white-50 mb-2">以 POST JSON 送到您的網址 (https)，標頭 <code>X-Kiosk-Signature: sha256=HMAC-SHA256(密鑰, 時間戳 + "." + 本文)</code>、
+            <code>X-Kiosk-Timestamp</code>、<code>X-Kiosk-Event</code>、<code>X-Kiosk-Delivery</code> (重送時相同，請以此去除重複)。回應 2xx 視為成功，失敗會重試 6 次。</div>
+        <table class="table table-dark table-sm align-middle" id="webhookTable">
+            <thead><tr><th>名稱 / 網址</th><th>事件</th><th>簽章密鑰</th><th>最近結果</th><th></th></tr></thead>
+            <tbody>
+            {% for h in hooks %}
+            <tr data-endpoint-id="{{ h.id }}"><td>{{ h.name }}{% if not h.is_active %} <span class="badge bg-secondary">停用</span>{% endif %}<div class="small text-white-50 text-break">{{ h.url }}</div></td>
+                <td class="small">{% for e in h.event_list %}{{ events[e] }}{{ '、' if not loop.last }}{% endfor %}</td>
+                <td><code class="small user-select-all">{{ h.secret }}</code></td>
+                <td class="small">{{ h.last_status or '-' }}{% if h.fail_streak %}<div class="text-danger">連續失敗 {{ h.fail_streak }} 次</div>{% endif %}</td>
+                <td class="text-nowrap"><form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="endpoint_id" value="{{ h.id }}">
+                    <button class="btn btn-sm btn-outline-info" name="action" value="ping_hook">測試</button>
+                    <button class="btn btn-sm btn-outline-light" name="action" value="toggle_hook">{{ '停用' if h.is_active else '啟用' }}</button>
+                    <button class="btn btn-sm btn-outline-danger" name="action" value="delete_hook">刪除</button></form></td></tr>
+            {% else %}<tr><td colspan="5" class="text-white-50">尚未設定 Webhook</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        <form method="POST" class="row g-2 align-items-end" id="webhookForm">{{ csrf() }}<input type="hidden" name="action" value="create_hook">
+            <div class="col-md-3"><label class="form-label small" for="whName">名稱</label><input class="form-control form-control-sm" id="whName" name="name" maxlength="60" required></div>
+            <div class="col-md-4"><label class="form-label small" for="whUrl">網址</label><input class="form-control form-control-sm" id="whUrl" name="url" type="url" required placeholder="https:// 開頭的接收網址"></div>
+            <div class="col-md-3">{% for e, label in events.items() %}<div class="form-check form-check-inline">
+                <input class="form-check-input" type="checkbox" name="events" value="{{ e }}" id="ev-{{ loop.index }}" checked><label class="form-check-label small" for="ev-{{ loop.index }}">{{ e }}</label></div>{% endfor %}</div>
+            <div class="col-md-2"><button class="btn btn-warning btn-sm fw-bold w-100" type="submit">新增</button></div>
+        </form>
+    </section>
+    <section class="card rounded-4 p-3">
+        <h2 class="h6 fw-bold">最近送出</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0" id="deliveryTable">
+            <thead><tr><th>時間</th><th>端點</th><th>事件</th><th>狀態</th><th>次數</th><th>結果</th><th></th></tr></thead>
+            <tbody>
+            {% for d in deliveries %}
+            <tr data-delivery-id="{{ d.id }}"><td class="small">{{ d.created_at.strftime('%m/%d %H:%M:%S') }}</td><td>{{ d.endpoint.name if d.endpoint else '-' }}</td><td>{{ d.event }}</td>
+                <td><span class="badge bg-{{ {'sent': 'success', 'pending': 'warning', 'failed': 'danger'}.get(d.status, 'secondary') }}">{{ {'sent': '已送達', 'pending': '待送 / 重試', 'failed': '失敗'}.get(d.status, d.status) }}</span></td>
+                <td>{{ d.attempts }}</td><td class="small">{{ d.response_code or '' }} {{ d.last_error }}</td>
+                <td>{% if d.status == 'failed' %}<form method="POST">{{ csrf() }}<input type="hidden" name="action" value="retry"><input type="hidden" name="delivery_id" value="{{ d.id }}"><button class="btn btn-sm btn-outline-warning">重送</button></form>{% endif %}</td></tr>
+            {% else %}<tr><td colspan="7" class="text-white-50">尚無送出紀錄</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

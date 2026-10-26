@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}營業費用{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% macro expense_fields(e, prefix) %}
+    <div class="col-md-2"><label class="form-label small" for="{{ prefix }}Date">日期</label>
+        <input class="form-control form-control-sm" type="date" id="{{ prefix }}Date" name="spent_on" value="{{ e.spent_on if e else today }}" required></div>
+    <div class="col-md-2"><label class="form-label small" for="{{ prefix }}Cat">類別</label>
+        <select class="form-select form-select-sm" id="{{ prefix }}Cat" name="category">
+            {% for k, label in categories.items() %}<option value="{{ k }}" {{ 'selected' if e and e.category == k }}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label small" for="{{ prefix }}Name">名稱</label>
+        <input class="form-control form-control-sm" id="{{ prefix }}Name" name="name" maxlength="80" value="{{ e.name if e else '' }}" required placeholder="10 月店租"></div>
+    <div class="col-md-2"><label class="form-label small" for="{{ prefix }}Amt">金額</label>
+        <input class="form-control form-control-sm" type="number" min="1" id="{{ prefix }}Amt" name="amount" value="{{ e.amount if e else '' }}" required></div>
+    <div class="col-md-3"><label class="form-label small" for="{{ prefix }}Vendor">廠商</label>
+        <input class="form-control form-control-sm" id="{{ prefix }}Vendor" name="vendor" maxlength="60" value="{{ e.vendor if e else '' }}"></div>
+    <div class="col-md-3"><label class="form-label small" for="{{ prefix }}Inv">進項發票號碼</label>
+        <input class="form-control form-control-sm" id="{{ prefix }}Inv" name="invoice_no" maxlength="20" value="{{ e.invoice_no if e else '' }}"></div>
+    <div class="col-md-5"><label class="form-label small" for="{{ prefix }}Note">備註</label>
+        <input class="form-control form-control-sm" id="{{ prefix }}Note" name="note" maxlength="200" value="{{ e.note if e else '' }}"></div>
+    <div class="col-md-2 d-flex align-items-end"><div class="form-check">
+        <input class="form-check-input" type="checkbox" name="is_fixed" value="1" id="{{ prefix }}Fixed" {{ 'checked' if e and e.is_fixed }}>
+        <label class="form-check-label small" for="{{ prefix }}Fixed">每月固定</label></div></div>
+{% endmacro %}
+{% block content %}
+<main class="container py-4" id="expensesPage">
+    {% call page_header('營業費用', 'bi-wallet2', '房租、水電、耗材、行銷等費用；搭配營業額、原料成本、人事成本產生損益表') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('pnl.statement', month=month) }}">損益表</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3" method="GET">
+        <input class="form-control form-control-sm" type="month" name="month" value="{{ month }}" aria-label="月份" style="width: 11rem">
+        <button class="btn btn-outline-info btn-sm" type="submit">查看</button>
+    </form>
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ month }} 費用合計</div><div class="stat-value text-warning" id="expenseTotal">${{ '{:,}'.format(total) }}</div></div></div>
+        {% for k, label in categories.items() if totals[k] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">${{ '{:,}'.format(totals[k]) }}</div></div></div>
+        {% endfor %}
+    </div>
+    <section class="card rounded-4 p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="h6 fw-bold mb-0">{{ month }} 的費用</h2>
+            <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="copy_fixed"><input type="hidden" name="month" value="{{ month }}">
+                <button class="btn btn-sm btn-outline-warning" type="submit" id="copyFixedBtn">複製上個月的固定費用</button></form></div>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="expenseTable">
+            <thead><tr><th>日期</th><th>類別</th><th>名稱</th><th class="text-end">金額</th><th>廠商 / 發票</th>{% if is_hub %}<th>分店</th>{% endif %}<th></th></tr></thead>
+            <tbody>
+            {% for e in rows %}
+            <tr data-expense-id="{{ e.id }}">
+                <td>{{ e.spent_on }}</td><td>{{ e.category_label }}{% if e.is_fixed %} <span class="badge bg-secondary">固定</span>{% endif %}</td>
+                <td>{{ e.name }}{% if e.note %}<div class="small text-white-50">{{ e.note }}</div>{% endif %}</td>
+                <td class="text-end">${{ '{:,}'.format(e.amount) }}</td><td class="small">{{ e.vendor }} {{ e.invoice_no }}</td>
+                {% if is_hub %}<td class="small">{{ node_names.get(e.node_uuid, '總部') if e.node_uuid else '總部' }}</td>{% endif %}
+                <td class="text-nowrap">{% if not (is_hub and e.node_uuid) %}
+                    <details class="d-inline"><summary class="btn btn-sm btn-outline-light">修改</summary>
+                        <form method="POST" class="row g-2 mt-1">{{ csrf() }}<input type="hidden" name="action" value="edit"><input type="hidden" name="expense_id" value="{{ e.id }}">
+                            <input type="hidden" name="month" value="{{ month }}">{{ expense_fields(e, 'e' ~ e.id) }}
+                            <div class="col-12"><button class="btn btn-sm btn-warning" type="submit">儲存</button></div></form></details>
+                    <form method="POST" class="d-inline" data-confirm="確定刪除「{{ e.name }}」？">{{ csrf() }}<input type="hidden" name="action" value="delete">
+                        <input type="hidden" name="expense_id" value="{{ e.id }}"><input type="hidden" name="month" value="{{ month }}">
+                        <button class="btn btn-sm btn-outline-danger">刪除</button></form>{% endif %}</td>
+            </tr>
+            {% else %}<tr><td colspan="7" class="text-white-50">這個月還沒有登錄費用</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+    <form method="POST" class="card rounded-4 p-3 row g-2 mx-0" id="expenseForm">{{ csrf() }}<input type="hidden" name="action" value="add">
+        <input type="hidden" name="month" value="{{ month }}">
+        <h2 class="h6 fw-bold">新增費用</h2>
+        {{ expense_fields(None, 'new') }}
+        <div class="col-12"><button class="btn btn-warning btn-sm fw-bold" type="submit">新增</button></div>
+    </form>
+</main>
+{% endblock %}

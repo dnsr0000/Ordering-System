@@ -142,3 +142,26 @@ def public_display_name(order):
         return table
     # 例如 "A5 (王小明)"：保留括號外的桌號，其餘遮罩
     return mask_name(re.split(r'\s*[(（]', table)[0])
+
+
+# ---------------------------------------------------------------------------
+# 匯出檔防公式注入：會員 / 員工輸入的文字若以 = + - @ 開頭，Excel 開啟時會當成公式執行 (例如 =HYPERLINK(...))
+# ---------------------------------------------------------------------------
+FORMULA_PREFIXES = ('=', '+', '-', '@', '\t', '\r')
+
+
+def neutralize_formulas(wb):
+    """openpyxl 活頁簿：所有被判定為公式的儲存格改為純文字 (本系統匯出的資料一律是文字或數字)"""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == 'f':
+                    cell.data_type = 's'
+    return wb
+
+
+def csv_safe(value):
+    """CSV 欄位：以公式字元開頭的文字前面加 ' (Excel 會當成文字)"""
+    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value

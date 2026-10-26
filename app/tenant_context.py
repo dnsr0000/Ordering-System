@@ -102,8 +102,10 @@ def install_tenant_context(app):
         g.staff_account = None
         # 不需要店家的請求：靜態檔、健康檢查、分店同步 API (同步 API 依分店權杖自行決定店家)
         # 綠界的伺服器通知與跨站 POST 回傳也不解析店家：不可寫 session (會蓋掉顧客原本的登入 Cookie)
-        if request.endpoint in ('static', 'health.healthz', 'payment.ecpay_notify', 'payment.ecpay_result') \
-                or request.blueprint == 'sync_api' \
+        if request.endpoint in ('static', 'health.healthz', 'payment.ecpay_notify', 'payment.ecpay_result',
+                                'table_pay.notify', 'table_pay.result', 'reservations.deposit_notify',
+                                'reservations.deposit_result') \
+                or request.blueprint in ('sync_api', 'api_v1') \
                 or request.path.rstrip('/') == '/tenant/register':
             return None
 

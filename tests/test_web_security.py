@@ -48,8 +48,12 @@ def test_csrf_scan_every_post_route(app, csrf_enabled):
     for rule in app.url_map.iter_rules():
         if rule.endpoint == 'static' or 'POST' not in rule.methods:
             continue
-        if rule.endpoint.startswith(('sync_api.', 'payment.ecpay_')):
-            continue  # 分店同步 API 以權杖驗證、綠界通知以檢查碼驗證 (都不使用 cookie)，見 test_sync_hub_node / test_payment_ecpay
+        if rule.endpoint.startswith(('sync_api.', 'payment.ecpay_', 'delivery.ubereats_webhook', 'delivery.foodpanda_webhook',
+                                     'table_pay.notify', 'table_pay.result', 'reservations.deposit_notify',
+                                     'reservations.deposit_result', 'api_v1.')):
+            # 分店同步 API 以權杖驗證、綠界通知以檢查碼驗證、外送平台 Webhook 以簽章 / 權杖驗證 (都不使用 cookie)，
+            # 見 test_sync_hub_node / test_payment_ecpay / test_delivery_platforms
+            continue
         total += 1
         path = re.sub(r'<[^>]+>', '1', rule.rule)
         code = anon.post(path, json={}).status_code

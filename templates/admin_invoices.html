@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}電子發票{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="invoices-page">
+    {% call page_header('電子發票', 'bi-receipt', '綠界加值中心開立紀錄：失敗會自動重送，也可在此手動重送、修改載具、作廢或折讓') %}
+    <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('settings_admin.edit', key='einvoice') }}">發票設定</a>
+    {% endcall %}
+    {% if not cfg.enabled %}<div class="alert alert-warning">尚未啟用電子發票：請到「發票設定」開啟並填寫特店資料 (測試環境可直接使用綠界測試帳號)。</div>{% endif %}
+    <form class="row g-2 align-items-end mb-3" method="GET">
+        <div class="col-auto"><label class="form-label small" for="inv-start">起</label><input class="form-control form-control-sm" type="date" id="inv-start" name="start" value="{{ start }}"></div>
+        <div class="col-auto"><label class="form-label small" for="inv-end">迄</label><input class="form-control form-control-sm" type="date" id="inv-end" name="end" value="{{ end }}"></div>
+        <div class="col-auto"><label class="form-label small" for="inv-status">狀態</label>
+            <select class="form-select form-select-sm" id="inv-status" name="status">
+                <option value="">全部</option>
+                {% for k, v in labels.items() %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ v[0] }} ({{ counts.get(k, 0) }})</option>{% endfor %}
+            </select></div>
+        <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></div>
+        <div class="col-auto ms-auto small text-white-50">已開立金額合計：<strong class="text-warning">${{ '{:,}'.format(total) }}</strong></div>
+    </form>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-sm align-middle" id="invoicesTable">
+            <thead><tr><th>建立時間</th><th>訂單</th><th>發票號碼</th><th>隨機碼</th><th>金額</th><th>載具</th><th>狀態</th><th>訊息</th><th class="text-end">操作</th></tr></thead>
+            <tbody>
+            {% for inv in invoices %}
+            {% set lab = labels.get(inv.status, (inv.status, 'secondary')) %}
+            <tr data-invoice-id="{{ inv.id }}">
+                <td class="small">{{ inv.created_at.strftime('%m-%d %H:%M') }}</td>
+                <td>{% if inv.order_id %}#{{ inv.order_id }}{% elif inv.settlement_id %}桌位結帳 #{{ inv.settlement_id }}{% endif %}</td>
+                <td class="fw-bold">{{ inv.invoice_no or '-' }}</td>
+                <td>{{ inv.random_number or '' }}</td>
+                <td>${{ inv.amount }}{% if inv.allowance_amount %}<div class="small text-info">折讓 ${{ inv.allowance_amount }}</div>{% endif %}</td>
+                <td class="small">{{ inv.carrier_label }}{% if inv.carrier_num %}<div class="text-white-50">{{ inv.carrier_num }}</div>{% endif %}</td>
+                <td>{{ status_badge(lab[0], lab[1]) }}</td>
+                <td class="small text-white-50">{{ inv.last_error }}</td>
+                <td class="text-end">
+                    <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
+                    {% if inv.status in ('pending', 'failed') %}
+                    <form method="POST" action="{{ url_for('invoices.invoice_action', invoice_id=inv.id) }}">{{ csrf() }}
+                        <input type="hidden" name="action" value="retry"><button class="btn btn-sm btn-outline-warning" type="submit">重送</button></form>
+                    {% endif %}
+                    {% if inv.status in ('issued', 'allowance') %}
+                    <a class="btn btn-sm btn-outline-light" href="{{ url_for('invoices.invoice_print', invoice_id=inv.id) }}" target="_blank" rel="noopener">列印</a>
+                    <form method="POST" action="{{ url_for('invoices.invoice_action', invoice_id=inv.id) }}" data-confirm="確定作廢 (跨期會改開全額折讓)？">{{ csrf() }}
+                        <input type="hidden" name="action" value="void"><input type="hidden" name="reason" value="後台作廢">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">作廢</button></form>
+                    <form method="POST" action="{{ url_for('invoices.invoice_action', invoice_id=inv.id) }}" class="d-flex gap-1">{{ csrf() }}
+                        <input type="hidden" name="action" value="allowance">
+                        <input class="form-control form-control-sm" type="number" name="amount" min="1" max="{{ inv.amount - inv.allowance_amount }}" placeholder="折讓$" aria-label="折讓金額" style="width: 6rem">
+                        <button class="btn btn-sm btn-outline-info" type="submit">折讓</button></form>
+                    {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="9" class="text-center text-white-50">此期間沒有發票紀錄</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}

@@ -321,6 +321,7 @@
         $('edit-combo-name').value = d.name || '';
         $('edit-combo-price').value = d.price || 0;
         $('edit-combo-desc').value = d.desc || '';
+        $('edit-combo-choices').value = d.choices || '';
         [1, 2, 3].forEach((n) => {
             sideSelect('edit-combo', n).value = d[`item${n}`] || '';
             $(`edit-combo-side${n}-group`).style.display = (n === 1 || d[`item${n - 1}`]) ? 'block' : 'none';

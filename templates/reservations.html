@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}訂位 / 候位{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="reservations-page">
+    {% call page_header('訂位 / 候位', 'bi-calendar-check', '線上訂位頁：/reserve；顧客自行取號：/waitlist (可用平板放在門口)；叫號會顯示在叫號看板並語音播報',
+                        back_url=url_for('pos.pos_terminal'), back_label='POS') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('reservations.public_waitlist') }}" target="_blank" rel="noopener">取號頁</a>
+    {% if cfg.online_enabled %}<a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('reservations.public_reserve') }}" target="_blank" rel="noopener">線上訂位頁</a>{% endif %}
+    {% endcall %}
+    <div class="row g-4">
+        <section class="col-xl-7">
+            <div class="card rounded-4 p-3 mb-3">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                    <h2 class="h5 fw-bold text-warning mb-0">訂位 {{ day }} (共 {{ covers }} 位)</h2>
+                    <form method="GET" class="d-flex gap-1"><input class="form-control form-control-sm" type="date" name="day" value="{{ day }}" aria-label="日期"><button class="btn btn-outline-info btn-sm" type="submit">查看</button></form>
+                </div>
+                <div class="small text-white-50 mb-2" id="noShowStats">本月未到 {{ deposit_stats.no_show }} 筆｜訂金不退 ${{ deposit_stats.forfeited }}
+                    {% if deposit_stats.refund_failed %}｜<span class="text-danger">訂金退款失敗 {{ deposit_stats.refund_failed }} 筆 (請到綠界後台退款)</span>{% endif %}</div>
+                <table class="table table-dark table-sm align-middle" id="reservationsTable">
+                    <thead><tr><th>時間</th><th>姓名 / 電話</th><th>人數</th><th>桌號</th><th>備註</th><th>狀態</th><th></th></tr></thead>
+                    <tbody>
+                    {% for r in reservations %}
+                    <tr data-reservation-id="{{ r.id }}"><td class="fw-bold">{{ r.reserved_at.strftime('%H:%M') }}</td><td>{{ r.name }}<div class="small text-white-50">{{ r.phone }}{% if r.source == 'online' %} • 線上{% endif %}</div>
+                        {% if no_shows.get(r.phone) %}<span class="badge bg-danger" title="近 180 天未到次數">未到 {{ no_shows[r.phone] }} 次</span>{% endif %}
+                        {% if r.deposit_status %}<span class="badge bg-{{ {'paid': 'success', 'pending': 'warning', 'refund_failed': 'danger', 'applied': 'info'}.get(r.deposit_status, 'secondary') }}" data-deposit="{{ r.deposit_status }}" title="{{ r.deposit_note }}">{{ r.deposit_label }} ${{ r.deposit_amount }}</span>{% endif %}</td>
+                        <td>{{ r.party_size }}</td><td>{{ r.table_name }}</td><td class="small">{{ r.note }}</td>
+                        <td>{{ status_badge({'booked': '已訂位', 'seated': '已入座', 'cancelled': '已取消', 'no_show': '未到'}[r.status], {'booked': 'info', 'seated': 'success', 'cancelled': 'secondary', 'no_show': 'danger'}[r.status]) }}</td>
+                        <td class="text-nowrap">{% if r.status == 'booked' %}
+                            <form method="POST" class="d-inline-flex gap-1">{{ csrf() }}<input type="hidden" name="action" value="reservation_status"><input type="hidden" name="reservation_id" value="{{ r.id }}">
+                                <select class="form-select form-select-sm" name="table_name" aria-label="桌號" style="width: 6rem"><option value="">桌號</option>{% for t in tables %}<option value="{{ t.name }}" {{ 'selected' if r.table_name == t.name }}>{{ t.name }}</option>{% endfor %}</select>
+                                <button class="btn btn-sm btn-success" type="submit" name="status" value="seated">入座</button>
+                                <button class="btn btn-sm btn-outline-danger" type="submit" name="status" value="no_show">未到</button>
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" name="status" value="cancelled">取消</button></form>{% endif %}</td></tr>
+                    {% else %}<tr><td colspan="7" class="text-center text-white-50">這天沒有訂位</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <form method="POST" class="card rounded-4 p-3 row g-2 mx-0" id="reserveForm">{{ csrf() }}<input type="hidden" name="action" value="reserve">
+                <h2 class="h6 fw-bold">新增訂位 (電話訂位)</h2>
+                <div class="col-md-3"><input class="form-control form-control-sm" name="name" placeholder="姓名" aria-label="姓名" required></div>
+                <div class="col-md-3"><input class="form-control form-control-sm" name="phone" placeholder="電話" aria-label="電話"></div>
+                <div class="col-md-2"><input class="form-control form-control-sm" type="number" min="1" name="party_size" value="2" aria-label="人數"></div>
+                <div class="col-md-2"><input class="form-control form-control-sm" type="date" name="date" value="{{ day }}" aria-label="日期" required></div>
+                <div class="col-md-2"><input class="form-control form-control-sm" type="time" name="time" aria-label="時間" required></div>
+                <div class="col-md-6"><input class="form-control form-control-sm" name="note" placeholder="備註 (兒童椅、包廂…)" aria-label="備註"></div>
+                <div class="col-md-3"><select class="form-select form-select-sm" name="table_name" aria-label="預排桌號"><option value="">預排桌號</option>{% for t in tables %}<option value="{{ t.name }}">{{ t.name }}</option>{% endfor %}</select></div>
+                <div class="col-md-3"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增訂位</button></div>
+            </form>
+        </section>
+        <section class="col-xl-5">
+            <div class="card rounded-4 p-3 mb-3">
+                <h2 class="h5 fw-bold text-info">現場候位 (今日)</h2>
+                <table class="table table-dark table-sm align-middle" id="waitlistTable">
+                    <tbody>
+                    {% for e in waitlist %}
+                    <tr class="{{ 'table-info' if e.status == 'called' }}"><td class="fs-5 fw-bold">{{ e.label }}</td><td>{{ e.name }}<div class="small text-white-50">{{ e.party_size }} 位 • {{ e.created_at.strftime('%H:%M') }}</div></td>
+                        <td class="text-end"><form method="POST" class="d-inline-flex gap-1">{{ csrf() }}<input type="hidden" name="action" value="waitlist_status"><input type="hidden" name="entry_id" value="{{ e.id }}">
+                            <button class="btn btn-sm btn-info" type="submit" name="status" value="called">{{ '再叫一次' if e.status == 'called' else '叫號' }}</button>
+                            <select class="form-select form-select-sm" name="table_name" aria-label="桌號" style="width: 5.5rem"><option value="">桌號</option>{% for t in tables %}<option value="{{ t.name }}">{{ t.name }}</option>{% endfor %}</select>
+                            <button class="btn btn-sm btn-success" type="submit" name="status" value="seated">入座</button>
+                            <button class="btn btn-sm btn-outline-secondary" type="submit" name="status" value="cancelled">過號</button></form></td></tr>
+                    {% else %}<tr><td class="text-center text-white-50">目前沒有人候位</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+                <form method="POST" class="d-flex gap-1" id="waitlistAddForm">{{ csrf() }}<input type="hidden" name="action" value="waitlist_add">
+                    <input class="form-control form-control-sm" name="name" placeholder="姓名 (選填)" aria-label="姓名">
+                    <input class="form-control form-control-sm" name="phone" placeholder="手機 (簡訊通知)" aria-label="手機">
+                    <input class="form-control form-control-sm" type="number" min="1" name="party_size" value="2" aria-label="人數" style="width: 5rem">
+                    <button class="btn btn-info btn-sm fw-bold text-nowrap" type="submit">取號</button>
+                </form>
+            </div>
+            {% if done %}<div class="card rounded-4 p-3"><h2 class="h6 fw-bold">已處理</h2>
+                <div class="small text-white-50">{% for e in done %}{{ e.label }} {{ '入座 ' ~ e.table_name if e.status == 'seated' else '過號' }}{{ '、' if not loop.last }}{% endfor %}</div></div>{% endif %}
+        </section>
+    </div>
+</main>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}排班建議{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="staffingPage">
+    {% call page_header('排班建議', 'bi-people', '依過去同一個星期幾的各時段訂單數估算需要的人力，與班表比較') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.admin', start=p.target, end=p.target) }}">打卡與排班</a>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='staffing') }}">排班參數</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3" method="GET">
+        <input class="form-control form-control-sm" type="date" name="date" value="{{ p.target }}" aria-label="日期" style="width: 11rem">
+        <button class="btn btn-outline-info btn-sm" type="submit">查看</button>
+        <span class="small text-white-50">星期{{ p.weekday }}・參考過去 {{ p.days_used }} 天・每人每小時 {{ p.per }} 張、最少 {{ p.min_staff }} 人</span>
+    </form>
+    <div class="row g-3 mb-3">
+        {% for label, value, cls in [('需要人力 (人時)', p.need_hours, ''), ('已排班 (人時)', p.have_hours, 'text-info'),
+                                     ('不足 (人時)', p.short_hours, 'text-danger' if p.short_hours else 'text-success'),
+                                     ('預估人事成本率', (p.labor_ratio ~ '%') if p.avg_wage else '未設時薪', '')] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {% endfor %}
+    </div>
+    {% if not p.rows %}<div class="alert alert-secondary">過去同一個星期幾沒有訂單紀錄，無法估算。</div>{% else %}
+    <div class="row g-4">
+        <section class="col-lg-6"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">每小時人力</h2>
+            <table class="table table-dark table-sm align-middle mb-0" id="staffingTable">
+                <thead><tr><th>時段</th><th class="text-end">預估訂單</th><th class="text-end">需要</th><th class="text-end">已排</th><th class="text-end">差異</th></tr></thead>
+                <tbody>{% for r in p.rows %}
+                <tr data-hour="{{ r.hour }}"><td>{{ '%02d' % r.hour }}:00</td><td class="text-end">{{ r.orders }}</td><td class="text-end">{{ r.need }}</td><td class="text-end">{{ r.have }}</td>
+                    <td class="text-end {{ 'text-danger' if r.gap < 0 else ('text-warning' if r.gap > 0 else 'text-success') }}">{{ '%+d' % r.gap if r.gap else '0' }}</td></tr>
+                {% endfor %}</tbody>
+            </table>
+            <div class="small text-white-50 mt-2">預估營業額 ${{ '{:,}'.format(p.revenue) }}；建議人力的人事成本約 ${{ '{:,}'.format(p.labor) }} (平均時薪 ${{ p.avg_wage }})。</div>
+        </div></section>
+        <section class="col-lg-6"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">建議補排的班別</h2>
+            {% if p.shifts %}
+            <form method="POST" id="staffingApplyForm">{{ csrf() }}<input type="hidden" name="date" value="{{ p.target }}"><input type="hidden" name="count" value="{{ p.shifts|length }}">
+                <table class="table table-dark table-sm align-middle"><tbody>
+                {% for s in p.shifts %}
+                <tr><td><input class="form-control form-control-sm" name="start_{{ loop.index0 }}" value="{{ s.start }}" aria-label="上班時間" style="width: 6rem"></td>
+                    <td><input class="form-control form-control-sm" name="end_{{ loop.index0 }}" value="{{ s.end }}" aria-label="下班時間" style="width: 6rem"></td>
+                    <td><select class="form-select form-select-sm" name="staff_{{ loop.index0 }}" aria-label="員工"><option value="">選擇員工</option>
+                        {% for st in staff %}<option value="{{ st.id }}">{{ st.username }}</option>{% endfor %}</select></td></tr>
+                {% endfor %}</tbody></table>
+                <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">加入班表</button>
+            </form>
+            {% else %}<div class="text-success small" id="staffingEnough">目前班表已足夠，不需要補排。</div>{% endif %}
+            {% if p.schedules %}<h3 class="h6 fw-bold mt-3">當天已排的班</h3>
+            <ul class="small mb-0">{% for ws in p.schedules %}<li>{{ ws.staff.username if ws.staff else '' }} {{ ws.start_time }}~{{ ws.end_time }} {{ ws.note }}</li>{% endfor %}</ul>{% endif %}
+        </div></section>
+    </div>
+    {% endif %}
+</main>
+{% endblock %}

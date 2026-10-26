@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}印表機與廚房工作站{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="printers-page">
+    {% call page_header('印表機與廚房工作站', 'bi-printer', '網路熱感印表機 (ESC/POS，埠號 9100)；廚房單依工作站分開列印，KDS 也可依工作站分開顯示') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='pos') }}">出單設定</a>
+    <a class="btn btn-outline-light btn-sm fw-bold" href="{{ url_for('kitchen.kitchen_display') }}" target="_blank" rel="noopener">開啟 KDS</a>
+    {% endcall %}
+    <div class="row g-4">
+        <section class="col-xl-6">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-warning">廚房工作站</h2>
+                <p class="small text-white-50 mb-2">每站負責的分類用逗號分隔 (例如：飲料, 甜點)。品項也可在下方個別指定。KDS 網址：/kitchen?station=編號</p>
+                <table class="table table-dark table-sm align-middle" id="stationsTable">
+                    <thead><tr><th>#</th><th>名稱</th><th>負責分類</th><th>排序</th><th>啟用</th><th></th></tr></thead>
+                    <tbody>
+                    {% for s in stations %}
+                    <tr>
+                        <td>{{ s.id }}</td>
+                        <td colspan="4">
+                            <form method="POST" class="d-flex flex-wrap gap-1 align-items-center">{{ csrf() }}
+                                <input type="hidden" name="action" value="edit_station"><input type="hidden" name="station_id" value="{{ s.id }}">
+                                <input class="form-control form-control-sm" name="name" value="{{ s.name }}" aria-label="名稱" style="width: 8rem">
+                                <input class="form-control form-control-sm" name="categories" value="{{ s.categories }}" aria-label="分類" style="width: 14rem">
+                                <input class="form-control form-control-sm" name="sort_order" type="number" value="{{ s.sort_order }}" aria-label="排序" style="width: 4.5rem">
+                                <div class="form-check ms-1"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="st-act-{{ s.id }}" {{ 'checked' if s.is_active }}>
+                                    <label class="form-check-label small" for="st-act-{{ s.id }}">啟用</label></div>
+                                <button class="btn btn-sm btn-outline-light" type="submit">儲存</button>
+                            </form>
+                        </td>
+                        <td><form method="POST" data-confirm="刪除工作站「{{ s.name }}」？">{{ csrf() }}<input type="hidden" name="action" value="delete_station">
+                            <input type="hidden" name="station_id" value="{{ s.id }}"><button class="btn btn-sm btn-outline-danger" type="submit" aria-label="刪除"><i class="bi bi-trash"></i></button></form></td>
+                    </tr>
+                    {% else %}<tr><td colspan="6" class="text-white-50 text-center">尚未建立工作站 (KDS 以整張訂單顯示)</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+                <form method="POST" class="row g-2 align-items-end" id="addStationForm">{{ csrf() }}
+                    <input type="hidden" name="action" value="add_station">
+                    <div class="col-4"><label class="form-label small" for="st-name">名稱</label><input class="form-control form-control-sm" id="st-name" name="name" placeholder="飲料站" required></div>
+                    <div class="col-5"><label class="form-label small" for="st-cats">負責分類</label><input class="form-control form-control-sm" id="st-cats" name="categories" placeholder="飲料, 甜點"></div>
+                    <div class="col-3"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                </form>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">品項指定工作站 (未指定時依分類)</h2>
+                <div class="table-responsive pro-scroll" style="max-height: 420px">
+                <table class="table table-dark table-sm align-middle mb-0">
+                    <tbody>
+                    {% for it in items %}
+                    <tr><td class="small text-white-50">{{ it.category }}</td><td>{{ it.name }}</td>
+                        <td><form method="POST" class="d-flex gap-1">{{ csrf() }}<input type="hidden" name="action" value="item_station"><input type="hidden" name="item_id" value="{{ it.id }}">
+                            <select class="form-select form-select-sm" name="station_id" aria-label="工作站">
+                                <option value="">依分類</option>
+                                {% for s in stations %}<option value="{{ s.id }}" {{ 'selected' if it.station_id == s.id }}>{{ s.name }}</option>{% endfor %}
+                            </select><button class="btn btn-sm btn-outline-light" type="submit">套用</button></form></td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </section>
+        <section class="col-xl-6">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-warning">網路印表機</h2>
+                {% for p in printers %}
+                <form method="POST" class="border border-secondary rounded p-2 mb-2 printer-row" data-printer-id="{{ p.id }}">{{ csrf() }}
+                    <input type="hidden" name="printer_id" value="{{ p.id }}">
+                    <div class="row g-1 align-items-end">
+                        <div class="col-4"><label class="form-label small mb-0" for="p-name-{{ p.id }}">名稱</label><input class="form-control form-control-sm" id="p-name-{{ p.id }}" name="name" value="{{ p.name }}"></div>
+                        <div class="col-5"><label class="form-label small mb-0" for="p-host-{{ p.id }}">IP</label><input class="form-control form-control-sm" id="p-host-{{ p.id }}" name="host" value="{{ p.host }}"></div>
+                        <div class="col-3"><label class="form-label small mb-0" for="p-port-{{ p.id }}">埠號</label><input class="form-control form-control-sm" id="p-port-{{ p.id }}" name="port" type="number" value="{{ p.port }}"></div>
+                        <div class="col-3"><select class="form-select form-select-sm" name="role" aria-label="用途"><option value="receipt" {{ 'selected' if p.role == 'receipt' }}>收據</option><option value="kitchen" {{ 'selected' if p.role == 'kitchen' }}>廚房單</option></select></div>
+                        <div class="col-3"><select class="form-select form-select-sm" name="station_id" aria-label="工作站"><option value="">全部品項</option>{% for s in stations %}<option value="{{ s.id }}" {{ 'selected' if p.station_id == s.id }}>{{ s.name }}</option>{% endfor %}</select></div>
+                        <div class="col-2"><select class="form-select form-select-sm" name="paper_width" aria-label="紙寬"><option value="80" {{ 'selected' if p.paper_width == 80 }}>80mm</option><option value="58" {{ 'selected' if p.paper_width == 58 }}>58mm</option></select></div>
+                        <div class="col-2"><select class="form-select form-select-sm" name="encoding" aria-label="編碼"><option value="big5" {{ 'selected' if p.encoding == 'big5' }}>Big5</option><option value="gb18030" {{ 'selected' if p.encoding == 'gb18030' }}>GB18030</option><option value="utf8" {{ 'selected' if p.encoding == 'utf8' }}>UTF-8</option></select></div>
+                        <div class="col-2"><input class="form-control form-control-sm" name="copies" type="number" min="1" max="5" value="{{ p.copies }}" aria-label="份數" title="份數"></div>
+                        <div class="col-12 d-flex flex-wrap gap-1 mt-1 align-items-center">
+                            <div class="form-check me-2"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="p-act-{{ p.id }}" {{ 'checked' if p.is_active }}><label class="form-check-label small" for="p-act-{{ p.id }}">啟用</label></div>
+                            <div class="form-check me-2" title="收據印表機的 RJ11 接了錢櫃：收現金時自動開錢櫃"><input class="form-check-input" type="checkbox" name="drawer" value="1" id="p-drawer-{{ p.id }}" {{ 'checked' if p.drawer }}><label class="form-check-label small" for="p-drawer-{{ p.id }}">接錢櫃</label></div>
+                            <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit_printer">儲存</button>
+                            <button class="btn btn-sm btn-outline-info" type="submit" name="action" value="test_printer">列印測試頁</button>
+                            <button class="btn btn-sm btn-outline-danger ms-auto" type="submit" name="action" value="delete_printer">刪除</button>
+                        </div>
+                    </div>
+                </form>
+                {% else %}<div class="text-white-50 small mb-2">尚未設定印表機。</div>{% endfor %}
+                <form method="POST" class="border border-warning rounded p-2" id="addPrinterForm">{{ csrf() }}
+                    <input type="hidden" name="action" value="add_printer"><input type="hidden" name="is_active" value="1">
+                    <div class="row g-1 align-items-end">
+                        <div class="col-4"><label class="form-label small mb-0" for="np-name">名稱</label><input class="form-control form-control-sm" id="np-name" name="name" placeholder="櫃檯收據機" required></div>
+                        <div class="col-4"><label class="form-label small mb-0" for="np-host">IP</label><input class="form-control form-control-sm" id="np-host" name="host" placeholder="192.168.1.50" required></div>
+                        <div class="col-2"><label class="form-label small mb-0" for="np-port">埠號</label><input class="form-control form-control-sm" id="np-port" name="port" type="number" value="9100"></div>
+                        <div class="col-2"><select class="form-select form-select-sm" name="role" aria-label="用途"><option value="receipt">收據</option><option value="kitchen">廚房單</option></select></div>
+                        <div class="col-4"><select class="form-select form-select-sm" name="station_id" aria-label="工作站"><option value="">全部品項</option>{% for s in stations %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select></div>
+                        <div class="col-3"><select class="form-select form-select-sm" name="paper_width" aria-label="紙寬"><option value="80">80mm</option><option value="58">58mm</option></select></div>
+                        <div class="col-3"><select class="form-select form-select-sm" name="encoding" aria-label="編碼"><option value="big5">Big5</option><option value="gb18030">GB18030</option><option value="utf8">UTF-8</option></select></div>
+                        <div class="col-2"><div class="form-check"><input class="form-check-input" type="checkbox" name="drawer" value="1" id="np-drawer"><label class="form-check-label small" for="np-drawer">接錢櫃</label></div></div>
+                        <div class="col-2"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                    </div>
+                </form>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">最近列印紀錄</h2>
+                <table class="table table-dark table-sm mb-0" id="printJobsTable">
+                    <tbody>
+                    {% for j in jobs %}
+                    <tr><td class="small">{{ j.created_at.strftime('%m-%d %H:%M:%S') }}</td><td>{{ j.title }}</td><td class="small">{{ j.printer.name if j.printer else '' }}</td>
+                        <td>{{ status_badge({'done': '完成', 'queued': '等待中', 'sending': '傳送中', 'failed': '失敗'}.get(j.status, j.status), {'done': 'success', 'failed': 'danger'}.get(j.status, 'warning')) }}</td>
+                        <td class="small text-white-50">{{ j.last_error }}</td>
+                        <td>{% if j.status == 'failed' %}<form method="POST">{{ csrf() }}<input type="hidden" name="action" value="retry_job"><input type="hidden" name="job_id" value="{{ j.id }}"><button class="btn btn-sm btn-outline-warning" type="submit">重印</button></form>{% endif %}</td></tr>
+                    {% else %}<tr><td class="text-white-50">尚無列印紀錄</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}作廢與退款紀錄{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="refunds-page">
+    {% call page_header('作廢與退款紀錄', 'bi-arrow-counterclockwise', '現金與儲值金當場退回；刷卡機、街口、線上付款需在對應系統退款後於此標記完成；LINE Pay 自動退款') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='refund') }}">退款規則</a>
+    {% endcall %}
+    {% if pending_online %}
+    <section class="card rounded-4 p-3 mb-4 border-warning">
+        <h2 class="h6 fw-bold text-warning mb-2"><i class="bi bi-exclamation-triangle me-1"></i>需人工退款的訂單 (已收款但訂單已取消)</h2>
+        <table class="table table-dark table-sm mb-0">
+            <tbody>
+            {% for o in pending_online %}
+            <tr><td>#{{ o.id }}</td><td>{{ o.table_number }}</td><td>${{ o.total_price }}</td><td>{{ o.payment_method }}</td>
+                <td class="small text-white-50">{{ o.payment_trade_no or o.payment_reference or '' }}
+                    {% if o.payment_note %}<div class="text-warning">{{ o.payment_note }}</div>{% endif %}</td>
+                <td class="text-end text-nowrap">
+                    {% if o.id in ecpay_refundable %}
+                    <form class="d-inline" method="POST" action="{{ url_for('refunds.online_refund_ecpay', order_id=o.id) }}" data-confirm="向綠界退刷 ${{ o.total_price }}？">{{ csrf() }}
+                        <button class="btn btn-sm btn-outline-warning ecpay-refund-btn" type="submit"><i class="bi bi-arrow-counterclockwise me-1"></i>綠界退刷</button></form>
+                    {% endif %}
+                    <form class="d-inline" method="POST" action="{{ url_for('refunds.online_refund_done', order_id=o.id) }}" data-confirm="確認已在金流後台 / 櫃檯完成退款？">{{ csrf() }}
+                    <button class="btn btn-sm btn-outline-success" type="submit">已完成退款</button></form></td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endif %}
+    <form class="row g-2 align-items-end mb-3" method="GET">
+        <div class="col-auto"><label class="form-label small" for="rf-start">起</label><input class="form-control form-control-sm" type="date" id="rf-start" name="start" value="{{ start }}"></div>
+        <div class="col-auto"><label class="form-label small" for="rf-end">迄</label><input class="form-control form-control-sm" type="date" id="rf-end" name="end" value="{{ end }}"></div>
+        <div class="col-auto"><label class="form-label small" for="rf-status">狀態</label>
+            <select class="form-select form-select-sm" id="rf-status" name="status"><option value="">全部</option>
+                {% for k, v in labels.items() %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ v[0] }}</option>{% endfor %}</select></div>
+        <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></div>
+    </form>
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">退款合計</div><div class="stat-value text-danger">${{ '{:,}'.format(total) }}</div></div></div>
+        {% for m, amt in by_method.items() %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ m }}</div><div class="stat-value">${{ '{:,}'.format(amt) }}</div></div></div>
+        {% endfor %}
+    </div>
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-sm align-middle" id="refundsTable">
+            <thead><tr><th>時間</th><th>訂單</th><th>類型</th><th>金額</th><th>方式</th><th>原因</th><th>經手 / 核准</th><th>狀態</th><th>結果</th><th></th></tr></thead>
+            <tbody>
+            {% for r in refunds %}
+            {% set lab = labels.get(r.status, (r.status, 'secondary')) %}
+            <tr data-refund-id="{{ r.id }}">
+                <td class="small">{{ r.created_at.strftime('%m-%d %H:%M') }}</td><td>#{{ r.order_id }}</td>
+                <td>{{ '作廢' if r.kind == 'cancel' else '部分退款' }}</td><td class="fw-bold">${{ r.amount }}</td><td>{{ r.method }}</td>
+                <td class="small">{{ r.reason }}</td><td class="small">{{ r.staff_username }}{% if r.approved_by and r.approved_by != r.staff_username %} / {{ r.approved_by }}{% endif %}</td>
+                <td>{{ status_badge(lab[0], lab[1]) }}</td><td class="small text-white-50">{{ r.provider_result }}</td>
+                <td class="text-end">
+                    {% if r.status in ('manual', 'failed') %}
+                    <form method="POST" action="{{ url_for('refunds.refund_action', refund_id=r.id) }}" class="d-inline">{{ csrf() }}
+                        <input type="hidden" name="action" value="done"><button class="btn btn-sm btn-outline-success" type="submit">已完成</button></form>
+                    {% endif %}
+                    {% if r.status == 'failed' and r.method == 'Line Pay' %}
+                    <form method="POST" action="{{ url_for('refunds.refund_action', refund_id=r.id) }}" class="d-inline">{{ csrf() }}
+                        <input type="hidden" name="action" value="retry"><button class="btn btn-sm btn-outline-warning" type="submit">重試 LINE Pay</button></form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="10" class="text-center text-white-50">此期間沒有退款</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}

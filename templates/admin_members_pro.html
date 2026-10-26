@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}會員經營{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="members-pro-page">
+    {% call page_header('會員經營', 'bi-award', '會員等級 (依累積消費自動升級)、生日禮、儲值金、LINE 推播') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='member') }}">等級 / 生日禮 / 儲值設定</a>
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='line') }}">LINE 設定</a>
+    {% endcall %}
+    <div class="row g-3 mb-4">
+        {% for label, value in [('會員數', stats.members), ('已綁定 LINE', stats.line_bound), ('儲值金餘額合計', '$' ~ '{:,}'.format(stats.wallet_total)), ('本月壽星', stats.birthday_month)] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">{{ value }}</div></div></div>
+        {% endfor %}
+    </div>
+    <div class="row g-4">
+        <section class="col-xl-5">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-warning">會員等級</h2>
+                <p class="small text-white-50">累積消費達門檻自動升級 (只升不降)。贈點倍數套用在結帳贈點；會員折扣在優惠券之後、點數折抵之前計算。</p>
+                {% for t in tiers %}
+                <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="tier_id" value="{{ t.id }}">
+                    <span class="badge bg-{{ t.color }} {{ 'text-dark' if t.color in ('warning', 'info', 'light') }}">{{ t.name }}</span>
+                    <input class="form-control form-control-sm" name="name" value="{{ t.name }}" aria-label="名稱" style="width: 6rem">
+                    <input class="form-control form-control-sm" type="number" name="min_spend" value="{{ t.min_spend }}" aria-label="累積消費門檻" title="累積消費門檻" style="width: 7rem">
+                    <input class="form-control form-control-sm" type="number" step="0.1" name="points_multiplier" value="{{ t.points_multiplier }}" aria-label="贈點倍數" title="贈點倍數" style="width: 5rem">
+                    <input class="form-control form-control-sm" type="number" name="discount_percent" value="{{ t.discount_percent }}" aria-label="折扣%" title="會員折扣 %" style="width: 4.5rem">
+                    <select class="form-select form-select-sm" name="color" aria-label="顏色" style="width: 6.5rem">{% for c in colors %}<option value="{{ c }}" {{ 'selected' if t.color == c }}>{{ c }}</option>{% endfor %}</select>
+                    <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit_tier">儲存</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete_tier" aria-label="刪除"><i class="bi bi-trash"></i></button>
+                </form>
+                {% else %}<div class="small text-white-50 mb-2">尚未設定等級</div>{% endfor %}
+                <form method="POST" class="row g-1 align-items-end mt-2" id="addTierForm">{{ csrf() }}<input type="hidden" name="action" value="add_tier">
+                    <div class="col-3"><label class="form-label small mb-0" for="tier-name">名稱</label><input class="form-control form-control-sm" id="tier-name" name="name" placeholder="金卡" required></div>
+                    <div class="col-3"><label class="form-label small mb-0" for="tier-min">累積消費</label><input class="form-control form-control-sm" id="tier-min" type="number" name="min_spend" value="0"></div>
+                    <div class="col-2"><label class="form-label small mb-0" for="tier-mul">贈點倍數</label><input class="form-control form-control-sm" id="tier-mul" type="number" step="0.1" name="points_multiplier" value="1"></div>
+                    <div class="col-2"><label class="form-label small mb-0" for="tier-disc">折扣%</label><input class="form-control form-control-sm" id="tier-disc" type="number" name="discount_percent" value="0"></div>
+                    <div class="col-2"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                </form>
+                <form method="POST" class="mt-2">{{ csrf() }}<input type="hidden" name="action" value="recompute_tiers">
+                    <button class="btn btn-outline-info btn-sm" type="submit">重新計算所有會員的累積消費與等級</button></form>
+            </div>
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-success">LINE 推播</h2>
+                {% if not line_ready %}<div class="small text-warning mb-2">尚未啟用 LINE 官方帳號推播 (系統設定 → LINE)。</div>{% endif %}
+                <form method="POST" id="broadcastForm" data-confirm="確定要推播給所選會員？">{{ csrf() }}<input type="hidden" name="action" value="broadcast">
+                    <select class="form-select form-select-sm mb-2" name="target" aria-label="推播對象">
+                        <option value="all">所有綁定 LINE 的會員</option><option value="birthday_month">本月壽星</option>
+                        {% for t in tiers %}<option value="tier:{{ t.id }}">等級：{{ t.name }}</option>{% endfor %}
+                    </select>
+                    <textarea class="form-control form-control-sm mb-2" name="message" rows="3" maxlength="1000" placeholder="例如：本週末全品項 9 折！" aria-label="推播內容" required></textarea>
+                    <button class="btn btn-success btn-sm fw-bold" type="submit" {{ 'disabled' if not line_ready }}>送出推播</button>
+                </form>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h5 fw-bold">生日禮</h2>
+                <div class="small text-white-50 mb-2">{% if cfg.birthday_enabled %}已啟用：每天自動送給本月壽星 (點數 {{ cfg.birthday_points }}{% if cfg.birthday_coupon_code %}、優惠券 {{ cfg.birthday_coupon_code }}{% endif %})；分店主機不執行，由總店 / 單機送出。{% else %}尚未啟用生日禮。{% endif %}</div>
+                <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="birthday_now"><button class="btn btn-outline-warning btn-sm" type="submit" {{ 'disabled' if not cfg.birthday_enabled }}>立即送出本月生日禮</button></form>
+            </div>
+        </section>
+        <section class="col-xl-7">
+            <div class="card rounded-4 p-3 mb-4">
+                <form method="GET" class="d-flex gap-2 mb-2"><input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="搜尋姓名或手機" aria-label="搜尋會員"><button class="btn btn-outline-info btn-sm" type="submit">搜尋</button></form>
+                <div class="table-responsive">
+                <table class="table table-dark table-sm align-middle" id="membersProTable">
+                    <thead><tr><th>會員</th><th>累積消費</th><th>點數</th><th>儲值金</th><th>生日 / 等級 / LINE</th></tr></thead>
+                    <tbody>
+                    {% for u in users %}
+                    <tr><td><div class="fw-bold">{{ u.name }}</div><div class="small text-white-50">{{ u.phone }}</div></td>
+                        <td>${{ '{:,}'.format(u.total_spent or 0) }}</td><td>{{ u.points }}</td><td>${{ u.wallet_balance or 0 }}</td>
+                        <td>
+                            <form method="POST" class="d-flex flex-wrap gap-1 align-items-center">{{ csrf() }}<input type="hidden" name="action" value="member"><input type="hidden" name="user_id" value="{{ u.id }}">
+                                <input class="form-control form-control-sm" type="date" name="birthday" value="{{ u.birthday or '' }}" aria-label="生日" style="width: 9rem">
+                                <select class="form-select form-select-sm" name="tier_id" aria-label="等級" style="width: 7rem"><option value="">無等級</option>{% for t in tiers %}<option value="{{ t.id }}" {{ 'selected' if u.tier_id == t.id }}>{{ t.name }}</option>{% endfor %}</select>
+                                {% if u.line_user_id %}<span class="badge bg-success">LINE</span>
+                                <div class="form-check"><input class="form-check-input" type="checkbox" name="unbind_line" value="1" id="ul-{{ u.id }}"><label class="form-check-label small" for="ul-{{ u.id }}">解除</label></div>{% endif %}
+                                <button class="btn btn-sm btn-outline-light" type="submit">儲存</button>
+                            </form>
+                            {% if current_user.role == 'owner' and cfg.wallet_enabled %}
+                            <form method="POST" class="d-flex gap-1 mt-1">{{ csrf() }}<input type="hidden" name="action" value="wallet_adjust"><input type="hidden" name="user_id" value="{{ u.id }}">
+                                <input class="form-control form-control-sm" type="number" name="delta" placeholder="儲值金 ±" aria-label="儲值金調整" style="width: 6rem">
+                                <input class="form-control form-control-sm" name="note" placeholder="調整原因" aria-label="調整原因">
+                                <button class="btn btn-sm btn-outline-warning text-nowrap" type="submit">調整</button></form>
+                            {% endif %}
+                        </td></tr>
+                    {% else %}<tr><td colspan="5" class="text-white-50 text-center">沒有會員</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">最近儲值金異動</h2>
+                <table class="table table-dark table-sm mb-0"><tbody>
+                {% for w in ledger %}<tr><td class="small">{{ w.created_at.strftime('%m-%d %H:%M') }}</td><td>{{ names.get(w.user_id, w.user_id) }}</td>
+                    <td>{{ {'topup': '加值', 'bonus': '加值贈送', 'pay': '消費', 'refund': '退回', 'adjust': '調整'}.get(w.reason, w.reason) }}</td>
+                    <td class="{{ 'text-danger' if w.delta < 0 else 'text-success' }}">{{ '%+d' % w.delta }}</td><td class="small text-white-50">{{ w.note }}</td></tr>
+                {% else %}<tr><td class="text-white-50">尚無異動</td></tr>{% endfor %}
+                </tbody></table>
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

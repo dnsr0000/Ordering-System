@@ -98,6 +98,8 @@ def nodes_action():
             raise AppError('❌ 請輸入分店名稱！', redirect_to=back)
         node, token = create_node(g.tenant_id, name, accepts_online_orders=request.form.get('accepts_online_orders') == '1')
         record_staff_audit('SYNC_NODE_CREATE', details=f'新增分店：{node.name} ({node.uuid})')
+        from app.services import branch_service
+        branch_service.refresh_sites(g.tenant_id)
         db.session.commit()
         _show_token_once(node, token)
         flash(f'✅ 已新增分店【{node.name}】，請立即複製下方的權杖 (只會顯示這一次)。', 'success')
@@ -126,6 +128,8 @@ def nodes_action():
         node.name = name
     else:
         raise AppError('不支援的操作', redirect_to=back)
+    from app.services import branch_service
+    branch_service.refresh_sites(g.tenant_id)   # 分店名單 (叫貨 / 調撥選擇對象) 下發給各分店
     db.session.commit()
     return redirect(back)
 

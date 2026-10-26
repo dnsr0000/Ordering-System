@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}外送派車{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="dispatch-page">
+    {% call page_header('外送派車', 'bi-scooter', '今天的外送到府訂單：指派外送員 → 出發 → 送達。訂單變動時自動更新') %}
+    {% if current_user.role in ('owner', 'manager') %}<a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='own_delivery') }}">外送設定</a>{% endif %}
+    {% endcall %}
+    {% if not enabled %}<div class="alert alert-secondary">尚未啟用外送到府 (系統設定 → 自有外送)。</div>{% endif %}
+    {% if read_only %}<div class="alert alert-info">線上端只顯示配送狀態；派車請在出餐分店操作。</div>{% endif %}
+    <div class="row g-3" id="dispatchCards">
+        {% for o in orders %}
+        <div class="col-md-6 col-xl-4"><div class="card rounded-4 p-3 h-100 dispatch-card {{ 'opacity-50' if o.status == 'Cancelled' }}" data-order-id="{{ o.id }}" data-delivery-status="{{ o.delivery_status }}">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div><span class="fs-4 fw-bold text-warning">#{{ '%03d' % o.display_pickup_number }}</span>
+                    <span class="small text-white-50">單號 #{{ o.id }} {{ o.created_at.strftime('%H:%M') }}{% if o.pickup_at_label %} • 預約 {{ o.pickup_at_label }}{% endif %}</span></div>
+                <span class="badge {{ {'pending': 'bg-secondary', 'assigned': 'bg-info text-dark', 'out': 'bg-warning text-dark', 'delivered': 'bg-success', 'failed': 'bg-danger'}.get(o.delivery_status, 'bg-dark') }} dispatch-status">
+                    {{ '已取消' if o.status == 'Cancelled' else labels.get(o.delivery_status, '-') }}</span>
+            </div>
+            <div class="fw-bold"><i class="bi bi-geo-alt me-1"></i>{{ o.delivery_address }}</div>
+            <div class="small"><i class="bi bi-telephone me-1"></i>{{ o.delivery_phone }} • {{ o.delivery_zone }} • 外送費 ${{ o.delivery_fee }}</div>
+            <div class="small text-white-50 mb-2">{{ o.items | map(attribute='item_name') | join('、') }} • 應收 ${{ o.total_price }} ({{ o.payment_method }}{{ '，已付款' if o.is_paid }})
+                {% if o.note %}<div class="text-warning">備註：{{ o.note }}</div>{% endif %}</div>
+            {% if o.driver_name %}<div class="small mb-2"><i class="bi bi-person-badge me-1"></i>{{ o.driver_name }}{% if o.dispatched_at %} • {{ o.dispatched_at.strftime('%H:%M') }} 出發{% endif %}{% if o.delivered_at %} • {{ o.delivered_at.strftime('%H:%M') }} 送達{% endif %}</div>{% endif %}
+            {% if not read_only and o.status != 'Cancelled' and o.delivery_status not in ('delivered', 'failed') %}
+            <div class="d-flex flex-wrap gap-1 mt-auto">
+                {% if o.delivery_status in ('pending', 'assigned') %}
+                <form method="POST" class="d-flex gap-1">{{ csrf() }}<input type="hidden" name="order_id" value="{{ o.id }}"><input type="hidden" name="action" value="assign">
+                    <select class="form-select form-select-sm" name="driver" aria-label="外送員" required>
+                        <option value="">選外送員</option>{% for d in drivers %}<option {{ 'selected' if d == o.driver_name }}>{{ d }}</option>{% endfor %}</select>
+                    <button class="btn btn-sm btn-outline-info text-nowrap dispatch-assign" type="submit">指派</button></form>
+                {% endif %}
+                {% if o.delivery_status == 'assigned' %}
+                <form method="POST">{{ csrf() }}<input type="hidden" name="order_id" value="{{ o.id }}"><input type="hidden" name="action" value="depart">
+                    <button class="btn btn-sm btn-warning fw-bold text-dark dispatch-depart" type="submit">出發</button></form>
+                {% endif %}
+                {% if o.delivery_status == 'out' %}
+                <form method="POST">{{ csrf() }}<input type="hidden" name="order_id" value="{{ o.id }}"><input type="hidden" name="action" value="complete">
+                    <button class="btn btn-sm btn-success fw-bold dispatch-complete" type="submit">已送達</button></form>
+                {% endif %}
+                <form method="POST" class="d-flex gap-1 ms-auto" data-confirm="標記為配送失敗？">{{ csrf() }}<input type="hidden" name="order_id" value="{{ o.id }}"><input type="hidden" name="action" value="fail">
+                    <input class="form-control form-control-sm" name="reason" placeholder="失敗原因" aria-label="失敗原因" style="width: 7rem">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">失敗</button></form>
+            </div>
+            {% endif %}
+        </div></div>
+        {% else %}
+        <div class="col-12 text-center text-white-50 py-5">今天沒有外送到府的訂單</div>
+        {% endfor %}
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/dispatch.js') }}"></script>{% endblock %}

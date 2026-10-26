@@ -65,6 +65,41 @@ services:
       start_period: 10s
     logging: *default-logging
 
+  # PostgreSQL 每日自動備份 (保留 BACKUP_KEEP_DAYS 天，預設 14)；還原演練：docker compose exec backup pg_restore_check.sh
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - path: .env.hub
+        required: true
+    environment:
+      TZ: Asia/Taipei
+      PGHOST: postgres
+    volumes:
+      - pg_backups:/backups
+      - ./deploy:/deploy:ro
+    entrypoint: ["/bin/sh", "-c"]
+    # 每分鐘檢查一次，到了 BACKUP_AT 就備份 (一天一次)
+    command:
+      - |
+        # 專案檔案為 Windows 換行 (CRLF)：去掉 \r 後安裝到 PATH (pg_backup.sh、pg_restore_check.sh)
+        for f in /deploy/*.sh; do tr -d '\r' < "$$f" > "/usr/local/bin/$$(basename "$$f")"; chmod +x "/usr/local/bin/$$(basename "$$f")"; done
+        export PGPASSWORD="$$POSTGRES_PASSWORD"
+        BACKUP_AT="$${BACKUP_AT:-03:30}"
+        last=""
+        while true; do
+          now=$$(date +%H:%M); today=$$(date +%F)
+          if [ "$$now" = "$$BACKUP_AT" ] && [ "$$last" != "$$today" ]; then
+            pg_backup.sh && last="$$today"
+          fi
+          sleep 30
+        done
+    networks: [backend]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -104,6 +139,7 @@ networks:
     internal: true
 
 volumes:
+  pg_backups:
   app_database:
   app_uploads:
   pg_data:

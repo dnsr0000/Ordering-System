@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}員工異常偵測{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="anomalyPage">
+    {% call page_header('員工異常偵測', 'bi-shield-exclamation', '各收銀員的作廢 / 退款、折扣 / 改價比例與交班帳差，明顯高於全店平均或超過門檻時標示') %}
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='anomaly') }}">門檻與通知設定</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3 no-print" method="GET">
+        {% for p, l in [('yesterday', '昨天'), ('', '近 7 天'), ('month', '本月'), ('last_month', '上月')] %}
+        <a class="btn btn-sm btn-outline-secondary text-white" href="{{ url_for('reports.staff_anomalies', preset=p or None, node=node) }}">{{ l }}</a>{% endfor %}
+        <input class="form-control form-control-sm" type="date" name="start" value="{{ start }}" aria-label="起" style="width: 10rem">
+        <input class="form-control form-control-sm" type="date" name="end" value="{{ end }}" aria-label="迄" style="width: 10rem">
+        {% if nodes %}<select class="form-select form-select-sm" name="node" aria-label="分店" style="width: 10rem"><option value="">全部分店</option>
+            {% for n in nodes %}<option value="{{ n.uuid }}" {{ 'selected' if node == n.uuid }}>{{ n.name }}</option>{% endfor %}</select>{% endif %}
+        <button class="btn btn-outline-info btn-sm" type="submit">查詢</button>
+        <button class="btn btn-outline-light btn-sm" type="button" data-action="print-page">列印</button>
+    </form>
+    <div class="small text-white-50 mb-3">全店：營業額 ${{ '{:,}'.format(r.store.sales) }}｜作廢 / 退款 {{ r.store.void_rate }}%｜折扣 / 改價 {{ r.store.discount_rate }}%。
+        門檻：高於全店平均 {{ r.cfg.rate_multiple }}% 且超過 作廢 {{ r.cfg.void_rate_limit }}% / 折扣 {{ r.cfg.discount_rate_limit }}%，至少 {{ r.cfg.min_events }} 次；
+        交班短少累計 ≥ ${{ r.cfg.shift_diff_limit }}。{% if node %}(分店篩選時不含交班資料){% endif %}</div>
+    <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="anomalyTable">
+        <thead><tr><th>員工</th><th>異常</th><th class="text-end">訂單 / 營業額</th><th class="text-end">整單作廢</th><th class="text-end">部分退款</th>
+            <th class="text-end">單品作廢</th><th class="text-end">作廢率</th><th class="text-end">手動折扣</th><th class="text-end">改價</th><th class="text-end">折扣率</th>
+            <th class="text-end">交班 (短少 / 溢收)</th></tr></thead>
+        <tbody>
+        {% for s in r.staff %}
+        <tr data-staff="{{ s.name }}" class="{{ 'table-danger' if s.flags }}">
+            <td class="fw-bold">{{ s.name }}</td>
+            <td>{% for f in s.flag_labels %}<span class="badge bg-danger me-1">{{ f }}</span>{% else %}<span class="text-white-50 small">正常</span>{% endfor %}</td>
+            <td class="text-end">{{ s.sales_count }} / ${{ '{:,}'.format(s.sales) }}</td>
+            <td class="text-end">{{ s.cancel_count }} / ${{ s.cancel_amount }}</td>
+            <td class="text-end">{{ s.partial_count }} / ${{ s.partial_amount }}</td>
+            <td class="text-end">{{ s.void_items }}</td>
+            <td class="text-end fw-bold">{{ s.void_rate }}%</td>
+            <td class="text-end">{{ s.discount_count }} / ${{ s.discount_amount }}</td>
+            <td class="text-end">{{ s.override_count }} / ${{ s.override_amount }}</td>
+            <td class="text-end fw-bold">{{ s.discount_rate }}%</td>
+            <td class="text-end">{{ s.shifts }} 班 (-${{ s.shift_short }} / +${{ s.shift_over }})</td>
+        </tr>
+        {% else %}<tr><td colspan="11" class="text-white-50">此期間沒有收銀資料</td></tr>{% endfor %}
+        </tbody>
+    </table></div>
+    <div class="small text-white-50">比例 = 金額 ÷ 該員工經手的營業額 (含之後作廢的訂單)。作廢 / 退款以執行的員工計；異常僅供參考，請搭配稽核紀錄與監視器確認。</div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

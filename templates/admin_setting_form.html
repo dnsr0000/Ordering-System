@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}{{ section.title }} - 系統設定{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="setting-form-page">
+    {{ page_header(section.title, section.icon, section.description) }}
+    {% if section.docs %}
+    <div class="small text-white-50 mb-3">參考文件：
+        {% for label, url in section.docs %}<a href="{{ url }}" target="_blank" rel="noopener noreferrer" class="me-2">{{ label }}</a>{% endfor %}
+    </div>
+    {% endif %}
+    {% if is_node and hq_managed %}
+    <div class="alert {{ 'alert-info' if setting_source == 'hq' else 'alert-warning' if setting_source == 'local' else 'alert-secondary' }} d-flex flex-wrap justify-content-between align-items-center gap-2" id="hqSettingBanner">
+        <div>
+            {% if setting_source == 'hq' %}<i class="bi bi-building me-1"></i>目前使用<strong>總部設定</strong>；在這裡儲存會改為本店自訂。
+            {% elif setting_source == 'local' %}<i class="bi bi-shop me-1"></i>目前為<strong>本店自訂</strong> (不受總部設定影響)。
+            {% else %}<i class="bi bi-info-circle me-1"></i>總部尚未下發此設定，目前使用預設值。{% endif %}
+        </div>
+        {% if setting_source == 'local' %}
+        <form method="POST" class="m-0" data-confirm="改回使用總部設定？本店自訂的內容會刪除。">
+            {{ csrf() }}<input type="hidden" name="action" value="revert_hq">
+            <button type="submit" class="btn btn-sm btn-outline-dark">改回總部設定</button>
+        </form>
+        {% endif %}
+    </div>
+    {% elif is_hub and hq_managed %}
+    <div class="alert alert-info small" id="hqSettingBanner"><i class="bi bi-broadcast me-1"></i>此設定儲存後會下發到所有分店 (分店另外自訂的除外)。</div>
+    {% elif is_node %}
+    <div class="alert alert-secondary small" id="hqSettingBanner"><i class="bi bi-hdd me-1"></i>此設定含金鑰或屬於本機設定，每台主機各自設定，不由總部下發。</div>
+    {% endif %}
+    <form method="POST" class="card rounded-4 p-4" id="settingForm" data-setting-key="{{ section.key }}" autocomplete="off">
+        {{ csrf() }}
+        {% for f in section.fields %}
+        <div class="mb-3 setting-field" data-field="{{ f.name }}">
+            {% if f.type == 'bool' %}
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="f-{{ f.name }}" name="{{ f.name }}" value="1" {{ 'checked' if values[f.name] }}>
+                <label class="form-check-label fw-bold" for="f-{{ f.name }}">{{ f.label }}</label>
+            </div>
+            {% elif f.type == 'multi' %}
+            <div class="fw-bold mb-1">{{ f.label }}</div>
+            <div class="d-flex flex-wrap gap-3">
+                {% for val, text in f.options %}
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="f-{{ f.name }}-{{ loop.index }}" name="{{ f.name }}" value="{{ val }}" {{ 'checked' if val in (values[f.name] or []) }}>
+                    <label class="form-check-label" for="f-{{ f.name }}-{{ loop.index }}">{{ text }}</label>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <label class="form-label fw-bold" for="f-{{ f.name }}">{{ f.label }}</label>
+            {% if f.type == 'select' %}
+            <select class="form-select" id="f-{{ f.name }}" name="{{ f.name }}">
+                {% for val, text in f.options %}<option value="{{ val }}" {{ 'selected' if values[f.name] == val }}>{{ text }}</option>{% endfor %}
+            </select>
+            {% elif f.type == 'textarea' %}
+            <textarea class="form-control" id="f-{{ f.name }}" name="{{ f.name }}" rows="3" placeholder="{{ f.placeholder }}">{{ values[f.name] or '' }}</textarea>
+            {% elif f.type == 'secret' %}
+            <input class="form-control" type="password" id="f-{{ f.name }}" name="{{ f.name }}" autocomplete="new-password"
+                   placeholder="{{ '已設定 (留空保持不變)' if values[f.name] else (f.placeholder or '尚未設定') }}">
+            {% if values[f.name] %}
+            <div class="form-check mt-1">
+                <input class="form-check-input" type="checkbox" id="f-{{ f.name }}-clear" name="{{ f.name }}__clear" value="1">
+                <label class="form-check-label small text-danger" for="f-{{ f.name }}-clear">清除此金鑰</label>
+            </div>
+            {% endif %}
+            {% else %}
+            <input class="form-control" id="f-{{ f.name }}" name="{{ f.name }}"
+                   type="{{ 'number' if f.type in ('int', 'float') else ('time' if f.type == 'time' else ('email' if f.type == 'email' else 'text')) }}"
+                   {% if f.type == 'float' %}step="any"{% endif %}
+                   {% if f.min is not none %}min="{{ f.min }}"{% endif %} {% if f.max is not none %}max="{{ f.max }}"{% endif %}
+                   value="{{ values[f.name] if values[f.name] is not none else '' }}" placeholder="{{ f.placeholder }}">
+            {% endif %}
+            {% endif %}
+            {% if f.help %}<div class="form-text text-white-50">{{ f.help }}</div>{% endif %}
+        </div>
+        {% endfor %}
+        <div class="d-flex gap-2">
+            <button class="btn btn-warning fw-bold text-dark" type="submit"><i class="bi bi-save me-1"></i>儲存</button>
+        </div>
+    </form>
+    {% if can_test %}
+    <form method="POST" action="{{ url_for('settings_admin.test', key=section.key) }}" class="mt-3" id="settingTestForm">
+        {{ csrf() }}
+        <button class="btn btn-outline-info fw-bold" type="submit"><i class="bi bi-plug me-1"></i>以目前儲存的設定測試連線</button>
+        <span class="small text-white-50 ms-2">請先儲存再測試；測試會實際呼叫外部服務 (測試環境)。</span>
+    </form>
+    {% endif %}
+</main>
+{% endblock %}

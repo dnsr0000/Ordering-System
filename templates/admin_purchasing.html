@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}供應商與採購單{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="purchasing-page">
+    {% call page_header('供應商與採購單', 'bi-truck', '低庫存自動產生建議採購單 (依供應商分單、補到目標庫存並進位到採購單位)；收貨時入庫並記錄有效期限') %}
+    <a class="btn btn-outline-light btn-sm fw-bold" href="{{ url_for('inventory.manage') }}">原物料</a>
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('purchasing.forecast') }}">備料預測</a>
+    {% endcall %}
+    <div class="row g-4">
+        <section class="col-xl-7">
+            <div class="card rounded-4 p-3 mb-4">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h2 class="h5 fw-bold text-warning mb-0">建議採購</h2>
+                    <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="suggest">
+                        <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit" id="suggestBtn" {{ 'disabled' if not suggestions }}>建立採購單草稿</button></form>
+                </div>
+                <table class="table table-dark table-sm mb-0" id="suggestTable">
+                    <thead><tr><th>原料</th><th>庫存 / 安全量</th><th>建議採購</th><th>供應商</th></tr></thead>
+                    <tbody>{% for ing, qty in suggestions %}
+                    <tr><td>{{ ing.name }}</td><td class="text-danger">{{ '%g' % ing.stock }} / {{ '%g' % ing.low_threshold }} {{ ing.unit }}</td>
+                        <td class="fw-bold">{{ '%g' % qty }} {{ ing.unit }}</td><td>{{ ing.supplier.name if ing.supplier else '(未指定)' }}</td></tr>
+                    {% else %}<tr><td colspan="4" class="text-center text-white-50">目前沒有低於安全量的原料</td></tr>{% endfor %}</tbody>
+                </table>
+            </div>
+            <div class="card rounded-4 p-3">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <h2 class="h5 fw-bold text-warning mb-0">採購單</h2>
+                    <form method="POST" class="d-flex gap-1">{{ csrf() }}<input type="hidden" name="action" value="new_po">
+                        <select class="form-select form-select-sm" name="supplier_id" aria-label="供應商"><option value="">(不指定供應商)</option>
+                            {% for s in suppliers if s.is_active %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}</select>
+                        <button class="btn btn-outline-warning btn-sm text-nowrap" type="submit">手動新增</button></form>
+                </div>
+                <table class="table table-dark table-sm align-middle mb-0" id="poTable">
+                    <thead><tr><th>單號</th><th>供應商</th><th>品項</th><th>金額</th><th>預計到貨</th><th>狀態</th></tr></thead>
+                    <tbody>{% for o in orders %}{% set lab = labels.get(o.status, (o.status, 'secondary')) %}
+                    <tr><td><a href="{{ url_for('purchasing.po', po_id=o.id) }}">{{ o.number }}</a></td><td>{{ o.supplier.name if o.supplier else '-' }}</td>
+                        <td>{{ o.lines | length }}</td><td>${{ '{:,}'.format(o.total) }}</td><td>{{ o.expected_on or '-' }}</td>
+                        <td><span class="badge bg-{{ lab[1] }}">{{ lab[0] }}</span></td></tr>
+                    {% else %}<tr><td colspan="6" class="text-center text-white-50">尚無採購單</td></tr>{% endfor %}</tbody>
+                </table>
+            </div>
+        </section>
+        <section class="col-xl-5">
+            <div class="card rounded-4 p-3">
+                <h2 class="h5 fw-bold text-warning">供應商</h2>
+                <form method="POST" class="row g-2 mb-3" id="addSupplierForm">{{ csrf() }}<input type="hidden" name="action" value="add_supplier">
+                    <div class="col-6"><input class="form-control form-control-sm" name="name" placeholder="名稱" aria-label="名稱" required></div>
+                    <div class="col-6"><input class="form-control form-control-sm" name="contact" placeholder="聯絡人" aria-label="聯絡人"></div>
+                    <div class="col-6"><input class="form-control form-control-sm" name="phone" placeholder="電話" aria-label="電話"></div>
+                    <div class="col-6"><input class="form-control form-control-sm" name="email" placeholder="Email (送出採購單)" aria-label="Email"></div>
+                    <div class="col-4"><input class="form-control form-control-sm" type="number" min="0" max="60" name="lead_days" value="1" aria-label="到貨天數" title="下單到到貨天數"></div>
+                    <div class="col-5"><input class="form-control form-control-sm" name="note" placeholder="備註" aria-label="備註"></div>
+                    <div class="col-3"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                </form>
+                {% for s in suppliers %}
+                <form method="POST" class="row g-1 mb-2 supplier-row" data-supplier-id="{{ s.id }}">{{ csrf() }}<input type="hidden" name="action" value="edit_supplier"><input type="hidden" name="supplier_id" value="{{ s.id }}">
+                    <div class="col-4"><input class="form-control form-control-sm" name="name" value="{{ s.name }}" aria-label="名稱"></div>
+                    <div class="col-4"><input class="form-control form-control-sm" name="phone" value="{{ s.phone }}" aria-label="電話"></div>
+                    <div class="col-4"><input class="form-control form-control-sm" name="email" value="{{ s.email }}" aria-label="Email"></div>
+                    <div class="col-4"><input class="form-control form-control-sm" name="contact" value="{{ s.contact }}" aria-label="聯絡人"></div>
+                    <div class="col-2"><input class="form-control form-control-sm" type="number" name="lead_days" value="{{ s.lead_days }}" aria-label="到貨天數"></div>
+                    <div class="col-3 d-flex align-items-center"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="sa-{{ s.id }}" {{ 'checked' if s.is_active }}><label class="form-check-label small" for="sa-{{ s.id }}">往來中</label></div></div>
+                    <div class="col-3"><button class="btn btn-outline-light btn-sm w-100" type="submit">儲存</button></div>
+                    <input type="hidden" name="note" value="{{ s.note }}">
+                </form>
+                {% else %}<div class="text-white-50 small">尚未建立供應商；原料可在「原物料」頁指定預設供應商。</div>{% endfor %}
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

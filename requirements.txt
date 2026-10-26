@@ -23,6 +23,8 @@ pandas==3.0.5
 Pillow==12.3.0
 # 桌位點餐 QR code (純 Python，輸出 SVG)
 segno==1.6.6
+# 綠界電子發票 API 的 AES 加解密
+cryptography==50.0.2
 
 # ---- 線上端 (PostgreSQL；本機只用 SQLite 可不裝) ----
 psycopg[binary]==3.3.6

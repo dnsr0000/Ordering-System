@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
     {% block head %}{% endblock %}
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}"{% if device_registered %} data-device="1" data-app-version="{{ app_version }}"{% endif %}>
     {% include "_flashes.html" %}
     {% block content %}{% endblock %}
 
@@ -19,6 +19,7 @@
     {% block page_data %}{% endblock %}
     <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/common.js') }}"></script>
+    {% if device_registered %}<script src="{{ url_for('static', filename='js/device.js') }}"></script>{% endif %}
     {% block scripts %}{% endblock %}
 </body>
 </html>

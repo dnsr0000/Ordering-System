@@ -111,6 +111,18 @@
     backdrop-filter: blur(4px);
 }
 
+.held-badge {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.8rem;
+}
+.held-note {
+    font-size: 0.75rem;
+}
+
 .btn-redeem {
     background: linear-gradient(135deg, #f5b738 0%, #e69c17 100%);
     border: none;
@@ -136,3 +148,7 @@
 #modalItemName {
     overflow-wrap: anywhere;
 }
+
+/* 集點卡 */
+.stamp-dot { font-size: 1.6rem; color: rgba(255, 255, 255, .35); }
+.stamp-dot.stamp-on { color: #ffc107; }

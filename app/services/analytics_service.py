@@ -57,7 +57,7 @@ def build_order_analytics(orders, limit=3):
     for o in valid:
         for i in o.items:
             st = stats.setdefault(i.item_name, {'quantity': 0, 'revenue': 0})
-            qty = i.quantity or 1
+            qty = i.quantity if i.quantity is not None else 1   # 單品作廢後可能為 0
             st['quantity'] += qty
             st['revenue'] += int(i.price or 0) * qty
     top = sorted(stats.items(), key=lambda kv: (kv[1]['quantity'], kv[1]['revenue']), reverse=True)[:limit]

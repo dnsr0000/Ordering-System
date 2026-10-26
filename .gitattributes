@@ -1,0 +1,20 @@
+# 換行：版本庫一律存 LF；取出時依作業系統轉換 (Windows 為 CRLF、Linux 線上主機與 CI 為 LF)。
+# 沒有這個檔案時，CRLF 的工作檔會讓 git 把整個檔案視為已修改，真正的修改被淹沒。
+* text=auto
+
+# 二進位檔不做換行轉換
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.xlsx binary
+*.onnx binary
+*.gguf binary
+*.db binary
+*.zip binary
+*.tgz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

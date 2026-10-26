@@ -136,8 +136,9 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
                         continue
                     if item.item_name not in item_stats:
                         item_stats[item.item_name] = {'qty': 0, 'rev': 0}
-                    item_stats[item.item_name]['qty'] += (item.quantity or 1)
-                    item_stats[item.item_name]['rev'] += ((item.price or 0) * (item.quantity or 1))
+                    qty = item.quantity if item.quantity is not None else 1   # 單品作廢後可能為 0
+                    item_stats[item.item_name]['qty'] += qty
+                    item_stats[item.item_name]['rev'] += (item.price or 0) * qty
 
             sales_data = [
                 {'餐點名稱 (Item Name)': name, '銷售數量 (Qty)': stats['qty'], '創造營收 (Revenue)': stats['rev']}
@@ -291,10 +292,11 @@ def _import_coupons(df):
         return 0
     count = 0
     for _, row in df.iterrows():
+        from app.services.coupon_service import CODE_RE
         code = str(_value(row, 'code') or '').strip().upper()
-        title = str(_value(row, 'title') or '').strip()
-        if not code or not title or code == '目前無資料':
-            continue
+        title = str(_value(row, 'title') or '').strip()[:100]
+        if not code or not title or code == '目前無資料' or not CODE_RE.match(code):
+            continue   # 代碼格式不合 (空白、符號、過短) 的列略過
         dtype = str(_value(row, 'discount_type') or DiscountType.FIXED).strip()
         dtype = dtype if dtype in (DiscountType.FIXED, DiscountType.PERCENT) else DiscountType.FIXED
         points = max(0, safe_int(_value(row, 'reward_points'), 0))

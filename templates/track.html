@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}出餐進度 - {{ shop.name if shop else '' }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
+<link rel="manifest" href="{{ url_for('public.manifest') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 text-center" id="track-page" style="max-width: 480px">
+    <div class="text-white-50 small">{{ shop.name if shop else '' }}</div>
+    <h1 class="h5 fw-bold mb-3">出餐進度</h1>
+    <div class="card rounded-4 p-4 mb-3">
+        <div class="text-white-50 small">取餐號碼</div>
+        <div class="track-number text-warning" id="trackNumber">#{{ '%03d' % data.pickup_number }}</div>
+        <div class="fs-4 fw-bold mt-2" id="trackStatus">{{ data.status_label }}</div>
+        <div class="small text-white-50 mt-1" id="trackHint">頁面會自動更新，餐點完成時會震動與提示</div>
+    </div>
+    <ul class="list-group mb-3 text-start" id="trackItems">
+        {% for it in data['items'] %}
+        <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between">
+            <span>{{ it.name }}</span><span>x{{ it.quantity }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    <div class="text-warning fw-bold mb-3 {{ 'd-none' if not data.delivery_status }}" id="trackDelivery"><i class="bi bi-scooter me-1"></i>外送：<span id="trackDeliveryLabel">{{ data.delivery_label }}</span><span id="trackDriver">{{ (' (' ~ data.driver ~ ')') if data.driver }}</span></div>
+    {% if data.pickup_at %}<div class="text-info fw-bold mb-3" id="trackPickupAt"><i class="bi bi-clock me-1"></i>預約取餐 {{ data.pickup_at }}</div>{% endif %}
+    <button type="button" class="btn btn-outline-warning btn-sm" data-action="enable-notify" id="trackNotifyBtn">
+        <i class="bi bi-bell me-1"></i>開啟完成通知
+    </button>
+    <!-- 餐後評分 (出餐後顯示) -->
+    <section class="card rounded-4 p-3 mt-3 d-none" id="feedbackBox">
+        <div class="fw-bold mb-2" id="feedbackTitle">這次的餐點還滿意嗎？</div>
+        <div class="d-flex justify-content-center gap-1 mb-2 feedback-stars" role="radiogroup" aria-label="評分">
+            {% for n in range(1, 6) %}<button type="button" class="btn btn-outline-warning feedback-star" data-action="rate" data-value="{{ n }}" aria-label="{{ n }} 星">★</button>{% endfor %}
+        </div>
+        <textarea class="form-control form-control-sm mb-2" id="feedbackComment" rows="2" maxlength="500" placeholder="想對我們說的話 (選填)"></textarea>
+        <button type="button" class="btn btn-warning btn-sm fw-bold" data-action="send-feedback" id="feedbackSendBtn" disabled>送出評分</button>
+        <div class="small mt-2" id="feedbackMsg"></div>
+        <a class="btn btn-success btn-sm mt-2 d-none" id="feedbackReview" target="_blank" rel="noopener"><i class="bi bi-google me-1"></i>到 Google 留下評論</a>
+    </section>
+</main>
+{% endblock %}
+{% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/track.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}"></script>{% endblock %}

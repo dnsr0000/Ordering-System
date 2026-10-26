@@ -1,12 +1,13 @@
 import os
 import re
 import secrets
-from datetime import datetime
+import time
+from datetime import date, datetime
 
 from flask import (Blueprint, current_app, flash, g, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_login import current_user, login_user, logout_user
-from sqlalchemy import update
+from sqlalchemy import or_, update
 
 from app.errors import AppError
 from app.extensions import db, ip_key, limiter
@@ -17,7 +18,8 @@ from app.models.order import Order
 from app.models.tenant import StaffAccount, Tenant
 from app.models.user import AdminLog, StaffAuditLog, User
 from app.routes.sync_admin import node_name_map
-from app.services import ai_service, analytics_service, backup_service, excel_service, menu_service
+from app.services import (ai_service, analytics_service, backup_service, coupon_service, excel_service, line_service,
+                          menu_service, wallet_service)
 from app.services.audit import record_staff_audit
 from app.services import auth_throttle
 from app.services.auth_throttle import clear_pin_lockout
@@ -29,6 +31,7 @@ from app.services.upload_paths import remove_upload, upload_file_path
 from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, is_platform_admin, is_weak_pin,
                        platform_admin_required, role_required, safe_int, validate_phone, validate_pin)
 
+MEMBER_PAGE_SIZE = 50
 admin_bp = Blueprint('admin', __name__)
 MANAGERS = ('owner', 'manager')
 STAFF_ROLES = {'manager', 'staff', 'kitchen'}
@@ -59,9 +62,6 @@ def _menu_item_form_data(item):
     }
 
 
-def _user_coupon_row(uc):
-    """會員持券列 (後台票券管理視窗與 toggle_user_coupon 回應共用)"""
-    return dict(uc.to_dict(), title=uc.coupon.title if uc.coupon else '優惠券')
 
 
 def _analytics(orders, limit):
@@ -89,7 +89,16 @@ def admin_dashboard():
     orders = analytics_service.load_dashboard_orders()
     start, _end = todays_range()
     items = MenuItem.query.all()
-    users = User.query.order_by(User.id).all()
+    # 會員名冊分頁 + 搜尋 (會員數上千時不再一次載入全部；持券於開啟票券視窗時才載入)
+    member_q = (request.args.get('uq') or '').strip()[:50]
+    users_query = User.query
+    if member_q:
+        like = f'%{member_q}%'
+        users_query = users_query.filter(or_(User.name.like(like), User.phone.like(like)))
+    member_total = users_query.count()
+    member_pages = max(1, -(-member_total // MEMBER_PAGE_SIZE))
+    member_page = min(max(1, request.args.get('up', 1, type=int)), member_pages)
+    users = users_query.order_by(User.id.desc()).offset((member_page - 1) * MEMBER_PAGE_SIZE).limit(MEMBER_PAGE_SIZE).all()
     member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
     return render_template(
         'admin.html',
@@ -102,7 +111,14 @@ def admin_dashboard():
         # 只顯示實際存在的會員照片 (檔案遺失時改顯示預設圖，避免瀏覽器出現 404)
         member_photo_ids={u.id for u in users if os.path.isfile(upload_file_path(member_dir, u.photo_path) or '')},
         admin_menu_items=[_menu_item_form_data(i) for i in items],
-        admin_user_coupons={u.id: [_user_coupon_row(uc) for uc in sorted(u.user_coupons, key=lambda c: c.id)] for u in users},
+        coupon_counts={u.id: coupon_service.unused_count(u) for u in users},
+        member_q=member_q, member_page=member_page, member_pages=member_pages, member_total=member_total,
+        coupon_batches=coupon_service.recent_batches(g.tenant_id),
+        coupon_targets=coupon_service.TARGET_LABELS,
+        member_tiers=wallet_service.tiers(g.tenant_id),
+        line_push_ready=line_service.messaging_enabled(),
+        coupon_history_days=coupon_service.HISTORY_DAYS,
+        today=date.today(),
         analytics=_analytics(orders, limit),
         current_limit=limit,
         reward_setting=get_or_create_reward_setting(g.tenant_id),
@@ -133,6 +149,20 @@ def _staff_login():
         flash('❌ 帳號或密碼錯誤！', 'danger')
         return render_template('admin.html', is_admin=False), 401
     auth_throttle.clear_keys(keys['device'], keys['account'])
+    if staff.totp_enabled:   # 兩步驟驗證：密碼正確後再輸入驗證 App 的 6 位數
+        from app.services import security_service
+        tenant_id = session.get('tenant_id')
+        session.clear()
+        if tenant_id is not None:
+            session['tenant_id'] = tenant_id
+        session[security_service.PENDING_KEY] = {'id': staff.id, 'v': staff.session_version, 'at': time.time()}
+        return redirect(url_for('security.two_factor'))
+    return complete_staff_login(staff)
+
+
+def complete_staff_login(staff):
+    """帳密 (與兩步驟驗證) 通過後：換新的工作階段並記錄登入"""
+    from app.services import security_service
     # 換新的工作階段：清掉登入前的顧客 / 其他員工資料，只保留目前店家
     tenant_id = session.get('tenant_id')
     session.clear()
@@ -140,6 +170,7 @@ def _staff_login():
         session['tenant_id'] = tenant_id
     login_user(staff)
     session.permanent = True
+    security_service.start_session(staff)
     log = AdminLog(tenant_id=staff.tenant_id, username=staff.username, login_at=datetime.now(),
                    ip_address=request.remote_addr or '')
     g.tenant_id = staff.tenant_id
@@ -154,7 +185,9 @@ def admin_logout():
     log = db.session.get(AdminLog, session.get('admin_log_id') or 0)
     if log is not None and not log.logout_at:
         log.logout_at = datetime.now()
-        db.session.commit()
+    from app.services import security_service
+    security_service.end_current_session()
+    db.session.commit()
     logout_user()
     tenant_id = session.get('tenant_id')
     session.clear()
@@ -198,8 +231,11 @@ def tenant_register():
 @role_required('owner')
 def staff_accounts():
     if request.method == 'GET':
+        from app.models.enums import PERMISSIONS, ROLE_DEFAULT_PERMISSIONS
         accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id, deleted_at=None).order_by(StaffAccount.id).all()
-        return render_template('staff_accounts.html', accounts=accounts, tenant=g.tenant, current_staff_id=current_user.id)
+        return render_template('staff_accounts.html', accounts=accounts, tenant=g.tenant, current_staff_id=current_user.id,
+                               permissions=PERMISSIONS,
+                               role_defaults={k: sorted(v) for k, v in ROLE_DEFAULT_PERMISSIONS.items()})
 
     back = url_for('admin.staff_accounts')
     action = request.form.get('action', 'create')
@@ -232,6 +268,31 @@ def staff_accounts():
         acc.set_password(new_pwd)
         record_staff_audit('STAFF_RESET_PASSWORD', details=f"重設員工帳號密碼：{acc.username}")
         flash(f'✅ 已成功重設員工【{acc.username}】的密碼！', 'success')
+    elif action == 'logout_all':
+        from app.services import security_service
+        security_service.logout_everywhere(acc, f'由 {current_user.username} 強制登出')
+        record_staff_audit('STAFF_LOGOUT_ALL', details=f"強制登出員工 {acc.username} 的所有裝置")
+        flash(f'✅【{acc.username}】已在所有裝置登出', 'success')
+    elif action == 'reset_2fa':
+        if acc.role == 'owner':
+            raise AppError('❌ 負責人帳號的兩步驟驗證請以備用碼登入後自行重設', 403, redirect_to=back)
+        acc.totp_secret, acc.totp_enabled, acc.totp_backup_codes, acc.totp_last_counter = '', False, '[]', 0
+        record_staff_audit('STAFF_2FA_RESET', details=f"重設員工 {acc.username} 的兩步驟驗證")
+        flash(f'✅ 已重設【{acc.username}】的兩步驟驗證', 'success')
+    elif action == 'permissions':
+        from app.models.enums import PERMISSIONS
+        perms = sorted({p for p in request.form.getlist('perm') if p in PERMISSIONS})
+        before = acc.permissions or ''
+        acc.permissions = ','.join(perms)
+        record_staff_audit('STAFF_PERMISSIONS', details=f"員工 {acc.username} 額外權限：{before or '無'} → {acc.permissions or '無'}")
+        flash(f'✅ 已更新【{acc.username}】的權限', 'success')
+    elif action == 'wage':
+        wage = safe_int(request.form.get('hourly_wage'), 0)
+        if not 0 <= wage <= 100000:
+            raise AppError('時薪需介於 0 ~ 100,000', redirect_to=back)
+        acc.hourly_wage = wage
+        record_staff_audit('STAFF_WAGE', details=f"設定員工 {acc.username} 時薪 ${wage}")
+        flash(f'✅ 已設定【{acc.username}】時薪 ${wage}', 'success')
     elif action == 'delete_account':
         # 軟刪除：保留帳號列 (稽核可追溯、id 不重用)，立即停用、使密碼失效並釋出帳號名稱
         record_staff_audit('STAFF_DELETE_ACCOUNT', details=f"刪除員工帳號：{acc.username} ({acc.role})，帳號ID={acc.id}")
@@ -345,9 +406,10 @@ def remove_reward_item(id):
 # ==============================================================================
 def _apply_coupon_form(coupon):
     code = request.form.get('code', '').strip().upper()
-    title = (request.form.get('title') or '').strip()
+    title = (request.form.get('title') or '').strip()[:100]
     if not code or not title:
         raise AppError('❌ 請輸入優惠券名稱與代碼！')
+    code = coupon_service.validate_code(code)
     if Coupon.query.filter(Coupon.code == code, Coupon.id != coupon.id).first():
         raise AppError('❌ 代碼已被使用！')
     if coupon.id is not None and coupon.code != code:  # 改代碼時一併更新會員已領取的券
@@ -360,13 +422,28 @@ def _apply_coupon_form(coupon):
     coupon.min_spend = max(0, safe_int(request.form.get('min_spend'), 0))
     coupon.reward_points = max(0, safe_int(request.form.get('reward_points'), 0))
     coupon.reward_discount_points = max(0, safe_int(request.form.get('reward_discount_points'), 0)) if coupon.reward_points else 0
+    coupon.member_only = bool(request.form.get('member_only'))
+    if coupon.member_only:   # 會員專屬券只能發放，不在紅利商城兌換
+        coupon.reward_points = coupon.reward_discount_points = 0
     coupon.is_reward = coupon.reward_points > 0
     coupon.per_user_limit = excel_service.parse_per_user_limit(request.form.get('per_user_limit'))
+    coupon.valid_from = coupon_service.parse_date(request.form.get('valid_from'))
+    coupon.valid_until = coupon_service.parse_date(request.form.get('valid_until'))
+    if coupon.valid_from and coupon.valid_until and coupon.valid_until < coupon.valid_from:
+        raise AppError('❌ 活動結束日不可早於開始日！')
+    coupon.valid_days = min(3650, max(0, safe_int(request.form.get('valid_days'), 0)))
+    coupon.login_required = bool(request.form.get('login_required'))
+    coupon.uses_per_member = min(1000, max(0, safe_int(request.form.get('uses_per_member'), 0)))
+    coupon.max_discount = min(1000000, max(0, safe_int(request.form.get('max_discount'), 0)))
+    if coupon.discount_type == DiscountType.FIXED and coupon.discount_value <= 0:
+        raise AppError('❌ 折抵金額必須大於 0！')
     return coupon
 
 
 def _coupon_desc(c):
-    return f"{c.title} ({c.code}，{c.discount_label}，門檻${c.min_spend}，兌換點數:{c.reward_points})"
+    kind = '會員專屬' if c.member_only else f'兌換點數:{c.reward_points}'
+    limits = f"，限制:{c.usage_label}" if c.usage_label else ''
+    return f"{c.title} ({c.code}，{c.discount_label}，門檻${c.min_spend}，{kind}，期限:{c.period_label}{limits})"
 
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
@@ -469,6 +546,62 @@ def edit_user(id):
     return redirect(_dashboard('users'))
 
 
+@admin_bp.route('/admin/coupons/<int:coupon_id>/issue', methods=['POST'], endpoint='issue_coupon')
+@role_required(*MANAGERS)
+def issue_coupon(coupon_id):
+    """批量發放會員券"""
+    coupon = db.session.get(Coupon, coupon_id)
+    if coupon is None or coupon.tenant_id != g.tenant_id:
+        raise AppError('查無此優惠券', 404)
+    f = request.form
+    users, desc, missing = coupon_service.resolve_targets(g.tenant_id, f.get('target'), safe_int(f.get('tier_id'), 0),
+                                                          f.get('phones'))
+    expire_mode = f.get('expire_mode') or 'coupon'
+    expires_on = coupon_service.parse_date(f.get('expires_on')) if expire_mode == 'date' else None
+    if expire_mode == 'date' and expires_on is None:
+        raise AppError('❌ 請選擇到期日', redirect_to=_dashboard('rewards'))
+    valid_days = max(1, safe_int(f.get('valid_days'), 0)) if expire_mode == 'days' else None
+    result = coupon_service.issue(g.tenant_id, coupon, users, safe_int(f.get('quantity'), 1), expires_on=expires_on,
+                                  valid_days=valid_days, staff=current_user.username)
+    until = f"，到期 {result['expires_at']:%Y/%m/%d}" if result['expires_at'] else '，無到期日'
+    record_staff_audit('COUPON_ISSUE', details=f"批量發放「{coupon.title}」({coupon.code}) 給{desc}：{result['members']} 位會員共 "
+                                               f"{result['issued']} 張{until}；超過每人上限略過 {len(result['skipped'])} 位；"
+                                               f"批次 {result['batch_id'][:8]}")
+    db.session.commit()
+    notified = 0
+    if f.get('notify_line') and result['issued']:
+        notified = coupon_service.notify_line(g.tenant_id, result['user_ids'], coupon, result['expires_at'])
+    msg = f"✅ 已發放「{coupon.title}」給 {result['members']} 位會員，共 {result['issued']} 張{until}"
+    if result['skipped']:
+        msg += f"；{len(result['skipped'])} 位已達每人上限未發放"
+    if missing:
+        msg += f"；找不到會員的手機：{'、'.join(missing[:10])}{' 等' if len(missing) > 10 else ''}"
+    if notified:
+        msg += f"；已 LINE 通知 {notified} 位"
+    flash(msg, 'success' if result['issued'] else 'warning')
+    return redirect(_dashboard('rewards'))
+
+
+@admin_bp.route('/admin/coupon_batches/<batch_id>/revoke', methods=['POST'], endpoint='revoke_coupon_batch')
+@role_required(*MANAGERS)
+def revoke_coupon_batch(batch_id):
+    """撤回一次發放中尚未使用的券 (發錯對象時使用；已使用的保留)"""
+    n = coupon_service.revoke_batch(g.tenant_id, str(batch_id)[:36])
+    record_staff_audit('COUPON_REVOKE', details=f'撤回批次 {str(batch_id)[:8]} 尚未使用的會員券 {n} 張')
+    db.session.commit()
+    flash(f'✅ 已撤回 {n} 張尚未使用的券 (已使用的保留)', 'success')
+    return redirect(_dashboard('rewards'))
+
+
+@admin_bp.route('/admin/users/<int:user_id>/coupons', endpoint='user_coupons')
+@role_required(*MANAGERS)
+def user_coupons(user_id):
+    """會員票券視窗的資料 (開啟時才載入)"""
+    user = db.get_or_404(User, user_id)
+    return jsonify({'success': True, 'user_name': user.name, 'coupons': coupon_service.admin_view(user),
+                    'unused': coupon_service.unused_count(user)})
+
+
 @admin_bp.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
 @role_required(*MANAGERS)
 def toggle_user_coupon(uc_id):
@@ -478,9 +611,9 @@ def toggle_user_coupon(uc_id):
     record_staff_audit('TOGGLE_USER_COUPON', target_user_id=uc.user_id,
                        details=f"手動將會員券 {uc.code} (持券 #{uc.id}) 切換為「{'已使用' if uc.is_used else '未使用'}」")
     db.session.commit()
-    coupons = UserCoupon.query.filter_by(user_id=uc.user_id).order_by(UserCoupon.id).all()
+    db.session.refresh(uc.user)
     return jsonify({'success': True, 'user_name': uc.user.name if uc.user else '',
-                    'coupons': [_user_coupon_row(c) for c in coupons]})
+                    'coupons': coupon_service.admin_view(uc.user), 'unused': coupon_service.unused_count(uc.user)})
 
 
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])

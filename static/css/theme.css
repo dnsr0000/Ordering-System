@@ -80,3 +80,68 @@ select option {
 @media print {
     .flash-stack { display: none; }
 }
+
+/* 斷線提示 (common.js) */
+.offline-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3000; text-align: center; padding: .4rem;
+    background: #b02a37; color: #fff; font-weight: 700; }
+
+/* 大字 / 高對比模式 (點餐頁「大字」按鈕，見 common.js) */
+html.a11y-large { font-size: 125%; }
+html.a11y-large body { line-height: 1.6; }
+html.a11y-large .text-white-50, html.a11y-large .text-muted, html.a11y-large .text-secondary { color: #fff !important; opacity: 1 !important; }
+html.a11y-large .btn { min-height: 48px; font-weight: 700; }
+html.a11y-large .form-control, html.a11y-large .form-select { min-height: 48px; font-size: 1.1rem; }
+html.a11y-large .badge { font-size: .95em; }
+html.a11y-large .menu-row .card, html.a11y-large .modal-content { border: 2px solid #ffc107 !important; }
+html.a11y-large :focus-visible { outline: 4px solid #ffc107 !important; outline-offset: 2px; }
+.a11y-toggle[aria-pressed="true"] { background: #ffc107; color: #000; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+
+/* 點餐機待機輪播 */
+.attract-overlay { position: fixed; inset: 0; z-index: 2000; background: #0b0d10; color: #fff; display: flex;
+    flex-direction: column; align-items: center; justify-content: center; cursor: pointer; text-align: center; }
+.attract-overlay .attract-img { max-width: 70vw; max-height: 55vh; object-fit: cover; border-radius: 1.5rem;
+    box-shadow: 0 0 60px rgba(255, 193, 7, .25); }
+.attract-overlay .attract-name { font-size: 3rem; font-weight: 800; margin-top: 1.5rem; }
+.attract-overlay .attract-price { font-size: 2.2rem; color: #ffc107; font-weight: 700; }
+.attract-overlay .attract-message { position: absolute; bottom: 6vh; font-size: 2rem; animation: attract-pulse 2s infinite; }
+@keyframes attract-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+/* ---------------------------------------------------------------- 桌位平面圖 (floor-plan.js) */
+.fp-canvas {
+    position: relative; width: 100%; aspect-ratio: 16 / 10; border-radius: 12px;
+    border: 1px dashed rgba(255, 255, 255, .25); overflow: hidden;
+    background-color: #161a22;
+    background-image: linear-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(255, 255, 255, .05) 1px, transparent 1px);
+    background-size: 5% 8%;
+}
+.fp-tray { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.fp-table {
+    width: 9%; min-width: 64px; aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 2px; color: #fff; background: #2b3240; border: 2px solid #6c757d;
+    border-radius: 10px; text-align: center; line-height: 1.15; user-select: none; touch-action: none; cursor: pointer;
+}
+.fp-canvas .fp-table { position: absolute; }
+.fp-tray .fp-table { position: relative; }
+.fp-round { border-radius: 50%; }
+.fp-long { aspect-ratio: 2 / 1; width: 15%; }
+.fp-name { font-weight: 700; font-size: .95rem; }
+.fp-meta { font-size: .7rem; opacity: .85; }
+.fp-edit { cursor: grab; border-color: #0dcaf0; }
+.fp-dragging { cursor: grabbing; opacity: .8; z-index: 5; box-shadow: 0 0 0 3px rgba(13, 202, 240, .5); }
+.fp-free { border-color: #198754; }
+.fp-occupied { border-color: #ffc107; background: #4a3d12; }
+.fp-calling { border-color: #dc3545; background: #4a1820; animation: fp-blink 1.2s infinite; }
+.fp-reserved { border-color: #0dcaf0; background: #10333d; }
+@keyframes fp-blink { 50% { box-shadow: 0 0 0 4px rgba(220, 53, 69, .45); } }
+@media (prefers-reduced-motion: reduce) { .fp-calling { animation: none; } }
+.fp-legend { border: 2px solid; color: #fff; }
+
+/* 裝置遠端鎖定 (static/js/device.js) */
+.device-lock { position: fixed; inset: 0; z-index: 3000; background: rgba(0, 0, 0, .94); color: #fff; display: flex;
+               align-items: center; justify-content: center; text-align: center; padding: 2rem; }
+.device-lock-icon { font-size: 4rem; }
+.device-lock-text { font-size: 1.6rem; font-weight: 700; margin-top: 1rem; }

@@ -39,6 +39,25 @@
         el.innerHTML = render(content);
     }
 
+    /**
+     * 關閉 Bootstrap 視窗後再執行 fn (例如接著開下一個視窗)。視窗還在開啟動畫中時 hide() 會被 Bootstrap 略過，
+     * 因此同時等「開啟完成」再關一次 (手指點太快時不會卡住)；關閉後移除這個等待，不影響下一次開啟。
+     */
+    function hideModalThen(el, fn) {
+        if (!el.classList.contains('show')) {
+            fn();
+            return;
+        }
+        const inst = window.bootstrap.Modal.getOrCreateInstance(el);
+        const onShown = () => inst.hide();
+        el.addEventListener('shown.bs.modal', onShown, { once: true });
+        el.addEventListener('hidden.bs.modal', () => {
+            el.removeEventListener('shown.bs.modal', onShown);
+            fn();
+        }, { once: true });
+        inst.hide();
+    }
+
     // ---------------------------------------------------------------- API
     class ApiError extends Error {
         constructor(message, status, data) {
@@ -116,11 +135,18 @@
      * 訂單有變動時呼叫 callback (建立、狀態變更、取消)。
      * EventSource 斷線會自動重連；切回分頁時也會重新整理一次，避免背景期間漏掉更新。
      */
-    function onOrdersChanged(callback) {
+    function onOrdersChanged(callback, { minIntervalMs = 1000 } = {}) {
+        // 短時間內多個事件合併成一次重新整理；尖峰時段連續有訂單時每個畫面最多每秒重新抓一次
+        // (舊做法每來一個事件就重新計時，事件不斷時會一直不更新，畫面多時也會放大伺服器負載)
         let pending = null;
-        const trigger = () => {           // 短時間內多個事件合併成一次重新整理
-            clearTimeout(pending);
-            pending = setTimeout(callback, 150);
+        let last = 0;
+        const trigger = () => {
+            if (pending) return;
+            pending = setTimeout(() => {
+                pending = null;
+                last = Date.now();
+                callback();
+            }, Math.max(150, last + minIntervalMs - Date.now()));
         };
         const source = new EventSource('/api/orders_stream');
         source.onmessage = trigger;
@@ -143,6 +169,7 @@
             clearTimeout(timer);
             timer = setTimeout(() => {
                 try { if (beforeLogout) beforeLogout(); } catch (err) { /* 不影響登出 */ }
+                setA11y(false);   // 下一位顧客回到一般字體
                 // 登出只接受 POST (避免其他網站以連結或圖片讓顧客被登出)
                 fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken() }, credentials: 'same-origin' })
                     .catch(() => {})
@@ -152,6 +179,23 @@
         ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach((e) => document.addEventListener(e, reset, { passive: true }));
         reset();
     }
+
+    // ---------------------------------------------------------------- 大字 / 高對比模式
+    // 按鈕 data-action="toggle-a11y"；只記在這個分頁 (sessionStorage)，點餐機閒置登出時還原
+    const A11Y_KEY = 'kiosk-a11y';
+
+    function setA11y(on) {
+        document.documentElement.classList.toggle('a11y-large', on);
+        document.querySelectorAll('[data-action="toggle-a11y"]').forEach((b) => b.setAttribute('aria-pressed', on ? 'true' : 'false'));
+        try { sessionStorage.setItem(A11Y_KEY, on ? '1' : '0'); } catch (err) { /* 瀏覽器不允許儲存時只影響本頁 */ }
+    }
+
+    try { if (sessionStorage.getItem(A11Y_KEY) === '1') document.documentElement.classList.add('a11y-large'); } catch (err) { /* 略過 */ }
+    document.addEventListener('DOMContentLoaded', () => setA11y(document.documentElement.classList.contains('a11y-large')));
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('[data-action="toggle-a11y"]');
+        if (btn) setA11y(!document.documentElement.classList.contains('a11y-large'));
+    });
 
     // ---------------------------------------------------------------- 圖片備援
     // <img data-fallback="/static/img/placeholder.svg">：檔案遺失時改用預設圖 (取代 onerror 屬性)
@@ -167,6 +211,27 @@
         });
     });
 
+    // ---------------------------------------------------------------- 斷線提示
+    // 網路中斷時在畫面底部顯示提示 (點餐、結帳需要連線)；恢復後自動隱藏
+    function updateOnlineBanner() {
+        let banner = document.getElementById('kiosk-offline-banner');
+        if (navigator.onLine) {
+            if (banner) banner.remove();
+            return;
+        }
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'kiosk-offline-banner';
+            banner.className = 'offline-banner';
+            banner.setAttribute('role', 'alert');
+            banner.textContent = '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳';
+            document.body.appendChild(banner);
+        }
+    }
+    window.addEventListener('online', updateOnlineBanner);
+    window.addEventListener('offline', updateOnlineBanner);
+    document.addEventListener('DOMContentLoaded', updateOnlineBanner);
+
     // ---------------------------------------------------------------- 其他
     function newOrderId() {
         if (global.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -180,5 +245,5 @@
         return `$${Math.round(Number(value) || 0).toLocaleString('zh-TW')}`;
     }
 
-    global.Kiosk = { html, setHtml, escapeHtml, api, ApiError, csrfToken, pageData, on, onOrdersChanged, startClock, idleLogout, newOrderId, money };
+    global.Kiosk = { html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, on, onOrdersChanged, startClock, idleLogout, newOrderId, money };
 })(window);

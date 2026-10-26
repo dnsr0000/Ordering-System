@@ -7,6 +7,12 @@
         <i class="bi bi-check-circle-fill text-success display-3"></i>
         <h1 class="h4 fw-bold mt-3">付款完成</h1>
         <p class="text-secondary">訂單已送到取餐分店，分店確認後會顯示取餐號碼，可在「我的訂單」查看。</p>
+        {% elif order.payment_status == 'pending' and order.payment_note %}
+        <i class="bi bi-bank text-info display-3"></i>
+        <h1 class="h4 fw-bold mt-3">等待繳費</h1>
+        <p class="fs-5 fw-bold" id="payment-info">{{ order.payment_note }}</p>
+        <p class="text-secondary">請於 {{ order.payment_due_at.strftime('%Y/%m/%d %H:%M') if order.payment_due_at else '期限' }} 前完成繳費 (金額 ${{ order.total_price }})，
+            繳費完成後訂單會自動送到取餐分店；逾期未繳訂單自動取消。</p>
         {% elif order.payment_status == 'pending' %}
         <i class="bi bi-hourglass-split text-warning display-3"></i>
         <h1 class="h4 fw-bold mt-3">尚未收到付款結果</h1>

@@ -63,6 +63,12 @@
 
 7. 備份
    注意：後台的「整庫備份/還原」只支援 SQLite，線上端請用以下方式。
+   (0) 自動備份 (docker-compose.yml 的 backup 服務，預設啟用)：每天 BACKUP_AT (預設 03:30) 以 pg_dump 備份到
+       volume kiosk-hub_pg_backups，保留 BACKUP_KEEP_DAYS 天 (預設 14)；在 .env.hub 調整。
+         docker compose exec backup ls -l /backups                    查看備份檔
+         docker compose exec backup pg_restore_check.sh              還原演練：把最新備份還原到暫存資料庫並比對筆數
+         docker compose cp backup:/backups/<檔名> ./                   複製到主機 (請再複製一份到其他主機或雲端)
+       上傳檔 (照片) 不在自動備份內，請依 (2) 另外備份。以下 (1)~(4) 為手動方式。
    (1) 資料庫 (pg_dump 自訂格式，可選擇性還原)：
      mkdir -p backups
      docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > backups/kiosk-$(date +%F).dump
@@ -96,6 +102,8 @@
      會一直占用一條執行緒，每個 worker 最多 85 條 SSE，請勿低於 100。
    - 每個 worker 最多約 15 條資料庫連線，worker 數 × 15 不可超過 PostgreSQL 的 max_connections (預設 100)。
    - gunicorn 的 timeout 是 worker 心跳逾時，不會中斷 SSE 長連線 (說明見 deploy/gunicorn.conf.py)。
+   - 背景排程 (自動行銷、Webhook、每日工作) 每個 worker 都會啟動，但同一時間只有一個「排程主控」執行
+     (資料庫租約 30 秒，主控 worker 重啟時由其他 worker 接手)，不會重複發券、推播或送 Webhook。
 
 10. 疑難排解
    - https://網域/ 顯示 502：app 尚未啟動完成或啟動失敗，查看 docker compose logs app。
@@ -103,6 +111,32 @@
    - 憑證申請失敗：確認 DNS 已指向本機、80/443 可從外部連入，查看 docker compose logs caddy。
    - 時間不對：docker compose exec app date 應顯示 CST (台灣時間)。
    - 進入容器執行指令：docker compose exec app flask --app run db current
+
+11. 負載測試 (上線前、或調整 GUNICORN_WORKERS / 主機規格時；勿對正式資料庫執行)
+   tests/load_gunicorn_pg.py 模擬尖峰時段：點餐機訪客 (瀏覽菜單 → 結帳，部分搶同一個限量餐點)、POS 收銀員、
+   廚房出餐、員工 SSE 長連線、外部系統以 API 金鑰 cursor 追蹤訂單；每位虛擬使用者以不同的 X-Forwarded-For 來源 IP
+   (不會被每 IP 頻率限制擋下)，結束後列出各端點延遲並檢查一致性。
+   a. 準備一個測試用的線上端 (新的 PostgreSQL 資料庫、Redis、TRUSTED_PROXY_COUNT=1、GUNICORN_WORKERS=4)，
+      docker compose exec app flask --app run demo seed --days 14 --password LoadTest!2026
+   b. 在另一台電腦 (避免與伺服器搶 CPU) 執行：
+      python tests/load_gunicorn_pg.py --url https://測試網域 --password LoadTest!2026 \
+          --kiosks 20 --cashiers 3 --kitchens 2 --sse 20 --duration 90 --database-url postgresql://...
+      (--database-url 可連到測試資料庫時才會做「不遺失 / 不重複 / 不超賣 / 取餐號 / 收款紀錄 / 排程主控」檢查)
+   c. 全部顯示 ✔ 才算通過；結束代碼 0 = 通過。
+   參考結果 (2026-10-26，2 vCPU / 8 GB 一台機器同時跑 PostgreSQL 16、Redis、gunicorn 4 worker × 128 執行緒與負載產生器)：
+   - 一般尖峰 (20 台點餐機 + 3 台 POS + 2 台廚房 + 20 條 SSE，90 秒)：576 張訂單 (6.3 張 / 秒、約 2.3 萬張 / 小時)；
+     點餐機結帳 p50 80 ms / p95 345 ms、菜單頁 p50 35 ms / p95 137 ms、POS 結帳 p50 77 ms / p95 209 ms、
+     廚房看板 p50 30 ms / p95 64 ms、POS 當日訂單 p50 76 ms / p95 249 ms；每個 worker 記憶體約 230 MB。
+   - 壓力 (60 台點餐機 + 6 台 POS + 2 台廚房 + 40 條 SSE，120 秒，CPU 滿載)：1267 張訂單 (10.2 張 / 秒)；
+     結帳 p50 1.7 s / p95 5.5 s (CPU 不足排隊)，沒有任何 5xx；每個 worker 記憶體約 330~360 MB (多次測試後持平，無洩漏)。
+   - 兩種情境的一致性檢查全部通過：成功回應的訂單都在資料庫且沒有重複建單、限量餐點剛好賣完不超賣、取餐號不重複、
+     每張訂單都有收款紀錄、多 worker 只有一個排程主控、每條 SSE 都收到其他 worker 的訂單通知 (Redis)、
+     對外 API cursor 沒有漏掉任何訂單。廚房兩台同時按出餐時，後到的回 409 (預期行為，畫面會重新整理)。
+   - 依測試結果的調整：order.pickup_at 加索引 (遷移 0023；訂單 40 萬筆時「今天的訂單」查詢 30 ms → 0.2 ms)；
+     看板 / POS 收到訂單通知後最多每秒重新抓一次 (尖峰時不會因連續通知而一直不更新，也不會放大伺服器負載)。
+   - 容量建議：結帳在同一家店依序取號 (取號到提交為同一筆交易)，單店每秒約 10 張以上需要更多 CPU；
+     一般門市 / 多分店線上端 2 vCPU、GUNICORN_WORKERS=2~4 即足夠。當天訂單超過約 3000 張時 POS「當日訂單」一次約 4 MB、0.4 秒，
+     如有這種量級請告知 (可改為分頁或只抓異動)。綠界測試環境本次無法連線 (網路政策封鎖)，付款流程以模擬通知測試 (第五節)。
 
 
 二、本機門市端部署 (Windows)
@@ -134,11 +168,19 @@
    (B) 工作排程器：建立工作 →「不論使用者登入與否均執行」、「以最高權限執行」；
        觸發程序「啟動時」；動作「啟動程式」C:\kiosk\venv\Scripts\python.exe，
        引數 serve_windows.py，開始位置 C:\kiosk；設定頁勾選「如果工作失敗，重新啟動間隔 1 分鐘」。
+   (C) 內附腳本 (最簡單)：以系統管理員身分開啟 PowerShell，在專案資料夾執行
+         powershell -ExecutionPolicy Bypass -File deploy\windows\install_autostart.ps1
+       會建立開機啟動工作 KioskPOS-Server (執行 deploy\windows\start_store.cmd：先校時再啟動，失敗每分鐘重試，
+       記錄檔 database\server.log)，並把 Windows 校時伺服器設為 time.stdtime.gov.tw、每天 05:00 再校時一次。
    - 防火牆只對「私人網路」開放 5000 埠給店內其他平板 / KDS 螢幕使用，不要直接開放到網際網路。
    - 電源選項設定「永不睡眠」，避免營業中伺服器休眠。
 
 3. 定期備份 database/ 與 uploads/
-   - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。建議：
+   - 系統內建每日自動備份 (後台「系統設定 → 自動備份」設定時間與保留天數，預設 03:30、保留 14 天)：
+     一致性快照壓縮成 database\backups\menu-日期.zip，後台「系統監控」(/admin/system) 可查看、立即備份、下載。
+     備份仍在同一台電腦，請另外複製到其他磁碟 / 雲端 (例如把 database\backups 設為雲端同步資料夾)。
+     上傳檔 (照片) 不在自動備份內。
+   - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。其他方式：
      (1) 後台「整庫備份」(平台管理者)：一次下載資料庫 + 上傳檔的壓縮檔，適合手動備份。
      (2) 排程自動備份：建立 C:\kiosk\backup.bat，內容例如：
            @echo off
@@ -222,17 +264,40 @@
 [ ] 門市電腦已開啟自動校時
 [ ] 以手機實際走一次線上點餐 → 門市廚房看板出現 → 出餐 → 線上看到狀態，並測試取消後庫存與點數回補
 [ ] 拔掉門市網路線測試：門市照常點餐/結帳；接回後「同步狀態」無錯誤、待上傳筆數歸零
+[ ] 多分店叫貨 / 調撥：各店原料名稱要一致 (依名稱對應)；總部中央廚房的原料建立在線上端後台「原物料與配方」。
+    分店價格 / 上下架在線上端設定，分店約 20 秒內套用 (分店離線時於恢復連線後套用)
 [ ] 後台建立正式使用的員工帳號 (owner / manager / staff / kitchen)，停用或刪除測試帳號
 [ ] 升級舊版門市：先 pip uninstall -y opencv-python，再 pip install -r requirements.txt
 
 業務 / 法規面
 [ ] 線上付款 (見第五節)：目前預設為綠界「測試環境」。正式收款前需向綠界申請正式特店 (需公司/商號資料)，
     設定 ECPAY_STAGE=0 與正式的 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV，並用小額真卡測試一次
-[ ] 退款：後台訂單出現「需退款」(取消後才收到付款) 時，到綠界廠商後台辦理退刷 (程式未串接退款 API)
+[ ] 訂位訂金：門市主機要能從外部以 HTTPS 連線 (綠界回傳 /payment/ecpay/reservation_notify)，門市 .env 設定 PUBLIC_BASE_URL
+    與綠界正式特店 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV、ECPAY_STAGE=0；退款失敗會通知，請到綠界後台處理。
+    訂金不退的規則 (幾小時前可退、未到不退) 請在訂位頁或店內公告。
+[ ] 自動行銷：依個資法第 20 條，會員表示拒絕行銷後須停止 (紅利商城「接收優惠活動訊息」關閉即不再發券 / 推播)；
+    LINE 推播需在 LINE 官方帳號付費方案的訊息則數內。
+[ ] API 與 Webhook：API 金鑰只顯示一次，請存在對方系統的密碼管理；不用時立即停用。Webhook 只送 https 且不送內網位址
+    (自架內網整合才在 .env 設 WEBHOOK_ALLOW_PRIVATE=1)；接收端請以簽章密鑰驗證 X-Kiosk-Signature。
+[ ] 舊資料封存：封存檔在 database/archive，帳簿憑證依法保存 5 年以上，請納入每日備份 (異地)。
+[ ] 裝置管理：點餐機 / POS 請用固定的瀏覽器設定檔 (清除 Cookie 會失去註冊，需重新配對)。
+[ ] 寄杯 / 多次券：同禮物卡屬預收款 (不設使用期限、須履約保證)；後台「寄杯 / 多次券」顯示未兌換次數與預收金額。
+[ ] 桌邊線上結帳 (系統設定 → 桌邊線上結帳)：門市主機要能從外部以 HTTPS 連線 (綠界會回傳付款結果到
+    /payment/ecpay/table_notify)，並在門市 .env 設定綠界正式特店 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV、
+    ECPAY_STAGE=0 與 PUBLIC_BASE_URL；付款時訂單已在櫃檯結帳或有異動會標記「需退款」並通知，請到綠界後台退款。
+[ ] 禮物卡 / 儲值金：屬預收款，依「商品 (服務) 禮券定型化契約應記載及不得記載事項」不得記載使用期限，
+    且須提供履約保證 (金融機構保證、信託、同業連帶保證等)；啟用前請確認並在禮物卡上印出保證機構資訊
+[ ] 退款：取消已用信用卡 / Apple Pay 付款的線上訂單時，可在「系統設定 → 付款方式」開啟自動向綠界退刷，
+    或在「作廢與退款紀錄」按「綠界退刷」；ATM / 超商代碼付款需向顧客取得帳戶後人工匯款。
+    正式特店需在綠界廠商後台確認已開通「信用卡退刷 API」
 [ ] 個人資料：後台「隱私權告知」填好營運者名稱與聯絡方式；告知頁內容是一般性範本，正式營運前請法律專業人士檢視
 [ ] 定期刪除停止使用的會員：在線上端排程每天執行 docker compose exec app flask --app run privacy purge-inactive --apply
     (先不加 --apply 預覽名單)
-[ ] 線上註冊沒有簡訊驗證手機：任何人都能用別人的號碼註冊。若要防範，需另外串接簡訊 OTP (付費服務)
+[ ] 會員註冊的簡訊驗證：後台「系統設定 → 簡訊驗證碼」選擇簡訊服務並填帳密、勾選「註冊時需簡訊驗證手機」
+    (未啟用時任何人都能用別人的號碼註冊)
+[ ] 進階功能的外部服務 (見第六節)：電子發票、LINE Pay、LINE、簡訊、外送平台、SMTP 都在後台填寫；
+    填完按「測試連線」或執行 flask --app run ops check-integrations，並各實際走一次 (小額真實交易)
+[ ] 儲值金屬預收款：啟用前確認履約保證 (信託 / 銀行保證) 與定型化契約揭露義務
 
 建議
 [ ] 監控：用 UptimeRobot 等服務每分鐘檢查 https://網域/healthz，異常時通知
@@ -262,7 +327,9 @@
        ECPAY_HASH_IV=…
        PUBLIC_BASE_URL=https://您的網域
    - 不想收線上付款 (改回到店付款)：ONLINE_PAYMENT=0。
-   - 取消已付款的訂單不會自動退款：到綠界廠商後台辦理退刷。
+   - 取消已付款的訂單：可開啟自動退刷 (系統設定 → 付款方式)，或在後台「作廢與退款紀錄」按「綠界退刷」。
+   - 開放 ATM / 超商代碼時，綠界會把取號結果送到 https://網域/payment/ecpay/info (同樣需要 PUBLIC_BASE_URL)；
+     訂單保留到繳費期限 (預設 ATM 1 天、超商代碼 120 分鐘，可在付款方式設定) 加 30 分鐘才自動取消。
 
 3. 付款測試腳本 (tests/test_payment_ecpay_script.py，不會動到正式資料庫，一律使用綠界測試特店)
      python tests/test_payment_ecpay_script.py            模擬模式：不需網路，模擬綠界通知走完 30 項付款情境
@@ -272,3 +339,56 @@
                                                           另外驗證綠界伺服器通知 (需先用 ngrok 等把該網址指到本機 5055 埠)
 
 相關程式：app/services/payment_ecpay.py (檢查碼、付款通知、逾時處理)、app/routes/payment.py。
+
+
+六、進階功能的外部服務 (後台「系統設定」填寫)
+--------------------------------------------------------------------
+所有金鑰由店家負責人在後台 /admin/settings 填寫 (只有負責人能修改金鑰；已儲存的金鑰不會再顯示，留空 = 不變)，
+存在各店家自己的資料庫 (門市 SQLite / 線上端 PostgreSQL)，不會同步到其他主機。每台主機需分別填寫。
+沒有填寫或未勾選啟用的服務自動停用，原本的流程照常運作。每個設定頁有「測試連線」按鈕；也可執行
+  flask --app run ops check-integrations        (線上端：docker compose exec app flask --app run ops check-integrations)
+
+1. 電子發票 (綠界 B2C)
+   - 測試：勾選「使用綠界測試環境」，特店編號 / HashKey / HashIV 留空即使用綠界公開測試帳號 (2000132)。
+     測試後台 https://vendor-stage.ecpay.com.tw 可查看開立的測試發票。
+   - 正式：向綠界申請「電子發票加值中心」(需公司統編、向國稅局申請使用電子發票)，取得正式特店編號、HashKey、HashIV，
+     取消勾選測試環境。開立失敗 (例如網路中斷) 會留在「待開立」，背景每 5 分鐘重送；資料錯誤 (載具不存在)
+     顯示在後台「電子發票」頁，修改載具後按「重送」。
+   - 需要 Python 套件 cryptography (已列在 requirements.txt)。
+   - 外送平台訂單由平台開立發票，儲值金消費在加值時已開立，這兩種不會重複開立。
+
+2. LINE Pay (門市掃顧客付款碼)
+   - 向 LINE Pay 申請「線下支付」商店，取得 Channel ID / Channel Secret Key；測試可先用 Sandbox。
+   - POS 選 LINE Pay 結帳時會跳出掃碼視窗，以條碼掃描器掃顧客 App 的付款條碼即扣款；
+     扣款失敗訂單自動取消、庫存回補。作廢 / 部分退款會自動退回 LINE Pay (失敗時後台「作廢與退款」可重試)。
+   - 門市主機需能連到 api-pay.line.me (HTTPS 443)。
+
+3. 信用卡刷卡機
+   - 使用銀行提供的刷卡機刷卡後，在 POS 輸入簽單上的授權碼 / 卡號末四碼記帳 (不需串接)；退款請在刷卡機操作，
+     後台「作廢與退款」標記完成。
+
+4. LINE 登入與官方帳號
+   - LINE Developers 建立 LINE Login channel，Callback URL 填 https://您的網域/auth/line/callback
+     (門市網站在店內網路時通常沒有公開網域，LINE 登入建議只在線上端啟用)。
+   - Messaging API channel 的 Channel access token (long-lived) 用於取餐完成通知、生日推播、行銷群發。
+     會員需先以 LINE 登入綁定，且要加入官方帳號好友才收得到推播。
+
+5. 簡訊驗證碼：三竹簡訊或 EVERY8D 的帳號密碼；測試時選「只記錄 (不發送)」，驗證碼會顯示在「系統監控」頁。
+
+6. 外送平台 (Uber Eats / foodpanda)
+   - 需向平台申請 POS 串接資格 (Uber Eats Marketplace API / Delivery Hero POS 整合)，平台會要求公開的 HTTPS 網址：
+       Uber Eats   https://您的網域/webhooks/ubereats             (簽章以 Client Secret 驗證)
+       foodpanda   https://您的網域/webhooks/foodpanda/<店家代碼>   (Bearer 權杖)
+     Webhook 會在收到訂單的那台主機建立訂單。門市主機通常在店內網路，請用 Cloudflare Tunnel 等把上述路徑開放給平台，
+     或先使用 POS「外送單」手動登錄 (不需申請)。
+   - 在「菜單進階設定」把平台上的品項代碼填在餐點的「外送 / 條碼代碼」；找不到品項的訂單會被拒單並通知。
+
+7. 寄信 (SMTP)、錯誤通知、定期報表
+   - SMTP：Gmail 請開啟兩步驟驗證後建立「應用程式密碼」(smtp.gmail.com、587、STARTTLS)。
+   - 監控：可填 Webhook (Discord / Slack / Google Chat)、Email、LINE；系統錯誤、印表機離線、發票開立失敗、
+     原料低於安全量、主機時鐘誤差過大時通知 (同一事件 10 分鐘內只通知一次)。
+
+8. 網路熱感印表機
+   - 支援 ESC/POS 網路印表機 (TCP 9100，例如 Epson TM-T82III、Xprinter)：在後台「印表機與廚房工作站」新增 IP，
+     印表機請設定固定 IP。收據機可在「收銀規則」勾選結帳後自動列印；廚房單依工作站分別出單。
+   - 印表機離線時列印工作保留在佇列中重試，三次失敗後在後台顯示並通知，可按「重印」。

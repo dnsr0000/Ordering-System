@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}候位取號 - {{ tenant.name }}{% endblock %}
+{% block content %}
+<main class="container py-5" id="waitlist-join-page" style="max-width: 480px">
+    <h1 class="h3 fw-bold text-center">{{ tenant.name }} 候位取號</h1>
+    <p class="text-center text-white-50">目前有 <strong class="text-warning" id="waitingCount">{{ waiting }}</strong> 組在等候</p>
+    <form method="POST" class="card rounded-4 p-4" id="waitlistJoinForm">{{ csrf() }}
+        <label class="form-label fw-bold" for="wl-size">用餐人數</label>
+        <input class="form-control form-control-lg mb-3" id="wl-size" type="number" min="1" max="50" name="party_size" value="2" required>
+        <label class="form-label" for="wl-name">稱呼 (選填)</label>
+        <input class="form-control mb-3" id="wl-name" name="name" maxlength="60">
+        <label class="form-label" for="wl-phone">手機 (選填，輪到時以簡訊通知)</label>
+        <input class="form-control mb-3" id="wl-phone" name="phone" inputmode="tel" maxlength="20">
+        <button class="btn btn-warning btn-lg fw-bold text-dark" type="submit">取號</button>
+    </form>
+</main>
+{% endblock %}

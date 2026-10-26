@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}桌邊結帳 - 自助點餐系統{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 560px">
+    <div class="card p-4 text-center" id="tablePayCard">
+        <h1 class="h4 fw-bold mb-3"><i class="bi bi-phone me-2 text-warning"></i>{{ table.label }} 線上結帳</h1>
+        <p class="mb-1">應付金額 <span class="fs-4 fw-bold text-warning" id="tablePayAmount">${{ tp.amount }}</span></p>
+        {% if note %}<p class="text-secondary small">{{ note }}</p>{% endif %}
+        {% if stage %}
+        <div class="alert alert-info text-start small">
+            <div class="fw-bold mb-1"><i class="bi bi-info-circle-fill me-1"></i>目前為綠界「測試環境」，不會真的扣款</div>
+            測試卡號 <code>4311-9522-2222-2222</code>，有效期限填未來的月/年，安全碼任意三碼，3D 驗證碼 <code>1234</code>。
+        </div>
+        {% endif %}
+        <form id="ecpay-form" method="post" action="{{ action }}">
+            {% for name, value in fields.items() %}
+            <input type="hidden" name="{{ name }}" value="{{ value }}">
+            {% endfor %}
+            <button type="submit" class="btn btn-warning btn-lg w-100 fw-bold">前往付款</button>
+        </form>
+        <a class="small text-secondary mt-3 d-inline-block" href="{{ url_for('customer.customer_index') }}">返回點餐頁</a>
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/pay.js') }}"></script>{% endblock %}

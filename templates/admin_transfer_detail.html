@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}{{ tr.number }} - 叫貨 / 調撥{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="transferDetail" data-status="{{ tr.status }}">
+    {% call page_header(('叫貨單 ' if tr.kind == 'request' else '調撥單 ') ~ tr.number, 'bi-arrow-left-right',
+                        tr.from_name ~ ' → ' ~ tr.to_name ~ '｜' ~ labels.get(tr.status, tr.status),
+                        back_url=url_for('branches.transfers'), back_label='叫貨 / 調撥') %}
+    <button class="btn btn-outline-light btn-sm" type="button" data-action="print-page">列印</button>
+    {% endcall %}
+    {% set can_ship = tr.from_site == me and tr.status == 'requested' %}
+    {% set can_receive = tr.to_site == me and tr.status == 'shipped' %}
+    <div class="small text-white-50 mb-2">建立：{{ tr.created_at.strftime('%Y-%m-%d %H:%M') }} {{ tr.created_by }}
+        {% if tr.shipped_at %}｜出貨：{{ tr.shipped_at.strftime('%m/%d %H:%M') }} {{ tr.shipped_by }}{% endif %}
+        {% if tr.received_at %}｜收貨：{{ tr.received_at.strftime('%m/%d %H:%M') }} {{ tr.received_by }}{% endif %}</div>
+    {% if tr.note %}<div class="alert alert-secondary small py-2">備註：{{ tr.note }}</div>{% endif %}
+    {% if tr.reason %}<div class="alert alert-{{ 'warning' if tr.status == 'received' else 'secondary' }} small py-2" id="transferReason">{{ tr.reason }}</div>{% endif %}
+    <form method="POST" id="transferForm">
+        {{ csrf() }}
+        <table class="table table-dark table-sm align-middle" id="transferLines">
+            <thead><tr><th>原料</th><th class="text-end">{{ '叫貨' if tr.kind == 'request' else '調撥' }}</th><th class="text-end">實出</th><th class="text-end">實收</th>
+                {% if can_ship or can_receive %}<th style="width: 9rem">{{ '本次出貨' if can_ship else '本次實收' }}</th>{% endif %}</tr></thead>
+            <tbody>
+            {% for ln in tr.lines %}
+            <tr>
+                <td>{{ ln.name }} <span class="small text-white-50">{{ ln.unit }}</span></td>
+                <td class="text-end">{{ '%g' % ln.qty }}</td>
+                <td class="text-end">{{ '%g' % ln.shipped if ln.shipped is not none else '-' }}</td>
+                <td class="text-end">{{ '%g' % ln.received if ln.received is not none else '-' }}</td>
+                {% if can_ship or can_receive %}<td><input class="form-control form-control-sm" type="number" step="any" min="0" name="qty_{{ loop.index0 }}"
+                    value="{{ '%g' % (ln.qty if can_ship else ln.shipped) }}" aria-label="{{ ln.name }} 數量"></td>{% endif %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if tr.shipped_value %}<div class="small text-white-50 mb-2">出貨成本 (估)：${{ '{:,}'.format(tr.shipped_value) }}</div>{% endif %}
+        {% if can_ship %}
+        <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-warning fw-bold" type="submit" name="action" value="ship" id="transferShipBtn">確認出貨 (扣本店庫存)</button>
+            <input class="form-control form-control-sm w-auto" name="reason" maxlength="200" placeholder="拒絕原因" aria-label="拒絕原因">
+            <button class="btn btn-outline-danger" type="submit" name="action" value="reject" id="transferRejectBtn">拒絕</button>
+        </div>
+        {% elif can_receive %}
+        <div class="d-flex flex-wrap gap-2">
+            <input class="form-control form-control-sm w-auto" name="reason" maxlength="100" placeholder="收貨備註 (選填)" aria-label="收貨備註">
+            <button class="btn btn-success fw-bold" type="submit" name="action" value="receive" id="transferReceiveBtn">確認收貨入庫</button>
+        </div>
+        {% elif tr.to_site == me and tr.kind == 'request' and tr.status == 'requested' %}
+        <div class="d-flex flex-wrap gap-2">
+            <span class="small text-white-50 align-self-center">等待{{ tr.from_name }}出貨…</span>
+            <input class="form-control form-control-sm w-auto" name="reason" maxlength="200" placeholder="取消原因" aria-label="取消原因">
+            <button class="btn btn-outline-danger" type="submit" name="action" value="cancel" id="transferCancelBtn">取消叫貨</button>
+        </div>
+        {% endif %}
+    </form>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

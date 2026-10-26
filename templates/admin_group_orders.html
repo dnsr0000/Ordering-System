@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}團體預購{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="groupOrdersAdmin">
+    {% call page_header('團體預購', 'bi-people-fill', '主揪分享連結給同事各自點餐，截止時合併成一張預約取餐訂單 (到店付款)') %}
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='group_order') }}">團體預購設定</a>
+    {% endcall %}
+    {% if not cfg.enabled %}<div class="alert alert-warning small">尚未開放團體預購，請先到「團體預購設定」開啟。</div>{% endif %}
+    {% if created %}<div class="alert alert-success small" id="groupCreatedAlert">已建立「{{ created.title }}」，分享連結：
+        <code class="user-select-all">{{ url_for('group_orders.join', shop=shop, token=created.token, _external=True) }}</code>
+        <button class="btn btn-sm btn-outline-dark ms-1" type="button" data-action="copy-text" data-text="{{ url_for('group_orders.join', shop=shop, token=created.token, _external=True) }}">複製</button></div>{% endif %}
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">近期團購 (取餐時間 7 天前起)</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0" id="groupTable">
+            <thead><tr><th>取餐</th><th>團購</th><th>主揪</th><th>截止</th><th class="text-end">人數 / 份數</th><th class="text-end">預估</th><th>狀態</th><th></th></tr></thead>
+            <tbody>
+            {% for x in groups %}{% set s = summaries[x.id] %}
+            <tr data-group-id="{{ x.id }}"><td class="small">{{ x.pickup_at.strftime('%m/%d %H:%M') }}<div class="text-white-50">{{ x.order_type }}</div></td>
+                <td><a class="link-light" href="{{ url_for('group_orders.manage', shop=shop, token=x.token) }}">{{ x.title }}</a>{% if x.created_by %}<div class="small text-white-50">代建：{{ x.created_by }}</div>{% endif %}</td>
+                <td class="small">{{ x.organizer_name }}<div class="text-white-50">{{ x.organizer_phone }}</div></td>
+                <td class="small">{{ x.deadline.strftime('%m/%d %H:%M') }}{{ ' 自動' if x.auto_submit }}</td>
+                <td class="text-end">{{ s.people|length }} / {{ s.count }}</td><td class="text-end">${{ '{:,}'.format(s.total) }}</td>
+                <td>{{ status_badge(x.status_label, {'open': 'success', 'submitted': 'info', 'failed': 'danger'}.get(x.status, 'secondary')) }}
+                    {% if x.order %}<div class="small">#{{ '%03d' % x.order.pickup_number }}</div>{% endif %}
+                    {% if x.status == 'failed' %}<div class="small text-danger">{{ x.error }}</div>{% endif %}</td>
+                <td class="text-nowrap">
+                    <a class="btn btn-sm btn-outline-light" href="{{ url_for('group_orders.print_list', shop=shop, token=x.token) }}" target="_blank" rel="noopener">分裝單</a>
+                    {% if x.status in ('open', 'failed') %}
+                    <form method="POST" class="d-inline" data-confirm="確定送單？">{{ csrf() }}<input type="hidden" name="action" value="submit"><input type="hidden" name="group_id" value="{{ x.id }}">
+                        <button class="btn btn-sm btn-warning text-dark">送單</button></form>
+                    <form method="POST" class="d-inline" data-confirm="確定取消這個團購？">{{ csrf() }}<input type="hidden" name="action" value="cancel"><input type="hidden" name="group_id" value="{{ x.id }}">
+                        <button class="btn btn-sm btn-outline-danger">取消</button></form>{% endif %}</td></tr>
+            {% else %}<tr><td colspan="8" class="text-white-50">目前沒有團購</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+    {% if cfg.enabled %}
+    <form method="POST" class="card rounded-4 p-3" id="groupAdminCreate">{{ csrf() }}<input type="hidden" name="action" value="create">
+        <h2 class="h6 fw-bold">代客建立團購 (電話預訂)</h2>
+        {% include "_group_form_fields.html" %}
+        <button class="btn btn-warning fw-bold text-dark mt-3 align-self-start" type="submit">建立</button>
+    </form>
+    {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

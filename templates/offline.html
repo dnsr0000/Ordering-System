@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}目前離線{% endblock %}
+{% block content %}
+<main class="container py-5 text-center" id="offline-page">
+    <i class="bi bi-wifi-off display-1 text-warning"></i>
+    <h1 class="h4 fw-bold mt-3">目前沒有網路連線</h1>
+    <p class="text-white-50">請確認手機已連上網路 (在店內請連店家的 Wi-Fi)，恢復連線後重新整理即可繼續點餐。點餐機上暫存的訂單會在恢復連線後自動補送。</p>
+    <a class="btn btn-warning fw-bold text-dark" href="{{ url_for('customer.customer_index') }}">重新整理</a>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/kiosk-offline.js') }}"></script>{% endblock %}

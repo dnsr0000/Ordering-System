@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}外送平台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="delivery-page">
+    {% call page_header('外送平台', 'bi-bicycle', '平台訂單自動匯入 (需平台 POS 串接資格)；沒有串接時可在 POS 以「外送單」手動登錄') %}
+    <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('settings_admin.edit', key='delivery') }}">平台金鑰設定</a>
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('menu_pro.manage') }}">品項代碼對應</a>
+    {% endcall %}
+    {% if unmapped %}<div class="alert alert-warning">有 {{ unmapped }} 項餐點尚未填寫「外送 / 條碼代碼」，平台訂單會改以品名比對，品名不同時無法匯入。</div>{% endif %}
+    <div class="row g-3 mb-4">
+        <div class="col-md-6"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">Uber Eats {% if cfg.ubereats_enabled %}<span class="badge bg-success">已啟用</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
+            <div class="small text-white-50 mb-1">在 Uber 開發者後台設定 Webhook URL (需 https 公開網址)：</div>
+            <div class="d-flex gap-2"><code class="flex-grow-1 text-break" id="uberWebhookUrl">{{ uber_url }}</code>
+                <button class="btn btn-sm btn-outline-light" type="button" data-action="copy-text" data-text="{{ uber_url }}">複製</button></div>
+        </div></div>
+        <div class="col-md-6"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">foodpanda {% if cfg.foodpanda_enabled %}<span class="badge bg-success">已啟用</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
+            <div class="small text-white-50 mb-1">提供給 foodpanda (Delivery Hero) 的訂單接收網址：</div>
+            <div class="d-flex gap-2"><code class="flex-grow-1 text-break" id="foodpandaWebhookUrl">{{ foodpanda_url }}</code>
+                <button class="btn btn-sm btn-outline-light" type="button" data-action="copy-text" data-text="{{ foodpanda_url }}">複製</button></div>
+        </div></div>
+    </div>
+    <h2 class="h5 fw-bold">最近的外送訂單</h2>
+    <table class="table table-dark table-striped table-sm" id="deliveryOrdersTable">
+        <thead><tr><th>時間</th><th>單號</th><th>平台</th><th>平台單號</th><th>品項</th><th>金額</th><th>狀態</th></tr></thead>
+        <tbody>
+        {% for o in orders %}
+        <tr><td class="small">{{ o.created_at.strftime('%m-%d %H:%M') }}</td><td>#{{ o.id }} (取餐 {{ '%03d' % o.display_pickup_number }})</td>
+            <td>{{ o.order_source }}</td><td>{{ o.external_ref }}</td>
+            <td class="small">{% for i in o['items'] %}{{ i.item_name }} x{{ i.quantity }}{{ '、' if not loop.last }}{% endfor %}</td>
+            <td>${{ o.total_price }}</td><td>{{ o.status_label }}</td></tr>
+        {% else %}<tr><td colspan="7" class="text-center text-white-50">尚無外送訂單</td></tr>{% endfor %}
+        </tbody>
+    </table>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

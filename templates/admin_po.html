@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}採購單 {{ po.number }}{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+{% set lab = labels.get(po.status, (po.status, 'secondary')) %}
+<main class="container py-4 narrow-page" id="po-page" data-status="{{ po.status }}">
+    {% call page_header('採購單 ' ~ po.number, 'bi-receipt', (po.supplier.name if po.supplier else '未指定供應商') ~ '・建立 ' ~ po.created_at.strftime('%Y-%m-%d') ~ ' ' ~ po.created_by) %}
+    <span class="badge bg-{{ lab[1] }} fs-6" id="poStatus">{{ lab[0] }}</span>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('purchasing.po_print', po_id=po.id) }}" target="_blank">列印</a>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('purchasing.index') }}">回列表</a>
+    {% endcall %}
+    {% if po.status == 'draft' %}
+    <form method="POST" id="poEditForm" class="card rounded-4 p-3 mb-3">{{ csrf() }}<input type="hidden" name="action" value="save">
+        <div class="row g-2 mb-2">
+            <div class="col-md-4"><label class="form-label small" for="po-sup">供應商</label>
+                <select class="form-select form-select-sm" id="po-sup" name="supplier_id"><option value="">(不指定)</option>
+                {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if po.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}</select></div>
+            <div class="col-md-3"><label class="form-label small" for="po-exp">預計到貨</label><input class="form-control form-control-sm" type="date" id="po-exp" name="expected_on" value="{{ po.expected_on or '' }}"></div>
+            <div class="col-md-5"><label class="form-label small" for="po-note">備註</label><input class="form-control form-control-sm" id="po-note" name="note" value="{{ po.note }}"></div>
+        </div>
+        <table class="table table-dark table-sm align-middle" id="poLines">
+            <thead><tr><th>原料</th><th>數量 (0 = 移除)</th><th>單價</th><th>小計</th></tr></thead>
+            <tbody>{% for ln in po.lines %}
+            <tr><td>{{ ln.ingredient.name }} ({{ ln.ingredient.unit }})</td>
+                <td><input class="form-control form-control-sm" type="number" step="any" min="0" name="qty__{{ ln.id }}" value="{{ '%g' % ln.quantity }}" aria-label="數量"></td>
+                <td><input class="form-control form-control-sm" type="number" step="any" min="0" name="cost__{{ ln.id }}" value="{{ '%g' % ln.unit_cost }}" aria-label="單價"></td>
+                <td>${{ '{:,}'.format((ln.quantity * ln.unit_cost)|round|int) }}</td></tr>
+            {% endfor %}
+            <tr><td><select class="form-select form-select-sm" name="add_ingredient_id" aria-label="加入原料"><option value="">+ 加入原料</option>
+                {% for i in ingredients %}<option value="{{ i.id }}">{{ i.name }} ({{ i.unit }})</option>{% endfor %}</select></td>
+                <td><input class="form-control form-control-sm" type="number" step="any" min="0" name="add_qty" placeholder="數量" aria-label="加入數量"></td><td colspan="2"></td></tr>
+            </tbody>
+        </table>
+        <div class="d-flex gap-2">
+            <button class="btn btn-outline-light btn-sm" type="submit">儲存</button>
+            <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit" form="poSendForm" id="poSendBtn">送出採購單</button>
+            <button class="btn btn-outline-danger btn-sm ms-auto" type="submit" form="poCancelForm">取消採購單</button>
+        </div>
+    </form>
+    <form method="POST" id="poSendForm" data-confirm="送出後就不能修改品項，確定送出？">{{ csrf() }}<input type="hidden" name="action" value="send"></form>
+    {% endif %}
+    {% if po.status in ('draft', 'sent') %}
+    <form method="POST" id="poReceiveForm" class="card rounded-4 p-3 mb-3" data-confirm="確認收貨入庫？">{{ csrf() }}<input type="hidden" name="action" value="receive">
+        <h2 class="h6 fw-bold">收貨入庫</h2>
+        <table class="table table-dark table-sm align-middle mb-2">
+            <thead><tr><th>原料</th><th>訂購</th><th>實收數量</th><th>有效期限</th></tr></thead>
+            <tbody>{% for ln in po.lines %}
+            <tr><td>{{ ln.ingredient.name }}</td><td>{{ '%g' % ln.quantity }} {{ ln.ingredient.unit }}</td>
+                <td><input class="form-control form-control-sm" type="number" step="any" min="0" name="recv__{{ ln.id }}" value="{{ '%g' % ln.quantity }}" aria-label="實收數量"></td>
+                <td><input class="form-control form-control-sm" type="date" name="exp__{{ ln.id }}" aria-label="有效期限"></td></tr>
+            {% endfor %}</tbody>
+        </table>
+        <button class="btn btn-success btn-sm fw-bold" type="submit" id="poReceiveBtn">確認收貨</button>
+    </form>
+    {% if po.status == 'sent' %}<form method="POST" id="poCancelForm" data-confirm="確定取消採購單？">{{ csrf() }}<input type="hidden" name="action" value="cancel">
+        <button class="btn btn-outline-danger btn-sm" type="submit">取消採購單</button></form>{% endif %}
+    {% if po.status == 'draft' %}<form method="POST" id="poCancelForm" data-confirm="確定取消採購單？">{{ csrf() }}<input type="hidden" name="action" value="cancel"></form>{% endif %}
+    {% else %}
+    <div class="card rounded-4 p-3">
+        <table class="table table-dark table-sm mb-0" id="poLines">
+            <thead><tr><th>原料</th><th>訂購</th><th>實收</th><th>單價</th></tr></thead>
+            <tbody>{% for ln in po.lines %}<tr><td>{{ ln.ingredient.name }}</td><td>{{ '%g' % ln.quantity }}</td>
+                <td>{{ '%g' % ln.received_qty if ln.received_qty is not none else '-' }}</td><td>${{ '%g' % ln.unit_cost }}</td></tr>{% endfor %}</tbody>
+        </table>
+        {% if po.received_at %}<div class="small text-white-50 mt-2">{{ po.received_at.strftime('%Y-%m-%d %H:%M') }} 由 {{ po.received_by }} 收貨</div>{% endif %}
+    </div>
+    {% endif %}
+</main>
+{% endblock %}

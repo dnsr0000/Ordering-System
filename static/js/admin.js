@@ -279,6 +279,14 @@
         }
         // AI 營運建議在背景產生，定期刷新一次避免需要手動重新整理
         setInterval(syncLive, 10000);
+        // 按登出時先停止即時同步：避免登出途中的同步請求拿到 401 而跳出「登入已過期」
+        document.querySelectorAll('form[action$="/admin/logout"]').forEach((form) => {
+            form.addEventListener('submit', () => {
+                sessionExpired = true;
+                if (eventSource) eventSource.close();
+                clearInterval(fallbackTimer);
+            });
+        });
     }
 
     // ---------------------------------------------------------------- 熱門排行筆數

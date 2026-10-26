@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}訂位資訊{% endblock %}
+{% block content %}
+<main class="container py-5 text-center" id="reservation-status-page" style="max-width: 480px">
+    <h1 class="h4 fw-bold">訂位資訊</h1>
+    <div class="card rounded-4 p-4 my-3">
+        <div class="fs-3 fw-bold text-warning">{{ r.reserved_at.strftime('%m/%d %H:%M') }}</div>
+        <div class="fs-5">{{ r.name }} • {{ r.party_size }} 位</div>
+        <div class="mt-2 fw-bold" id="reservationState">{{ '等待付款訂金' if r.deposit_status == 'pending' and r.status == 'booked' else {'booked': '訂位成功', 'seated': '已入座', 'cancelled': '已取消', 'no_show': '未到 (已釋出)'}[r.status] }}</div>
+        {% if r.deposit_status %}
+        <div class="mt-2" id="depositState">訂金 ${{ r.deposit_amount }}：{{ r.deposit_label }}{% if r.deposit_note %}<div class="small text-white-50">{{ r.deposit_note }}</div>{% endif %}</div>
+        {% endif %}
+    </div>
+    {% if r.deposit_status == 'pending' and r.status == 'booked' %}
+    <a class="btn btn-warning fw-bold mb-3" href="{{ url_for('reservations.deposit_pay', token=r.token) }}" id="depositPayBtn">前往付款訂金</a>
+    {% endif %}
+    <p class="small text-white-50">請保留此頁網址以便查詢或取消。{% if r.deposit_status == 'paid' %}訂位前 {{ refund_hours }} 小時以前取消可退還訂金，之後取消或未到訂金不退。{% endif %}</p>
+    {% if r.status == 'booked' %}
+    <form method="POST" data-confirm="確定取消訂位？">{{ csrf() }}<input type="hidden" name="action" value="cancel">
+        <button class="btn btn-outline-danger" type="submit">取消訂位</button></form>
+    {% endif %}
+</main>
+{% endblock %}

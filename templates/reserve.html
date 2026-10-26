@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}線上訂位 - {{ tenant.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="reserve-page" style="max-width: 560px">
+    <h1 class="h4 fw-bold mb-1">{{ tenant.name }} 線上訂位</h1>
+    <p class="small text-white-50">可預訂 {{ cfg.days_ahead }} 天內的時段，單筆最多 {{ cfg.max_party_size }} 位。</p>
+    <form method="GET" class="d-flex gap-2 mb-3">
+        <input class="form-control" type="date" name="day" value="{{ day }}" min="{{ today }}" aria-label="訂位日期">
+        <button class="btn btn-outline-info text-nowrap" type="submit">查詢時段</button>
+    </form>
+    <form method="POST" class="card rounded-4 p-3" id="publicReserveForm">{{ csrf() }}
+        <div class="mb-2 fw-bold">選擇時段 ({{ day }})</div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            {% for t, used, left in slots %}
+            <input type="radio" class="btn-check" name="slot" id="slot-{{ loop.index }}" value="{{ t.isoformat() }}" {{ 'disabled' if left <= 0 }} required>
+            <label class="btn btn-outline-warning btn-sm" for="slot-{{ loop.index }}">{{ t.strftime('%H:%M') }}<span class="d-block small">剩 {{ left }} 位</span></label>
+            {% else %}<div class="text-white-50">這天沒有可預訂的時段</div>{% endfor %}
+        </div>
+        <div class="row g-2">
+            <div class="col-6"><label class="form-label small" for="rv-name">姓名</label><input class="form-control" id="rv-name" name="name" required maxlength="60"></div>
+            <div class="col-6"><label class="form-label small" for="rv-phone">手機</label><input class="form-control" id="rv-phone" name="phone" inputmode="tel" pattern="09\d{8}" required></div>
+            <div class="col-4"><label class="form-label small" for="rv-size">人數</label><input class="form-control" id="rv-size" type="number" min="1" max="{{ cfg.max_party_size }}" name="party_size" value="2" required></div>
+            <div class="col-8"><label class="form-label small" for="rv-note">備註</label><input class="form-control" id="rv-note" name="note" maxlength="200" placeholder="兒童椅、過敏…"></div>
+        </div>
+        <button class="btn btn-warning fw-bold text-dark mt-3" type="submit">送出訂位</button>
+        <div class="small text-white-50 mt-2">送出即表示同意本店依隱私權告知使用您的姓名與電話聯絡訂位事宜。</div>
+    </form>
+</main>
+{% endblock %}

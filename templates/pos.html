@@ -44,8 +44,40 @@
                 <button type="button" class="btn btn-outline-info btn-sm fw-bold" data-action="openTables" id="posOpenTablesBtn">
                     <i class="bi bi-qr-code me-1"></i> 桌位結帳 (<span id="topUnpaidTableCount">0</span>)
                 </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm fw-bold" data-action="openServiceCalls" id="posCallsBtn" title="桌邊呼叫服務">
+                    <i class="bi bi-bell me-1"></i> 呼叫 (<span id="posCallsCount">0</span>)
+                </button>
                 {% endif %}
 
+                <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openShift" id="posShiftBtn">
+                    <i class="bi bi-cash-coin me-1"></i> 交班 <span id="posShiftBadge" class="badge {{ 'bg-success' if pos_cfg.shift else 'bg-secondary' }}">{{ '開班中' if pos_cfg.shift else '未開班' }}</span>
+                </button>
+                {% if pos_cfg.hasDrawer %}
+                <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openDrawer" id="posDrawerBtn" title="手動開錢櫃 (會留下稽核紀錄)">
+                    <i class="bi bi-inbox me-1"></i> 開錢櫃
+                </button>
+                {% endif %}
+                {% if pos_cfg.giftCardEnabled %}
+                <button type="button" class="btn btn-outline-warning btn-sm fw-bold" data-action="openGiftCards" id="posGiftBtn">
+                    <i class="bi bi-gift me-1"></i> 禮物卡
+                </button>
+                {% endif %}
+                <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openCustomerDisplay" id="posDisplayBtn" title="開啟客顯視窗 (拖到面向顧客的第二螢幕)">
+                    <i class="bi bi-display me-1"></i> 客顯
+                </button>
+                {% if pos_cfg.canDelivery %}
+                <button type="button" class="btn btn-outline-warning btn-sm fw-bold" data-action="toggleDeliveryMode" id="posDeliveryBtn">
+                    <i class="bi bi-bicycle me-1"></i> 外送單
+                </button>
+                {% endif %}
+                {% if sync_role != 'hub' %}
+                <a href="{{ url_for('reservations.board') }}" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-calendar-check me-1"></i> 訂位/候位
+                </a>
+                {% endif %}
+                <a href="{{ url_for('timeclock.punch') }}" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-person-badge me-1"></i> 打卡
+                </a>
                 <a href="/kitchen" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
                     <i class="bi bi-fire text-danger me-1"></i> 廚房 KDS
                 </a>
@@ -154,10 +186,10 @@
                                 <div class="d-flex justify-content-between align-items-end pt-2 mt-1 border-top border-secondary border-opacity-50">
                                     <div>
                                         {% if item.is_discount and item.discount_price > 0 %}
-                                        <del class="text-white-50 pos-xs">${{ item.price }}</del>
-                                        <span class="fw-bold text-danger fs-5 ms-1">${{ item.discount_price }}</span>
+                                        <del class="text-white-50 pos-xs">${{ item.list_price }}</del>
+                                        <span class="fw-bold text-danger fs-5 ms-1">${{ item.sale_price }}</span>
                                         {% else %}
-                                        <span class="fw-bold text-warning fs-5">${{ item.price }}</span>
+                                        <span class="fw-bold text-warning fs-5">${{ item.list_price }}</span>
                                         {% endif %}
                                     </div>
                                     {% if item.is_reward %}
@@ -198,20 +230,44 @@
                                     <span class="fw-bold text-white small" id="posMemberName">會員</span>
                                     <small class="text-white-50 ms-1" id="posMemberPhone"></small>
                                     <span class="badge bg-warning text-dark ms-1"><i class="bi bi-star-fill text-danger me-1"></i><span id="posMemberPoints">0</span> 點</span>
+                                    <span class="badge bg-info text-dark ms-1 d-none" id="posMemberTier"></span>
+                                    <span class="badge bg-secondary ms-1 d-none" id="posMemberStamps"></span>
+                                    {% if pos_cfg.walletEnabled %}<span class="badge bg-success ms-1" id="posMemberWallet">儲值 $0</span>{% endif %}
                                 </div>
                                 <div class="d-flex gap-1">
+                                    {% if pos_cfg.walletEnabled and pos_cfg.canWallet %}
+                                    <button type="button" class="btn btn-sm btn-outline-success py-0 px-2 pos-xs" data-action="openTopup" title="會員儲值">💰 儲值</button>
+                                    {% endif %}
                                     <button type="button" class="btn btn-sm btn-outline-info py-0 px-2 pos-xs" data-action="openPinModal" title="當面核對身分後協助設定/重設手機登入PIN碼">
                                         🔑 設PIN
                                     </button>
+                                    {% if menu_data.passProducts %}
+                                    <button type="button" class="btn btn-sm btn-outline-warning py-0 px-2 pos-xs" data-action="openPassSell" title="售出寄杯 / 多次券">☕ 寄杯</button>
+                                    {% endif %}
                                     <button type="button" class="btn btn-sm btn-outline-danger py-0 px-2 pos-xs" data-action="clearMember">
                                         解除
                                     </button>
                                 </div>
                             </div>
+                            <div id="posMemberPasses" class="small mt-1 d-none"></div>
+                        </div>
+
+                        <!-- 外送單模式 (手動登錄外送平台訂單) -->
+                        <div class="p-2 rounded border border-warning mb-2 d-none" id="posDeliveryPanel">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <small class="fw-bold text-warning"><i class="bi bi-bicycle me-1"></i>外送單登錄 (平台代收，不另收款)</small>
+                                <button type="button" class="btn btn-sm btn-outline-secondary text-white py-0 px-2 pos-xs" data-action="toggleDeliveryMode">結束</button>
+                            </div>
+                            <div class="row g-1">
+                                <div class="col-5"><select id="posDeliveryPlatform" class="form-select form-select-sm" aria-label="外送平台">
+                                    {% for p in pos_cfg.deliveryPlatforms %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+                                </select></div>
+                                <div class="col-7"><input type="text" id="posDeliveryRef" class="form-control form-control-sm" placeholder="平台訂單編號" maxlength="60"></div>
+                            </div>
                         </div>
 
                         <!-- 2. 用餐方式、桌號與備註 -->
-                        <div class="p-2 rounded bg-dark border border-secondary mb-2">
+                        <div class="p-2 rounded bg-dark border border-secondary mb-2" id="posOrderInfoBox">
                             <div class="row g-1 align-items-center mb-1">
                                 <div class="col-5">
                                     <div class="btn-group btn-group-sm w-100" role="group">
@@ -219,12 +275,26 @@
                                         <label class="btn btn-outline-warning fw-bold" for="posTypeDineIn">內用</label>
                                         <input type="radio" class="btn-check" name="posOrderType" id="posTypeTakeout" value="外帶">
                                         <label class="btn btn-outline-warning fw-bold" for="posTypeTakeout">外帶</label>
+                                        {% if pos_cfg.homeDelivery %}
+                                        <input type="radio" class="btn-check" name="posOrderType" id="posTypeHome" value="外送到府">
+                                        <label class="btn btn-outline-warning fw-bold" for="posTypeHome">外送</label>
+                                        {% endif %}
                                     </div>
                                 </div>
                                 <div class="col-7">
                                     <input type="text" id="posTableInput" class="form-control form-control-sm" placeholder="桌號或顧客稱呼 (如: A1)" maxlength="40">
                                 </div>
                             </div>
+                            {% if pos_cfg.homeDelivery %}
+                            <div class="d-none mb-1" id="posHomeBox">
+                                <input type="text" id="posHomeAddress" class="form-control form-control-sm mb-1" maxlength="200" placeholder="外送地址 (含樓層)" aria-label="外送地址">
+                                <div class="row g-1">
+                                    <div class="col-6"><input type="tel" id="posHomePhone" class="form-control form-control-sm" maxlength="20" placeholder="聯絡電話" aria-label="聯絡電話"></div>
+                                    <div class="col-6"><select id="posHomeZone" class="form-select form-select-sm" aria-label="配送區域">
+                                        {% for z in pos_cfg.homeDelivery.zones %}<option value="{{ z.name }}" data-fee="{{ z.fee }}">{{ z.name }} (+${{ z.fee }})</option>{% endfor %}</select></div>
+                                </div>
+                            </div>
+                            {% endif %}
                             <!-- 快速桌號標籤 -->
                             <div class="d-flex flex-wrap gap-1 mb-1">
                                 {% for t in ['A1', 'A2', 'A3', 'B1', 'B2', '外帶客', '電話預訂'] %}
@@ -232,8 +302,14 @@
                                 {% endfor %}
                             </div>
                             <div class="row g-1 align-items-center">
-                                <div class="col-8">
+                                <div class="col-6">
                                     <input type="text" id="posOrderNote" class="form-control form-control-sm" placeholder="整單備註 (如: 少油、分開裝)..." maxlength="200">
+                                </div>
+                                <div class="col-2">
+                                    <div class="form-check mb-0" title="廚房優先製作">
+                                        <input class="form-check-input" type="checkbox" id="posRush">
+                                        <label class="form-check-label small text-danger fw-bold pos-xs" for="posRush">加急</label>
+                                    </div>
                                 </div>
                                 <div class="col-4 text-end d-none" id="posCutleryBox">
                                     <div class="form-check form-switch d-inline-block mb-0">
@@ -298,14 +374,34 @@
                                 <span>商品小計</span>
                                 <span>$<span id="posSubtotal">0</span></span>
                             </div>
+                            <div class="d-flex justify-content-between small text-warning d-none" id="posPromotionRow">
+                                <span>促銷 <span id="posPromotionNames" class="pos-xxs"></span></span>
+                                <span>-$<span id="posPromotionDiscount">0</span></span>
+                            </div>
                             <div class="d-flex justify-content-between small text-info">
                                 <span>優惠券折抵</span>
                                 <span>-$<span id="posPromoDiscount">0</span></span>
+                            </div>
+                            <div class="d-flex justify-content-between small text-info d-none" id="posTierRow">
+                                <span>會員等級折扣</span>
+                                <span>-$<span id="posTierDiscount">0</span></span>
+                            </div>
+                            <div class="d-flex justify-content-between small text-danger d-none" id="posManualRow">
+                                <span>整單折扣 <button type="button" class="btn btn-link btn-sm p-0 pos-xxs text-danger" data-action="clearOrderDiscount">取消</button></span>
+                                <span>-$<span id="posManualDiscount">0</span></span>
                             </div>
                             <div class="d-flex justify-content-between small text-success">
                                 <span>紅利點數折抵</span>
                                 <span>-$<span id="posPointsDiscount">0</span></span>
                             </div>
+                            <div class="d-flex justify-content-between small text-white-50 d-none" id="posServiceRow">
+                                <span>服務費 (<span id="posServicePercent">0</span>%)</span>
+                                <span>+$<span id="posServiceCharge">0</span></span>
+                            </div>
+                            <div class="d-flex justify-content-between small text-white-50 d-none" id="posDeliveryFeeRow">
+                                <span>外送費</span><span>+$<span id="posDeliveryFee">0</span></span>
+                            </div>
+                            <div id="posGiftList" class="small text-warning"></div>
                             <div class="d-flex justify-content-between align-items-baseline border-top border-secondary pt-1 mt-1">
                                 <span class="fw-bold text-white">應收總額</span>
                                 <span class="fw-bold text-warning fs-3">$<span id="posFinalTotal">0</span></span>
@@ -316,10 +412,9 @@
                         <div class="row g-1 align-items-center mb-2">
                             <div class="col-5">
                                 <select id="posPaymentMethod" class="form-select form-select-sm fw-bold text-warning" aria-label="付款方式">
-                                    <option value="Cash">💵 現金 Cash</option>
-                                    <option value="Credit Card">💳 信用卡</option>
-                                    <option value="Line Pay">📱 Line Pay</option>
-                                    <option value="街口支付">📱 街口支付</option>
+                                    {% set pay_labels = {'Cash': '💵 現金 Cash', 'Credit Card': '💳 信用卡', 'Line Pay': '📱 LINE Pay', '街口支付': '📱 街口支付', 'Apple Pay': '📱 Apple Pay', '儲值金': '💰 會員儲值金'} %}
+                                    {% for m in pos_cfg.methods %}<option value="{{ m }}">{{ pay_labels.get(m, m) }}</option>{% endfor %}
+                                    <option value="混合付款">🔀 混合付款</option>
                                 </select>
                             </div>
                             <div class="col-7" id="posCashInputCol">
@@ -330,6 +425,25 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- 刷卡機授權碼 / LINE Pay 說明 -->
+                        <div class="row g-1 mb-2 d-none" id="posCardRow">
+                            <div class="col-7"><input type="text" id="posCardAuth" class="form-control form-control-sm" maxlength="12"
+                                placeholder="刷卡授權碼{{ ' (必填)' if pos_cfg.cardRequireAuth }}" autocomplete="off"></div>
+                            <div class="col-5"><input type="text" id="posCardLast4" class="form-control form-control-sm" maxlength="4" inputmode="numeric"
+                                placeholder="卡號末四碼{{ ' (必填)' if pos_cfg.cardRequireLast4 }}" autocomplete="off"></div>
+                        </div>
+                        <div class="small text-info mb-2 d-none" id="posLinePayHint"><i class="bi bi-upc-scan me-1"></i>結帳時請掃描顧客 LINE Pay 付款條碼</div>
+                        {% if pos_cfg.invoiceEnabled %}
+                        <!-- 電子發票 -->
+                        <div class="row g-1 mb-2" id="posInvoiceRow">
+                            <div class="col-5"><select id="posInvoiceType" class="form-select form-select-sm" aria-label="發票類型">
+                                <option value="">發票：預設</option><option value="print">紙本證明聯</option><option value="mobile">手機條碼</option>
+                                <option value="company">打統編</option><option value="donate">捐贈</option><option value="citizen">自然人憑證</option>
+                            </select></div>
+                            <div class="col-7"><input type="text" id="posInvoiceValue" class="form-control form-control-sm d-none" maxlength="16" autocomplete="off" aria-label="載具 / 統編 / 愛心碼"></div>
+                        </div>
+                        {% endif %}
 
                         <!-- 現金快速鍵 -->
                         <div id="posQuickCashRow" class="d-flex flex-wrap gap-1 mb-2">
@@ -342,8 +456,11 @@
 
                         <!-- 底部操作按鈕 -->
                         <div class="row g-2">
-                            <div class="col-4">
-                                <button type="button" class="btn btn-outline-info w-100 fw-bold py-2" data-action="holdOrder" title="暫存此筆訂單 (F4)">
+                            <div class="col-4 d-flex flex-column gap-1">
+                                <button type="button" class="btn btn-outline-danger btn-sm fw-bold" data-action="openOrderDiscount" title="整單折扣 (需權限或主管核准)">
+                                    <i class="bi bi-percent"></i> 折扣
+                                </button>
+                                <button type="button" class="btn btn-outline-info w-100 fw-bold btn-sm" data-action="holdOrder" title="暫存此筆訂單 (F4)">
                                     <i class="bi bi-pause-fill"></i> 掛單
                                 </button>
                             </div>
@@ -471,11 +588,36 @@
             <div class="modal-content pos-panel text-white shadow-lg">
                 <div class="modal-header border-secondary">
                     <h5 class="modal-title fw-bold text-info mb-0"><i class="bi bi-qr-code me-2"></i>桌位結帳 (掃碼點餐未結帳)</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                    <div class="btn-group btn-group-sm ms-3" role="group" aria-label="檢視方式">
+                        <button type="button" class="btn btn-outline-light active" data-action="tablesView" data-view="list" id="posTablesListBtn">清單</button>
+                        <button type="button" class="btn btn-outline-light" data-action="tablesView" data-view="floor" id="posTablesFloorBtn">平面圖</button>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="關閉"></button>
                 </div>
                 <div class="modal-body p-3 overflow-y-auto pos-live-body">
+                    <div class="d-none" id="posFloorBox">
+                        <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small">
+                            <select class="form-select form-select-sm w-auto" id="posFloorArea" aria-label="區域"><option value="">全部區域</option></select>
+                            <span class="badge fp-legend fp-free">空桌</span><span class="badge fp-legend fp-occupied">用餐中</span>
+                            <span class="badge fp-legend fp-calling">呼叫中</span><span class="badge fp-legend fp-reserved">即將訂位</span>
+                        </div>
+                        <div id="posFloorPlan"></div>
+                    </div>
                     <div class="row g-3" id="posTablesGrid"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 桌邊呼叫服務 -->
+    <div class="modal fade no-print" id="posCallsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content pos-panel text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning mb-0"><i class="bi bi-bell me-2"></i>桌邊呼叫服務</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-3" id="posCallsList"></div>
             </div>
         </div>
     </div>
@@ -519,6 +661,7 @@
                         <div class="border-top border-dark pt-2 small">
                             <div class="d-flex justify-content-between"><span>商品小計：</span><span>$<span id="rcpt-subtotal">0</span></span></div>
                             <div class="d-flex justify-content-between"><span>折扣折抵：</span><span>-$<span id="rcpt-discount">0</span></span></div>
+                            <div class="d-flex justify-content-between d-none" id="rcpt-service-row"><span>服務費：</span><span>+$<span id="rcpt-service">0</span></span></div>
                             <div class="d-flex justify-content-between fw-bold fs-5 mt-1 pt-1 border-top border-dark">
                                 <span>應付總額：</span><span>$<span id="rcpt-total">0</span></span>
                             </div>
@@ -529,25 +672,39 @@
                             <div class="d-flex justify-content-between fw-bold">
                                 <span>找零金額：</span><span>$<span id="rcpt-change">0</span></span>
                             </div>
+                            <div id="rcpt-invoice-box" class="mt-2 pt-1 border-top border-dark d-none">
+                                <div class="d-flex justify-content-between"><span>電子發票：</span><strong id="rcpt-invoice-no"></strong></div>
+                                <div class="d-flex justify-content-between"><span>載具 / 隨機碼：</span><span id="rcpt-invoice-carrier"></span></div>
+                            </div>
                             <div id="rcpt-points-box" class="mt-2 pt-1 border-top border-dark d-none">
                                 <div class="d-flex justify-content-between"><span>本次新增紅利：</span><span id="rcpt-earned-pts">+0 點</span></div>
                                 <div class="d-flex justify-content-between"><span>會員剩餘紅利：</span><span id="rcpt-remain-pts">0 點</span></div>
                             </div>
                         </div>
-                        <div class="text-center small mt-3 pt-2 border-top border-dark">
-                            謝謝光臨，請憑取餐號碼取餐！
+                        <div class="text-center mt-2 d-none" id="rcpt-qr-box">
+                            <img id="rcpt-qr" alt="出餐進度 QR code" class="rcpt-qr">
+                            <div class="small">掃描查看出餐進度</div>
+                        </div>
+                        <div class="text-center small mt-3 pt-2 border-top border-dark" id="rcpt-footer">
+                            {{ pos_footer }}
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer border-secondary justify-content-between no-print">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="rcpt-close-btn">關閉 (Enter)</button>
-                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" data-action="printReceipt">
-                        <i class="bi bi-printer-fill me-1"></i> 列印收據
-                    </button>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-outline-light" data-action="printReceiptNetwork" id="rcpt-net-print">
+                            <i class="bi bi-printer me-1"></i> 熱感機列印
+                        </button>
+                        <button type="button" class="btn btn-warning fw-bold text-dark px-4" data-action="printReceipt">
+                            <i class="bi bi-printer-fill me-1"></i> 瀏覽器列印
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+    {% include "_pos_pro_modals.html" %}
 {% endblock %}
 
 {% block page_data %}
@@ -555,5 +712,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/pos.js') }}"></script>
+<script src="{{ url_for('static', filename='js/floor-plan.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pos-pro.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/pos.js') }}"></script>
 {% endblock %}

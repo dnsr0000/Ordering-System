@@ -1,0 +1,21 @@
+{# 建立團購的欄位 (公開頁與後台代建共用)；需要 default_pickup #}
+<div class="row g-2">
+    <div class="col-12"><label class="form-label small" for="gTitle">團購名稱</label>
+        <input class="form-control" id="gTitle" name="title" maxlength="60" required placeholder="例如：業務部週五午餐"></div>
+    <div class="col-6"><label class="form-label small" for="gName">主揪姓名</label>
+        <input class="form-control" id="gName" name="organizer_name" maxlength="30" required></div>
+    <div class="col-6"><label class="form-label small" for="gPhone">主揪手機</label>
+        <input class="form-control" id="gPhone" name="organizer_phone" inputmode="tel" pattern="09\d{8}" required></div>
+    <div class="col-6"><label class="form-label small" for="gPickup">取餐時間</label>
+        <input class="form-control" id="gPickup" type="datetime-local" name="pickup_at" step="900" required value="{{ default_pickup.strftime('%Y-%m-%dT%H:%M') }}"></div>
+    <div class="col-6"><label class="form-label small" for="gDeadline">截止收單 (空白 = 取餐前 {{ cfg.deadline_minutes }} 分鐘)</label>
+        <input class="form-control" id="gDeadline" type="datetime-local" name="deadline" step="900"></div>
+    <div class="col-6"><label class="form-label small" for="gType">用餐方式</label>
+        <select class="form-select" id="gType" name="order_type"><option value="外帶">外帶</option><option value="內用">內用</option></select></div>
+    <div class="col-6 d-flex align-items-end"><div class="form-check">
+        <input class="form-check-input" type="checkbox" name="auto_submit" value="1" id="gAuto" checked>
+        <label class="form-check-label small" for="gAuto">截止時自動送單</label></div></div>
+    <input type="hidden" name="auto_submit" value="0">
+    <div class="col-12"><label class="form-label small" for="gNote">給參加者的說明 (選填)</label>
+        <input class="form-control" id="gNote" name="note" maxlength="100" placeholder="例如：每人預算 150 元內"></div>
+</div>

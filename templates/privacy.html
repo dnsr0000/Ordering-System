@@ -31,6 +31,13 @@
         {% else %}
         <div class="small text-secondary">人臉辨識登入：未啟用 (未保存您的人臉資料)。</div>
         {% endif %}
+        {% if member.line_user_id %}
+        <div class="small mt-2">LINE 綁定：<span class="text-success fw-bold">已綁定</span> (用於 LINE 登入與取餐 / 生日通知)</div>
+        <form method="POST" action="{{ url_for('member_auth.line_unbind') }}" data-confirm="確定解除 LINE 綁定？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-secondary btn-sm mt-1" type="submit" id="btn-unbind-line">解除 LINE 綁定</button>
+        </form>
+        {% endif %}
     </section>
     {% endif %}
 
@@ -54,9 +61,12 @@
     <section class="card p-3 mb-3">
         <h2 class="h6 fw-bold">三、個人資料之類別</h2>
         <ul class="mb-0">
-            <li>識別資料：姓名、手機號碼、安全 PIN 碼 (僅保存無法還原的雜湊值)。</li>
+            <li>識別資料：姓名、手機號碼、安全 PIN 碼 (僅保存無法還原的雜湊值)；選填的生日 (用於生日禮)；
+                綁定 LINE 時的 LINE 使用者識別碼 (用於 LINE 登入與通知，不取得您的好友名單或訊息)。</li>
             <li>人臉資料 (僅限您另行同意使用人臉辨識登入時)：註冊照片及由照片計算出的人臉特徵值。</li>
-            <li>消費資料：訂單內容、金額、付款方式、紅利點數與優惠券使用紀錄。線上付款的信用卡資料由金流服務商直接蒐集，本店不保存卡號。</li>
+            <li>消費資料：訂單內容、金額、付款方式、紅利點數、儲值金與優惠券使用紀錄、電子發票載具或統一編號。
+                線上付款的信用卡資料由金流服務商直接蒐集，本店不保存卡號 (門市刷卡僅記錄授權碼與卡號末四碼供對帳)。</li>
+            <li>訂位與候位資料：姓名、電話、人數與時間 (訂位完成後依第四點期間刪除)。</li>
             <li>使用紀錄：登入時間、操作時間、連線 IP 位址。</li>
         </ul>
     </section>
@@ -68,7 +78,8 @@
                 (訂單紀錄保留但移除姓名)；依商業會計法等法令須保存之交易紀錄，於法定保存期限屆滿後刪除。</li>
             <li>地區：本店各門市之系統，以及本店使用之雲端主機所在地。</li>
             <li>對象：本店及所屬分店 (會員與點數可於各分店共用)；線上付款時之金流服務商 (綠界科技，僅提供訂單編號、金額與品名)；
-                依法令規定得向本店要求提供之機關。</li>
+                電子發票加值中心 (綠界科技，依法開立發票所需之載具、統一編號或捐贈碼)；LINE Pay (門市以 LINE Pay 付款時)；
+                簡訊服務商 (僅寄送驗證碼或候位通知所需之手機號碼)；LINE (您綁定 LINE 時之通知)；依法令規定得向本店要求提供之機關。</li>
             <li>方式：以電子方式蒐集、處理、利用，並於門市與雲端主機之間加密傳輸 (HTTPS)。</li>
         </ul>
     </section>

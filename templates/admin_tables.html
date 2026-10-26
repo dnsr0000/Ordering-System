@@ -60,6 +60,21 @@
         </form>
     </section>
 
+    <section class="card rounded-4 p-4 mb-4" id="floorPlanSection">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <h2 class="h5 fw-bold mb-0"><i class="bi bi-diagram-3 text-info me-2"></i>桌位平面圖</h2>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" id="floorArea" aria-label="區域">
+                    <option value="">全部區域</option>{% for a in areas %}<option value="{{ a }}">{{ a }}</option>{% endfor %}
+                </select>
+                <button class="btn btn-sm btn-warning fw-bold text-nowrap" type="button" data-action="save-layout" id="saveLayoutBtn">儲存配置</button>
+            </div>
+        </div>
+        <div class="small text-white-50 mb-2">拖拉桌位擺放位置 (雙擊移回下方待擺放區)；座位數、區域、形狀在下方桌位列表設定。POS「桌位結帳」可切換平面圖查看每桌狀態。</div>
+        <div id="floorPlanEditor"></div>
+        <div class="small mt-2" id="floorSaveMsg"></div>
+    </section>
+
     <section class="card rounded-4 p-4">
         <h2 class="h5 fw-bold mb-3"><i class="bi bi-grid-3x3-gap-fill text-info me-2"></i>桌位列表 ({{ tables|length }})</h2>
         <div class="table-responsive">
@@ -83,6 +98,11 @@
                                 <input type="hidden" name="table_id" value="{{ t.id }}">
                                 <input class="form-control form-control-sm table-name-input" name="name" value="{{ t.name }}" maxlength="30" aria-label="桌號" required>
                                 <input class="form-control form-control-sm table-sort-input" name="sort_order" type="number" value="{{ t.sort_order }}" aria-label="排序" title="排序">
+                                <input class="form-control form-control-sm table-seats-input" name="seats" type="number" min="1" max="30" value="{{ t.seats }}" aria-label="座位數" title="座位數">
+                                <input class="form-control form-control-sm table-area-input" name="area" value="{{ t.area }}" maxlength="20" placeholder="區域" aria-label="區域" title="區域 (例：室內 / 戶外)">
+                                <select class="form-select form-select-sm table-shape-input" name="shape" aria-label="形狀" title="形狀">
+                                    {% for k, v in shapes.items() %}<option value="{{ k }}" {{ 'selected' if t.shape == k }}>{{ v }}</option>{% endfor %}
+                                </select>
                                 <button class="btn btn-sm btn-outline-light text-nowrap" type="submit">儲存</button>
                             </form>
                         </td>
@@ -132,4 +152,9 @@
         </div>
     </section>
 </main>
+{% endblock %}
+{% block page_data %}<script type="application/json" id="page-data">{{ {'floor': floor} | tojson }}</script>{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/floor-plan.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin-tables.js') }}"></script>
 {% endblock %}
