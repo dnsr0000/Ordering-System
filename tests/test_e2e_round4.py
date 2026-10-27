@@ -88,7 +88,9 @@ def test_kiosk_offline_queue_then_replay(app, page):
     page.locator('#cart-sidebar.show').wait_for()
     page.locator('[data-action="preview"]').click()
     page.locator('#confirmModal.show').wait_for()
-    page.route('**/submit_order', lambda route: route.abort())   # 門市主機連不上
+    # 門市主機連不上：結帳與補送都失敗 (點餐機每 15 秒會自動補送一次，不擋住補送的話在較慢的機器上會在檢查前就送出)
+    page.route('**/submit_order', lambda route: route.abort())
+    page.route('**/api/kiosk/offline_order', lambda route: route.abort())
     page.locator('[data-action="checkout"]').click()
     page.locator('#offlineReceiptModal.show').wait_for()
     code = page.locator('#offlineReceiptCode').inner_text()
@@ -98,7 +100,10 @@ def test_kiosk_offline_queue_then_replay(app, page):
     expect(page.locator('#cart-count')).to_have_text('0')
     with app.app_context():
         assert Order.query.filter(Order.note.like(f'[斷線暫存 {code}%')).count() == 0
+    page.evaluate('KioskOffline.flush()')   # 仍連不上時補送失敗：維持待補送 (不會變成失敗或遺失)
+    expect(page.locator('#offlineQueueBadge')).to_contain_text('1 筆待補送')
     page.unroute('**/submit_order')
+    page.unroute('**/api/kiosk/offline_order')
     page.evaluate('KioskOffline.flush()')
     expect(page.locator('#offlineQueueBadge')).to_contain_text('已補送 1 筆')
     with app.app_context():
