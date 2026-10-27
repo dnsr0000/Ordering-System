@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}客顯 - {{ tenant.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block body_class %}customer-display{% endblock %}
+{% block content %}
+<main class="container-fluid py-4 px-5" id="customerDisplay" data-state="idle">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="h4 fw-bold text-warning mb-0"><i class="bi bi-shop me-2"></i>{{ tenant.name }}</div>
+        <div class="text-white-50" id="cdClock"></div>
+    </div>
+    <section id="cdIdle" class="cd-idle text-center">
+        <div class="cd-welcome" id="cdWelcome">{{ message }}</div>
+        <div class="text-white-50 fs-4 mt-3">請向櫃檯人員點餐</div>
+    </section>
+    <section id="cdCart" class="d-none">
+        <div class="row g-4">
+            <div class="col-7">
+                <table class="table table-dark table-lg cd-table align-middle">
+                    <thead><tr><th>品項</th><th class="text-center">數量</th><th class="text-end">小計</th></tr></thead>
+                    <tbody id="cdLines"></tbody>
+                </table>
+            </div>
+            <div class="col-5">
+                <div class="card rounded-4 p-4">
+                    <div id="cdMember" class="mb-3 text-info fs-5 d-none"></div>
+                    <div class="d-flex justify-content-between fs-5"><span>小計</span><span id="cdSubtotal">$0</span></div>
+                    <div class="d-flex justify-content-between fs-5 text-danger d-none" id="cdDiscountRow"><span>折扣</span><span id="cdDiscount">-$0</span></div>
+                    <div class="d-flex justify-content-between fs-5 d-none" id="cdServiceRow"><span>服務費</span><span id="cdService">$0</span></div>
+                    <hr>
+                    <div class="d-flex justify-content-between align-items-end"><span class="fs-4">應付金額</span><span class="cd-total text-warning" id="cdTotal">$0</span></div>
+                    <div class="d-flex justify-content-between fs-4 mt-2 d-none" id="cdCashRow"><span>收您</span><span id="cdCash">$0</span></div>
+                    <div class="d-flex justify-content-between fs-4 text-success d-none" id="cdChangeRow"><span>找您</span><span id="cdChange">$0</span></div>
+                </div>
+            </div>
+        </div>
+    </section>
+    <section id="cdPaid" class="cd-idle text-center d-none">
+        <i class="bi bi-check-circle-fill text-success cd-paid-icon"></i>
+        <div class="cd-welcome mt-3">謝謝光臨</div>
+        <div class="fs-3 mt-2">取餐號碼 <span class="text-warning fw-bold" id="cdPickup"></span></div>
+        <div class="fs-4 text-success mt-2 d-none" id="cdPaidChange"></div>
+    </section>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/pos-display.js') }}"></script>{% endblock %}

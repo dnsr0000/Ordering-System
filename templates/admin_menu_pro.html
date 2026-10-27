@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}菜單進階設定{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="menu-pro-page">
+    {% call page_header('菜單進階設定', 'bi-clock-history', '供應時段與販售期間、外帶 / 線上 / 外送價格、過敏原與素食標示、英文與日文名稱') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='menu') }}">顯示設定</a>
+    {% endcall %}
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold text-info">分類翻譯</h2>
+        <form method="POST" class="row g-2" id="categoryI18nForm">{{ csrf() }}<input type="hidden" name="action" value="categories">
+            {% for cat in categories %}
+            {% set t = translations.get(cat) %}
+            <div class="col-md-4 col-xl-3">
+                <input type="hidden" name="category" value="{{ cat }}">
+                <div class="small fw-bold mb-1">{{ cat }}</div>
+                <div class="input-group input-group-sm mb-1"><span class="input-group-text">EN</span><input class="form-control" name="en__{{ cat }}" value="{{ t.name_en if t else '' }}" aria-label="{{ cat }} 英文"></div>
+                <div class="input-group input-group-sm"><span class="input-group-text">日</span><input class="form-control" name="ja__{{ cat }}" value="{{ t.name_ja if t else '' }}" aria-label="{{ cat }} 日文"></div>
+            </div>
+            {% endfor %}
+            <div class="col-12"><button class="btn btn-outline-info btn-sm fw-bold" type="submit">儲存分類翻譯</button></div>
+        </form>
+    </section>
+    <div class="table-responsive">
+    <table class="table table-dark table-sm align-middle" id="menuProTable">
+        <thead><tr><th>分類</th><th>品項</th><th>內用價</th><th>外帶 / 線上 / 外送</th><th>供應</th><th>標示</th><th>翻譯</th><th>代碼 / 成本</th><th></th></tr></thead>
+        <tbody>
+        {% for it in items %}
+        {% set ok, hint = it.service_status() %}
+        <tr id="item-{{ it.id }}">
+            <td class="small text-white-50">{{ it.category }}</td>
+            <td class="fw-bold">{{ it.name }}</td>
+            <td>${{ it.price }}</td>
+            <td class="small">{{ it.takeout_price or '-' }} / {{ it.online_price or '-' }} / {{ it.delivery_price or '-' }}</td>
+            <td class="small">{% if ok %}<span class="text-success">供應中</span>{% else %}<span class="text-warning">{{ hint }}</span>{% endif %}
+                {% if it.avail_start or it.avail_end %}<div class="text-white-50">{{ it.avail_start or '00:00' }}~{{ it.avail_end or '23:59' }}</div>{% endif %}</td>
+            <td class="small">{% for a in it.allergen_codes %}<span class="badge bg-danger allergen-badge me-1">{{ allergens[a] }}</span>{% endfor %}
+                {% if it.diet %}<span class="badge bg-success allergen-badge">{{ diets[it.diet] }}</span>{% endif %}
+                {% if it.spicy_level %}<span class="badge bg-warning text-dark allergen-badge">辣 {{ it.spicy_level }}</span>{% endif %}</td>
+            <td class="small">{{ it.name_en }}{% if it.name_ja %} / {{ it.name_ja }}{% endif %}</td>
+            <td class="small">{{ it.external_code }}{% if it.unit_cost %} / ${{ it.unit_cost }}{% endif %}</td>
+            <td><button class="btn btn-sm btn-outline-warning" type="button" data-bs-toggle="collapse" data-bs-target="#edit-{{ it.id }}" aria-expanded="false">編輯</button></td>
+        </tr>
+        <tr class="collapse" id="edit-{{ it.id }}"><td colspan="9">
+            <form method="POST" class="row g-2 p-2 border border-secondary rounded menu-pro-form" data-item-id="{{ it.id }}">{{ csrf() }}
+                <input type="hidden" name="action" value="item"><input type="hidden" name="item_id" value="{{ it.id }}">
+                <div class="col-md-3"><label class="form-label small" for="as-{{ it.id }}">供應時段</label>
+                    <div class="input-group input-group-sm"><input class="form-control" type="time" id="as-{{ it.id }}" name="avail_start" value="{{ it.avail_start }}">
+                        <span class="input-group-text">~</span><input class="form-control" type="time" name="avail_end" value="{{ it.avail_end }}" aria-label="結束"></div>
+                    <div class="form-text text-white-50">空白 = 全天；可跨午夜 (22:00~02:00)</div></div>
+                <div class="col-md-3"><div class="form-label small">供應星期</div>
+                    {% for n in range(1, 8) %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="avail_days" value="{{ n }}" id="d{{ n }}-{{ it.id }}" {{ 'checked' if (n|string) in (it.avail_days or '1234567') }}>
+                        <label class="form-check-label small" for="d{{ n }}-{{ it.id }}">{{ weekdays[n - 1] }}</label></div>{% endfor %}</div>
+                <div class="col-md-3"><label class="form-label small" for="sf-{{ it.id }}">販售期間 (季節限定)</label>
+                    <div class="input-group input-group-sm"><input class="form-control" type="date" id="sf-{{ it.id }}" name="sale_from" value="{{ it.sale_from or '' }}">
+                        <span class="input-group-text">~</span><input class="form-control" type="date" name="sale_until" value="{{ it.sale_until or '' }}" aria-label="販售結束"></div></div>
+                <div class="col-md-3"><div class="form-label small">通路價 (0 = 同內用 ${{ it.price }})</div>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text">外帶</span><input class="form-control" type="number" min="0" name="takeout_price" value="{{ it.takeout_price }}" aria-label="外帶價">
+                        <span class="input-group-text">線上</span><input class="form-control" type="number" min="0" name="online_price" value="{{ it.online_price }}" aria-label="線上價">
+                        <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" name="delivery_price" value="{{ it.delivery_price }}" aria-label="外送價"></div></div>
+                <div class="col-md-6"><div class="form-label small">過敏原</div>
+                    {% for code, label in allergens.items() %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="allergens" value="{{ code }}" id="al-{{ code }}-{{ it.id }}" {{ 'checked' if code in it.allergen_codes }}>
+                        <label class="form-check-label small" for="al-{{ code }}-{{ it.id }}">{{ label }}</label></div>{% endfor %}</div>
+                <div class="col-md-3"><label class="form-label small" for="diet-{{ it.id }}">素食</label>
+                    <select class="form-select form-select-sm" id="diet-{{ it.id }}" name="diet"><option value="">葷食 / 不標示</option>
+                        {% for code, label in diets.items() %}<option value="{{ code }}" {{ 'selected' if it.diet == code }}>{{ label }}</option>{% endfor %}</select></div>
+                <div class="col-md-3"><label class="form-label small" for="sp-{{ it.id }}">辣度</label>
+                    <select class="form-select form-select-sm" id="sp-{{ it.id }}" name="spicy_level">{% for n, l in [(0, '不辣'), (1, '小辣'), (2, '中辣'), (3, '大辣')] %}<option value="{{ n }}" {{ 'selected' if it.spicy_level == n }}>{{ l }}</option>{% endfor %}</select></div>
+                <div class="col-md-3"><label class="form-label small" for="nen-{{ it.id }}">English name</label><input class="form-control form-control-sm" id="nen-{{ it.id }}" name="name_en" value="{{ it.name_en }}"></div>
+                <div class="col-md-3"><label class="form-label small" for="nja-{{ it.id }}">日本語名</label><input class="form-control form-control-sm" id="nja-{{ it.id }}" name="name_ja" value="{{ it.name_ja }}"></div>
+                <div class="col-md-3"><label class="form-label small" for="den-{{ it.id }}">English description</label><input class="form-control form-control-sm" id="den-{{ it.id }}" name="description_en" value="{{ it.description_en }}"></div>
+                <div class="col-md-3"><label class="form-label small" for="dja-{{ it.id }}">日本語の説明</label><input class="form-control form-control-sm" id="dja-{{ it.id }}" name="description_ja" value="{{ it.description_ja }}"></div>
+                <div class="col-md-3"><label class="form-label small" for="ext-{{ it.id }}">外送平台 / 條碼代碼</label><input class="form-control form-control-sm" id="ext-{{ it.id }}" name="external_code" value="{{ it.external_code }}" placeholder="與平台上的品項代碼相同"></div>
+                <div class="col-md-3"><label class="form-label small" for="cost-{{ it.id }}">單位成本 (未設定配方時)</label><input class="form-control form-control-sm" id="cost-{{ it.id }}" type="number" min="0" name="unit_cost" value="{{ it.unit_cost }}"></div>
+                <div class="col-md-6"><label class="form-label small" for="size-{{ it.id }}">規格 (名稱:加減價，逗號分隔；第一個為預設)</label><input class="form-control form-control-sm" id="size-{{ it.id }}" name="size_options" value="{{ it.size_options }}" placeholder="例如 中杯:0, 大杯:15, 小杯:-10" maxlength="200"></div>
+                <div class="col-md-3"><label class="form-label small" for="kcal-{{ it.id }}">熱量 (大卡，0 = 不標示)</label><input class="form-control form-control-sm" id="kcal-{{ it.id }}" type="number" min="0" max="5000" name="calories" value="{{ it.calories }}"></div>
+                <div class="col-md-9"><label class="form-label small" for="nutri-{{ it.id }}">營養標示 (選填)</label><input class="form-control form-control-sm" id="nutri-{{ it.id }}" name="nutrition" value="{{ it.nutrition }}" maxlength="200" placeholder="例如 蛋白質 25g、脂肪 18g、碳水化合物 40g、鈉 650mg"></div>
+                <div class="col-12"><button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">儲存「{{ it.name }}」</button></div>
+            </form>
+        </td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</main>
+{% endblock %}

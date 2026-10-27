@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}採購單 {{ po.number }}{% endblock %}
+{% block theme %}light{% endblock %}
+{% block content %}
+<main class="container py-4" id="po-print">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+        <div><h1 class="h4 fw-bold mb-1">{{ tenant.name }} 採購單</h1><div>單號：{{ po.number }}</div></div>
+        <div class="text-end small">建立：{{ po.created_at.strftime('%Y-%m-%d') }}<br>預計到貨：{{ po.expected_on or '-' }}</div>
+    </div>
+    {% if po.supplier %}<p class="mb-3">供應商：<strong>{{ po.supplier.name }}</strong> {{ po.supplier.contact }} {{ po.supplier.phone }}</p>{% endif %}
+    <table class="table table-bordered table-sm">
+        <thead><tr><th>#</th><th>品名</th><th>數量</th><th>單位</th><th>單價</th><th>小計</th></tr></thead>
+        <tbody>{% for ln in po.lines %}<tr><td>{{ loop.index }}</td><td>{{ ln.ingredient.name }}</td><td>{{ '%g' % ln.quantity }}</td>
+            <td>{{ ln.ingredient.unit }}</td><td>{{ '%g' % ln.unit_cost }}</td><td>{{ '{:,}'.format((ln.quantity * ln.unit_cost)|round|int) }}</td></tr>{% endfor %}
+        <tr class="fw-bold"><td colspan="5" class="text-end">合計</td><td>{{ '{:,}'.format(po.total) }}</td></tr></tbody>
+    </table>
+    {% if po.note %}<p>備註：{{ po.note }}</p>{% endif %}
+    <button class="btn btn-dark no-print" type="button" data-action="print-page">列印</button>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

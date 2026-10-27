@@ -36,13 +36,16 @@ def change_points(tenant_id, user_id, delta, reason, order_id=None, clamp=False)
 
 
 def recompute_points(user_ids):
-    """以異動帳重算會員點數合計"""
+    """以異動帳重算會員點數與儲值金合計"""
+    from app.models.member import WalletLedger
     ids = sorted({i for i in user_ids if i})
     if not ids:
         return
     total = select(func.coalesce(func.sum(PointLedger.delta), 0)).where(PointLedger.user_id == User.id) \
         .scalar_subquery()
-    db.session.execute(update(User).where(User.id.in_(ids)).values(points=total)
+    wallet = select(func.coalesce(func.sum(WalletLedger.delta), 0)).where(WalletLedger.user_id == User.id) \
+        .scalar_subquery()
+    db.session.execute(update(User).where(User.id.in_(ids)).values(points=total, wallet_balance=wallet)
                        .execution_options(synchronize_session=False))
 
 

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, status_badge %}
+{% block title %}{{ group.title }} - 團體預購{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% macro item_rows(selected) %}
+{% set picked = {} %}{% for ln in selected %}{% set _ = picked.update({ln.menu_item_id: ln}) %}{% endfor %}
+{% for cat, rows in items|groupby('category', default='') %}
+<div class="small fw-bold text-warning mt-2">{{ cat or '其他' }}</div>
+{% for m in rows %}{% set cur = picked.get(m.id) %}
+<div class="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom border-secondary group-item" data-item-id="{{ m.id }}">
+    <div class="flex-grow-1"><span class="fw-bold">{{ m.name }}</span> <span class="text-white-50 small">${{ m.price_for(channel) }}</span></div>
+    {% if m.sizes %}<select class="form-select form-select-sm w-auto" name="size_{{ m.id }}" aria-label="{{ m.name }} 規格">
+        {% for n, d in m.sizes %}<option value="{{ n }}" {{ 'selected' if cur and cur.size == n }}>{{ n }}{{ ' +$%d' % d if d }}</option>{% endfor %}</select>{% endif %}
+    <input class="form-control form-control-sm" style="width: 9rem" name="note_{{ m.id }}" maxlength="50" placeholder="備註 (少冰…)" value="{{ cur.customization if cur else '' }}" aria-label="{{ m.name }} 備註">
+    <input class="form-control form-control-sm" style="width: 4.5rem" type="number" min="0" max="20" name="qty_{{ m.id }}" value="{{ cur.quantity if cur else 0 }}" aria-label="{{ m.name }} 份數">
+</div>
+{% endfor %}{% endfor %}
+{% endmacro %}
+{% block content %}
+<main class="container py-4" id="groupJoinPage" style="max-width: 720px">
+    <div class="d-flex justify-content-between align-items-start gap-2">
+        <div><h1 class="h4 fw-bold mb-1">{{ group.title }}</h1>
+            <div class="small text-white-50">{{ g.tenant.name }}・主揪 {{ group.organizer_name }}・{{ group.order_type }}・取餐 {{ group.pickup_at.strftime('%m/%d %H:%M') }}</div></div>
+        <span id="groupStatus">{{ status_badge(group.status_label if not (group.status == 'open' and not group.is_open) else '已截止', 'success' if group.is_open else 'secondary') }}</span>
+    </div>
+    {% if group.note %}<div class="alert alert-info small py-2 mt-2 mb-0">{{ group.note }}</div>{% endif %}
+    <div class="small my-2">截止收單：<b>{{ group.deadline.strftime('%m/%d %H:%M') }}</b>　目前 {{ summary.people|length }} 人、{{ summary.count }} 份、預估 ${{ '{:,}'.format(summary.total) }}
+        {% if is_manager %}<a class="ms-2 link-warning" href="{{ url_for('group_orders.manage', shop=shop, token=group.token) }}">管理團購</a>{% endif %}</div>
+
+    {% for key, e in mine %}
+    <section class="card rounded-4 p-3 mb-2 my-entry" data-entry-id="{{ e.id }}">
+        <div class="d-flex justify-content-between"><b>我的點餐：{{ e.name }}</b>
+            {% if group.is_open %}<span><a class="btn btn-sm btn-outline-info" href="{{ url_for('group_orders.join', shop=shop, token=group.token, edit=key) }}">修改</a>
+            <form method="POST" class="d-inline" data-confirm="確定刪除您的點餐？">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="entry_key" value="{{ key }}">
+                <button class="btn btn-sm btn-outline-danger">刪除</button></form></span>{% endif %}</div>
+        {% for p in summary.people if p.entry.id == e.id %}
+        <div class="small">{% for ln in p.lines %}{{ ln.name }}{{ ' (' ~ ln.size ~ ')' if ln.size }} × {{ ln.qty }}{{ ' ' ~ ln.note if ln.note }}{{ '、' if not loop.last }}{% endfor %}　小計 ${{ p.subtotal }}</div>
+        {% endfor %}
+        <div class="small text-white-50 mt-1">換手機修改請用個人連結：<code class="user-select-all">{{ url_for('group_orders.join', shop=shop, token=group.token, entry=key, _external=True) }}</code></div>
+    </section>
+    {% endfor %}
+
+    {% if group.is_open %}
+    <form method="POST" class="card rounded-4 p-3 mb-3" id="groupEntryForm">{{ csrf() }}
+        <input type="hidden" name="action" value="{{ 'update' if editing else 'add' }}">
+        {% if editing %}<input type="hidden" name="entry_key" value="{{ edit_key }}">{% endif %}
+        <div class="fw-bold mb-2">{{ '修改我的點餐' if editing else '我要點餐' }} <span class="small text-white-50">(每人最多 {{ cfg.max_qty_per_person }} 份，金額以送單時為準)</span></div>
+        <div class="row g-2 mb-2">
+            <div class="col-6"><label class="form-label small" for="geName">您的名字</label><input class="form-control" id="geName" name="name" maxlength="30" required value="{{ editing.name if editing else '' }}"></div>
+            <div class="col-6"><label class="form-label small" for="geNote">備註 (選填)</label><input class="form-control" id="geNote" name="note" maxlength="100" value="{{ editing.note if editing else '' }}"></div>
+        </div>
+        {{ item_rows(editing.lines if editing else []) }}
+        <button class="btn btn-warning fw-bold text-dark mt-3" type="submit" id="groupEntrySubmit">{{ '儲存修改' if editing else '加入團購' }}</button>
+    </form>
+    {% else %}
+    <div class="alert alert-secondary" id="groupClosed">這個團購{{ '已送單，請等候主揪通知取餐' if group.status == 'submitted' else ('已取消' if group.status == 'cancelled' else '已截止收單') }}。</div>
+    {% endif %}
+
+    <section class="card rounded-4 p-3">
+        <div class="fw-bold mb-1">目前的點餐 (合計)</div>
+        <table class="table table-dark table-sm small mb-0" id="groupTotals"><tbody>
+            {% for it in summary['items'] %}<tr><td>{{ it.name }}{{ ' (' ~ it.size ~ ')' if it.size }}</td><td class="text-end">{{ it.qty }} 份</td></tr>
+            {% else %}<tr><td class="text-white-50">還沒有人點餐</td></tr>{% endfor %}
+        </tbody></table>
+    </section>
+</main>
+{% endblock %}

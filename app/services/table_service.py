@@ -213,42 +213,175 @@ def unpaid_tables():
     return out
 
 
-def settle_table(tenant_id, table_id, payment_method, cash_received, staff):
-    """結清某一桌所有未結帳訂單；回傳 {orders, total, cash_received, change}"""
-    payment = normalize_payment_method(payment_method)
-    if payment is None:
-        raise AppError(f'不支援的付款方式：{payment_method}')
+def _parse_payments(payments, total, legacy_method, legacy_received, legacy_info=None):
+    """
+    分開付款：[{method, amount, received, auth_code, card_last4, one_time_key}]；未提供時視為單一付款 (整筆)。
+    回傳整理後的清單 (金額合計需等於應付總額)。
+    """
+    from app.services import payment_service
+    if not payments:
+        info = legacy_info if isinstance(legacy_info, dict) else {}
+        payments = [{'auth_code': info.get('auth_code'), 'card_last4': info.get('card_last4'),
+                     'one_time_key': info.get('one_time_key'),
+                     'method': legacy_method, 'amount': total, 'received': legacy_received}]
+    if not isinstance(payments, list) or len(payments) > 10:
+        raise AppError('分開付款的格式不正確 (最多 10 筆)')
+    allowed = payment_service.allowed_methods('pos')
+    out = []
+    for p in payments:
+        if not isinstance(p, dict):
+            raise AppError('分開付款的格式不正確')
+        method = normalize_payment_method(p.get('method'))
+        if method is None:
+            raise AppError(f"不支援的付款方式：{p.get('method')}")
+        if method not in allowed or method in ('平台代收', '儲值金'):
+            raise AppError(f'桌位結帳不可使用「{method}」')
+        amount = safe_int(p.get('amount'), 0)
+        if amount <= 0:
+            raise AppError('每一筆付款金額都必須大於 0')
+        received = safe_int(p.get('received'), 0)
+        if method == 'Cash':
+            if received and received < amount:
+                raise AppError(f'實收現金 (${received}) 小於應付金額 (${amount})！')
+            received = received or amount
+        else:
+            received = amount
+        auth, last4 = ('', '')
+        if method == 'Credit Card':
+            auth, last4 = payment_service.validate_card_details(p, True)
+        out.append({'method': method, 'amount': amount, 'received': received, 'change': received - amount,
+                    'auth_code': auth, 'card_last4': last4, 'one_time_key': p.get('one_time_key')})
+    if sum(p['amount'] for p in out) != total:
+        raise AppError(f"分開付款合計 (${sum(p['amount'] for p in out)}) 與應付總額 (${total}) 不符")
+    return out
+
+
+def settle_table(tenant_id, table_id, payment_method, cash_received, staff, order_ids=None, payments=None,
+                 invoice_info=None, payment_info=None, online=None):
+    """
+    桌位結帳：結清該桌未結帳的掃碼點餐訂單 (order_ids 指定時只結這幾張 = 分開結帳)，
+    payments 可分成多筆不同付款方式 (均分或自訂金額)。回傳 {orders, total, cash_received, change, ...}
+    """
+    from app.models.payment import PaymentKind, Settlement
+    from app.services import einvoice_ecpay, linepay, payment_service, settings_service, wallet_service
     table = db.session.get(DiningTable, safe_int(table_id, 0))
     if table is None or table.tenant_id != tenant_id:
         raise AppError('查無此桌位', 404)
-    orders = unpaid_orders_query().filter(Order.dining_table_id == table.id).order_by(Order.id).all()
-    if not orders:
-        raise AppError(f'{table.label}沒有未結帳的訂單', 409)
+    query = unpaid_orders_query().filter(Order.dining_table_id == table.id)
+    if order_ids:
+        wanted = {safe_int(i, 0) for i in order_ids}
+        query = query.filter(Order.id.in_(wanted))
+    orders = query.order_by(Order.id).all()
+    if not orders or (order_ids and len(orders) != len({safe_int(i, 0) for i in order_ids})):
+        raise AppError(f'{table.label}沒有可結帳的訂單 (可能剛被結帳或取消)，請重新整理', 409)
     total = sum(o.total_price or 0 for o in orders)
-    received = safe_int(cash_received, 0)
-    is_cash = payment == 'Cash'
-    if is_cash and received and received < total:
-        raise AppError(f'實收現金 (${received}) 小於應付總額 (${total})！')
-    received = received if (is_cash and received) else total
+    if online is not None:   # 桌邊線上結帳 (綠界已收款)：金額必須與付款時相同
+        if total != online['amount']:
+            raise AppError(f'訂單金額已異動 (付款 ${online["amount"]}，目前 ${total})', 409)
+        parts = [{'method': online['method'], 'amount': total, 'received': total, 'change': 0,
+                  'auth_code': str(online.get('reference') or '')[:60], 'card_last4': '', 'one_time_key': None}]
+    else:
+        parts = _parse_payments(payments, total, payment_method, cash_received, payment_info)
+    if invoice_info:
+        einvoice_ecpay.normalize_invoice_info(invoice_info, settings_service.get('einvoice', tenant_id))
+    primary = max(parts, key=lambda p: p['amount'])['method']
     now = datetime.now()
+
+    settlement = Settlement(tenant_id=tenant_id, table_name=table.name, total=total,
+                            order_ids=','.join(str(o.id) for o in orders), staff_username=staff.username, created_at=now)
+    db.session.add(settlement)
+    db.session.flush()
+    # LINE Pay (串接) 先扣款：之後的資料庫更新失敗時自動退款
+    charged = []
+    for p in parts:
+        if p['method'] == 'Line Pay' and linepay.is_enabled(tenant_id):
+            key = linepay.normalize_one_time_key(p.get('one_time_key'))
+            ref = f'S{settlement.uuid}-{len(charged) + 1}'
+            try:
+                p['auth_code'] = linepay.pay(tenant_id, ref, p['amount'], key)
+            except linepay.LinePayError as exc:
+                db.session.rollback()
+                _refund_charged(tenant_id, charged)
+                raise AppError(exc.message, 402, payment_failed=True)
+            charged.append((ref, p['amount']))
     settled = 0
     for o in orders:
         # 條件式更新：兩台 POS 同時結同一桌時，每張訂單只會被結一次
         settled += db.session.execute(
             update(Order).where(Order.id == o.id, Order.payment_status == 'unpaid', Order.status != OrderStatus.CANCELLED)
-            .values(payment_status='settled', payment_method=payment, paid_at=now, cash_received=o.total_price,
-                    cash_change=0, cashier_username=o.cashier_username or staff.username)
+            .values(payment_status='settled', payment_method=primary, paid_at=now, cash_received=o.total_price,
+                    cash_change=0, cashier_username=o.cashier_username or staff.username, settlement_id=settlement.id,
+                    shift_id=payment_service.open_shift_id(tenant_id))
             .execution_options(synchronize_session=False)).rowcount
     if settled != len(orders):
         db.session.rollback()
+        _refund_charged(tenant_id, charged)
         raise AppError('這一桌的訂單剛被其他人結帳或取消，請重新整理後再結帳！', 409)
+    for p in parts:
+        payment_service.record_payment(None, PaymentKind.SETTLE, p['method'], p['amount'], received=p['received'],
+                                       change=p['change'], reference=p['auth_code'], card_last4=p['card_last4'],
+                                       note=f'{table.label}結帳', staff=staff.username, settlement_id=settlement.id,
+                                       tenant_id=tenant_id)
+    for o in orders:
+        db.session.refresh(o)
+        if o.user_id:
+            user = o.user
+            user.total_spent = (user.total_spent or 0) + (o.total_price or 0)
+            wallet_service.refresh_tier(user)
+    if settings_service.get('einvoice', tenant_id).get('enabled') and total > 0:
+        inv = einvoice_ecpay.create_invoice(orders[0], invoice_info or {}, settlement=settlement, amount=total)
+        db.session.flush()
+        if settings_service.get('einvoice', tenant_id).get('auto_issue', True):
+            from app.services import deferred
+            deferred.defer(einvoice_ecpay.issue_invoice, inv.id)
+    received = sum(p['received'] for p in parts)
+    change = sum(p['change'] for p in parts)
+    detail = '；'.join(f"{p['method']} ${p['amount']}" for p in parts)
     record_staff_audit('TABLE_SETTLE', tenant_id=tenant_id,
-                       details=f"{table.label}結帳：訂單 {', '.join('#' + str(o.id) for o in orders)} | 付款:{payment} "
-                               f"應收:${total} 實收:${received} 找零:${received - total}")
+                       details=f"{table.label}結帳：訂單 {', '.join('#' + str(o.id) for o in orders)} | 付款:{detail} "
+                               f"應收:${total} 實收:${received} 找零:${change}")
     db.session.commit()
     order_event_bus.notify(tenant_id)
     return {'table': table.name, 'orders': [o.id for o in orders], 'total': total, 'cash_received': received,
-            'change': received - total, 'payment_method': payment}
+            'change': change, 'payment_method': primary, 'settlement_id': settlement.id,
+            'payments': [{'method': p['method'], 'amount': p['amount'], 'change': p['change']} for p in parts]}
+
+
+def _refund_charged(tenant_id, charged):
+    from app.services import linepay, monitor_service
+    for ref, amount in charged:
+        try:
+            linepay.refund(tenant_id, ref, amount)
+        except linepay.LinePayError as exc:
+            monitor_service.alert(f'桌位結帳失敗後 LINE Pay 自動退款失敗 ({ref} ${amount})：{exc.message}，請至 LINE Pay 商家後台退款',
+                                  key=f'linepay-{ref}', tenant_id=tenant_id)
+
+
+def move_orders(tenant_id, from_table_id, to_table_id, order_ids=None):
+    """換桌 / 併桌：把未結帳的訂單移到另一桌 (order_ids 為空時整桌移過去)"""
+    src = db.session.get(DiningTable, safe_int(from_table_id, 0))
+    dst = db.session.get(DiningTable, safe_int(to_table_id, 0))
+    if src is None or dst is None or src.tenant_id != tenant_id or dst.tenant_id != tenant_id:
+        raise AppError('查無此桌位', 404)
+    if src.id == dst.id:
+        raise AppError('請選擇不同的桌位')
+    query = unpaid_orders_query().filter(Order.dining_table_id == src.id)
+    if order_ids:
+        query = query.filter(Order.id.in_([safe_int(i, 0) for i in order_ids]))
+    orders = query.all()
+    if not orders:
+        raise AppError(f'{src.label}沒有未結帳的訂單', 409)
+    for o in orders:
+        label = o.table_number or ''
+        new_label = label.replace(src.label, dst.label, 1) if src.label in label else dst.label
+        db.session.execute(update(Order).where(Order.id == o.id, Order.payment_status == 'unpaid')
+                           .values(dining_table_id=dst.id, table_number=new_label[:50])
+                           .execution_options(synchronize_session=False))
+    record_staff_audit('TABLE_MOVE', tenant_id=tenant_id,
+                       details=f"{src.label} → {dst.label}：訂單 {', '.join('#' + str(o.id) for o in orders)}")
+    db.session.commit()
+    order_event_bus.notify(tenant_id)
+    return {'moved': [o.id for o in orders], 'from': src.name, 'to': dst.name}
 
 
 def table_counts():
@@ -310,3 +443,133 @@ def fix_conflicts(found):
                 fixed += 1
         db.session.commit()
     return fixed
+
+
+# ---------------------------------------------------------------------------
+# 桌邊呼叫服務
+# ---------------------------------------------------------------------------
+CALL_KINDS = {'water': '加水 / 餐具', 'bill': '想結帳', 'help': '需要服務'}
+CALL_EXPIRE_HOURS = 6   # 超過幾小時仍未處理的呼叫不再顯示 (忘了按「已處理」)
+
+
+def call_service(table, kind, note=''):
+    """顧客按「呼叫服務」：同一桌同一種呼叫未處理前不重複建立。回傳 (ServiceCall, 是否新建立)"""
+    from app.models.order import ServiceCall
+    if kind not in CALL_KINDS:
+        raise AppError('不支援的呼叫類型')
+    since = datetime.now() - timedelta(hours=CALL_EXPIRE_HOURS)
+    existing = ServiceCall.query.filter(ServiceCall.dining_table_id == table.id, ServiceCall.kind == kind,
+                                        ServiceCall.handled_at.is_(None), ServiceCall.created_at >= since).first()
+    if existing is not None:
+        return existing, False
+    call = ServiceCall(tenant_id=table.tenant_id, dining_table_id=table.id, kind=kind,
+                       note=str(note or '').strip()[:100], created_at=datetime.now())
+    db.session.add(call)
+    db.session.commit()
+    order_event_bus.notify(table.tenant_id)
+    return call, True
+
+
+def open_calls():
+    """POS 顯示的待處理呼叫 (最早的在前)"""
+    from app.models.order import ServiceCall
+    since = datetime.now() - timedelta(hours=CALL_EXPIRE_HOURS)
+    calls = ServiceCall.query.filter(ServiceCall.handled_at.is_(None), ServiceCall.created_at >= since) \
+        .order_by(ServiceCall.created_at).limit(50).all()
+    return [{'id': c.id, 'table': c.dining_table.name if c.dining_table else '?', 'kind': c.kind,
+             'label': CALL_KINDS.get(c.kind, c.kind), 'note': c.note,
+             'at': c.created_at.strftime('%H:%M'),
+             'minutes': int((datetime.now() - c.created_at).total_seconds() // 60)} for c in calls]
+
+
+def handle_call(call_id, staff_username):
+    from app.models.order import ServiceCall
+    call = db.session.get(ServiceCall, safe_int(call_id, 0))
+    if call is None or call.tenant_id != g.tenant_id:
+        raise AppError('查無此呼叫', 404)
+    if call.handled_at is None:
+        call.handled_at, call.handled_by = datetime.now(), staff_username
+        db.session.commit()
+        order_event_bus.notify(call.tenant_id)
+    return call
+
+
+# ---------------------------------------------------------------------------
+# 桌位平面圖
+# ---------------------------------------------------------------------------
+TABLE_SHAPES = {'square': '方桌', 'round': '圓桌', 'long': '長桌'}
+
+
+def update_table_details(table, seats=None, area=None, shape=None):
+    """座位數 (1~30)、區域、形狀"""
+    if seats is not None:
+        n = safe_int(seats, 0)
+        if not 1 <= n <= 30:
+            raise AppError('座位數需介於 1 ~ 30')
+        table.seats = n
+    if area is not None:
+        table.area = str(area or '').strip()[:20]
+    if shape is not None:
+        table.shape = shape if shape in TABLE_SHAPES else 'square'
+
+
+def save_layout(positions):
+    """平面圖擺放：[{id, x, y}] (平面圖寬高的千分比 0~1000；x 或 y 為空 = 從平面圖移除)。回傳更新筆數"""
+    if not isinstance(positions, list) or len(positions) > 500:
+        raise AppError('平面圖資料格式不正確')
+    tables = {t.id: t for t in DiningTable.query.all()}
+    n = 0
+    for p in positions:
+        if not isinstance(p, dict):
+            continue
+        table = tables.get(safe_int(p.get('id'), 0))
+        if table is None:
+            continue
+        x, y = p.get('x'), p.get('y')
+        if x is None or y is None:
+            table.pos_x = table.pos_y = None
+        else:
+            table.pos_x = max(0, min(1000, safe_int(x, 0)))
+            table.pos_y = max(0, min(1000, safe_int(y, 0)))
+        n += 1
+    return n
+
+
+def floor_plan(now=None):
+    """
+    POS 平面圖：每一桌的狀態 free 空桌 / occupied 用餐中 (有未結帳的掃碼點餐) / calling 呼叫服務中 / reserved 即將訂位到場，
+    用餐中顯示開始時間、已用餐分鐘、未結帳金額與張數。
+    """
+    from app.models.order import ServiceCall
+    from app.models.reservation import Reservation
+    now = now or datetime.now()
+    tables = DiningTable.query.filter_by(is_active=True).order_by(DiningTable.sort_order, DiningTable.id).all()
+    unpaid = {}
+    for o in unpaid_orders_query().order_by(Order.id).all():
+        unpaid.setdefault(o.dining_table_id, []).append(o)
+    calls = {}
+    since = now - timedelta(hours=CALL_EXPIRE_HOURS)
+    for c in ServiceCall.query.filter(ServiceCall.handled_at.is_(None), ServiceCall.created_at >= since).all():
+        calls.setdefault(c.dining_table_id, []).append(c)
+    reserved = {}
+    for r in Reservation.query.filter(Reservation.status == 'booked', Reservation.table_name != '',
+                                      Reservation.reserved_at >= now - timedelta(minutes=30),
+                                      Reservation.reserved_at <= now + timedelta(minutes=60)).all():
+        reserved.setdefault(r.table_name, r)
+    out = []
+    for t in tables:
+        orders = unpaid.get(t.id, [])
+        first = min((o.created_at for o in orders if o.created_at), default=None)
+        r = reserved.get(t.name)
+        status = 'calling' if calls.get(t.id) else ('occupied' if orders else ('reserved' if r else 'free'))
+        out.append({
+            'id': t.id, 'name': t.name, 'seats': t.seats or 0, 'area': t.area or '', 'shape': t.shape or 'square',
+            'x': t.pos_x, 'y': t.pos_y, 'status': status,
+            'total': sum(o.total_price or 0 for o in orders), 'orders': len(orders),
+            'since': first.strftime('%H:%M') if first else '',
+            'minutes': int((now - first).total_seconds() // 60) if first else 0,
+            'calls': [CALL_KINDS.get(c.kind, c.kind) for c in calls.get(t.id, [])],
+            'reservation': f"{r.reserved_at:%H:%M} {r.name} {r.party_size}位" if r else '',
+        })
+    areas = sorted({t['area'] for t in out if t['area']})
+    return {'tables': out, 'areas': areas}

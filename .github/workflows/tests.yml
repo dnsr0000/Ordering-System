@@ -1,0 +1,71 @@
+# 自動測試：push 到 main / 開 Pull Request 時執行。失敗時 PR 會顯示紅色叉叉，請修正後再合併。
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: pytest (SQLite, Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  postgres:
+    name: pytest (PostgreSQL，線上端)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: kiosk
+          POSTGRES_PASSWORD: kiosk
+          POSTGRES_DB: kiosk_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U kiosk" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://kiosk:kiosk@127.0.0.1:5432/kiosk_test
+      TEST_SYNC_HUB_DATABASE_URL: postgresql://kiosk:kiosk@127.0.0.1:5432/kiosk_sync_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: PGPASSWORD=kiosk psql -h 127.0.0.1 -U kiosk -d kiosk_test -c "CREATE DATABASE kiosk_sync_test"
+      - run: pytest -q
+
+  e2e:
+    name: 瀏覽器端對端測試
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: pytest -q -m e2e

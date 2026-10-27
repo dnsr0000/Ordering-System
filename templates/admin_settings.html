@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}系統設定與進階功能{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="settings-hub">
+    {{ page_header('系統設定與進階功能', 'bi-sliders', '外部服務的金鑰與營運規則都在這裡由管理者自行填寫；未設定的服務會自動停用。',
+                   back_url=url_for('admin.admin_dashboard'), back_label='管理後台') }}
+    {% for group in groups %}
+    <section class="mb-4 settings-group" data-group="{{ group }}">
+        <h2 class="h5 fw-bold text-info mb-3">{{ group }}</h2>
+        <div class="row g-3">
+            {% for p in pages if p.group == group %}
+            <div class="col-md-6 col-xl-4">
+                {% if p.url %}
+                <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card" href="{{ p.url }}">
+                {% else %}
+                <div class="card rounded-4 p-3 h-100 feature-card opacity-50">
+                {% endif %}
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <i class="bi {{ p.icon }} text-warning fs-4"></i><span class="fw-bold text-white">{{ p.name }}</span>
+                        <span class="badge bg-warning text-dark ms-auto">功能</span>
+                    </div>
+                    <div class="small text-white-50">{{ p.desc }}</div>
+                {% if p.url %}</a>{% else %}</div>{% endif %}
+            </div>
+            {% endfor %}
+            {% for s in sections if s.group == group %}
+            <div class="col-md-6 col-xl-4">
+                <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card setting-card" href="{{ url_for('settings_admin.edit', key=s.key) }}"
+                   data-setting-key="{{ s.key }}">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <i class="bi {{ s.icon }} text-info fs-4"></i><span class="fw-bold text-white">{{ s.title }}</span>
+                        {% if s.enabled is not none %}
+                        <span class="badge ms-auto {{ 'bg-success' if s.enabled else 'bg-secondary' }}">{{ '已啟用' if s.enabled else '未啟用' }}</span>
+                        {% else %}<span class="badge bg-dark border border-secondary ms-auto">設定</span>{% endif %}
+                    </div>
+                    <div class="small text-white-50">{{ s.description }}</div>
+                    {% if s.owner_only %}<div class="small text-warning mt-1"><i class="bi bi-key me-1"></i>含金鑰，僅負責人可修改</div>{% endif %}
+                    {% if s.source == 'hq' %}<div class="small text-info mt-1"><i class="bi bi-building me-1"></i>使用總部設定</div>
+                    {% elif s.source == 'local' and s.hq %}<div class="small text-white-50 mt-1"><i class="bi bi-shop me-1"></i>本店自訂</div>{% endif %}
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endfor %}
+</main>
+{% endblock %}

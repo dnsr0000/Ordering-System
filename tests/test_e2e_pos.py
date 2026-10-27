@@ -228,12 +228,16 @@ def test_pos_combo_and_addon_order(app, page):
 
     page.select_option('#posPaymentMethod', 'Credit Card')
     expect(page.locator('#posQuickCashRow')).to_be_hidden()
+    expect(page.locator('#posCardAuth')).to_be_visible()          # 刷卡機：輸入授權碼記帳
+    page.fill('#posCardAuth', 'AB1234')
+    page.fill('#posCardLast4', '4242')
     page.locator('#posSubmitBtn').click()
 
     order, items = receipt_order(app, page)
     expect(page.locator('#rcpt-total')).to_have_text('220')
     expect(page.locator('#rcpt-items-tbody')).to_contain_text(XSS_COMBO)
     assert order['payment_method'] == 'Credit Card' and order['cash_change'] == 0
+    assert (order['payment_reference'], order['card_last4']) == ('AB1234', '4242')
     assert order['order_source'] == 'POS' and order['total_price'] == 220
     combo_line = next(i for i in items if i[4] == combo_id)
     assert combo_line[1] == 195

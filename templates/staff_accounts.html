@@ -65,7 +65,8 @@
                     {% for account in accounts %}
                     {% set role = role_labels.get(account.role, (account.role, 'bg-secondary')) %}
                     <tr data-staff-id="{{ account.id }}">
-                        <td class="fw-bold staff-username">{{ account.username }}</td>
+                        <td class="fw-bold staff-username">{{ account.username }}
+                            {% if account.totp_enabled %}<span class="badge bg-success ms-1" title="已啟用兩步驟驗證"><i class="bi bi-shield-check"></i> 2FA</span>{% endif %}</td>
                         <td><span class="badge {{ role[1] }}">{{ role[0] }}</span></td>
                         <td>
                             {% if account.is_active %}
@@ -95,6 +96,20 @@
                                     </button>
                                 </form>
                                 {% endif %}
+                                <form method="POST" class="d-inline" data-confirm="讓【{{ account.username }}】在所有裝置 (含各分店) 立即登出？">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="logout_all">
+                                    <input type="hidden" name="account_id" value="{{ account.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-light text-nowrap"><i class="bi bi-box-arrow-right"></i> 登出所有裝置</button>
+                                </form>
+                                {% if account.totp_enabled and account.id != current_staff_id and account.role != 'owner' %}
+                                <form method="POST" class="d-inline" data-confirm="重設【{{ account.username }}】的兩步驟驗證？(員工手機遺失時使用，對方下次登入只需密碼，再自行重新設定)">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="action" value="reset_2fa">
+                                    <input type="hidden" name="account_id" value="{{ account.id }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap">重設 2FA</button>
+                                </form>
+                                {% endif %}
                                 {% if account.id != current_staff_id %}
                                 <form method="POST" class="d-inline" data-confirm="確定刪除此員工帳號？刪除後會立即停用、無法再登入，帳號名稱可重新使用；歷史稽核紀錄會保留。">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -106,6 +121,40 @@
                                 </form>
                                 {% endif %}
                             </div>
+                        </td>
+                    </tr>
+                    {% if account.role in ('staff', 'kitchen') %}
+                    <tr class="staff-permissions-row" data-staff-id="{{ account.id }}">
+                        <td colspan="5">
+                            <form method="POST" class="d-flex flex-wrap gap-3 align-items-center small">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="permissions">
+                                <input type="hidden" name="account_id" value="{{ account.id }}">
+                                <span class="text-white-50">額外權限：</span>
+                                {% set granted = (account.permissions or '').split(',') %}
+                                {% for code, label in permissions.items() %}
+                                {% set default = code in role_defaults.get(account.role, []) %}
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="perm" value="{{ code }}" id="perm-{{ account.id }}-{{ code }}"
+                                           {{ 'checked' if default or code in granted }} {{ 'disabled' if default }}>
+                                    <label class="form-check-label" for="perm-{{ account.id }}-{{ code }}">{{ label }}{{ ' (角色預設)' if default }}</label>
+                                </div>
+                                {% endfor %}
+                                <button type="submit" class="btn btn-sm btn-outline-info">儲存權限</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    <tr class="staff-wage-row" data-staff-id="{{ account.id }}">
+                        <td colspan="5">
+                            <form method="POST" class="d-flex flex-wrap gap-2 align-items-center small">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="wage">
+                                <input type="hidden" name="account_id" value="{{ account.id }}">
+                                <label class="text-white-50" for="wage-{{ account.id }}">時薪 (人事成本率，本機)：</label>
+                                <input class="form-control form-control-sm w-auto" type="number" min="0" max="100000" id="wage-{{ account.id }}" name="hourly_wage" value="{{ account.hourly_wage or 0 }}">
+                                <button type="submit" class="btn btn-sm btn-outline-info">儲存時薪</button>
+                            </form>
                         </td>
                     </tr>
                     {% else %}

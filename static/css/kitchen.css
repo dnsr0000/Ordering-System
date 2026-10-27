@@ -50,3 +50,8 @@
     background-color: #16a34a;
     color: #fff;
 }
+
+/* 加急訂單 */
+.kds-rush { outline: 3px solid #dc3545; animation: kds-rush-pulse 1.5s ease-in-out infinite; }
+@keyframes kds-rush-pulse { 50% { outline-color: rgba(220, 53, 69, 0.3); } }
+.kds-station-tabs .btn { min-width: 6rem; }

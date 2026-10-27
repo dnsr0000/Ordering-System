@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}員工打卡 - {{ tenant.name }}{% endblock %}
+{% block content %}
+<main class="container py-4" id="timeclock-page" style="max-width: 640px">
+    <h1 class="h3 fw-bold text-center mb-1"><i class="bi bi-person-badge text-warning me-2"></i>員工打卡</h1>
+    <div class="text-center fs-2 fw-bold text-warning mb-3 clock" id="tcClock">--:--:--</div>
+    <form method="POST" class="card rounded-4 p-4 mb-4" id="punchForm" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="form-label fw-bold" for="tcUser">員工帳號</label>
+        <input class="form-control form-control-lg mb-2" id="tcUser" name="username" required autocomplete="off">
+        <label class="form-label fw-bold" for="tcPass">密碼</label>
+        <input class="form-control form-control-lg mb-3" type="password" id="tcPass" name="password" required autocomplete="off">
+        <div class="d-flex gap-2">
+            <button class="btn btn-success btn-lg fw-bold flex-grow-1" type="submit" name="action" value="in">上班打卡</button>
+            <button class="btn btn-outline-warning btn-lg fw-bold flex-grow-1" type="submit" name="action" value="out">下班打卡</button>
+        </div>
+    </form>
+    <div class="row g-3">
+        <div class="col-md-6"><h2 class="h6 fw-bold">今日班表</h2>
+            <ul class="list-group">{% for s in schedules %}<li class="list-group-item bg-dark text-white border-secondary">{{ s.staff.username if s.staff else '' }} {{ s.start_time }}~{{ s.end_time }}</li>
+            {% else %}<li class="list-group-item bg-dark text-white-50 border-secondary">今日無排班</li>{% endfor %}</ul></div>
+        <div class="col-md-6"><h2 class="h6 fw-bold">今日打卡</h2>
+            <ul class="list-group">{% for r in records %}<li class="list-group-item bg-dark text-white border-secondary">{{ r.staff.username if r.staff else '' }} {{ r.clock_in.strftime('%H:%M') }} ~ {{ r.clock_out.strftime('%H:%M') if r.clock_out else '上班中' }}</li>
+            {% else %}<li class="list-group-item bg-dark text-white-50 border-secondary">尚無打卡</li>{% endfor %}</ul></div>
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/timeclock.js') }}"></script>{% endblock %}

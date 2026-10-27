@@ -99,3 +99,95 @@ def register_cli(app: Flask):
         click.echo(f'取消 {expire_unpaid_orders(force=True)} 張逾時未付款的訂單')
 
     app.cli.add_command(payments_cli)
+
+    ops_cli = AppGroup('ops', help='維運：發票重送、每日排程、備份、外部服務連線檢查')
+
+    @ops_cli.command('retry-invoices')
+    def retry_invoices_command():
+        """重送待開立的電子發票 (伺服器背景每 5 分鐘也會執行)"""
+        from app.services.einvoice_ecpay import retry_pending
+        click.echo(f'開立成功 {retry_pending(older_than_seconds=0, limit=200)} 張')
+
+    @ops_cli.command('daily')
+    def daily_command():
+        """立即執行今天到期的每日工作 (自動備份、生日禮、定期報表)"""
+        from app.services.maintenance_service import run_daily_jobs
+        done = run_daily_jobs()
+        click.echo('已執行：' + ('、'.join(done) if done else '沒有到期的工作'))
+
+    @ops_cli.command('backup')
+    @click.option('--keep-days', default=14, show_default=True)
+    def backup_command(keep_days):
+        """立即備份門市資料庫 (SQLite) 到 database/backups"""
+        from app.services.maintenance_service import run_sqlite_backup
+        path = run_sqlite_backup(keep_days)
+        if path is None:
+            raise click.ClickException('只有 SQLite 可以使用此指令；PostgreSQL 請用 deploy/pg_backup.sh')
+        click.echo(f'已備份：{path}')
+
+    @ops_cli.command('check-integrations')
+    @click.option('--tenant', 'slug', default='default', show_default=True)
+    def check_integrations_command(slug):
+        """以目前的設定測試各項外部服務 (電子發票、LINE Pay、LINE、簡訊、寄信、外送平台、監控)"""
+        from flask import g
+        from app.errors import AppError
+        from app.models.tenant import Tenant
+        from app.services import settings_service
+        tenant = Tenant.query.filter_by(slug=slug).first()
+        if tenant is None:
+            raise click.ClickException(f'找不到店家 {slug}')
+        with app.test_request_context('/'):
+            g.tenant, g.tenant_id = tenant, tenant.id
+            for key, tester in settings_service.TESTERS.items():
+                title = settings_service.SECTIONS[key].title
+                if settings_service.SECTIONS[key].enabled_field and not settings_service.is_enabled(key, tenant.id):
+                    click.echo(f'- {title}：未啟用，略過')
+                    continue
+                try:
+                    click.echo(f'✔ {title}：{tester(settings_service.get(key, tenant.id))}')
+                except AppError as exc:
+                    click.echo(f'✘ {title}：{exc.message}')
+                except Exception as exc:  # noqa: BLE001
+                    click.echo(f'✘ {title}：{exc}')
+
+    app.cli.add_command(ops_cli)
+
+    demo_cli = AppGroup('demo', help='展示用的示範店家 (不影響其他店家)')
+
+    @demo_cli.command('seed')
+    @click.option('--slug', default='demo', show_default=True, help='示範店家的網址代號')
+    @click.option('--days', default=60, show_default=True, help='產生過去幾天的營運資料')
+    @click.option('--orders-per-day', default=80, show_default=True, help='平日每天大約幾張訂單 (假日多 35%)')
+    @click.option('--seed', 'seed_value', default=42, show_default=True, help='亂數種子 (相同種子產生相同資料)')
+    @click.option('--password', default=None, help='示範帳號的密碼 (未指定時隨機產生並顯示)')
+    @click.option('--reset', is_flag=True, help='示範店家已存在時刪除後重新建立')
+    def demo_seed_command(slug, days, orders_per_day, seed_value, password, reset):
+        """建立示範店家與過去 N 天的訂單、會員、成本、費用、打卡等資料 (所有報表都有內容)"""
+        from app.services import demo_service
+        if password is not None and len(password) < 10:
+            raise click.ClickException('密碼至少 10 個字元')
+        try:
+            result = demo_service.seed(slug=slug, days=days, orders_per_day=orders_per_day, seed_value=seed_value,
+                                       password=password, reset=reset, progress=click.echo)
+        except demo_service.DemoError as exc:
+            raise click.ClickException(exc.message)
+        click.echo(f"示範店家「示範店家」已建立：網址 /shop/{result['slug']}，共 {result['orders']} 張訂單")
+        click.echo(f"帳號：{'、'.join(result['accounts'])} (負責人 {result['owner']})")
+        click.echo(f"密碼 (所有示範帳號相同)：{result['password']}")
+        click.echo(f"示範會員：手機 0900000001 ~ 09000000{result['members']:02d}，PIN {demo_service.MEMBER_PIN}")
+
+    @demo_cli.command('remove')
+    @click.option('--slug', default='demo', show_default=True, help='示範店家的網址代號')
+    @click.option('--yes', is_flag=True, help='不再詢問直接刪除')
+    def demo_remove_command(slug, yes):
+        """刪除示範店家與它的所有資料 (只會刪除由 demo seed 建立的店家)"""
+        from app.services import demo_service
+        if not yes:
+            click.confirm(f'確定刪除示範店家「{slug}」的所有資料？', abort=True)
+        try:
+            n = demo_service.remove(slug)
+        except demo_service.DemoError as exc:
+            raise click.ClickException(exc.message)
+        click.echo(f'已刪除 {n} 筆資料' if n else f'找不到示範店家「{slug}」')
+
+    app.cli.add_command(demo_cli)

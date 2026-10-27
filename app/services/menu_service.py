@@ -1,5 +1,6 @@
 """菜單、套餐與紅利商品的後台維護邏輯 (新增與編輯共用同一套驗證)"""
 import os
+import re
 import uuid
 
 import pandas as pd
@@ -144,9 +145,11 @@ def save_combo(combo, form, flag):
     for other in others:
         if other.name == name:
             raise AppError(f'❌ 該主餐已存在名為【{name}】的套餐，請使用不同名稱！')
-        if set(other.side_item_ids) == {sid for sid, _ in sides}:
+        if not other.choice_groups and not str(form.get('choices') or '').strip() \
+                and set(other.side_item_ids) == {sid for sid, _ in sides}:
             raise AppError(f'❌ 該主餐已存在包含相同配餐內容的套餐【{other.name}】，不可重複建立相同組合！')
 
+    choices = parse_combo_choices(form.get('choices'))
     combo.main_item_id = main_id
     combo.name = name
     combo.additional_price = max(0, safe_int(form.get('additional_price'), 0))
@@ -154,7 +157,45 @@ def save_combo(combo, form, flag):
     combo.can_addon = flag('can_addon')
     combo.sides = [ComboOptionItem(menu_item_id=sid, position=pos, customizable=bool(cust and items[sid].has_modifiers))
                    for pos, (sid, cust) in enumerate(sides)]
+    combo.sides += [ComboOptionItem(menu_item_id=item.id, position=len(sides) + n, choice_group=group, extra_price=extra,
+                                    customizable=bool(item.has_modifiers))
+                    for n, (group, item, extra) in enumerate(choices)]
     return combo
+
+
+def parse_combo_choices(text):
+    """
+    任選群組文字：每行「群組: 餐點, 餐點+加價」(冒號 / 逗號全形半形皆可)。回傳 [(群組, MenuItem, 加價)]。
+    每組至少兩個選項；餐點以名稱對應本店菜單。
+    """
+    out = []
+    groups = set()
+    for raw in str(text or '').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        group, sep, rest = line.replace('：', ':').partition(':')
+        group = group.strip()[:30]
+        if not sep or not group:
+            raise AppError(f'❌ 任選群組格式錯誤：「{line}」，請寫成「群組: 餐點, 餐點+加價」')
+        if group in groups:
+            raise AppError(f'❌ 任選群組「{group}」重複')
+        groups.add(group)
+        options = [p.strip() for p in re.split(r'[,，、]', rest) if p.strip()]
+        if len(options) < 2:
+            raise AppError(f'❌ 任選群組「{group}」至少要有兩個選項')
+        seen = set()
+        for opt in options:
+            m = re.fullmatch(r'(.+?)\s*\+\s*(\d+)', opt)
+            name, extra = (m.group(1).strip(), int(m.group(2))) if m else (opt, 0)
+            item = MenuItem.query.filter_by(name=name).first()
+            if item is None:
+                raise AppError(f'❌ 任選群組「{group}」的餐點「{name}」不在菜單中')
+            if item.id in seen:
+                raise AppError(f'❌ 任選群組「{group}」的餐點「{name}」重複')
+            seen.add(item.id)
+            out.append((group, item, extra))
+    return out
 
 
 # ---------------------------------------------------------------------------

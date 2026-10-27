@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block theme %}light{% endblock %}
+{% block title %}分裝清單 {{ group.title }}{% endblock %}
+{% block content %}
+<main class="container py-3" id="groupPrintPage">
+    <div class="d-flex justify-content-between align-items-center no-print mb-2">
+        <span class="small text-muted">每人一格，可剪下貼在餐袋上</span>
+        <button class="btn btn-sm btn-dark" type="button" data-action="print-page">列印</button>
+    </div>
+    <h1 class="h5 fw-bold">{{ g.tenant.name }}｜團購「{{ group.title }}」</h1>
+    <div class="small mb-3">主揪 {{ group.organizer_name }} {{ group.organizer_phone }}・{{ group.order_type }}・取餐 {{ group.pickup_at.strftime('%m/%d %H:%M') }}
+        {% if group.order %}・取餐號 #{{ '%03d' % group.order.pickup_number }}{% endif %}・共 {{ summary.people|length }} 人 {{ summary.count }} 份</div>
+    <div class="row g-2">
+        {% for p in summary.people %}
+        <div class="col-6 col-md-4"><div class="border border-dark rounded p-2 h-100 group-label">
+            <div class="fw-bold fs-5">{{ p.entry.name }}</div>
+            {% for ln in p.lines %}<div>{{ ln.name }}{{ ' (' ~ ln.size ~ ')' if ln.size }} × {{ ln.qty }}{% if ln.note %} <i>{{ ln.note }}</i>{% endif %}</div>{% endfor %}
+            {% if p.entry.note %}<div class="small fst-italic">{{ p.entry.note }}</div>{% endif %}
+            <div class="small text-end">${{ p.subtotal }}</div>
+        </div></div>
+        {% endfor %}
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

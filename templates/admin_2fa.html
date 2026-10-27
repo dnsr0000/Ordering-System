@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}兩步驟驗證{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-5 narrow-page" id="two-factor-page">
+    <h1 class="h4 fw-bold mb-3"><i class="bi bi-shield-lock text-warning me-2"></i>兩步驟驗證</h1>
+    <form method="POST" class="card rounded-4 p-4" id="twoFactorForm" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <p class="small text-white-50 mb-3">帳號 <strong class="text-white">{{ username }}</strong>：請開啟手機上的驗證 App (Google Authenticator、Microsoft Authenticator 等)，輸入目前顯示的 6 位數。手機不在身邊時可輸入一組 8 位數備用碼。</p>
+        <label class="form-label fw-bold" for="twoFactorCode">驗證碼</label>
+        <input class="form-control form-control-lg text-center mb-3" id="twoFactorCode" name="code" inputmode="numeric"
+               maxlength="9" autocomplete="one-time-code" required autofocus>
+        <button class="btn btn-warning fw-bold text-dark" type="submit">確認登入</button>
+        <a class="btn btn-link text-white-50 mt-2" href="{{ url_for('admin.admin_dashboard') }}">取消，重新登入</a>
+    </form>
+</main>
+{% endblock %}

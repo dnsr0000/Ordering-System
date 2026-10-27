@@ -17,6 +17,8 @@
     const REWARD_LABEL = '[點數兌換]';
 
     const pageData = Kiosk.pageData();
+    const pro = pageData.pro || {};
+    const ui = pageData.ui || {};
 
     // ---------------------------------------------------------------- localStorage (隱私模式可能無法使用)
     function loadCart() {
@@ -28,6 +30,20 @@
     function clearStoredCart() {
         try { localStorage.removeItem(CART_KEY); } catch (err) { /* 忽略 */ }
     }
+
+    // 桌邊呼叫服務 (掃桌位 QR code 後，登入前後都可使用)
+    async function callService(btn) {
+        btn.disabled = true;
+        try {
+            const res = await api('/api/table/call', { json: { kind: btn.dataset.kind } });
+            alert(`🔔 ${res.message}`);
+        } catch (err) {
+            alert(`❌ ${err.message}`);
+        } finally {
+            setTimeout(() => { btn.disabled = false; }, 3000);
+        }
+    }
+    Kiosk.on(document, 'click', { 'call-service': (el) => callService(el) });
 
     // 未登入的歡迎頁：清掉上一位顧客留下的購物車 (登出、閒置登出都會回到這裡)
     if (!pageData.loggedIn) {
@@ -58,6 +74,19 @@
     let checkoutOrderId = null;    // 本次結帳的 client_order_id (重送沿用，購物車變動後重新產生)
     let submitting = false;
     let myOrdersTimer = null;
+    let promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
+    let promotionSeq = 0;
+    let promotionTimer = null;
+
+    /** 價格通路：線上點餐 / 外帶 / 內用 (與後端 order_service._price_channel 相同) */
+    function priceChannel() {
+        if (isOnline) return 'online';
+        const sel = $('orderType');
+        return sel && sel.value === '外帶' ? 'takeout' : 'dine_in';
+    }
+    function channelPrice(item) {
+        return Number((item.prices && item.prices[priceChannel()]) || item.price) || 0;
+    }
 
     // ================================================================ 購物車資料
     /** 把舊版或紅利商城寫入的品項轉成目前格式；無法辨識的品項丟棄 */
@@ -78,9 +107,13 @@
             price: Number(raw.price) || 0,
             quantity: Math.max(1, parseInt(raw.quantity, 10) || 1),
             customization: String(raw.customization || ''),
+            size: String(raw.size || ''),
             modifier_ids: (raw.modifier_ids || []).map(Number).filter(Boolean),
             combo_option_id: Number(raw.combo_option_id) || null,
             combo_name: String(raw.combo_name || ''),
+            combo_choices: (raw.combo_choices || []).map(Number).filter(Boolean),
+            pass_id: Number(raw.pass_id) || 0,
+            choice_labels: (raw.choice_labels || []).map(String),
             is_add_on: raw.is_add_on === true || raw.is_add_on === 'true',
             is_reward: isReward,
             points_cost: Number(raw.points_cost) || 0,
@@ -91,14 +124,17 @@
     }
 
     function lineKey(line) {
-        return [line.menu_item_id, line.combo_option_id || 0, line.is_add_on ? 1 : 0, line.customization,
-            [...line.modifier_ids].sort((a, b) => a - b).join(',')].join('|');
+        return [line.menu_item_id, line.combo_option_id || 0, line.is_add_on ? 1 : 0, line.size || '', line.customization,
+            [...line.modifier_ids].sort((a, b) => a - b).join(','), (line.combo_choices || []).join(','), line.pass_id || 0].join('|');
     }
 
     /** 購物車品項的顯示說明：[套餐: X]、客製化文字、加料(+N) (與後端產生的明細相同) */
     function lineDescription(line) {
         const parts = [];
+        if (line.pass_id) parts.push('[寄杯]');
         if (line.combo_name) parts.push(`[套餐: ${line.combo_name}]`);
+        parts.push(...(line.choice_labels || []));
+        if (line.size) parts.push(line.size);
         if (line.customization) parts.push(line.customization);
         line.modifier_ids.forEach((id) => {
             const m = modifierById.get(id);
@@ -121,21 +157,50 @@
         return ids.reduce((sum, id) => sum + (modifierById.has(id) ? Number(modifierById.get(id).price) || 0 : 0), 0);
     }
 
-    function makeLine(item, { combo = null, isAddon = false, customization = '', modifierIds = [] } = {}) {
-        const base = isAddon ? Number(item.add_on_price) || 0 : Number(item.price) + (combo ? Number(combo.price) || 0 : 0);
+    /** 規格加減價 (與後端相同：沒有指定時用第一個規格) */
+    function sizeDelta(item, size) {
+        const sizes = (item && item.sizes) || [];
+        if (!sizes.length) return 0;
+        const chosen = sizes.find((s) => s.name === size) || sizes[0];
+        return Number(chosen.delta) || 0;
+    }
+
+    /** 套餐任選：選中的選項 → { ids, extra, labels } */
+    function comboChoiceInfo(combo, ids) {
+        const out = { ids: [], extra: 0, labels: [] };
+        (combo && combo.choices ? combo.choices : []).forEach((g) => {
+            const opt = g.options.find((o) => ids.includes(Number(o.id)));
+            if (!opt) return;
+            out.ids.push(Number(opt.id));
+            out.extra += Number(opt.extra_price) || 0;
+            out.labels.push(`${g.group}:${opt.name}${Number(opt.extra_price) ? `(+${opt.extra_price})` : ''}`);
+        });
+        return out;
+    }
+
+    function makeLine(item, { combo = null, isAddon = false, customization = '', modifierIds = [], size = '', choiceIds = [],
+                              passId = 0 } = {}) {
+        const choice = comboChoiceInfo(combo, choiceIds);
+        let base = isAddon ? Number(item.add_on_price) || 0
+            : Math.max(0, channelPrice(item) + sizeDelta(item, size)) + (combo ? Number(combo.price) || 0 : 0) + choice.extra;
+        if (passId) base = 0;   // 寄杯兌換：免費 (只收加料)
         return {
             menu_item_id: Number(item.id),
             name: item.name,
             price: base + modifiersTotal(modifierIds),
             quantity: 1,
             customization,
+            size: isAddon ? '' : size,
             modifier_ids: modifierIds,
             combo_option_id: combo ? combo.id : null,
             combo_name: combo ? combo.name : '',
+            combo_choices: choice.ids,
+            choice_labels: choice.labels,
+            pass_id: passId || 0,
             is_add_on: isAddon,
             is_reward: false,
             points_cost: 0,
-            can_addon: isAddon ? false : (combo ? combo.can_addon !== false : true),
+            can_addon: isAddon || passId ? false : (combo ? combo.can_addon !== false : true),
             is_sold_out: false,
         };
     }
@@ -235,11 +300,75 @@
         return changed;
     }
 
+    /** 內用 / 外帶切換時，一般品項改用該通路的價格 */
+    function repriceCart() {
+        cart.forEach((l) => {
+            if (l.is_reward) return;
+            if (l.pass_id) {
+                l.price = modifiersTotal(l.modifier_ids);
+                return;
+            }
+            const item = menuItems.get(l.menu_item_id);
+            if (!item) return;
+            if (l.is_add_on) {
+                l.price = (Number(item.add_on_price) || 0) + modifiersTotal(l.modifier_ids);
+                return;
+            }
+            const combo = l.combo_option_id ? (item.combos || []).find((c) => Number(c.id) === Number(l.combo_option_id)) : null;
+            l.price = Math.max(0, channelPrice(item) + sizeDelta(item, l.size)) + (combo ? Number(combo.price) || 0 : 0)
+                + comboChoiceInfo(combo, l.combo_choices || []).extra + modifiersTotal(l.modifier_ids);
+        });
+        saveCart();
+        updateCartUI();
+    }
+
+    // ================================================================ 促銷活動預覽 (實際以後端結帳計算為準)
+    function schedulePromotionPreview() {
+        clearTimeout(promotionTimer);
+        promotionTimer = setTimeout(runPromotionPreview, 300);
+    }
+
+    async function runPromotionPreview() {
+        const seq = ++promotionSeq;
+        if (!cart.length) {
+            promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
+            calculateTotal();
+            return;
+        }
+        try {
+            const res = await api('/api/promotions/preview', {
+                json: { items: cart.map(itemPayload), channel: pageData.table ? 'table' : 'kiosk', order_type: $('orderType').value },
+            });
+            if (seq === promotionSeq) promotion = res;
+        } catch (err) {
+            if (seq === promotionSeq) promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
+        }
+        calculateTotal();
+    }
+
+    function itemPayload(l) {
+        return {
+            menu_item_id: l.menu_item_id,
+            quantity: l.quantity,
+            modifier_ids: l.modifier_ids,
+            combo_option_id: l.combo_option_id,
+            is_add_on: l.is_add_on,
+            is_reward: l.is_reward,
+            customization: l.customization,
+            size: l.size || '',
+        };
+    }
+
     // ================================================================ 金額計算 (與後端 process_checkout 相同的進位規則)
     function computeTotals() {
         const subtotal = cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
-        const promo = Math.min(appliedPromoDiscount, subtotal);
-        const remaining = Math.max(0, subtotal - promo);
+        const promotionDiscount = Math.min(Number(promotion.discount) || 0, subtotal);
+        const afterPromotion = Math.max(0, subtotal - promotionDiscount);
+        const promo = promotion.blocks_coupon ? 0 : Math.min(appliedPromoDiscount, afterPromotion);
+        let remaining = Math.max(0, afterPromotion - promo);
+        const tierPct = Number(pro.tierDiscount) || 0;
+        const tier = tierPct > 0 ? remaining * Math.min(100, tierPct) / 100 : 0;
+        remaining = Math.max(0, remaining - tier);
         let pointsUsed = 0;
         let pointsDiscount = 0;
         const toggle = $('usePointsToggle');
@@ -255,9 +384,30 @@
             pointsDiscount = Math.min(Math.floor(val / ppd), maxCash);
             pointsUsed = pointsDiscount * ppd;
         }
-        const final = Math.floor(Math.max(0, remaining - pointsDiscount) + 0.5);
-        const earned = isGuest ? 0 : Math.floor(final / Math.max(1, Number(rewardConfig.spendPerPoint) || 100));
-        return { subtotal, promo, pointsUsed, pointsDiscount, final, earned };
+        const afterDiscounts = Math.max(0, remaining - pointsDiscount);
+        const servicePct = Number(pro.serviceChargePercent) || 0;
+        const dineIn = pageData.table || $('orderType').value === '內用';
+        const service = servicePct > 0 && pro.serviceChargeDineIn && dineIn ? Math.floor(afterDiscounts * servicePct / 100 + 0.5) : 0;
+        const delivery = deliveryFee(subtotal);
+        const final = Math.floor(afterDiscounts + 0.5) + service + delivery;
+        const earned = isGuest ? 0 : Math.floor((final - delivery) / Math.max(1, Number(rewardConfig.spendPerPoint) || 100));
+        return { subtotal, promo, pointsUsed, pointsDiscount, final, earned, promotionDiscount, tier, service, delivery };
+    }
+
+    /** 外送到府的外送費 (與後端相同：依配送區域，商品小計達免運門檻免收) */
+    function deliveryFee(subtotal) {
+        if (!pro.homeDelivery || !$('orderType') || $('orderType').value !== '外送到府') return 0;
+        const opt = $('deliveryZone') && $('deliveryZone').selectedOptions[0];
+        if (!opt) return 0;
+        const freeOver = Number(pro.homeDelivery.freeOver) || 0;
+        return freeOver && subtotal >= freeOver ? 0 : Number(opt.dataset.fee) || 0;
+    }
+
+    function toggleRow(rowId, valueId, value) {
+        const row = $(rowId);
+        if (!row) return;
+        row.classList.toggle('d-none', !(value > 0));
+        setText(valueId, Math.round(value));
     }
 
     function setText(id, value) {
@@ -267,12 +417,33 @@
 
     function calculateTotal() {
         const t = computeTotals();
+        toggleRow('cart-promotion-row', 'cart-promotion', t.promotionDiscount);
+        setText('cart-promotion-names', (promotion.names || []).join('、'));
+        toggleRow('cart-tier-row', 'cart-tier', t.tier);
+        toggleRow('cart-service-row', 'cart-service', t.service);
+        toggleRow('cart-delivery-row', 'cart-delivery', t.delivery);
+        const gifts = $('cart-gifts');
+        if (gifts) Kiosk.setHtml(gifts, (promotion.gifts || []).map((g) => html`<div><i class="bi bi-gift me-1"></i>${ui.gift || '贈品'}：${g.name} x${g.quantity}</div>`));
         setText('cart-subtotal', Math.round(t.subtotal));
         setText('cart-promo-discount', Math.round(t.promo));
         setText('cart-points-discount', Math.round(t.pointsDiscount));
         setText('cart-final', t.final);
         setText('cart-earned-points', t.earned);
+        toggleCalories('cart-calories-row', 'cart-calories');
         return t;
+    }
+
+    /** 購物車熱量合計 (有標示熱量的餐點才計入；後台關閉熱量顯示時隱藏) */
+    function cartCalories() {
+        return cart.reduce((sum, l) => sum + (Number((menuItems.get(Number(l.menu_item_id)) || {}).calories) || 0) * l.quantity, 0);
+    }
+
+    function toggleCalories(rowId, valueId) {
+        const row = $(rowId);
+        if (!row) return;
+        const kcal = pro.showCalories ? cartCalories() : 0;
+        row.classList.toggle('d-none', !(kcal > 0));
+        setText(valueId, Math.round(kcal));
     }
 
     function setUserPoints(points) {
@@ -344,6 +515,7 @@
             Kiosk.setHtml($('addon-recommend-container'), addonRecommendHtml());
         }
         calculateTotal();
+        schedulePromotionPreview();
     }
 
     function changeQty(index, delta) {
@@ -456,8 +628,7 @@
         if (!item) return;
         const combo = comboId ? (item.combos || []).find((c) => String(c.id) === String(comboId)) : null;
         // 等套餐視窗完全關閉後再開客製化視窗，避免兩個 Modal 的轉場互相干擾
-        $('comboModal').addEventListener('hidden.bs.modal', () => proceedToModifiers(item, combo, false), { once: true });
-        modal('comboModal').hide();
+        Kiosk.hideModalThen($('comboModal'), () => proceedToModifiers(item, combo, false));
     }
 
     function modifierSectionHtml(key, title, group) {
@@ -509,15 +680,31 @@
             </div>`;
     }
 
-    /** 有客製化選項時開啟客製化視窗，否則直接加入購物車 */
-    function proceedToModifiers(item, combo, isAddon) {
+    /** 規格選擇 (單選)：第一個為預設 */
+    function sizeSectionHtml(item) {
+        const sign = (d) => (d > 0 ? ` (+$${d})` : (d < 0 ? ` (-$${-d})` : ''));
+        return html`
+            <div class="mod-section p-3 mb-3 rounded border border-warning bg-dark shadow-sm" data-key="size">
+                <h6 class="fw-bold text-warning mb-2 border-bottom border-secondary pb-1">${ui.size || '規格'}</h6>
+                <div class="d-flex flex-wrap gap-2" role="radiogroup">
+                    ${item.sizes.map((s, i) => html`
+                        <input type="radio" class="btn-check" name="item-size" id="size-${i}" value="${s.name}" data-mod="size" ${i === 0 ? 'checked' : ''}>
+                        <label class="btn btn-outline-warning btn-sm" for="size-${i}">${s.name}${sign(Number(s.delta) || 0)}</label>`)}
+                </div>
+            </div>`;
+    }
+
+    /** 有客製化選項或規格時開啟客製化視窗，否則直接加入購物車 */
+    function proceedToModifiers(item, combo, isAddon, passId = 0) {
         const hasMain = item.modifiers && item.modifiers !== 'none';
+        const hasSizes = !isAddon && !passId && (item.sizes || []).length > 0;
         const sides = combo ? (combo.sides || []).filter((s) => s.customizable) : [];
-        if (!hasMain && !sides.length) {
-            addLine(makeLine(item, { combo, isAddon }));
+        const choices = combo ? (combo.choices || []) : [];
+        if (!hasMain && !sides.length && !hasSizes && !choices.length) {
+            addLine(makeLine(item, { combo, isAddon, passId }));
             return;
         }
-        pendingSelection = { item, combo, isAddon, sides };
+        pendingSelection = { item, combo, isAddon, sides, choices, passId };
         let title;
         if (isAddon) title = `加購客製化 - ${item.name}`;
         else title = combo ? `客製化選擇 - ${item.name} [套餐: ${combo.name}]` : `客製化選擇 - ${item.name}`;
@@ -526,10 +713,41 @@
         const isComboMode = Boolean(combo || sides.length);
         const mainTitle = isAddon ? `加購：${item.name}` : (isComboMode ? `主餐：${item.name}` : item.name);
         Kiosk.setHtml($('modifierModalBody'), [
+            hasSizes ? sizeSectionHtml(item) : '',
             hasMain ? modifierSectionHtml('main', mainTitle, item.modifiers) : '',
             sides.map((side, i) => modifierSectionHtml(`side${i}`, `配餐：${side.name}`, side.modifiers)),
+            choices.map((g, gi) => choiceSectionHtml(g, gi)),
         ]);
+        syncChoiceMods();
         modal('modifierModal').show();
+    }
+
+    /** 套餐任選群組：單選 (售完的選項不能選)，選項可客製時顯示該選項的客製化 */
+    function choiceSectionHtml(g, gi) {
+        const first = g.options.find((o) => o.is_available !== false);
+        return html`
+            <div class="mod-section p-3 mb-3 rounded border border-info bg-dark shadow-sm" data-key="choice${gi}" data-choice-group="${gi}">
+                <h6 class="fw-bold text-info mb-2 border-bottom border-secondary pb-1">${g.group} (任選一項)</h6>
+                <div class="d-flex flex-wrap gap-2" role="radiogroup">
+                    ${g.options.map((o) => html`
+                        <input type="radio" class="btn-check" name="combo-choice-${gi}" id="choice-${gi}-${o.id}" value="${o.id}"
+                               data-mod="choice" ${o.is_available === false ? 'disabled' : ''} ${first && o.id === first.id ? 'checked' : ''}>
+                        <label class="btn btn-outline-info btn-sm" for="choice-${gi}-${o.id}">${o.name}${Number(o.extra_price) ? ` (+$${o.extra_price})` : ''}${o.is_available === false ? ' (售完)' : ''}</label>`)}
+                </div>
+                ${g.options.filter((o) => o.customizable && o.modifiers && o.modifiers !== 'none').map((o) => html`
+                    <div class="choice-mods mt-2 d-none" data-opt="${o.id}">
+                        ${modifierSectionHtml(`choice${gi}-${o.id}`, `${o.name} 客製化`, o.modifiers)}
+                    </div>`)}
+            </div>`;
+    }
+
+    function syncChoiceMods() {
+        document.querySelectorAll('#modifierModalBody [data-choice-group]').forEach((sec) => {
+            const checked = sec.querySelector('[data-mod="choice"]:checked');
+            sec.querySelectorAll('.choice-mods').forEach((box) => {
+                box.classList.toggle('d-none', !checked || box.dataset.opt !== checked.value);
+            });
+        });
     }
 
     /** 讀取一個客製化區塊：回傳 { text: 冰塊/甜度或辣度文字, modifierIds: 勾選的加料 } */
@@ -563,8 +781,65 @@
             modifierIds.push(...s.modifierIds);
         });
 
-        addLine(makeLine(sel.item, { combo: sel.combo, isAddon: sel.isAddon, customization: texts.join('、'), modifierIds }));
+        const choiceIds = [];
+        for (const [gi, g] of (sel.choices || []).entries()) {
+            const checked = body.querySelector(`[data-choice-group="${gi}"] [data-mod="choice"]:checked`);
+            if (!checked) {
+                alert(`⚠️ 請在「${g.group}」中選擇一項！`);
+                return;
+            }
+            choiceIds.push(Number(checked.value));
+            const opt = g.options.find((o) => String(o.id) === checked.value);
+            const box = body.querySelector(`[data-choice-group="${gi}"] .choice-mods[data-opt="${checked.value}"] .mod-section`);
+            const c = readSection(box);
+            if (c.text) texts.push(`${opt.name}(${c.text})`);
+            modifierIds.push(...c.modifierIds);
+        }
+        const sizeInput = body.querySelector('[data-mod="size"]:checked');
+        addLine(makeLine(sel.item, { combo: sel.combo, isAddon: sel.isAddon, customization: texts.join('、'), modifierIds,
+            size: sizeInput ? sizeInput.value : '', choiceIds, passId: sel.passId || 0 }));
         modal('modifierModal').hide();
+    }
+
+    /** 寄杯：兌換一份 (不能超過剩餘次數) */
+    function usePass(passId) {
+        const p = (pageData.passes || []).find((x) => Number(x.id) === Number(passId));
+        const item = p ? menuItems.get(Number(p.menu_item_id)) : null;
+        if (!p || !item) {
+            alert('⚠️ 找不到可兌換的餐點');
+            return;
+        }
+        const used = cart.filter((l) => Number(l.pass_id) === Number(p.id)).reduce((s, l) => s + l.quantity, 0);
+        if (used >= Number(p.remaining)) {
+            alert(`⚠️ 寄杯「${p.name}」剩 ${p.remaining} 次，已全部加入購物車`);
+            return;
+        }
+        proceedToModifiers(item, null, false, p.id);
+    }
+
+    async function openTableBill() {
+        try {
+            const res = await api('/api/table/bill');
+            Kiosk.setHtml($('tableBillBody'), res.orders.length ? html`
+                ${res.orders.map((o) => html`<div class="border-bottom py-1"><div class="fw-bold small">取餐 #${o.pickup_number} • $${o.total_price}</div>
+                    ${o.items.map((i) => html`<div class="small text-secondary">${i.name} x${i.quantity}</div>`)}</div>`)}
+                <div class="fs-5 fw-bold text-end mt-2">合計 <span id="tableBillTotal">$${res.total}</span></div>` : html`<div class="text-secondary">目前沒有需要結帳的訂單</div>`);
+            $('tablePayBtn').disabled = !res.orders.length || !res.online_pay;
+            modal('tableBillModal').show();
+        } catch (err) {
+            alert(`❌ ${err.message}`);
+        }
+    }
+
+    async function payTableBill() {
+        $('tablePayBtn').disabled = true;
+        try {
+            const res = await api('/api/table/pay', { method: 'POST', json: {} });
+            window.location.href = res.payment_url;
+        } catch (err) {
+            alert(`❌ ${err.message}`);
+            $('tablePayBtn').disabled = false;
+        }
     }
 
     function triggerAddon(itemId) {
@@ -656,7 +931,7 @@
     // ================================================================ 結帳
     function takeoutInfo() {
         const orderType = $('orderType').value;
-        const takeout = orderType === '外帶';
+        const takeout = orderType === '外帶' || orderType === '外送到府';
         return {
             orderType,
             needCutlery: takeout ? $('needCutlery').checked : false,
@@ -677,6 +952,13 @@
         if (soldOut) {
             alert(`⚠️ 購物車中有已售完餐點【${soldOut.name}】，請先點擊「移除」後再結帳！`);
             return;
+        }
+        if ($('paymentMethod').value === '儲值金') {
+            const t0 = computeTotals();
+            if ((Number(pro.walletBalance) || 0) < t0.final) {
+                alert(`⚠️ 儲值金餘額 $${Number(pro.walletBalance) || 0} 不足 (應付 $${t0.final})，請改用其他付款方式或至櫃檯加值！`);
+                return;
+            }
         }
         // 購物車可能在套用優惠碼後變動 (百分比折扣、低消門檻)：送出前重新驗證一次
         if (activePromoCode) await verifyPromo(activePromoCode, { silent: true });
@@ -703,28 +985,46 @@
                     : (info.orderType === '外帶' ? (info.needCutlery ? '需要餐具' : '不需要餐具') : '內用')}</div>
                 ${info.note ? html`<div class="small text-warning mt-2">備註：${info.note}</div>` : ''}
             </div>`);
+        toggleRow('preview-promotion-row', 'preview-promotion', t.promotionDiscount);
+        toggleRow('preview-tier-row', 'preview-tier', t.tier);
+        toggleRow('preview-service-row', 'preview-service', t.service);
+        toggleRow('preview-delivery-row', 'preview-delivery', t.delivery);
         setText('preview-subtotal', Math.round(t.subtotal));
         setText('preview-promo', Math.round(t.promo));
         setText('preview-points', Math.round(t.pointsDiscount));
-        setText('preview-final', t.final);
+        setText('preview-final', checkoutPayload().expected_total);   // 伺服器回報過新金額時顯示新金額
         setText('preview-earned', t.earned);
+        toggleCalories('preview-calories-row', 'preview-calories');
+        const pickupSel = $('pickupTime');
+        const pickupLabel = pickupSel && pickupSel.value ? pickupSel.options[pickupSel.selectedIndex].text : '';
+        $('preview-pickup-row').classList.toggle('d-none', !pickupLabel);
+        setText('preview-pickup', pickupLabel);
         modal('confirmModal').show();
+    }
+
+    /** 上一次送出時伺服器回報的金額 (購物車內容沒變、顧客已看過新金額時，再送出以它為準) */
+    let acceptedTotal = null;
+    function payloadKey(payload) {
+        return JSON.stringify({ ...payload, client_order_id: '', expected_total: 0 });
     }
 
     function checkoutPayload() {
         const t = computeTotals();
         const info = takeoutInfo();
         if (!checkoutOrderId) checkoutOrderId = Kiosk.newOrderId();
-        return {
+        const payload = {
             client_order_id: checkoutOrderId,
             items: cart.map((l) => ({
                 menu_item_id: l.menu_item_id,
                 quantity: l.quantity,
                 modifier_ids: l.modifier_ids,
                 combo_option_id: l.combo_option_id,
+                combo_choices: l.combo_choices || [],
+                pass_id: l.pass_id || 0,
                 is_add_on: l.is_add_on,
                 is_reward: l.is_reward,
                 customization: l.customization,
+                size: l.size || '',
             })),
             payment_method: $('paymentMethod').value,
             order_type: info.orderType,
@@ -732,7 +1032,38 @@
             note: info.note,
             promo_code: activePromoCode,
             use_points: t.pointsUsed,
+            invoice: invoicePayload(),
+            pickup_at: $('pickupTime') ? $('pickupTime').value : '',
+            delivery: info.orderType === '外送到府' ? {
+                address: ($('deliveryAddress').value || '').trim(),
+                phone: ($('deliveryPhone').value || '').trim(),
+                zone: $('deliveryZone').value,
+            } : null,
         };
+        const key = payloadKey(payload);
+        payload.expected_total = acceptedTotal && acceptedTotal.key === key ? acceptedTotal.total : t.final;
+        return payload;
+    }
+
+    /** 伺服器回報金額與畫面不同 (剛改價等)：以伺服器的單價更新購物車；仍有差異時記住伺服器金額 (顧客確認後再送出) */
+    function applyServerPrices(data) {
+        const prices = data.line_prices || [];
+        if (prices.length === cart.length) cart.forEach((l, i) => { l.price = Number(prices[i]) || 0; });
+        saveCart();
+        updateCartUI();
+        const again = checkoutPayload();
+        const total = Number(data.server_total) || 0;
+        acceptedTotal = computeTotals().final === total ? null : { key: payloadKey(again), total };
+    }
+
+    const INVOICE_PLACEHOLDERS = { mobile: '手機條碼 /ABC1234', company: '統一編號 8 碼', donate: '愛心碼' };
+    function invoicePayload() {
+        const sel = $('invoiceType');
+        if (!sel || !sel.value) return null;
+        const value = ($('invoiceValue').value || '').trim();
+        if (sel.value === 'company') return { type: 'company', buyer_id: value };
+        if (sel.value === 'donate') return { type: 'donate', love_code: value };
+        return { type: sel.value, carrier: value };
     }
 
     function handleCheckoutError(err) {
@@ -742,6 +1073,20 @@
             saveCart();
             modal('confirmModal').hide();
             alert(`⚠️ 抱歉！以下餐點剛好售罄：\n【${data.sold_out_items.join('、')}】\n已為您更新菜單並在購物車中劃掉標記，請移除後再結帳！`);
+            window.location.reload();
+            return;
+        }
+        if (data.price_changed) {
+            modal('confirmModal').hide();
+            applyServerPrices(data);
+            alert(`⚠️ ${err.message}`);
+            bootstrap.Offcanvas.getOrCreateInstance($('cart-sidebar')).show();
+            return;
+        }
+        if (data.coupon_unavailable || data.points_changed) {
+            // 優惠券或點數剛在其他裝置 / 門市 / 線上用掉：重新載入最新的點數與可用券，讓顧客確認金額後再送出
+            modal('confirmModal').hide();
+            alert(`⚠️ ${err.message}`);
             window.location.reload();
             return;
         }
@@ -772,11 +1117,35 @@
             if (sidebar) sidebar.hide();
             showReceipt(data);
         } catch (err) {
+            if (window.KioskOffline && window.KioskOffline.shouldQueue(err)) {
+                queueOffline(err);
+                return;
+            }
             handleCheckoutError(err);
         } finally {
             submitting = false;
             btn.disabled = false;
         }
+    }
+
+    /** 連不到門市主機：可暫存的訂單 (現金、未用點數 / 券) 存在點餐機，連線恢復後自動補送 */
+    function queueOffline(err) {
+        const payload = checkoutPayload();
+        const reason = KioskOffline.blockReason(payload);
+        if (reason) {
+            alert(`${err.message}\n\n（${reason}，請稍後再試或至櫃檯點餐）`);
+            return;
+        }
+        const summary = cart.map((l) => `${l.name}×${l.quantity}`).join('、');
+        const entry = KioskOffline.enqueue(payload, computeTotals().final, summary);
+        cart = [];
+        checkoutOrderId = null;
+        saveCart();
+        updateCartUI();
+        modal('confirmModal').hide();
+        const sidebar = bootstrap.Offcanvas.getInstance($('cart-sidebar'));
+        if (sidebar) sidebar.hide();
+        KioskOffline.showReceipt(entry);
     }
 
     function showReceipt(data) {
@@ -792,6 +1161,25 @@
         setText('receipt-payment', data.payment_method);
         setText('receipt-note', data.note || '');
         $('receipt-note-row').classList.toggle('d-none', !data.note);
+        setText('receipt-delivery', data.delivery_address ? `${data.delivery_address} (外送費 $${data.delivery_fee || 0})` : '');
+        $('receipt-delivery-row').classList.toggle('d-none', !data.delivery_address);
+        setText('receipt-pickup-at', data.pickup_at || '');
+        $('receipt-pickup-at-row').classList.toggle('d-none', !data.pickup_at);
+        const svcRow = $('receipt-service-row');
+        if (svcRow) {
+            svcRow.classList.toggle('d-none', !(Number(data.service_charge) > 0));
+            setText('receipt-service', Number(data.service_charge) || 0);
+        }
+        const invRow = $('receipt-invoice-row');
+        if (invRow) {
+            invRow.classList.toggle('d-none', !data.invoice);
+            if (data.invoice) setText('receipt-invoice', data.invoice.invoice_no || `${data.invoice.carrier} (開立中)`);
+        }
+        const qrBox = $('receipt-qr-box');
+        if (qrBox) {
+            qrBox.classList.toggle('d-none', !data.track_qr);
+            if (data.track_qr) $('receipt-qr').src = data.track_qr;
+        }
         setText('receipt-subtotal', Math.round(data.subtotal));
         setText('receipt-discount', Math.round(data.discount_amount));
         setText('receipt-total', Math.round(data.total_price));
@@ -824,6 +1212,7 @@
         paid: ['bg-success', '已線上付款'],
         expired: ['bg-secondary', '付款逾時'],
         refund_required: ['bg-danger', '退款處理中'],
+        refunded: ['bg-secondary', '已退款'],
     };
 
     function orderCardHtml(o) {
@@ -836,9 +1225,11 @@
                         <span class="badge ${STATUS_BADGES[o.status] || 'bg-danger'}">${o.status}</span>
                         <span class="badge bg-primary ms-1">${o.order_type}</span>
                         <span class="badge bg-warning text-dark fw-bold ms-1 order-pickup">${o.pickup_pending ? '取餐號：待分店確認' : `取餐 #${String(o.pickup_number || o.order_id).padStart(3, '0')}`}</span>
+                        ${o.pickup_at ? html`<span class="badge bg-info text-dark ms-1 order-pickup-at"><i class="bi bi-clock me-1"></i>預約 ${o.pickup_at}</span>` : ''}
+                        ${o.delivery_label ? html`<span class="badge bg-warning text-dark ms-1 order-delivery"><i class="bi bi-scooter me-1"></i>${o.delivery_label}</span>` : ''}
                         ${o.pickup_node_name ? html`<span class="badge bg-dark ms-1 order-node"><i class="bi bi-shop me-1"></i>${o.pickup_node_name}</span>` : ''}
                         ${PAYMENT_BADGES[o.payment_status] ? html`<span class="badge ms-1 order-payment ${PAYMENT_BADGES[o.payment_status][0]}">${PAYMENT_BADGES[o.payment_status][1]}</span>` : ''}
-                        ${o.payment_url ? html`<a class="btn btn-sm btn-warning fw-bold ms-2 order-pay" href="${o.payment_url}">前往付款</a>` : ''}
+                        ${o.payment_url ? html`<a class="btn btn-sm btn-warning fw-bold ms-2 order-pay" href="${o.payment_url}">${o.payment_note ? '查看繳費資訊' : '前往付款'}</a>` : ''}
                     </div>
                     <small class="text-muted">${o.created_at}</small>
                 </div>
@@ -953,6 +1344,9 @@
     Kiosk.on(document, 'click', {
         'add': (el) => startAdd(el.dataset.id),
         'pick-combo': (el) => pickCombo(el.dataset.comboId),
+        'use-pass': (el) => usePass(el.dataset.passId),
+        'table-bill': () => openTableBill(),
+        'table-pay': () => payTableBill(),
         'confirm-modifiers': () => confirmModifiers(),
         'addon': (el) => triggerAddon(el.dataset.id),
         'qty': (el) => changeQty(Number(el.dataset.index), Number(el.dataset.delta)),
@@ -978,8 +1372,20 @@
             applyPromoCode();
         },
         'toggle-points': () => togglePoints(),
-        'order-type': (el) => $('takeoutExtraBox').classList.toggle('d-none', el.value !== '外帶'),
+        'order-type': (el) => {
+            $('takeoutExtraBox').classList.toggle('d-none', el.value !== '外帶' && el.value !== '外送到府');
+            if ($('homeDeliveryBox')) $('homeDeliveryBox').classList.toggle('d-none', el.value !== '外送到府');
+            repriceCart();
+        },
+        'recalc-delivery': () => calculateTotal(),
     });
+    if ($('invoiceType')) {
+        $('invoiceType').addEventListener('change', () => {
+            const type = $('invoiceType').value;
+            $('invoiceValue').classList.toggle('d-none', !INVOICE_PLACEHOLDERS[type]);
+            $('invoiceValue').placeholder = INVOICE_PLACEHOLDERS[type] || '';
+        });
+    }
     // 卡片以鍵盤操作 (Enter / 空白鍵) 等同點擊
     document.addEventListener('keydown', (ev) => {
         if ((ev.key === 'Enter' || ev.key === ' ') && ev.target instanceof Element && ev.target.matches('[role="button"][data-action]')) {
@@ -990,6 +1396,9 @@
 
     $('cart-sidebar').addEventListener('show.bs.offcanvas', syncLatestUserCoupons);
     $('modifierModal').addEventListener('hidden.bs.modal', () => { pendingSelection = null; });
+    $('modifierModalBody').addEventListener('change', (ev) => {
+        if (ev.target.matches('[data-mod="choice"]')) syncChoiceMods();
+    });
     $('historyModal').addEventListener('shown.bs.modal', () => {
         if (!myOrdersTimer) myOrdersTimer = setInterval(fetchMyOrders, 3000);
     });
@@ -1001,7 +1410,7 @@
     document.querySelectorAll('#menuList .menu-row').forEach((row, i) => { row.dataset.order = i; });
     renderCoupons(pageData.coupons);
     storeCart(cart);   // 寫回正規化後的格式
-    updateCartUI();
+    repriceCart();     // 購物車留在瀏覽器的是加入當時的價格：以目前菜單重算 (店家可能已改價)
     // 點餐機無人操作自動登出；桌邊掃碼點餐是顧客自己的手機，不自動登出
     if (!pageData.table) Kiosk.idleLogout({ timeoutMs: IDLE_TIMEOUT_MS });
 })();

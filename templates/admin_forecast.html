@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}備料預測{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="forecast-page">
+    {% call page_header('備料預測', 'bi-graph-up', '以過去幾週同一個星期幾的銷售量平均，預估份數與原料需求') %}
+    <a class="btn btn-outline-light btn-sm fw-bold" href="{{ url_for('inventory.manage') }}">原物料</a>
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('purchasing.index') }}">採購單</a>
+    {% if current_user.role in ('owner', 'manager') %}<a class="btn btn-outline-warning btn-sm" href="{{ url_for('timeclock.staffing', date=f.target) }}">依預測排班</a>{% endif %}
+    {% endcall %}
+    <form class="row g-2 align-items-end mb-3" method="GET">
+        <div class="col-auto"><label class="form-label small" for="fc-date">預測日期</label><input class="form-control form-control-sm" type="date" id="fc-date" name="date" value="{{ f.target }}"></div>
+        <div class="col-auto"><label class="form-label small" for="fc-weeks">參考週數</label><input class="form-control form-control-sm" type="number" min="1" max="12" id="fc-weeks" name="weeks" value="{{ weeks }}"></div>
+        <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">預測</button></div>
+        <div class="col-auto text-white-50 small" id="fcBasis">星期{{ f.weekday }}；參考 {{ f.weeks }} 天：{% for d in f.days %}{{ d.strftime('%m/%d') }}{{ '、' if not loop.last }}{% else %}沒有可參考的歷史資料{% endfor %}</div>
+    </form>
+    <div class="row g-4">
+        <section class="col-xl-6"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">預估份數 (合計 {{ f.total_qty }} 份)</h2>
+            <table class="table table-dark table-sm mb-0" id="forecastItems">
+                <thead><tr><th>餐點</th><th>分類</th><th>預估</th><th>平均</th><th>歷史</th></tr></thead>
+                <tbody>{% for r in f['items'] %}<tr><td>{{ r.name }}</td><td>{{ r.category }}</td><td class="fw-bold text-warning">{{ r.qty }}</td>
+                    <td>{{ r.avg }}</td><td class="small text-white-50">{{ r.history | join(' / ') }}</td></tr>
+                {% else %}<tr><td colspan="5" class="text-center text-white-50">沒有資料</td></tr>{% endfor %}</tbody>
+            </table>
+        </div></section>
+        <section class="col-xl-6">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h6 fw-bold">原料需求 (依配方)</h2>
+                <table class="table table-dark table-sm mb-0" id="forecastIngredients">
+                    <thead><tr><th>原料</th><th>需求</th><th>庫存</th><th>不足</th></tr></thead>
+                    <tbody>{% for i in f.ingredients %}<tr class="{{ 'table-danger' if i.short > 0 }}"><td>{{ i.name }}</td><td>{{ i.need }} {{ i.unit }}</td>
+                        <td>{{ i.stock }}</td><td>{{ i.short if i.short > 0 else '-' }}</td></tr>
+                    {% else %}<tr><td colspan="4" class="text-center text-white-50">預估的餐點尚未設定配方</td></tr>{% endfor %}</tbody>
+                </table>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">來客時段分布</h2>
+                {% for h in f.hours %}<div class="bar-row"><span>{{ '%02d' % h.hour }}:00</span>
+                    <div class="bar-track"><div class="bar-fill" style="width: {{ h.share }}%"></div></div><span>{{ h.share }}%</span></div>
+                {% else %}<div class="text-white-50 small">沒有資料</div>{% endfor %}
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

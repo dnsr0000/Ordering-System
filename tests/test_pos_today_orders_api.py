@@ -97,8 +97,11 @@ def test_only_todays_orders_of_own_shop(app, staff_client, seeded):
             'total_price', 'items'} <= set(order)
     assert order['order_source'] == 'POS' and order['cashier_username'] == 'm18_pos'
     assert (order['total_price'], order['cash_received'], order['cash_change']) == (160, 200, 40)
-    assert order['items'] == [{'name': '模組18今日餐', 'item_name': '模組18今日餐', 'is_reward': False, 'price': 80,
-                               'quantity': 2, 'subtotal': 160, 'customization': '少冰'}]
+    item = dict(order['items'][0])
+    assert len(order['items']) == 1 and item.pop('id') > 0
+    assert item == {'name': '模組18今日餐', 'item_name': '模組18今日餐', 'is_reward': False, 'is_gift': False,
+                    'original_price': None, 'price': 80, 'quantity': 2, 'subtotal': 160,
+                    'customization': '少冰', 'voided_qty': 0, 'void_note': ''}
 
     stock = {m['id']: m for m in data['menu_items']}
     assert stock[seeded['item_id']]['stock'] == 28 and stock[seeded['item_id']]['is_sold_out'] is False
@@ -130,20 +133,23 @@ def test_no_n_plus_one(app, staff_client, seeded):
     """訂單數增加時查詢次數不變 (明細以 selectinload 一次載入)"""
     from sqlalchemy import event
 
+    with app.app_context():
+        engine = db.engine
+
     def count_queries():
+        # 每次請求都在自己的 app context 執行 (外層沒有 app context，g 不會跨請求保留快取)
         counter = []
         listener = lambda *a, **k: counter.append(1)  # noqa: E731
-        event.listen(db.engine, 'before_cursor_execute', listener)
+        event.listen(engine, 'before_cursor_execute', listener)
         try:
             assert staff_client.get(URL).status_code == 200
         finally:
-            event.remove(db.engine, 'before_cursor_execute', listener)
+            event.remove(engine, 'before_cursor_execute', listener)
         return len(counter)
 
-    with app.app_context():
-        before = count_queries()
-        for n in range(3):
-            r = checkout(staff_client, [line(seeded['item_id'], 1)], url='/api/pos/checkout',
-                         cash_received=100, client_order_id=new_client_order_id())
-            assert r.status_code == 200
-        assert count_queries() == before
+    before = count_queries()
+    for n in range(3):
+        r = checkout(staff_client, [line(seeded['item_id'], 1)], url='/api/pos/checkout',
+                     cash_received=100, client_order_id=new_client_order_id())
+        assert r.status_code == 200
+    assert count_queries() == before

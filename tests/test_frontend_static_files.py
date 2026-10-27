@@ -7,7 +7,7 @@ import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATES = sorted(glob.glob(os.path.join(ROOT, 'templates', '*.html')))
-SCRIPTS = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', '*.js')))
+SCRIPTS = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', '**', '*.js'), recursive=True))   # 含 js/pos/ 模組
 STYLES = sorted(glob.glob(os.path.join(ROOT, 'static', 'css', '*.css')))
 
 
@@ -62,3 +62,25 @@ def test_scripts_escape_dynamic_html(path):
     assert not re.search(r'\.innerHTML\s*\+?=\s*`', src), '請用 Kiosk.setHtml(el, Kiosk.html`...`)'
     assert not re.search(r'insertAdjacentHTML\s*\([^,]+,\s*`', src)
     assert not re.search(r'\.innerHTML\s*\+?=\s*[^`;]*\+', src), '不可用字串相加組 HTML'
+
+
+POS_MODULES = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', 'pos', '*.js')))
+
+
+def test_pos_modules_import_only_existing_exports():
+    """POS 拆成 ES 模組 (static/js/pos.js + static/js/pos/)：每個 import 的名稱都要在對方模組 export，不可漏 / 拼錯"""
+    exports = {}
+    for path in POS_MODULES:
+        src = _read(path)
+        names = set(re.findall(r'^export (?:async function|function|const|let)\s+([A-Za-z_$][\w$]*)', src, re.M))
+        for group in re.findall(r'^export const \{([^}]*)\}', src, re.M):
+            names |= {n.strip() for n in group.split(',') if n.strip()}
+        exports[os.path.basename(path)] = names
+    assert set(exports) >= {'core.js', 'menu.js', 'cart.js', 'member.js', 'totals.js', 'checkout.js', 'live.js'}
+    for path in POS_MODULES + [os.path.join(ROOT, 'static', 'js', 'pos.js')]:
+        src = _read(path)
+        for names, target in re.findall(r"^import \{([^}]*)\} from '\./(?:pos/)?([a-z]+\.js)';", src, re.M):
+            for name in (n.strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
+                assert name in exports[target], f'{os.path.basename(path)} 匯入的 {name} 不在 {target}'
+        assert len(src.split('\n')) <= 500, f'{os.path.basename(path)} 超過 500 行，請再拆分'
+    assert 'type="module"' in _read(os.path.join(ROOT, 'templates', 'pos.html')).split('js/pos.js')[0].rsplit('<script', 1)[1]

@@ -34,7 +34,7 @@ from app.sync.registry import SPECS
 
 logger = logging.getLogger(__name__)
 
-PUSH_SPECS = SPECS
+PUSH_SPECS = tuple(s for s in SPECS if s.direction != 'down')   # 總部設定只下發，不上傳
 PAGE = 500
 
 
@@ -119,10 +119,11 @@ class NodeSync:
         while True:
             changes, nxt = collect_changes(tenant_id, PUSH_SPECS, cursor, upto, position, PAGE)
             db.session.rollback()
-            if changes or send_stock:
+            # 庫存隨最後一頁送出：線上端先套用本分店已收到的線上訂單 (取餐號)，再以回報值扣掉尚未送達的線上訂單
+            last = nxt is None
+            if changes or (send_stock and last):
                 body = self.transport.call('POST', '/push', json_body={
-                    'changes': changes, 'stock': stock if send_stock else None})
-                send_stock = False
+                    'changes': changes, 'stock': stock if send_stock and last else None})
                 sent += sum(len(v) for v in changes.values())
                 self._handle_push_response(tenant_id, body)
             if nxt is None:
@@ -180,18 +181,34 @@ class NodeSync:
         with tracking.suppressed(db.session):
             result = Applier(tenant_id, 'node').apply(changes)
         # 以下是本分店因此產生的變更 (取餐號、庫存)，正常標記並在下次上傳
+        shortages = []
         for order in result.new_orders:
             if order.node_uuid == my_node and order.status != 'Cancelled':
-                consume_stock_unchecked(tenant_id, order_stock_demands(order))
+                short = consume_stock_unchecked(tenant_id, order_stock_demands(order))
                 if not order.pickup_number:
                     order.pickup_number = next_pickup_number(tenant_id)
+                if short:
+                    shortages.append((order, short))
         new_ids = {o.id for o in result.new_orders}
         for order in result.cancelled_orders:
             if order.id not in new_ids and runtime.owns_stock(order):
                 _change_stock(tenant_id, order_stock_demands(order), +1)
             flag_refund_if_paid(order.id)  # 已在櫃檯結帳的訂單被線上端取消：標記需退款
         recompute_points(result.touched_users)
+        from app.services import pass_service
+        pass_service.recompute(result.touched_passes)
         db.session.commit()
+        for transfer, message in result.transfer_alerts:   # 叫貨單：本店取消時對方已出貨等
+            from app.services import monitor_service
+            monitor_service.alert(message, key=f'transfer-{transfer.uuid}', tenant_id=tenant_id, level='warning',
+                                  source='sync')
+        for order, short in shortages:
+            # 線上端以較舊的庫存快照接單 (分店現場先賣掉、尚未回報)：訂單照常成立，通知店員聯絡顧客或改換餐點
+            from app.services import monitor_service
+            detail = '、'.join(f'{name} (需 {need}，剩 {had})' for name, need, had in short)
+            monitor_service.alert(f'線上訂單 #{order.id} (取餐 #{order.pickup_number:03d}) 送達分店時庫存不足：{detail}；'
+                                  f'請聯絡顧客改換餐點或取消退款', key=f'online-short-{order.uuid}', tenant_id=tenant_id,
+                                  level='warning', source='sync')
         if result.orders_changed:
             order_event_bus.notify(tenant_id)
         for rel_path in sorted(result.menu_images):

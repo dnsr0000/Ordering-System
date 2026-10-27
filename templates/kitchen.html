@@ -13,7 +13,7 @@
         <div class="d-flex align-items-center gap-3">
             <i class="bi bi-fire text-danger fs-2"></i>
             <div>
-                <h4 class="mb-0 fw-bold text-white">廚房出單即時看板 (KDS)</h4>
+                <h4 class="mb-0 fw-bold text-white">廚房出單即時看板 (KDS){% if station %} • <span class="text-warning" id="kdsStationName">{{ station.name }}</span>{% endif %}</h4>
                 <small class="text-white-50">待製作訂單：<span id="pendingCountBadge" class="badge bg-danger fs-6">0</span> 筆</small>
             </div>
         </div>
@@ -33,6 +33,15 @@
     </div>
 </header>
 
+{% if stations %}
+<nav class="container-fluid px-4 mb-3 d-flex flex-wrap gap-2 kds-station-tabs" id="kdsStationTabs">
+    <a class="btn btn-sm fw-bold {{ 'btn-warning text-dark' if not station else 'btn-outline-light' }}" href="{{ url_for('kitchen.kitchen_display') }}">全部 (整單)</a>
+    {% for s in stations %}
+    <a class="btn btn-sm fw-bold {{ 'btn-warning text-dark' if station and station.id == s.id else 'btn-outline-light' }}"
+       href="{{ url_for('kitchen.kitchen_display', station=s.id) }}" data-station-id="{{ s.id }}">{{ s.name }}</a>
+    {% endfor %}
+</nav>
+{% endif %}
 <main class="container-fluid px-4 pb-4">
     <div id="ordersGrid" class="row g-3" aria-live="polite"></div>
 
@@ -41,6 +50,10 @@
         <h3 class="text-white-50 mt-3">目前無待製作訂單，廚房備料中！</h3>
     </div>
 </main>
+{% endblock %}
+
+{% block page_data %}
+<script type="application/json" id="page-data">{{ kds|tojson }}</script>
 {% endblock %}
 
 {% block scripts %}

@@ -101,6 +101,7 @@ def create_app(config_class=Config):
 
     db.init_app(app)
     from app.services import points_service  # noqa: F401  (註冊同步變更追蹤與點數異動帳的 SQLAlchemy 事件)
+    from app.services import history_service  # noqa: F401  (原料成本 / 售價變動歷史)
     migrate.init_app(app, db, directory=os.path.join(config_class.BASE_DIR, 'migrations'))
     csrf.init_app(app)
     limiter.init_app(app)
@@ -108,6 +109,9 @@ def create_app(config_class=Config):
 
     from app.services.event_bus import order_event_bus
     order_event_bus.init_app(app)
+    from app.services import deferred, monitor_service
+    deferred.init_app(app)
+    monitor_service.install_log_handler(app)
 
     register_error_handlers(app)
     _register_security_hooks(app)
@@ -123,7 +127,8 @@ def create_app(config_class=Config):
 
     @app.before_request
     def daily_auto_close_stale_orders():
-        if request.endpoint not in ('static', 'health.healthz', 'payment.ecpay_notify', 'payment.ecpay_result') \
+        if request.endpoint not in ('static', 'health.healthz', 'payment.ecpay_notify', 'payment.ecpay_result',
+                                    'payment.ecpay_info') \
                 and request.blueprint != 'sync_api':
             from app.services.order_service import ensure_daily_auto_close
             ensure_daily_auto_close()
@@ -151,6 +156,11 @@ def create_app(config_class=Config):
     if app.config['SYNC_ROLE'] == 'hub' and app.config.get('ONLINE_PAYMENT') and not app.testing and not _running_cli():
         from app.services.payment_ecpay import start_expiry_worker
         start_expiry_worker(app)
+
+    # 背景排程：列印佇列、發票重送、每日備份 / 生日禮 / 報表、監控通知 (CLI 指令與測試不啟動)
+    if not app.testing and not _running_cli():
+        from app.services.maintenance_service import start_scheduler
+        start_scheduler(app)
 
     # 分店：伺服器啟動後在背景與線上端同步 (CLI 指令與測試不啟動)
     if (app.config['SYNC_ROLE'] == 'node' and app.config['SYNC_AUTOSTART'] and not app.testing
@@ -181,6 +191,9 @@ def _init_login(app):
             return None
         staff = db.session.get(StaffAccount, int(staff_id))
         if staff is None or not staff.can_login or version != staff.session_version:
+            return None
+        from app.services import security_service
+        if not security_service.session_is_valid(staff):   # 已被登出 (其他裝置操作) 或閒置逾時
             return None
         return staff
 

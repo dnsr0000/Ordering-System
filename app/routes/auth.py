@@ -61,9 +61,12 @@ def register():
     線上端沒有門市相機，只提供手機 + PIN 註冊。
     """
     face_enabled = not sync_runtime.is_hub()
+    from app.services import loyalty_service
+    referral_enabled = bool(loyalty_service.referral_config(g.tenant_id).get('referral_enabled'))
     if request.method == 'GET':
         return render_template('register.html', login_mode=False, face_enabled=face_enabled,
-                               privacy=privacy_service.notice_context(g.tenant_id))
+                               privacy=privacy_service.notice_context(g.tenant_id), referral_enabled=referral_enabled,
+                               referral_code=(request.args.get('ref') or '')[:12])
 
     name = (request.form.get('name') or '').strip()
     phone = (request.form.get('phone') or '').strip()
@@ -82,9 +85,23 @@ def register():
         raise AppError('❌ 安全 PIN 碼必須為 4 至 6 位純數字！')
     if is_weak_pin(pin, phone):
         raise AppError(WEAK_PIN_MESSAGE)
+    referrer = loyalty_service.find_referrer(g.tenant_id, request.form.get('referral_code')) if referral_enabled else None
     duplicate_phone = AppError('❌ 此手機號碼已註冊過本店會員，請直接登入！', 409)
     if User.query.filter_by(phone=phone).first():
         raise duplicate_phone
+    from app.services import settings_service, sms_service
+    sms_cfg = settings_service.get('sms')
+    phone_verified = False
+    if sms_cfg.get('provider', 'none') != 'none' and sms_cfg.get('otp_on_register'):
+        sms_service.consume_verified(phone, 'register', request.form.get('otp_code'))
+        phone_verified = True
+    birthday = None
+    if request.form.get('birthday'):
+        from datetime import date
+        try:
+            birthday = date.fromisoformat(request.form.get('birthday'))
+        except ValueError:
+            raise AppError('生日格式不正確')
 
     filename, filepath, feature = '', None, None
     if use_face:
@@ -103,8 +120,15 @@ def register():
             remove_file_quietly(filepath)
             raise AppError('⚠️ 此人臉已註冊為本店會員，請直接使用「人臉辨識」或「手機 + PIN」登入；如需協助請洽櫃檯。', 409)
 
-    user = User(name=name[:100], phone=phone, photo_path=filename, feature=feature, points=20)
+    user = User(name=name[:100], phone=phone, photo_path=filename, feature=feature, points=20, birthday=birthday)
+    if phone_verified:
+        from datetime import datetime
+        user.phone_verified_at = datetime.now()
+    if referrer is not None:
+        user.referred_by_uuid = referrer.uuid
     user.set_pin(pin)
+    from app.routes.member_auth import bind_pending_line
+    bind_pending_line(user)
     privacy_service.record_consent(user, face=use_face)
     db.session.add(user)
     try:
@@ -180,6 +204,9 @@ def phone_login():
 
     # 登入成功只清除裝置與帳號層級 (IP 層級不清，避免攻擊者穿插自己的正確登入洗掉計數)
     auth_throttle.clear_keys(keys['device'], keys['account'])
+    from app.routes.member_auth import bind_pending_line
+    if bind_pending_line(user):
+        db.session.commit()
     login_member(user)
     return jsonify({'success': True, 'user_name': user.name, 'points': user.points})
 

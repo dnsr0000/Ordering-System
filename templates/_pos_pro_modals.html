@@ -1,0 +1,321 @@
+{# POS 進階功能的對話框 (由 static/js/pos-pro.js 控制) #}
+
+<!-- 主管核准 -->
+<div class="modal fade no-print pro-modal" id="posApprovalModal" tabindex="-1" aria-hidden="true" aria-labelledby="posApprovalTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posApprovalForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posApprovalTitle"><i class="bi bi-shield-lock me-1"></i>主管核准</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-white-50 mb-2" id="posApprovalReason">此操作需要主管核准</p>
+                <input type="text" class="form-control mb-2" id="posApproverUser" placeholder="主管帳號" autocomplete="off" required>
+                <input type="password" class="form-control" id="posApproverPass" placeholder="主管密碼" autocomplete="new-password" required>
+                <div class="small text-danger mt-2" id="posApprovalMsg"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-warning fw-bold text-dark" id="posApprovalSubmit">核准</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 整單折扣 -->
+<div class="modal fade no-print pro-modal" id="posDiscountModal" tabindex="-1" aria-hidden="true" aria-labelledby="posDiscountTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posDiscountForm">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-danger" id="posDiscountTitle"><i class="bi bi-percent me-1"></i>整單折扣</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="btn-group w-100 mb-2" role="group">
+                    <input type="radio" class="btn-check" name="posDiscountType" id="posDiscAmount" value="amount" checked>
+                    <label class="btn btn-outline-warning" for="posDiscAmount">折抵金額</label>
+                    <input type="radio" class="btn-check" name="posDiscountType" id="posDiscPercent" value="percent">
+                    <label class="btn btn-outline-warning" for="posDiscPercent">折扣 %</label>
+                </div>
+                <input type="number" class="form-control form-control-lg text-end" id="posDiscountValue" min="1" placeholder="金額或 %" required>
+                <div class="d-flex flex-wrap gap-1 mt-2">
+                    {% for v in [5, 10, 20] %}<button type="button" class="btn btn-sm btn-outline-light" data-action="discountPreset" data-type="percent" data-value="{{ v }}">折 {{ v }}%</button>{% endfor %}
+                    {% for v in [10, 50, 100] %}<button type="button" class="btn btn-sm btn-outline-light" data-action="discountPreset" data-type="amount" data-value="{{ v }}">折 ${{ v }}</button>{% endfor %}
+                </div>
+                <div class="small text-white-50 mt-2">結帳時若需主管核准會再請主管輸入帳密。</div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-danger fw-bold">套用折扣</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 單品改價 -->
+<div class="modal fade no-print pro-modal" id="posPriceModal" tabindex="-1" aria-hidden="true" aria-labelledby="posPriceTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posPriceForm">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posPriceTitle">改價：<span id="posPriceItemName"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="small text-white-50 mb-1">原單價 $<span id="posPriceOriginal">0</span></div>
+                <input type="number" class="form-control form-control-lg text-end" id="posPriceValue" min="0" required aria-label="新單價">
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-outline-light" data-action="resetLinePrice">還原原價</button>
+                <button type="submit" class="btn btn-warning fw-bold text-dark">確認改價</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- LINE Pay 掃碼 -->
+<div class="modal fade no-print pro-modal" id="posLinePayModal" tabindex="-1" aria-hidden="true" aria-labelledby="posLinePayTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posLinePayForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-success" id="posLinePayTitle"><i class="bi bi-upc-scan me-1"></i>LINE Pay 付款</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="fs-3 fw-bold text-warning text-center mb-2">$<span id="posLinePayAmount">0</span></div>
+                <p class="small text-white-50">請顧客打開 LINE Pay「付款碼」，以條碼掃描器掃描 (或手動輸入條碼下方數字)：</p>
+                <input type="text" class="form-control form-control-lg text-center" id="posLinePayKey" inputmode="numeric" autocomplete="off" required aria-label="付款碼">
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-success fw-bold">扣款</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 交班 -->
+<div class="modal fade no-print pro-modal" id="posShiftModal" tabindex="-1" aria-hidden="true" aria-labelledby="posShiftTitle">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posShiftTitle"><i class="bi bi-cash-coin me-1"></i>交班 / 零用金</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div id="posShiftClosed" class="d-none">
+                    <p class="text-white-50">目前沒有開班。開班後的收款、退款與零用金異動都會記在此班，關班時計算應有現金與帳差。</p>
+                    <form id="posShiftOpenForm" class="d-flex gap-2">
+                        <input type="number" class="form-control" id="posShiftOpening" min="0" placeholder="開班零用金" required aria-label="開班零用金">
+                        <button type="submit" class="btn btn-success fw-bold text-nowrap">開班</button>
+                    </form>
+                </div>
+                <div id="posShiftOpen" class="d-none">
+                    <div class="row g-2 mb-3" id="posShiftSummary"></div>
+                    <form id="posShiftMoveForm" class="row g-1 mb-3">
+                        <div class="col-3"><select class="form-select form-select-sm" id="posShiftMoveKind" aria-label="類型"><option value="pay_out">支出</option><option value="pay_in">存入</option></select></div>
+                        <div class="col-3"><input type="number" class="form-control form-control-sm" id="posShiftMoveAmount" min="1" placeholder="金額" required aria-label="金額"></div>
+                        <div class="col-4"><input type="text" class="form-control form-control-sm" id="posShiftMoveNote" placeholder="用途 (例：買冰塊)" required aria-label="用途"></div>
+                        <div class="col-2"><button type="submit" class="btn btn-outline-warning btn-sm w-100">登記</button></div>
+                    </form>
+                    <h6 class="fw-bold">關班盤點 (輸入各面額張數 / 枚數)</h6>
+                    <form id="posShiftCloseForm">
+                        <div class="row g-1 mb-2" id="posShiftDenoms"></div>
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span>實點現金：<strong class="text-warning fs-5">$<span id="posShiftCounted">0</span></strong></span>
+                            <span>帳差：<strong id="posShiftDiff">$0</strong></span>
+                        </div>
+                        <input type="text" class="form-control form-control-sm mb-2" id="posShiftNote" placeholder="備註 (帳差原因)" maxlength="200" aria-label="備註">
+                        <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="posShiftPrint" checked><label class="form-check-label small" for="posShiftPrint">關班後以熱感機列印交班報表</label></div>
+                        <button type="submit" class="btn btn-danger fw-bold w-100">關班</button>
+                    </form>
+                </div>
+                <div id="posShiftResult" class="d-none"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 會員儲值 -->
+<div class="modal fade no-print pro-modal" id="posTopupModal" tabindex="-1" aria-hidden="true" aria-labelledby="posTopupTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posTopupForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-success" id="posTopupTitle">💰 會員儲值：<span id="posTopupName"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="small text-white-50 mb-2">目前餘額 $<span id="posTopupBalance">0</span></div>
+                <input type="number" class="form-control form-control-lg text-end mb-2" id="posTopupAmount" min="1" placeholder="加值金額" required aria-label="加值金額">
+                <div class="d-flex gap-1 mb-2">{% for v in [500, 1000, 2000, 3000] %}<button type="button" class="btn btn-sm btn-outline-light flex-grow-1" data-action="topupPreset" data-value="{{ v }}">${{ v }}</button>{% endfor %}</div>
+                <select class="form-select mb-2" id="posTopupMethod" aria-label="付款方式"><option value="Cash">現金</option><option value="Credit Card">信用卡</option><option value="Line Pay">LINE Pay (記帳)</option></select>
+                <input type="text" class="form-control form-control-sm d-none" id="posTopupAuth" placeholder="刷卡授權碼" maxlength="12" aria-label="刷卡授權碼">
+                <div class="small text-success mt-2" id="posTopupMsg"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
+                <button type="submit" class="btn btn-success fw-bold">確認儲值</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 禮物卡：售出、查詢餘額 -->
+<div class="modal fade no-print pro-modal" id="posGiftModal" tabindex="-1" aria-hidden="true" aria-labelledby="posGiftTitle">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posGiftTitle"><i class="bi bi-gift me-1"></i>禮物卡</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <form id="posGiftSellForm" autocomplete="off">
+                    <div class="fw-bold mb-2">售出新卡</div>
+                    <div class="d-flex gap-1 mb-2">{% for v in pos_cfg.giftPresets %}<button type="button" class="btn btn-sm btn-outline-light flex-grow-1" data-action="giftPreset" data-value="{{ v }}">${{ v }}</button>{% endfor %}</div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6"><input type="number" class="form-control text-end" id="posGiftAmount" min="1" placeholder="面額" required aria-label="面額"></div>
+                        <div class="col-6"><select class="form-select" id="posGiftMethod" aria-label="付款方式"><option value="Cash">現金</option><option value="Credit Card">信用卡</option><option value="Line Pay">LINE Pay (記帳)</option></select></div>
+                    </div>
+                    <input type="text" class="form-control form-control-sm mb-2 d-none" id="posGiftAuth" placeholder="刷卡授權碼" maxlength="12" aria-label="刷卡授權碼">
+                    <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="posGiftPrint" checked><label class="form-check-label small" for="posGiftPrint">以收據印表機列印卡號</label></div>
+                    <button type="submit" class="btn btn-warning fw-bold text-dark w-100" id="posGiftSellBtn">售出</button>
+                    <div class="small mt-2" id="posGiftSellMsg"></div>
+                </form>
+                <hr class="border-secondary">
+                <form id="posGiftLookupForm" autocomplete="off">
+                    <div class="fw-bold mb-2">查詢餘額</div>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="posGiftLookupCode" inputmode="numeric" maxlength="24" placeholder="刷卡或輸入 16 碼卡號" aria-label="禮物卡卡號">
+                        <button class="btn btn-outline-info" type="submit">查詢</button>
+                    </div>
+                    <div class="small mt-2" id="posGiftLookupMsg"></div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 作廢 / 部分退款 -->
+<div class="modal fade no-print pro-modal" id="posRefundModal" tabindex="-1" aria-hidden="true" aria-labelledby="posRefundTitle">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content" id="posRefundForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-danger" id="posRefundTitle">訂單 #<span id="posRefundOrderId"></span>：<span id="posRefundModeLabel">退款</span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div class="btn-group w-100 mb-3" role="group">
+                    <input type="radio" class="btn-check" name="posRefundMode" id="posRefundVoid" value="void" checked>
+                    <label class="btn btn-outline-danger" for="posRefundVoid">作廢整單 (取消訂單、回補庫存與點數)</label>
+                    <input type="radio" class="btn-check" name="posRefundMode" id="posRefundPartial" value="partial">
+                    <label class="btn btn-outline-warning" for="posRefundPartial">部分退款</label>
+                    <input type="radio" class="btn-check" name="posRefundMode" id="posRefundItem" value="item">
+                    <label class="btn btn-outline-info" for="posRefundItem">作廢品項 (改單)</label>
+                </div>
+                <div class="small text-white-50 mb-2">付款方式 <span id="posRefundMethod"></span>，可退金額 $<span id="posRefundMax">0</span></div>
+                <input type="number" class="form-control mb-2 d-none" id="posRefundAmount" min="1" placeholder="退款金額" aria-label="退款金額">
+                <div class="row g-2 mb-2 d-none" id="posRefundItemRow">
+                    <div class="col-8"><select class="form-select" id="posRefundItemSel" aria-label="作廢的品項"></select></div>
+                    <div class="col-4"><input type="number" class="form-control" id="posRefundItemQty" min="1" value="1" aria-label="作廢份數"></div>
+                    <div class="col-12 small text-white-50">退款金額依品項占小計的比例分攤折扣；桌邊未結帳的訂單直接降低應付金額；廚房看板同步顯示作廢。</div>
+                </div>
+                <select class="form-select mb-2 d-none" id="posRefundTender" aria-label="退回的付款方式"></select>
+                <input type="text" class="form-control" id="posRefundReason" maxlength="200" placeholder="原因 (例：客訴、少出餐)" aria-label="原因">
+                <div class="small text-info mt-2">現金 / 儲值金當場退回；LINE Pay (串接) 自動退款；刷卡請在刷卡機取消授權後，到後台「作廢與退款紀錄」標記完成。已開立的發票會自動作廢或折讓。</div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-danger fw-bold">確認</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 寄杯 / 多次券：售出給綁定的會員 -->
+<div class="modal fade no-print pro-modal" id="posPassSellModal" tabindex="-1" aria-hidden="true" aria-labelledby="posPassSellTitle">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content" id="posPassSellForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posPassSellTitle"><i class="bi bi-cup-hot me-2"></i>售出寄杯給 <span id="posPassMember"></span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <select class="form-select mb-2" id="posPassProduct" aria-label="寄杯商品"></select>
+                <div class="row g-2">
+                    <div class="col-6"><select class="form-select" id="posPassMethod" aria-label="付款方式"></select></div>
+                    <div class="col-6"><input type="number" class="form-control" id="posPassCash" min="0" placeholder="現金實收 (選填)" aria-label="現金實收"></div>
+                    <div class="col-12"><input type="text" class="form-control d-none" id="posPassAuth" placeholder="刷卡授權碼" aria-label="刷卡授權碼"></div>
+                </div>
+                <div class="small text-white-50 mt-2">售出後建立一張「寄杯購買」訂單 (收款、發票、交班照常)；之後會員每次兌換一份。</div>
+                <div class="small mt-2" id="posPassMsg"></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-warning fw-bold" id="posPassSellBtn">確認售出</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 混合付款 (一筆訂單分多種付款方式) -->
+<div class="modal fade no-print pro-modal" id="posTenderModal" tabindex="-1" aria-hidden="true" aria-labelledby="posTenderTitle">
+    <div class="modal-dialog modal-dialog-centered">
+        <form class="modal-content" id="posTenderForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posTenderTitle"><i class="bi bi-intersect me-2"></i>混合付款：應付 $<span id="posTenderTotal">0</span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <div id="posTenderRows"></div>
+                <button type="button" class="btn btn-sm btn-outline-light mt-1" data-action="addTender"><i class="bi bi-plus"></i> 新增一種付款方式</button>
+                <div class="mt-2 small">尚未分配：<span class="fw-bold" id="posTenderRemain">$0</span></div>
+                <div class="small text-white-50 mt-1">現金那一筆可另填「實收」計算找零；禮物卡輸入卡號、刷卡輸入授權碼 / 末四碼。</div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-warning fw-bold" id="posTenderSubmit">確認結帳</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 桌位分開結帳 / 換桌 -->
+<div class="modal fade no-print pro-modal" id="posSplitModal" tabindex="-1" aria-hidden="true" aria-labelledby="posSplitTitle">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <form class="modal-content" id="posSplitForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-info" id="posSplitTitle"><span id="posSplitTable"></span> 桌：分開結帳 / 換桌</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <h6 class="fw-bold">1. 選擇要結帳的訂單</h6>
+                <div id="posSplitOrders" class="mb-3"></div>
+                <h6 class="fw-bold">2. 付款方式 (應收 <span class="text-warning">$<span id="posSplitTotal">0</span></span>)</h6>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <button type="button" class="btn btn-sm btn-outline-light" data-action="splitEqual" data-n="2">均分 2 人</button>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-action="splitEqual" data-n="3">均分 3 人</button>
+                    <button type="button" class="btn btn-sm btn-outline-light" data-action="splitEqual" data-n="4">均分 4 人</button>
+                    <button type="button" class="btn btn-sm btn-outline-info" data-action="splitAddRow">+ 新增一筆付款</button>
+                </div>
+                <div id="posSplitPayments"></div>
+                <div class="small mb-2" id="posSplitRemain"></div>
+                {% if pos_cfg.invoiceEnabled %}
+                <div class="row g-1 mb-2">
+                    <div class="col-5"><select class="form-select form-select-sm" id="posSplitInvoiceType" aria-label="發票類型">
+                        <option value="">發票：預設</option><option value="print">紙本證明聯</option><option value="mobile">手機條碼</option><option value="company">打統編</option><option value="donate">捐贈</option>
+                    </select></div>
+                    <div class="col-7"><input type="text" class="form-control form-control-sm" id="posSplitInvoiceValue" placeholder="載具 / 統編 / 愛心碼" maxlength="16" aria-label="載具"></div>
+                </div>
+                {% endif %}
+                <div class="small text-danger" id="posSplitMsg"></div>
+                <hr class="border-secondary">
+                <h6 class="fw-bold">換桌 / 併桌 (把勾選的訂單移到另一桌)</h6>
+                <div class="d-flex gap-2"><select class="form-select form-select-sm" id="posMoveTarget" aria-label="目的桌"></select>
+                    <button type="button" class="btn btn-sm btn-outline-warning text-nowrap" data-action="moveTable">移到此桌</button></div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                <button type="submit" class="btn btn-info fw-bold text-dark">結帳所選訂單</button>
+            </div>
+        </form>
+    </div>
+</div>

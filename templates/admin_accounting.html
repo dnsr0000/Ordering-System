@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}會計匯出{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="accountingPage">
+    {% call page_header('會計匯出', 'bi-journal-text', '每日傳票 (依收款紀錄產生借貸分錄，售價內含營業稅) 與發票明細，下載 CSV / Excel 匯入會計軟體') %}
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='accounting') }}">科目設定</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3" method="GET">
+        {% for p, l in [('yesterday', '昨天'), ('month', '本月'), ('last_month', '上月')] %}
+        <a class="btn btn-sm btn-outline-secondary text-white" href="{{ url_for('reports.accounting', preset=p, node=node) }}">{{ l }}</a>{% endfor %}
+        <input class="form-control form-control-sm" type="date" name="start" value="{{ start }}" aria-label="起" style="width: 10rem">
+        <input class="form-control form-control-sm" type="date" name="end" value="{{ end }}" aria-label="迄" style="width: 10rem">
+        {% if nodes %}<select class="form-select form-select-sm" name="node" aria-label="分店" style="width: 10rem"><option value="">全部分店</option>
+            {% for n in nodes %}<option value="{{ n.uuid }}" {{ 'selected' if node == n.uuid }}>{{ n.name }}</option>{% endfor %}</select>{% endif %}
+        <button class="btn btn-outline-info btn-sm" type="submit">查詢</button>
+    </form>
+    <div class="d-flex flex-wrap gap-2 mb-3" id="accountingDownloads">
+        <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='journal') }}">傳票 CSV</a>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='journal', format='xlsx') }}">傳票 Excel</a>
+        <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.accounting', start=start, end=end, export='invoices') }}">發票明細 CSV ({{ invoice_count }} 張)</a>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('reports.accounting', start=start, end=end, export='invoices', format='xlsx') }}">發票明細 Excel</a>
+    </div>
+    {% for v in vouchers %}
+    <section class="card rounded-4 p-3 mb-3" data-voucher="{{ v.no }}">
+        <div class="d-flex justify-content-between"><h2 class="h6 fw-bold mb-2">{{ v.no }} ({{ v.date }})</h2>
+            <span class="small {{ 'text-success' if v.debit == v.credit else 'text-danger' }}">借 ${{ '{:,}'.format(v.debit) }} / 貸 ${{ '{:,}'.format(v.credit) }}</span></div>
+        <table class="table table-dark table-sm mb-0"><thead><tr><th>科目</th><th class="text-end">借方</th><th class="text-end">貸方</th></tr></thead><tbody>
+            {% for ln in v.lines %}<tr><td>{{ ln.code }} {{ ln.name }}</td><td class="text-end">{{ '{:,}'.format(ln.debit) if ln.debit }}</td><td class="text-end">{{ '{:,}'.format(ln.credit) if ln.credit }}</td></tr>{% endfor %}
+        </tbody></table>
+    </section>
+    {% else %}<div class="text-white-50" id="accountingEmpty">此期間沒有收款紀錄</div>{% endfor %}
+    <div class="small text-white-50">說明：儲值與禮物卡售出記為預收款項，以儲值金 / 禮物卡付款時沖減預收；外送平台代收記為應收帳款，待平台撥款後由會計沖帳。
+        匯出檔為通用格式，匯入前請對照會計軟體的欄位。</div>
+</main>
+{% endblock %}

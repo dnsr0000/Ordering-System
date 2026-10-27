@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}原物料與配方{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="inventory-page">
+    {% call page_header('原物料與配方', 'bi-box-seam', '設定每份餐點的原料用量後，結帳自動扣料、取消回補；進貨會以加權平均更新成本') %}
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('purchasing.index') }}" id="purchasingLink"><i class="bi bi-truck me-1"></i>供應商與採購單</a>
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('purchasing.forecast') }}" id="forecastLink"><i class="bi bi-graph-up me-1"></i>備料預測</a>
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='inventory') }}">庫存規則</a>
+    {% endcall %}
+    {% if not cfg.enabled %}<div class="alert alert-warning">原物料扣料尚未啟用 (系統設定 → 原物料庫存)。目前可先建立原料與配方。</div>{% endif %}
+    {% if low %}<div class="alert alert-danger" id="lowStockAlert"><i class="bi bi-exclamation-octagon me-1"></i>低於安全量：
+        {% for i in low %}<strong>{{ i.name }}</strong> ({{ '%g' % i.stock }} {{ i.unit }}){{ '、' if not loop.last }}{% endfor %}
+        <a class="btn btn-sm btn-light ms-2" href="{{ url_for('purchasing.index') }}">產生採購建議</a></div>{% endif %}
+    {% if lots %}<div class="alert alert-warning" id="expiringLots"><div class="fw-bold mb-1"><i class="bi bi-hourglass-split me-1"></i>即將到期 / 已過期的批號</div>
+        {% for lot in lots %}
+        <form method="POST" class="d-flex flex-wrap align-items-center gap-2 small mb-1 lot-row" data-lot-id="{{ lot.id }}" data-confirm="整批報廢 {{ '%g' % lot.remaining }} {{ lot.ingredient.unit }}？">{{ csrf() }}
+            <input type="hidden" name="action" value="discard_lot"><input type="hidden" name="lot_id" value="{{ lot.id }}">
+            <strong>{{ lot.ingredient.name }}</strong> 剩 {{ '%g' % lot.remaining }} {{ lot.ingredient.unit }}，有效期限 {{ lot.expires_on.strftime('%Y/%m/%d') }}
+            {% if lot.expires_on < today %}<span class="badge bg-danger">已過期</span>{% else %}<span class="badge bg-warning text-dark">{{ (lot.expires_on - today).days }} 天後到期</span>{% endif %}
+            <button class="btn btn-sm btn-outline-danger py-0" type="submit">整批報廢</button>
+        </form>
+        {% endfor %}</div>{% endif %}
+    <div class="row g-4">
+        <section class="col-xl-7">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-warning">原料庫存</h2>
+                <form method="POST" id="stocktakeForm">{{ csrf() }}<input type="hidden" name="action" value="stocktake">
+                <table class="table table-dark table-sm align-middle" id="ingredientsTable">
+                    <thead><tr><th>原料</th><th>庫存</th><th>安全量</th><th>單位成本</th><th>盤點數量</th></tr></thead>
+                    <tbody>
+                    {% for i in ingredients %}
+                    <tr class="{{ 'table-danger' if i.is_low }}"><td class="fw-bold">{{ i.name }}{% if not i.is_active %} <span class="badge bg-secondary">停用</span>{% endif %}</td>
+                        <td>{{ '%g' % i.stock }} {{ i.unit }}</td><td>{{ '%g' % i.low_threshold }}</td><td>${{ '%g' % i.unit_cost }}</td>
+                        <td><input class="form-control form-control-sm" type="number" step="any" name="count__{{ i.id }}" placeholder="實際數量" aria-label="{{ i.name }} 盤點數量" style="width: 8rem"></td></tr>
+                    {% else %}<tr><td colspan="5" class="text-white-50 text-center">尚未建立原料</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+                {% if ingredients %}<div class="d-flex gap-2"><input class="form-control form-control-sm" name="note" placeholder="盤點備註" aria-label="盤點備註">
+                    <button class="btn btn-outline-info btn-sm fw-bold text-nowrap" type="submit">送出盤點</button></div>{% endif %}
+                </form>
+            </div>
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h6 fw-bold">進貨 / 報廢 / 調整</h2>
+                <form method="POST" class="row g-2 align-items-end" id="movementForm">{{ csrf() }}
+                    <div class="col-md-3"><label class="form-label small" for="mv-ing">原料</label>
+                        <select class="form-select form-select-sm" id="mv-ing" name="ingredient_id" required>{% for i in ingredients %}<option value="{{ i.id }}">{{ i.name }} ({{ i.unit }})</option>{% endfor %}</select></div>
+                    <div class="col-md-2"><label class="form-label small" for="mv-act">類型</label>
+                        <select class="form-select form-select-sm" id="mv-act" name="action"><option value="purchase">進貨</option><option value="waste">報廢</option><option value="adjust">調整 (±)</option></select></div>
+                    <div class="col-md-2"><label class="form-label small" for="mv-qty">數量</label><input class="form-control form-control-sm" id="mv-qty" type="number" step="any" name="quantity" required></div>
+                    <div class="col-md-2"><label class="form-label small" for="mv-cost">進貨單價</label><input class="form-control form-control-sm" id="mv-cost" type="number" step="any" min="0" name="unit_cost"></div>
+                    <div class="col-md-3"><label class="form-label small" for="mv-note">備註</label><input class="form-control form-control-sm" id="mv-note" name="note" placeholder="廠商 / 單號"></div>
+                    <div class="col-md-3"><label class="form-label small" for="mv-exp">有效期限 (進貨，選填)</label><input class="form-control form-control-sm" id="mv-exp" type="date" name="expires_on"></div>
+                    <div class="col-12"><button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">登記</button></div>
+                </form>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">新增 / 編輯原料</h2>
+                <form method="POST" class="row g-2 align-items-end mb-3" id="addIngredientForm">{{ csrf() }}<input type="hidden" name="action" value="add">
+                    <div class="col-md-3"><input class="form-control form-control-sm" name="name" placeholder="名稱 (例：牛肉片)" aria-label="名稱" required></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" name="unit" placeholder="單位 g" aria-label="單位"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="stock" placeholder="期初庫存" aria-label="期初庫存"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="low_threshold" placeholder="安全量" aria-label="安全量"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="unit_cost" placeholder="單位成本" aria-label="單位成本"></div>
+                    <div class="col-md-1"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                </form>
+                {% for i in ingredients %}
+                <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="ingredient_id" value="{{ i.id }}">
+                    <input class="form-control form-control-sm" name="name" value="{{ i.name }}" aria-label="名稱" style="width: 9rem">
+                    <input class="form-control form-control-sm" name="unit" value="{{ i.unit }}" aria-label="單位" style="width: 4rem">
+                    <input class="form-control form-control-sm" type="number" step="any" name="low_threshold" value="{{ '%g' % i.low_threshold }}" aria-label="安全量" style="width: 6rem">
+                    <input class="form-control form-control-sm" type="number" step="any" name="unit_cost" value="{{ '%g' % i.unit_cost }}" aria-label="單位成本" style="width: 6rem">
+                    <select class="form-select form-select-sm" name="supplier_id" aria-label="供應商" style="width: 8rem"><option value="">(供應商)</option>
+                        {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if i.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}</select>
+                    <input class="form-control form-control-sm" type="number" step="any" min="0" name="par_level" value="{{ '%g' % i.par_level }}" aria-label="目標庫存" title="目標庫存 (建議採購補到此量)" style="width: 6rem">
+                    <input class="form-control form-control-sm" type="number" step="any" min="0" name="pack_size" value="{{ '%g' % i.pack_size }}" aria-label="採購單位" title="採購單位 (一箱多少)" style="width: 5rem">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="ia-{{ i.id }}" {{ 'checked' if i.is_active }}><label class="form-check-label small" for="ia-{{ i.id }}">啟用</label></div>
+                    <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit">儲存</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete">刪除</button>
+                </form>
+                {% endfor %}
+            </div>
+        </section>
+        <section class="col-xl-5">
+            <div class="card rounded-4 p-3 mb-4">
+                <h2 class="h5 fw-bold text-warning">餐點配方</h2>
+                <form method="GET" class="d-flex gap-2 mb-2">
+                    <select class="form-select form-select-sm" name="item" aria-label="選擇餐點">
+                        {% for it in items %}<option value="{{ it.id }}" {{ 'selected' if selected and selected.id == it.id }}>{{ it.category }}｜{{ it.name }}{% if recipes.get(it.id) %} ✔{% endif %}</option>{% endfor %}
+                    </select><button class="btn btn-outline-info btn-sm text-nowrap" type="submit">編輯配方</button>
+                </form>
+                {% if selected %}
+                <form method="POST" id="recipeForm">{{ csrf() }}<input type="hidden" name="action" value="recipe"><input type="hidden" name="menu_item_id" value="{{ selected.id }}">
+                    <div class="fw-bold mb-1">{{ selected.name }} 每份用量</div>
+                    {% set lines = recipes.get(selected.id, []) %}
+                    {% for n in range(lines|length + 3) %}
+                    {% set rl = lines[n] if n < lines|length else none %}
+                    <div class="d-flex gap-1 mb-1">
+                        <select class="form-select form-select-sm" name="ingredient_id" aria-label="原料"><option value="">--</option>
+                            {% for i in ingredients %}<option value="{{ i.id }}" {{ 'selected' if rl and rl.ingredient_id == i.id }}>{{ i.name }} ({{ i.unit }})</option>{% endfor %}</select>
+                        <input class="form-control form-control-sm" type="number" step="any" min="0" name="quantity" value="{{ '%g' % rl.quantity if rl else '' }}" aria-label="用量" style="width: 7rem">
+                    </div>
+                    {% endfor %}
+                    <button class="btn btn-warning btn-sm fw-bold text-dark mt-1" type="submit">儲存配方</button>
+                </form>
+                {% endif %}
+                <table class="table table-dark table-sm mt-3 mb-0"><thead><tr><th>已設定配方</th><th>售價</th><th>原料成本</th><th>毛利率</th></tr></thead><tbody>
+                {% for it in items if recipes.get(it.id) %}
+                <tr><td>{{ it.name }}</td><td>${{ it.price }}</td><td>${{ costs[it.id] }}</td>
+                    <td>{{ ((it.price - costs[it.id]) / it.price * 100)|round(1) if it.price else '-' }}%</td></tr>
+                {% endfor %}
+                </tbody></table>
+            </div>
+            <div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">最近異動</h2>
+                <table class="table table-dark table-sm mb-0" id="movementsTable"><tbody>
+                {% for m in movements %}
+                <tr><td class="small">{{ m.created_at.strftime('%m-%d %H:%M') }}</td><td>{{ m.ingredient.name if m.ingredient else '' }}</td>
+                    <td>{{ labels.get(m.reason, m.reason) }}</td><td class="{{ 'text-danger' if m.delta < 0 else 'text-success' }}">{{ '%+g' % m.delta }}</td>
+                    <td class="small text-white-50">{% if m.order_id %}#{{ m.order_id }} {% endif %}{{ m.note }}</td></tr>
+                {% else %}<tr><td class="text-white-50">尚無異動</td></tr>{% endfor %}
+                </tbody></table>
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

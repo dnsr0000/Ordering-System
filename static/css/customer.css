@@ -183,3 +183,7 @@ body.customer-page {
 @media (max-width: 576px) {
     #cart-sidebar { width: 100%; }
 }
+
+/* 進階功能：出餐進度 QR、過敏原標示 */
+.receipt-qr { width: 140px; height: 140px; }
+.menu-diet .badge { margin-right: .2rem; }

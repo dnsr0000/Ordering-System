@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}裝置管理{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="devicesPage">
+    {% call page_header('裝置管理', 'bi-display', '點餐機、POS、廚房看板的註冊、在線狀態、程式版本、遠端鎖定與重新整理') %}{% endcall %}
+    <div class="alert alert-secondary small">新增裝置後，在該裝置的瀏覽器開啟 <code>/device/pair</code> 輸入配對碼 (15 分鐘內有效)。目前程式版本 <code id="serverVersion">{{ version }}</code>；
+        版本不同的裝置請按「重新整理」。鎖定後畫面會蓋上鎖定訊息，且該裝置的結帳等操作立即被拒絕。</div>
+    <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="deviceTable">
+        <thead><tr><th>裝置</th><th>狀態</th><th>版本</th><th>最後回報</th><th>頁面 / IP</th><th></th></tr></thead>
+        <tbody>
+        {% for row in rows %}{% set d = row.d %}
+        <tr data-device-id="{{ d.id }}" data-online="{{ 1 if row.online else 0 }}">
+            <td class="fw-bold">{{ d.name }}<div class="small text-white-50">{{ d.kind_label }}{{ '｜' ~ d.note if d.note }}</div></td>
+            <td>{% if d.is_locked %}<span class="badge bg-danger">已鎖定</span>{% endif %}
+                {% if row.pairing %}<span class="badge bg-warning text-dark">配對碼 {{ d.pair_code }}</span>{% elif not d.paired_at %}<span class="badge bg-secondary">未配對</span>
+                {% elif row.online %}<span class="badge bg-success">在線</span>{% else %}<span class="badge bg-secondary">離線</span>{% endif %}</td>
+            <td>{% if d.app_version %}<code>{{ d.app_version }}</code> {% if row.version_ok %}<span class="text-success">✓</span>{% else %}<span class="text-warning small">需重新整理</span>{% endif %}{% else %}-{% endif %}</td>
+            <td class="small">{{ d.last_seen_at.strftime('%m/%d %H:%M:%S') if d.last_seen_at else '-' }}</td>
+            <td class="small">{{ d.last_path }}<div class="text-white-50">{{ d.last_ip }}</div></td>
+            <td class="text-nowrap"><form method="POST" class="d-inline-flex gap-1">{{ csrf() }}<input type="hidden" name="device_id" value="{{ d.id }}">
+                {% if d.is_locked %}<button class="btn btn-sm btn-success" name="action" value="unlock">解除鎖定</button>
+                {% else %}<input class="form-control form-control-sm" name="message" placeholder="鎖定訊息" aria-label="鎖定訊息" style="width: 9rem">
+                <button class="btn btn-sm btn-outline-danger" name="action" value="lock">鎖定</button>{% endif %}
+                <button class="btn btn-sm btn-outline-info" name="action" value="reload">重新整理</button>
+                <button class="btn btn-sm btn-outline-light" name="action" value="pair">重新配對</button>
+                <button class="btn btn-sm btn-outline-secondary" name="action" value="delete">刪除</button></form></td>
+        </tr>
+        {% else %}<tr><td colspan="6" class="text-white-50">尚未登記裝置</td></tr>{% endfor %}
+        </tbody>
+    </table></div>
+    <form method="POST" class="card rounded-4 p-3 row g-2 mx-0 align-items-end" id="deviceForm">{{ csrf() }}<input type="hidden" name="action" value="create">
+        <div class="col-md-4"><label class="form-label small" for="dvName">名稱</label><input class="form-control form-control-sm" id="dvName" name="name" maxlength="60" required placeholder="1 號點餐機"></div>
+        <div class="col-md-3"><label class="form-label small" for="dvKind">類型</label><select class="form-select form-select-sm" id="dvKind" name="kind">
+            {% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+        <div class="col-md-3"><label class="form-label small" for="dvNote">備註</label><input class="form-control form-control-sm" id="dvNote" name="note" maxlength="120" placeholder="入口左側"></div>
+        <div class="col-md-2"><button class="btn btn-warning btn-sm fw-bold w-100" type="submit">新增並產生配對碼</button></div>
+    </form>
+</main>
+{% endblock %}

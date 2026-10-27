@@ -25,3 +25,14 @@ def test_points_equal_ledger_sum(app):
             PointLedger.user_id == User.id).scalar_subquery()
         rows = db.session.execute(sa.select(User.id, User.points, total).where(User.points != total)).all()
         assert not rows, f'點數合計與異動帳不一致 (user_id, points, ledger)：{rows[:10]}'
+
+
+def test_pass_remaining_equals_ledger_sum(app):
+    """寄杯剩餘次數 = 寄杯異動帳合計 (同點數)"""
+    from app.models.member import MemberPass, PassLedger
+    with app.app_context():
+        total = sa.select(sa.func.coalesce(sa.func.sum(PassLedger.delta), 0)).where(
+            PassLedger.member_pass_id == MemberPass.id).scalar_subquery()
+        bad = db.session.execute(sa.select(MemberPass.id, MemberPass.remaining, total)
+                                 .where(MemberPass.remaining != total)).all()
+        assert not bad, f'寄杯剩餘次數與異動帳不一致：{bad[:5]}'

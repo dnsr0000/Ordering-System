@@ -97,6 +97,26 @@ def record_staff_failure(keys):
     db.session.commit()
 
 
+# 優惠代碼猜測：同一來源 IP / 同一會員輸入不存在的代碼 (或未持有的會員專屬券) 太多次 → 暫停查詢公開代碼
+PROMO_IP_MAX_FAILS = 20
+PROMO_MEMBER_MAX_FAILS = 10
+
+
+def promo_keys(tenant_id, ip, user_id=None):
+    keys = [f"promo:ip:{tenant_id}:{ip or '-'}"]
+    if user_id:
+        keys.append(f"promo:member:{tenant_id}:{user_id}")
+    return keys
+
+
+def record_promo_failure(tenant_id, ip, user_id=None):
+    """記錄一次無效代碼 (由呼叫端 commit，結帳時與訂單同一交易)"""
+    keys = promo_keys(tenant_id, ip, user_id)
+    record_failure(keys[0], PROMO_IP_MAX_FAILS)
+    if len(keys) > 1:
+        record_failure(keys[1], PROMO_MEMBER_MAX_FAILS)
+
+
 @lru_cache(maxsize=1)
 def _dummy_hash():
     from werkzeug.security import generate_password_hash

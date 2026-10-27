@@ -80,6 +80,27 @@ class User(TenantScoped, db.Model):
     face_consented_at = db.Column(db.DateTime, nullable=True)
     last_login_at = db.Column(db.DateTime, nullable=True)
     last_logout_at = db.Column(db.DateTime, nullable=True)
+    # ---- 會員經營：生日、等級、LINE 綁定、儲值金 (合計快取，由 wallet_ledger 重算)、累積消費 (本機計算) ----
+    birthday = db.Column(db.Date, nullable=True)
+    birthday_gift_year = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    tier_id = db.Column(db.Integer, db.ForeignKey('member_tier.id', ondelete='SET NULL', name='fk_user_tier_id'), nullable=True)
+    line_user_id = db.Column(db.String(64), nullable=False, default='', server_default='', index=True)
+    wallet_balance = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    total_spent = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    phone_verified_at = db.Column(db.DateTime, nullable=True)
+    # 會員條碼 (手機出示的動態 QR code) 的簽章金鑰：同步到各分店，任一分店的 POS 都能驗證
+    qr_secret = db.Column(db.String(64), nullable=False, default='', server_default='')
+    # 推薦好友：自己的推薦碼 (第一次查看時產生)、推薦人 (以 uuid 記錄，跨分店通用)
+    referral_code = db.Column(db.String(12), nullable=False, default='', server_default='', index=True)
+    referred_by_uuid = db.Column(db.String(36), nullable=False, default='', server_default='')
+    # 點數即將到期通知的最後日期 (本機：只有線上端 / 單機執行點數到期)
+    points_notice_on = db.Column(db.Date, nullable=True)
+    # 拒絕接收行銷訊息 (個資法第 20 條：當事人表示拒絕行銷時應即停止)：自動行銷不發券、不推播；會同步
+    marketing_opt_out = db.Column(db.Boolean, nullable=False, default=False, server_default='0')
+    # 已封存訂單的累積消費 (本機；封存後等級升級仍計入，見 archive_service)
+    archived_spent = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+
+    tier = db.relationship('MemberTier')
 
     def set_pin(self, pin):
         self.pin_hash = generate_password_hash(str(pin).strip())

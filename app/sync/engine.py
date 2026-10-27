@@ -8,7 +8,7 @@
 
 套用規則 (merge)：
 - lww：updated_at 較新者覆蓋 (同時間保留本機)
-- insert_only：建立後不再變更 (訂單明細、點數異動、刪除紀錄)
+- insert_only：建立後不再變更 (點數異動、刪除紀錄)；order_item：訂單明細，只有作廢份數只增不減
 - order：狀態只往前走 (製作中 < 已出餐 < 已取餐 < 已取消)，取餐號以分店編的為準
 - voucher：兌換憑證狀態只往前走 (可用 < 已退點 < 已使用)
 - 刪除紀錄 (sync_tombstone) 優先：已刪除的資料不會被舊的更新復活
@@ -29,7 +29,8 @@ from flask import current_app
 from sqlalchemy import LargeBinary
 
 from app.extensions import db
-from app.models.enums import OrderStatus, VoucherStatus
+from app.models.branch import HQ_SITE, TRANSFER_RANK
+from app.models.enums import DELIVERY_STATUS_RANK, OrderStatus, VoucherStatus
 from app.models.sync import SyncAlias, SyncTombstone
 from app.models.user import FeatureVector, decode_feature_bytes, encode_feature_array
 from app.services.upload_paths import is_valid_member_photo, is_valid_menu_image, remove_upload
@@ -39,7 +40,9 @@ ORDER_RANK = {OrderStatus.PENDING: 0, OrderStatus.COMPLETED: 1, OrderStatus.PICK
 VOUCHER_RANK = {VoucherStatus.OPEN: 0, VoucherStatus.REFUNDED: 1, VoucherStatus.USED: 2}
 _CHUNK = 500
 # 負責人帳號在線上端才能變更的欄位
-OWNER_PROTECTED_COLUMNS = ('username', 'password_hash', 'role', 'is_active', 'deleted_at')
+# 分店不可變更負責人帳號的這些欄位 (兩步驟驗證的金鑰 / 備用碼也包含在內：被入侵的分店不能關掉或換掉負責人的驗證)
+OWNER_PROTECTED_COLUMNS = ('username', 'password_hash', 'role', 'is_active', 'deleted_at', 'totp_secret', 'totp_enabled',
+                           'totp_backup_codes')
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +154,12 @@ class ApplyResult:
     conflicts: list = field(default_factory=list)       # [{table, uuid, reason}]
     aliases: list = field(default_factory=list)         # [{table, uuid, canonical}] (線上端合併的重複資料)
     touched_users: set = field(default_factory=set)     # 需要重算點數的會員 id
+    touched_passes: set = field(default_factory=set)    # 需要重算剩餘次數的寄杯 id
     new_orders: list = field(default_factory=list)      # 新收到的訂單物件
     cancelled_orders: list = field(default_factory=list)  # 因同步而變成已取消的訂單物件
     orders_changed: bool = False
     menu_images: set = field(default_factory=set)       # 收到的餐點圖片路徑
+    transfer_alerts: list = field(default_factory=list)  # [(叫貨 / 調撥單, 說明)]：已取消的叫貨單仍被出貨等
     applied: int = 0
 
 
@@ -212,6 +217,10 @@ class Applier:
     # ---- 主流程 ----
     def apply(self, changes):
         for spec in SPECS:
+            if self.side == 'hub' and spec.direction == 'down':
+                if changes.get(spec.name):
+                    self.conflict(spec, '', '總部設定只能在線上端修改，分店上傳的內容已忽略')
+                continue
             for data in changes.get(spec.name) or ():
                 self._apply_row(spec, data)
             db.session.flush()
@@ -286,6 +295,10 @@ class Applier:
             return '餐點圖片路徑格式不正確'
         if spec.name == 'user' and not is_valid_member_photo(values.get('photo_path')):
             return '會員照片路徑格式不正確'
+        if self.side == 'hub' and spec.name == 'expense' and existing is not None:
+            if existing.node_uuid != self.source_node_uuid:   # 只能改自己登錄的費用 (線上端的費用 node_uuid 為空)
+                return '不可修改其他分店或線上端的費用'
+            values['node_uuid'] = self.source_node_uuid
         if self.side == 'hub' and spec.name == 'staff_account':
             if existing is not None and existing.role == 'owner':
                 if any(name in values and values[name] != getattr(existing, name) for name in OWNER_PROTECTED_COLUMNS):
@@ -345,6 +358,13 @@ class Applier:
         if spec.name == 'order_item' and self.side == 'hub' and not self._order_owned(values.get('order_id')):
             self.conflict(spec, uuid, '不可修改其他分店的訂單')
             return
+        if spec.name == 'expense' and self.side == 'hub':
+            values['node_uuid'] = self.source_node_uuid   # 費用一律記在上傳的分店
+        if spec.name == 'stock_transfer' and self.side == 'hub':
+            reason = self._transfer_insert_error(values)
+            if reason:
+                self.conflict(spec, uuid, reason)
+                return
         obj = model(**values)
         obj.uuid, obj.tenant_id = uuid, self.tenant_id
         if spec.name == 'user':
@@ -354,6 +374,50 @@ class Applier:
         self._remember(spec.name, uuid, obj.id)
         self.result.applied += 1
         self._after_change(spec, obj, created=True)
+
+    def _transfer_insert_error(self, values):
+        """線上端：分店只能建立自己是收貨方的叫貨單、自己是出貨方的調撥單，且對方必須是本店家的分店或總部"""
+        from app.models.sync import SyncNode
+        src, kind = self.source_node_uuid, values.get('kind')
+        frm, to = values.get('from_site'), values.get('to_site')
+        if frm == to:
+            return '出貨方與收貨方不可相同'
+        if kind == 'request' and (to != src or values.get('status') not in ('requested', 'cancelled')):
+            return '分店只能建立自己收貨的叫貨單'
+        if kind == 'transfer' and (frm != src or values.get('status') != 'shipped'):
+            return '分店只能建立自己出貨的調撥單'
+        if kind not in ('request', 'transfer'):
+            return '單據種類不正確'
+        other = frm if kind == 'request' else to
+        if other != HQ_SITE and SyncNode.query.filter_by(tenant_id=self.tenant_id, uuid=other) \
+                .execution_options(skip_tenant_filter=True).first() is None:
+            return '找不到對方分店'
+        return None
+
+    def _merge_transfer(self, spec, obj, values):
+        """叫貨 / 調撥單：狀態只往前走 (待出貨 → 取消 / 拒絕 → 已出貨 → 已收貨)；線上端檢查是否由該角色的分店操作"""
+        incoming = values.get('status')
+        rank_in, rank_now = TRANSFER_RANK.get(incoming, -1), TRANSFER_RANK.get(obj.status, -1)
+        newer = values.get('updated_at') is not None and (obj.updated_at is None or values['updated_at'] > obj.updated_at)
+        if incoming == 'cancelled' and obj.status in ('shipped', 'received') and \
+                (self.side == 'node' or self.source_node_uuid == obj.to_site):
+            # 收貨方取消時，出貨方已先出貨 (以已出貨為準)：通知收貨方照常收貨或安排退回
+            self.result.transfer_alerts.append(
+                (obj, f'叫貨單 {obj.number} 已由{obj.from_name}出貨，{obj.to_name}的取消未生效；請收貨入庫或安排退回'))
+        if not (rank_in > rank_now or (rank_in == rank_now and incoming != obj.status and newer)):
+            return
+        if self.side == 'hub':
+            actor = obj.from_site if incoming in ('shipped', 'rejected') else obj.to_site
+            if actor != self.source_node_uuid:
+                self.conflict(spec, obj.uuid, '不可代替其他分店變更叫貨 / 調撥單')
+                return
+        previous = obj.status
+        for name in ('status', 'lines_json', 'shipped_by', 'shipped_at', 'received_by', 'received_at', 'reason'):
+            if name in values:
+                setattr(obj, name, values[name])
+        if previous == 'cancelled' and incoming in ('shipped', 'received'):
+            self.result.transfer_alerts.append(
+                (obj, f'叫貨單 {obj.number} 已被{obj.to_name}取消，但{obj.from_name}在同步前已出貨；請收貨方收貨入庫或安排退回'))
 
     def _order_owned(self, order_id):
         if order_id is None:
@@ -366,8 +430,21 @@ class Applier:
     def _merge(self, spec, obj, values):
         if spec.merge == 'insert_only':
             return
+        if spec.merge == 'order_item':   # 單品作廢：作廢份數只增不減 (剩下份數跟著更新)
+            incoming = values.get('voided_qty') or 0
+            if incoming > (obj.voided_qty or 0):
+                if self.side == 'hub' and not self._order_owned(obj.order_id):
+                    self.conflict(spec, obj.uuid, '不可修改其他分店的訂單')
+                    return
+                obj.voided_qty, obj.quantity = incoming, values.get('quantity', obj.quantity)
+                obj.void_note = values.get('void_note') or obj.void_note
+                self.result.orders_changed = True
+            return
         if spec.merge == 'order':
             self._merge_order(spec, obj, values)
+            return
+        if spec.merge == 'transfer':
+            self._merge_transfer(spec, obj, values)
             return
         if spec.merge == 'voucher':
             incoming = values.get('status')
@@ -401,6 +478,10 @@ class Applier:
             changed = True
             if incoming == OrderStatus.CANCELLED:
                 self.result.cancelled_orders.append(order)
+        # 桌邊未結帳的訂單作廢品項時直接降低應付金額 (只會變少)
+        incoming_total = values.get('total_price')
+        if incoming_total is not None and order.payment_status == 'unpaid' and incoming_total < (order.total_price or 0):
+            order.total_price, changed = incoming_total, True
         if order.completed_at is None and values.get('completed_at'):
             order.completed_at, changed = values['completed_at'], True
         if not order.pickup_number and values.get('pickup_number'):
@@ -414,6 +495,28 @@ class Applier:
                 order.payment_status, changed = new_pay, True
                 order.payment_method = values.get('payment_method') or order.payment_method
                 order.paid_at = values.get('paid_at') or order.paid_at
+        # LINE Pay 扣款中 (authorizing) 的訂單剛好被同步出去：之後收到扣款成功 ('') 的版本
+        if order.payment_status == 'authorizing' and incoming_pay == '':
+            order.payment_status, changed = '', True
+            order.payment_reference = values.get('payment_reference') or order.payment_reference
+        # 已退款金額只增不減 (部分退款在建立訂單的那台主機執行)
+        incoming_refunded = values.get('refunded_amount') or 0
+        if incoming_refunded > (order.refunded_amount or 0):
+            order.refunded_amount, changed = incoming_refunded, True
+        if incoming_pay == 'refunded' and order.payment_status == 'refund_required':
+            order.payment_status, changed = 'refunded', True
+        # 自有外送的配送狀態只往前走 (分店派車 / 送達後同步回線上端，顧客在追蹤頁看到)；同一階段改派外送員以較新的為準
+        incoming_ds = values.get('delivery_status') or ''
+        rank_in = DELIVERY_STATUS_RANK.get(incoming_ds, 0)
+        rank_now = DELIVERY_STATUS_RANK.get(order.delivery_status or '', 0)
+        newer = values.get('updated_at') and (order.updated_at is None or values['updated_at'] > order.updated_at)
+        if rank_in > rank_now or (rank_in == rank_now and rank_in and newer
+                                  and (values.get('driver_name') or '') != (order.driver_name or '')):
+            order.delivery_status = incoming_ds
+            order.driver_name = values.get('driver_name') or order.driver_name
+            order.dispatched_at = values.get('dispatched_at') or order.dispatched_at
+            order.delivered_at = values.get('delivered_at') or order.delivered_at
+            changed = True
         if changed:
             order.updated_at = max(filter(None, (order.updated_at, values.get('updated_at'))), default=None)
             self.result.orders_changed = True
@@ -423,8 +526,10 @@ class Applier:
             self.result.orders_changed = True
             if created:
                 self.result.new_orders.append(obj)
-        elif spec.name == 'point_ledger':
+        elif spec.name in ('point_ledger', 'wallet_ledger', 'stamp_ledger'):
             self.result.touched_users.add(obj.user_id)
+        elif spec.name == 'pass_ledger':
+            self.result.touched_passes.add(obj.member_pass_id)
         elif spec.name == 'user':
             self.result.touched_users.add(obj.id)
         elif spec.name == 'menu_item' and obj.image_path:

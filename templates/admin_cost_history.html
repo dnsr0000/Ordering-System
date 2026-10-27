@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}成本 / 售價歷史{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="costHistoryPage">
+    {% call page_header('成本 / 售價歷史', 'bi-clock-history', '原料單位成本與餐點售價的每一次變動；原料漲價吃掉了哪些餐點的毛利') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('inventory.manage') }}">原物料與配方</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3" method="GET">
+        <label class="small" for="chDays">與幾天前比較</label>
+        <select class="form-select form-select-sm" id="chDays" name="days" style="width: 8rem">
+            {% for d in (7, 30, 90, 180, 365) %}<option value="{{ d }}" {{ 'selected' if d == days }}>{{ d }} 天</option>{% endfor %}</select>
+        <select class="form-select form-select-sm" name="kind" aria-label="種類" style="width: 9rem"><option value="">全部紀錄</option>
+            <option value="ingredient" {{ 'selected' if kind == 'ingredient' }}>原料成本</option><option value="menu" {{ 'selected' if kind == 'menu' }}>餐點售價</option></select>
+        <button class="btn btn-outline-info btn-sm" type="submit">查看</button>
+    </form>
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">原料成本變動對毛利的影響 (與 {{ days }} 天前相比)</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0" id="impactTable">
+            <thead><tr><th>餐點</th><th class="text-end">售價</th><th class="text-end">每份成本 (前 → 後)</th><th class="text-end">變化</th><th class="text-end">毛利率 (前 → 後)</th></tr></thead>
+            <tbody>
+            {% for r in impact %}
+            <tr data-impact-item="{{ r.id }}" class="{{ 'table-danger' if r.margin_then - r.margin_now >= 5 }}">
+                <td>{{ r.name }}</td><td class="text-end">${{ r.price }}</td><td class="text-end">${{ r.cost_then }} → ${{ r.cost_now }}</td>
+                <td class="text-end {{ 'text-danger' if r.delta > 0 else 'text-success' }}">{{ '+' if r.delta > 0 }}{{ r.delta }}</td>
+                <td class="text-end">{{ r.margin_then }}% → {{ r.margin_now }}%</td></tr>
+            {% else %}<tr><td colspan="5" class="text-white-50">這段期間原料成本沒有變動 (或餐點沒有設定配方)</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+        <div class="small text-white-50 mt-1">毛利率下降 5 個百分點以上的餐點標紅，建議檢討售價或配方。</div>
+    </section>
+    <section class="card rounded-4 p-3">
+        <h2 class="h6 fw-bold">變動紀錄</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0" id="historyTable">
+            <thead><tr><th>時間</th><th>種類</th><th>名稱</th><th>欄位</th><th class="text-end">原本</th><th class="text-end">變更後</th><th class="text-end">%</th><th>修改者</th></tr></thead>
+            <tbody>
+            {% for h in history %}
+            <tr><td class="small">{{ h.changed_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ '原料' if h.kind == 'ingredient' else '餐點' }}</td><td>{{ h.name }}</td>
+                <td>{{ labels.get(h.field, h.field) }}</td><td class="text-end">{{ '%g' % h.old_value }}</td><td class="text-end">{{ '%g' % h.new_value }}</td>
+                <td class="text-end {{ 'text-danger' if (h.change_pct or 0) > 0 and h.kind == 'ingredient' }}">{{ ('%+g%%' % h.change_pct) if h.change_pct is not none else '' }}</td>
+                <td class="small">{{ h.changed_by }}</td></tr>
+            {% else %}<tr><td colspan="8" class="text-white-50">尚無變動紀錄 (從這個版本開始記錄)</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+</main>
+{% endblock %}

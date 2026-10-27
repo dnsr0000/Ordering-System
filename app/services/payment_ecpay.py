@@ -1,5 +1,6 @@
 """
-綠界 ECPay 全方位金流 (AIO, AioCheckOut V5)：線上點餐的信用卡付款。
+綠界 ECPay 全方位金流 (AIO, AioCheckOut V5)：線上點餐的線上付款 (信用卡 / Apple Pay / ATM 虛擬帳號 / 超商代碼，
+可用的方式在後台「系統設定 → 付款方式」勾選)。
 
 流程：
 1. 線上端結帳建立訂單 (payment_status='pending'，此時不會同步給分店) → 導到 /pay/<訂單> 自動送出表單到綠界付款頁
@@ -7,6 +8,9 @@
    訂單這時才同步到取餐分店；回應純文字 1|OK (否則綠界會在 5~15 分鐘後重送，一天最多 4 次)
 3. 顧客瀏覽器由 OrderResultURL 回到本站顯示結果 (僅顯示用，以 ReturnURL 的通知為準)
 4. 超過 PAYMENT_TIMEOUT_MINUTES 仍未收到通知：先向綠界查詢訂單，確定未付款才取消並回補庫存與點數
+   (ATM / 超商代碼：綠界取號後以 PaymentInfoURL 通知繳費期限，期限過後才取消)
+5. 取消已用信用卡 / Apple Pay 付款的訂單：可設定自動向綠界退刷 (信用卡請退款 CreditDetail/DoAction)，
+   失敗或未開啟時在後台「作廢與退款紀錄」手動處理 / 重試
 
 測試環境使用綠界公開的測試特店 (免註冊)：
     MerchantID 3002607、HashKey pwFHCqoQZGmho4w6、HashIV EkRm7iFT261dpevs
@@ -86,8 +90,23 @@ def _item_name(order):
     return names[:180]  # 上限 400 字元，超過會被截斷並造成檢查碼錯誤；中文保守截短
 
 
+# 綠界 AIO 的付款方式代碼 (ChoosePayment=ALL 時以 IgnorePayment 排除未啟用的)
+ECPAY_METHODS = ('Credit', 'WebATM', 'ATM', 'CVS', 'BARCODE', 'ApplePay', 'TWQR', 'BNPL')
+
+
+def payment_choice(tenant_id):
+    """依後台設定回傳 (ChoosePayment, IgnorePayment)"""
+    from app.services import settings_service
+    cfg = settings_service.get('payments', tenant_id)
+    methods = [m for m in (cfg.get('online_methods') or ['Credit']) if m in ECPAY_METHODS] or ['Credit']
+    if len(methods) == 1:
+        return methods[0], ''
+    return 'ALL', '#'.join(m for m in ECPAY_METHODS if m not in methods)
+
+
 def build_payment_form(order, base_url):
     """產生送到綠界付款頁的表單欄位 (每次呼叫都換新的特店訂單編號)"""
+    from app.services import settings_service
     merchant_id, hash_key, hash_iv, _base = _cfg()
     trade_no = _new_trade_no()
     order.payment_ref = trade_no
@@ -108,6 +127,15 @@ def build_payment_form(order, base_url):
         'CustomField1': order.uuid,
         'NeedExtraPaidInfo': 'N',
     }
+    choose, ignore = payment_choice(order.tenant_id)
+    params['ChoosePayment'] = choose
+    if ignore:
+        params['IgnorePayment'] = ignore
+    if choose in ('ALL', 'ATM', 'CVS'):
+        cfg = settings_service.get('payments', order.tenant_id)
+        params['PaymentInfoURL'] = f'{base_url}/payment/ecpay/info'
+        params['ExpireDate'] = str(int(cfg.get('atm_expire_days') or 1))
+        params['StoreExpireDate'] = str(int(cfg.get('cvs_expire_minutes') or 120))
     params['CheckMacValue'] = check_mac_value(params, hash_key, hash_iv)
     return params
 
@@ -118,7 +146,19 @@ def _touch_order_rows(order):
     return marker
 
 
-def mark_paid(order_uuid, trade_no, amount, paid_at=None):
+def method_for(payment_type):
+    """綠界通知的 PaymentType (例：Credit_CreditCard、ATM_LAND、CVS_CVS、ApplePay) → 本系統付款方式"""
+    kind = str(payment_type or '')
+    if kind.startswith('ATM_') or kind.startswith('WebATM'):
+        return PaymentMethod.ATM
+    if kind.startswith('CVS_') or kind.startswith('BARCODE'):
+        return PaymentMethod.CVS
+    if kind.startswith('ApplePay'):
+        return PaymentMethod.APPLE_PAY
+    return PaymentMethod.CREDIT_CARD
+
+
+def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None):
     """
     標記已付款 (只有「待付款且未取消」→ paid)。回傳 'paid' / 'already' / 'refund_required' / 'amount_mismatch' / 'not_found'。
     訂單已逾時或已取消後才收到付款：標記 refund_required，讓後台人工退款。
@@ -134,16 +174,18 @@ def mark_paid(order_uuid, trade_no, amount, paid_at=None):
             logger.error('綠界付款金額不符：訂單 %s 應付 %s，通知金額 %s', order_uuid, order.total_price, amount)
             return 'amount_mismatch'
         paid_at = paid_at or datetime.now()
+        method = method_for(payment_type)
         swapped = db.session.execute(
             update(Order).where(Order.id == order.id, Order.payment_status == 'pending',
                                 Order.status != OrderStatus.CANCELLED)
             .values(payment_status='paid', payment_trade_no=trade_no, paid_at=paid_at,
-                    payment_method=PaymentMethod.CREDIT_CARD)
+                    payment_method=method)
             .execution_options(synchronize_session=False)).rowcount
         if not swapped:
             refund = db.session.execute(
                 update(Order).where(Order.id == order.id, Order.payment_status.in_(('pending', 'expired')))
-                .values(payment_status='refund_required', payment_trade_no=trade_no, paid_at=paid_at)
+                .values(payment_status='refund_required', payment_trade_no=trade_no, paid_at=paid_at,
+                        payment_method=method)
                 .execution_options(synchronize_session=False)).rowcount
             db.session.commit()
             if refund:
@@ -152,9 +194,29 @@ def mark_paid(order_uuid, trade_no, amount, paid_at=None):
             return 'already'
         _touch_order_rows(order)
         tenant_id = order.tenant_id
+        _after_online_paid(order, trade_no, method)
         db.session.commit()
     order_event_bus.notify(tenant_id)
     return 'paid'
+
+
+def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
+    """線上付款完成：收款紀錄、會員累積消費 / 等級、電子發票 (等待付款 → 待開立)"""
+    from app.models.payment import Invoice, InvoiceStatus, PaymentKind
+    from app.services import deferred, einvoice_ecpay, payment_service, settings_service, wallet_service
+    db.session.refresh(order)
+    payment_service.record_payment(order, PaymentKind.SALE, method, order.total_price,
+                                   reference=trade_no or '', staff='ecpay')
+    if order.user is not None:
+        order.user.total_spent = (order.user.total_spent or 0) + (order.total_price or 0)
+        wallet_service.refresh_tier(order.user)
+    cfg = settings_service.get('einvoice', order.tenant_id)
+    for inv in Invoice.query.filter_by(order_id=order.id, status=InvoiceStatus.WAITING) \
+            .execution_options(skip_tenant_filter=True).all():
+        inv.status = InvoiceStatus.PENDING
+        db.session.flush()
+        if cfg.get('auto_issue', True):
+            deferred.defer(einvoice_ecpay.issue_invoice, inv.id)
 
 
 def handle_notification(form):
@@ -173,8 +235,52 @@ def handle_notification(form):
         paid_at = datetime.strptime(params.get('PaymentDate', ''), '%Y/%m/%d %H:%M:%S')
     except ValueError:
         pass
-    result = mark_paid(params.get('CustomField1'), params.get('TradeNo'), params.get('TradeAmt'), paid_at)
+    result = mark_paid(params.get('CustomField1'), params.get('TradeNo'), params.get('TradeAmt'), paid_at,
+                       params.get('PaymentType'))
     return '0|AmountMismatch' if result == 'amount_mismatch' else '1|OK'
+
+
+# ATM 取號成功 / 超商代碼取號成功的 RtnCode
+INFO_OK_CODES = {'2', '10100073'}
+
+
+def handle_payment_info(form):
+    """
+    PaymentInfoURL：ATM / 超商代碼取號結果。記下繳費期限與繳費資訊 (帳號 / 代碼)，
+    期限前不會因為一般的付款逾時而取消訂單。回傳要回應綠界的字串。
+    """
+    from app.tenant_context import tenant_bypass
+    params = {k: v for k, v in form.items()}
+    if not verify(params):
+        logger.warning('綠界取號通知檢查碼錯誤：%s', params.get('MerchantTradeNo'))
+        return '0|CheckMacValue Error'
+    if str(params.get('RtnCode')) not in INFO_OK_CODES:
+        return '1|OK'
+    due = None
+    raw = str(params.get('ExpireDate') or '').strip()
+    for fmt, end_of_day in (('%Y/%m/%d %H:%M:%S', False), ('%Y/%m/%d %H:%M', False), ('%Y/%m/%d', True)):
+        try:
+            due = datetime.strptime(raw, fmt)
+            if end_of_day:
+                due = due.replace(hour=23, minute=59, second=59)
+            break
+        except ValueError:
+            continue
+    if params.get('vAccount'):
+        note = f"ATM 轉帳：銀行代碼 {params.get('BankCode', '')} 帳號 {params.get('vAccount')}"
+    elif params.get('PaymentNo'):
+        note = f"超商代碼：{params.get('PaymentNo')}"
+    else:
+        note = '超商條碼繳費'
+    with tenant_bypass():
+        order = Order.query.filter_by(uuid=params.get('CustomField1')).first()
+        if order is None or order.payment_status != 'pending' or order.payment_ref != params.get('MerchantTradeNo'):
+            return '1|OK'
+        if due is not None:
+            order.payment_due_at = due
+        order.payment_note = note[:120]
+        db.session.commit()
+    return '1|OK'
 
 
 def query_trade(trade_no):
@@ -196,6 +302,7 @@ def query_trade(trade_no):
 
 
 _last_sweep = {'at': 0.0}
+DUE_GRACE_MINUTES = 30   # 繳費期限過後再等 30 分鐘 (銀行 / 超商入帳通知可能延遲) 才取消
 
 
 def expire_unpaid_orders(force=False, query=query_trade):
@@ -212,14 +319,18 @@ def expire_unpaid_orders(force=False, query=query_trade):
     deadline = datetime.now() - timedelta(minutes=current_app.config.get('PAYMENT_TIMEOUT_MINUTES', 15))
     cancelled = 0
     with tenant_bypass():
-        stale = db.session.execute(select(Order.id, Order.uuid, Order.tenant_id, Order.payment_ref, Order.total_price)
+        stale = db.session.execute(select(Order.id, Order.uuid, Order.tenant_id, Order.payment_ref, Order.total_price,
+                                          Order.payment_due_at)
                                    .where(Order.payment_status == 'pending', Order.created_at < deadline)).all()
-    for order_id, uuid, tenant_id, ref, total in stale:
+    now = datetime.now()
+    for order_id, uuid, tenant_id, ref, total, due_at in stale:
+        if due_at is not None and now < due_at + timedelta(minutes=DUE_GRACE_MINUTES):
+            continue   # ATM / 超商代碼：繳費期限內 (另加入帳緩衝) 不取消
         info = query(ref) if ref else {'TradeStatus': '10200095'}
         if info is None:
             continue  # 查不到 (網路問題)：下次再試，不冒險取消
         if str(info.get('TradeStatus')) == '1':
-            mark_paid(uuid, info.get('TradeNo'), info.get('TradeAmt') or total)
+            mark_paid(uuid, info.get('TradeNo'), info.get('TradeAmt') or total, payment_type=info.get('PaymentType'))
             continue
         with tenant_bypass():
             # 先把付款狀態改為逾時 (條件式，與付款通知只有一方成功)；之後才到的付款會被標記為需退款
@@ -237,6 +348,48 @@ def expire_unpaid_orders(force=False, query=query_trade):
                 continue
             cancelled += 1
     return cancelled
+
+
+class EcpayRefundError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
+
+
+def _post(url, data):
+    resp = requests.post(url, data=data, timeout=15)
+    resp.raise_for_status()
+    return dict(urllib.parse.parse_qsl(resp.text, keep_blank_values=True))
+
+
+def refund(order, amount, post=None):
+    """
+    信用卡 / Apple Pay 退刷 (CreditDetail/DoAction，Action=R)：已請款的交易退回指定金額。
+    若交易尚未關帳 (當日授權)，全額退款時改用 Action=N (放棄授權)。成功回傳說明文字，失敗拋出 EcpayRefundError。
+    ATM / 超商代碼付款無法由系統退款 (需向顧客取得帳戶後人工匯款)。
+    """
+    post = post or _post
+    if order.payment_method not in (PaymentMethod.CREDIT_CARD, PaymentMethod.APPLE_PAY):
+        raise EcpayRefundError('ATM / 超商代碼付款無法自動退款，請聯絡顧客提供帳戶後匯款')
+    if not order.payment_ref or not order.payment_trade_no:
+        raise EcpayRefundError('找不到綠界交易編號，請到綠界廠商後台退款')
+    merchant_id, hash_key, hash_iv, base = _cfg()
+    url = base + '/CreditDetail/DoAction'
+    actions = ['R'] + (['N'] if int(amount) >= int(order.total_price or 0) else [])
+    last = ''
+    for action in actions:
+        params = {'MerchantID': merchant_id, 'MerchantTradeNo': order.payment_ref, 'TradeNo': order.payment_trade_no,
+                  'Action': action, 'TotalAmount': str(int(amount))}
+        params['CheckMacValue'] = check_mac_value(params, hash_key, hash_iv)
+        try:
+            data = post(url, params)
+        except requests.RequestException as exc:
+            raise EcpayRefundError(f'無法連線綠界：{exc}') from exc
+        if str(data.get('RtnCode')) == '1':
+            label = '退刷' if action == 'R' else '取消授權'
+            return f"綠界{label}成功 {data.get('TradeNo') or order.payment_trade_no} ${int(amount)}"
+        last = str(data.get('RtnMsg') or data.get('RtnCode') or '未知錯誤')
+    raise EcpayRefundError(f'綠界退款失敗：{last}')
 
 
 def start_expiry_worker(app, interval=60):

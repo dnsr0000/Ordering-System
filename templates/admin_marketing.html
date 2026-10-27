@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}會員分群與自動行銷{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="marketingPage">
+    {% call page_header('會員分群與自動行銷', 'bi-people', '依最近消費 (R)、次數 (F)、金額 (M) 自動分群；久未消費自動發券、排程推播，並追蹤回購成效') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('members_pro.manage') }}">會員經營</a>
+    {% endcall %}
+    {% if not can_run %}
+    <div class="alert alert-secondary small">自動行銷由總部 (線上端) 執行 (會員資料最完整、避免各分店重複發券)；以下分群僅含本分店看得到的消費紀錄。</div>
+    {% endif %}
+
+    <section class="mb-4">
+        <h2 class="h6 fw-bold">會員分群 <span class="small text-white-50">(共 {{ member_total }} 位；分數依近一年有消費會員的排名五等分)</span></h2>
+        <div class="row g-3" id="segmentCards">
+            {% for key, seg in segments.items() %}{% set s = summary[key] %}
+            <div class="col-6 col-md-4 col-xl-3">
+                <a class="stat-tile d-block text-decoration-none {{ 'border border-warning' if segment == key }}" href="{{ url_for('marketing.index', segment=key) }}" data-segment="{{ key }}">
+                    <div class="stat-label">{{ seg.label }} <span class="small text-white-50">{{ seg.desc }}</span></div>
+                    <div class="stat-value" data-segment-count="{{ key }}">{{ s.count }}</div>
+                    <div class="small text-white-50">平均近一年 ${{ '{:,}'.format(s.avg_spend) }}｜LINE {{ s.line }}｜拒絕行銷 {{ s.opt_out }}</div>
+                    <div class="small text-info">{{ seg.advice }}</div>
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    {% if segment %}
+    <section class="card rounded-4 p-3 mb-4" id="segmentMembers">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h6 fw-bold mb-0">{{ segments[segment].label }} ({{ members|length }} 位，依近一年金額排序)</h2>
+            <a class="btn btn-sm btn-warning fw-bold text-dark" href="{{ url_for('marketing.index', segment=segment, format='xlsx') }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel</a>
+        </div>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0">
+            <thead><tr><th>會員</th><th>最近消費</th><th class="text-end">距今</th><th class="text-end">次數</th><th class="text-end">金額</th><th>R / F / M</th><th></th></tr></thead>
+            <tbody>
+            {% for r in members %}
+            <tr data-member-id="{{ r.id }}"><td>{{ r.name }} <span class="small text-white-50">{{ r.phone[:4] }}***{{ r.phone[-3:] }}</span></td>
+                <td>{{ r.last_at.strftime('%Y-%m-%d') if r.last_at else '-' }}</td><td class="text-end">{{ r.days if r.days is not none else '-' }}</td>
+                <td class="text-end">{{ r.orders }}</td><td class="text-end">${{ '{:,}'.format(r.spend) }}</td><td>{{ r.r }} / {{ r.f }} / {{ r.m }}</td>
+                <td>{% if r.line %}<span class="badge bg-success">LINE</span>{% endif %}{% if r.opt_out %} <span class="badge bg-secondary">拒絕行銷</span>{% endif %}</td></tr>
+            {% else %}<tr><td colspan="7" class="text-white-50">此分群沒有會員</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+    {% endif %}
+
+    <div class="row g-4">
+        <section class="col-xl-7"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">自動行銷活動</h2>
+            <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="campaignTable">
+                <thead><tr><th>活動</th><th>條件</th><th>內容</th><th class="text-end">發送</th><th class="text-end">30 天回購</th><th class="text-end">用券</th><th>狀態</th><th></th></tr></thead>
+                <tbody>
+                {% for c in campaigns %}{% set st = stats[c.id] %}
+                <tr data-campaign-id="{{ c.id }}" data-status="{{ c.status }}">
+                    <td>{{ c.name }}<div class="small text-white-50">{{ c.kind_label }}</div></td>
+                    <td class="small">{% if c.kind == 'winback' %}超過 {{ c.inactive_days }} 天未消費<br>冷卻 {{ c.cooldown_days }} 天
+                        {% else %}{{ segments[c.segment].label if c.segment in segments else '全部會員' }}<br>{{ c.send_at.strftime('%m/%d %H:%M') if c.send_at }}{% endif %}</td>
+                    <td class="small">{{ c.coupon.title if c.coupon else '' }}{{ '｜' if c.coupon and c.message }}{{ c.message|truncate(30) }}</td>
+                    <td class="text-end">{{ st.sent }}</td>
+                    <td class="text-end">{{ st.returned }} ({{ st.rate }}%)<div class="small text-white-50">${{ '{:,}'.format(st.revenue) }}</div></td>
+                    <td class="text-end">{{ st.coupons_used }} / {{ st.coupons_issued }}</td>
+                    <td><span class="badge bg-{{ {'active': 'success', 'paused': 'secondary', 'done': 'info', 'running': 'warning'}.get(c.status, 'secondary') }}">{{ {'active': '啟用', 'paused': '暫停', 'done': '已發送', 'running': '執行中'}.get(c.status, c.status) }}</span></td>
+                    <td class="text-nowrap">{% if can_run %}
+                        <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="campaign_id" value="{{ c.id }}">
+                            {% if c.status in ('active', 'paused') %}<button class="btn btn-sm btn-outline-warning" name="action" value="run_now" data-run-campaign="{{ c.id }}">立即執行</button>
+                            <button class="btn btn-sm btn-outline-light" name="action" value="toggle">{{ '暫停' if c.status == 'active' else '啟用' }}</button>{% endif %}
+                            <button class="btn btn-sm btn-outline-danger" name="action" value="delete">刪除</button></form>{% endif %}</td>
+                </tr>
+                {% else %}<tr><td colspan="8" class="text-white-50">尚未建立活動</td></tr>{% endfor %}
+                </tbody>
+            </table></div>
+            <div class="small text-white-50">「30 天回購」：收到後 30 天內回來消費的會員數與營業額。拒絕行銷的會員一律不發。</div>
+        </div></section>
+        {% if can_run %}
+        <section class="col-xl-5"><form class="card rounded-4 p-3 h-100" method="POST" id="campaignForm">
+            {{ csrf() }}<input type="hidden" name="action" value="create">
+            <h2 class="h6 fw-bold">新增活動</h2>
+            <div class="row g-2">
+                <div class="col-7"><label class="form-label small" for="cmName">名稱</label><input class="form-control form-control-sm" id="cmName" name="name" maxlength="60" required placeholder="想念你券"></div>
+                <div class="col-5"><label class="form-label small" for="cmKind">種類</label>
+                    <select class="form-select form-select-sm" id="cmKind" name="kind" data-toggle-group="cmkind">
+                        {% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+                <div class="col-6" data-group="cmkind" data-when="winback"><label class="form-label small" for="cmInactive">超過幾天未消費</label>
+                    <input class="form-control form-control-sm" type="number" id="cmInactive" name="inactive_days" value="60" min="7" max="730"></div>
+                <div class="col-6" data-group="cmkind" data-when="winback"><label class="form-label small" for="cmCooldown">同一人幾天內不重發</label>
+                    <input class="form-control form-control-sm" type="number" id="cmCooldown" name="cooldown_days" value="90" min="7" max="730"></div>
+                <div class="col-6 d-none" data-group="cmkind" data-when="broadcast"><label class="form-label small" for="cmSegment">對象</label>
+                    <select class="form-select form-select-sm" id="cmSegment" name="segment"><option value="all">全部會員</option>
+                        {% for key, seg in segments.items() %}<option value="{{ key }}">{{ seg.label }}</option>{% endfor %}</select></div>
+                <div class="col-6 d-none" data-group="cmkind" data-when="broadcast"><label class="form-label small" for="cmSendAt">發送時間</label>
+                    <input class="form-control form-control-sm" type="datetime-local" id="cmSendAt" name="send_at" value="{{ now.strftime('%Y-%m-%dT%H:%M') }}"></div>
+                <div class="col-8"><label class="form-label small" for="cmCoupon">發送優惠券 (選填)</label>
+                    <select class="form-select form-select-sm" id="cmCoupon" name="coupon_id"><option value="">不發券 (只推播)</option>
+                        {% for c in coupons %}<option value="{{ c.id }}">{{ c.title }} ({{ c.discount_label }})</option>{% endfor %}</select></div>
+                <div class="col-4"><label class="form-label small" for="cmValid">券有效天數</label>
+                    <input class="form-control form-control-sm" type="number" id="cmValid" name="coupon_valid_days" value="14" min="1" max="365"></div>
+                <div class="col-12"><label class="form-label small" for="cmMessage">LINE 推播文字 (可用 {name} {shop} {coupon})</label>
+                    <textarea class="form-control form-control-sm" id="cmMessage" name="message" rows="3" maxlength="500" placeholder="{name} 好久不見！{shop} 送您 {coupon}，期待再見到您～"></textarea></div>
+            </div>
+            <button class="btn btn-warning btn-sm fw-bold mt-2" type="submit">建立活動</button>
+        </form></section>
+        {% endif %}
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

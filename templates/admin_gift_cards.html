@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}禮物卡 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="giftCardsPage">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h1 class="h4 fw-bold mb-0"><i class="bi bi-gift me-2 text-warning"></i>禮物卡</h1>
+        <a class="btn btn-sm btn-outline-light" href="{{ url_for('settings_admin.index') }}">回系統設定</a>
+    </div>
+    {% if not enabled %}<div class="alert alert-secondary">尚未啟用禮物卡：<a href="{{ url_for('settings_admin.edit', key='gift_card') }}">系統設定 → 禮物卡</a>。POS「禮物卡」可售出與查詢餘額。</div>{% endif %}
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">流通在外餘額 (預收款)</div><div class="stat-value text-warning" id="giftOutstanding">${{ '{:,}'.format(outstanding) }}</div></div></div>
+    </div>
+    <form class="d-flex gap-2 mb-3" method="GET">
+        <input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="卡號 (可部分)" aria-label="卡號">
+        <button class="btn btn-sm btn-outline-info" type="submit">搜尋</button>
+    </form>
+    {% if detail %}
+    <section class="card rounded-4 p-3 mb-3" id="giftDetail">
+        <h2 class="h6 fw-bold">{{ detail.masked_code }} 異動紀錄</h2>
+        <table class="table table-dark table-sm mb-0"><tbody>
+            {% for e in detail_entries %}
+            <tr><td>{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ {'issue': '售出', 'redeem': '消費', 'refund': '退款退回', 'void': '作廢'}.get(e.reason, e.reason) }}</td>
+                <td class="{{ 'text-danger' if e.delta < 0 else 'text-success' }}">{{ e.delta }}</td>
+                <td>{{ ('訂單 #' ~ e.order_id) if e.order_id else '' }}</td><td class="text-white-50">{{ e.staff_username }}</td></tr>
+            {% endfor %}
+        </tbody></table>
+    </section>
+    {% endif %}
+    <div class="table-responsive">
+        <table class="table table-dark table-sm align-middle" id="giftCardTable">
+            <thead><tr><th>卡號</th><th>售出</th><th>面額</th><th>餘額</th><th>狀態</th><th></th></tr></thead>
+            <tbody>
+            {% for c in cards %}
+            <tr data-card-id="{{ c.id }}">
+                <td><a href="{{ url_for('gift_cards.index', card=c.id, q=q) }}">{{ c.masked_code }}</a></td>
+                <td class="small">{{ c.created_at.strftime('%Y-%m-%d') }} {{ c.sold_by }}</td>
+                <td>${{ c.initial_amount }}</td><td class="fw-bold">${{ balances.get(c.id, 0) }}</td>
+                <td>{% if c.status == 'void' %}<span class="badge bg-secondary">已作廢</span>{% else %}<span class="badge bg-success">可使用</span>{% endif %}</td>
+                <td class="text-end">{% if c.status != 'void' %}
+                    <form class="d-inline" method="POST" data-confirm="確定作廢這張禮物卡？餘額將歸零">{{ csrf() }}
+                        <input type="hidden" name="action" value="void"><input type="hidden" name="card_id" value="{{ c.id }}">
+                        <input type="hidden" name="reason" value="後台作廢">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">作廢</button></form>{% endif %}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-white-50 py-4">沒有禮物卡</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}

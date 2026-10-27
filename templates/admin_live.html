@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}即時看板{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="live-page">
+    {% call page_header('即時看板', 'bi-speedometer2', '今天的營業狀況，每 30 秒與訂單變動時自動更新' ~ ('；彙整所有分店同步上來的訂單' if data.is_hub else '')) %}
+    <span class="text-white-50 small">更新：<span id="liveAt">{{ data.at }}</span></span>
+    {% endcall %}
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">今日營業額</div><div class="stat-value text-warning" id="liveRevenue">${{ '{:,}'.format(data.revenue) }}</div>
+            <div class="small" id="liveVs"></div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">訂單數</div><div class="stat-value" id="liveOrders">{{ data.orders }}</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">客單價</div><div class="stat-value" id="liveAvg">${{ data.avg_ticket }}</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">製作中 / 取消</div><div class="stat-value"><span id="livePending">{{ data.pending }}</span> / <span class="text-danger" id="liveCancelled">{{ data.cancelled }}</span></div></div></div>
+    </div>
+    <div class="row g-4">
+        <section class="col-xl-7"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">各分店</h2>
+            <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0" id="liveStores">
+                <thead><tr><th>分店</th><th>連線</th><th>營業額</th><th>訂單</th><th>客單價</th><th>製作中</th><th>線上單</th></tr></thead>
+                <tbody></tbody></table></div>
+        </div></section>
+        <section class="col-xl-5"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">熱銷品項</h2>
+            <ol class="mb-0" id="liveTop"></ol>
+        </div></section>
+        <section class="col-xl-7"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">每小時營業額</h2>
+            <div id="liveHourly"></div>
+        </div></section>
+        <section class="col-xl-5"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">最新訂單</h2>
+            <table class="table table-dark table-sm mb-0" id="liveRecent"><tbody></tbody></table>
+        </div></section>
+    </div>
+</main>
+{% endblock %}
+{% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/live-dashboard.js') }}"></script>{% endblock %}

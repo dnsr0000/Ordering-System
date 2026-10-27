@@ -100,8 +100,16 @@
                 </div>
             </div>
 
+            {% set mf = member_features() %}
+            {% if mf.line_login %}
+            <a href="{{ url_for('member_auth.line_start') }}" class="btn btn-success w-100 fw-bold mt-2" id="lineLoginBtn"><i class="bi bi-line me-1"></i> 使用 LINE 登入</a>
+            {% endif %}
+            {% if mf.line_pending %}
+            <div class="alert alert-success small py-2 mt-2" id="linePendingHint">登入後會自動綁定剛才授權的 LINE 帳號。</div>
+            {% endif %}
             <div class="d-flex justify-content-between mt-3">
                 <a href="{{ url_for('customer.customer_index') }}" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回首頁</a>
+                {% if mf.pin_reset %}<a href="{{ url_for('member_auth.forgot_pin') }}" class="text-info text-decoration-none small" id="forgotPinLink">忘記 PIN？</a>{% endif %}
                 <a href="{{ url_for('auth.register') }}" class="text-warning text-decoration-none small">尚未加入會員？前往註冊 <i class="bi bi-arrow-right"></i></a>
             </div>
 
@@ -115,7 +123,7 @@
                 </div>
             </div>
 
-            <form id="registerForm" action="{{ url_for('auth.register') }}" method="POST" enctype="multipart/form-data">
+            <form id="registerForm" action="{{ url_for('auth.register') }}" method="POST" enctype="multipart/form-data" data-otp-purpose="register">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3 text-start">
                     <label class="form-label fw-bold small text-white" for="regName">姓名</label>
@@ -123,13 +131,34 @@
                 </div>
                 <div class="mb-3 text-start">
                     <label class="form-label fw-bold small text-white" for="regPhone">電話 (09開頭10碼)</label>
+                    {% set mf = member_features() %}
+                    {% if mf.otp_register %}
+                    <div class="input-group">
+                        <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="例如：0912345678" pattern="09[0-9]{8}" autocomplete="tel" required data-otp-phone>
+                        <button class="btn btn-outline-warning" type="button" data-action="send-otp" id="regSendOtpBtn">傳送驗證碼</button>
+                    </div>
+                    <input type="text" class="form-control form-input mt-2" id="regOtp" name="otp_code" placeholder="簡訊驗證碼 (6 碼)" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required>
+                    <div class="small mt-1" data-otp-msg></div>
+                    {% else %}
                     <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="例如：0912345678" pattern="09[0-9]{8}" autocomplete="tel" required>
+                    {% endif %}
                 </div>
                 <div class="mb-3 text-start">
                     <label class="form-label fw-bold small text-white" for="regPin">手機登入安全 PIN 碼 (4~6位數字)</label>
                     <input type="password" class="form-control form-input" id="regPin" name="pin" placeholder="請設定 4~6 位數字密碼"
                            pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" required>
                 </div>
+                <div class="mb-3 text-start">
+                    <label class="form-label fw-bold small text-white" for="regBirthday">生日 (選填，生日當月送生日禮)</label>
+                    <input type="date" class="form-control form-input" id="regBirthday" name="birthday">
+                </div>
+                {% if referral_enabled %}
+                <div class="mb-3 text-start">
+                    <label class="form-label fw-bold small text-white" for="regReferral">推薦碼 (選填，朋友推薦時填寫)</label>
+                    <input type="text" class="form-control form-input" id="regReferral" name="referral_code" maxlength="12"
+                           value="{{ referral_code or '' }}" autocomplete="off" style="text-transform: uppercase">
+                </div>
+                {% endif %}
 
                 {% if face_enabled %}
                 <div class="form-check text-start mb-2">
@@ -217,4 +246,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/register.js') }}"></script>
+<script src="{{ url_for('static', filename='js/member-extras.js') }}"></script>
 {% endblock %}

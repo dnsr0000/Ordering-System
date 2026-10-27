@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}促銷活動{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="promotions-page">
+    {{ page_header('促銷活動', 'bi-tags', '結帳時自動計算 (紅利兌換品、加購品不參加)；同一份餐點只參加一個單品活動，依優先順序') }}
+    <div class="row g-4">
+        <section class="col-xl-7">
+            <table class="table table-dark table-sm align-middle" id="promotionsTable">
+                <thead><tr><th>活動</th><th>類型 / 規則</th><th>適用</th><th>期間</th><th>狀態</th><th></th></tr></thead>
+                <tbody>
+                {% for p in promotions %}
+                <tr><td class="fw-bold">{{ p.name }}<div class="small text-white-50">優先 {{ p.priority }}{% if p.member_only %} • 會員限定{% endif %}{% if not p.stack_with_coupon %} • 不可併用優惠券{% endif %}</div></td>
+                    <td class="small">{{ p.kind_label }}：
+                        {% if p.kind == 'bogo' %}買 {{ p.buy_qty }} 送 {{ p.get_qty }}
+                        {% elif p.kind == 'nth_discount' %}第 {{ p.nth }} 件 {{ p.percent }}%
+                        {% elif p.kind == 'threshold_discount' %}滿 ${{ p.threshold }} {% if p.amount %}折 ${{ p.amount }}{% else %}打 {{ p.percent }}%{% endif %}
+                        {% else %}滿 ${{ p.threshold }} 送 {{ item_by_uuid[p.gift_item_uuid].name if p.gift_item_uuid in item_by_uuid else '(贈品已刪除)' }}{% endif %}</td>
+                    <td class="small">{% if p.target_type == 'all' %}全部{% elif p.target_type == 'category' %}分類：{{ p.target_value }}{% else %}{{ p.target_value.split(',')|length }} 項餐點{% endif %}
+                        {% if p.channels %}<div class="text-white-50">{{ p.channels }}</div>{% endif %}</td>
+                    <td class="small">{{ p.start_date or '' }}~{{ p.end_date or '' }}{% if p.start_time or p.end_time %}<div>{{ p.start_time }}~{{ p.end_time }}</div>{% endif %}</td>
+                    <td>{{ status_badge('進行中' if p.is_active else '停用', 'success' if p.is_active else 'secondary') }}</td>
+                    <td class="text-nowrap">
+                        <a class="btn btn-sm btn-outline-light" href="{{ url_for('promotions.manage', edit=p.id) }}">編輯</a>
+                        <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="promotion_id" value="{{ p.id }}">
+                            <button class="btn btn-sm btn-outline-warning" type="submit" name="action" value="toggle">{{ '停用' if p.is_active else '啟用' }}</button></form>
+                        <form method="POST" class="d-inline" data-confirm="刪除活動「{{ p.name }}」？">{{ csrf() }}<input type="hidden" name="promotion_id" value="{{ p.id }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete" aria-label="刪除"><i class="bi bi-trash"></i></button></form>
+                    </td></tr>
+                {% else %}<tr><td colspan="6" class="text-center text-white-50">尚未建立促銷活動</td></tr>{% endfor %}
+                </tbody>
+            </table>
+        </section>
+        <section class="col-xl-5">
+            {% set p = edit %}
+            <form method="POST" class="card rounded-4 p-3" id="promotionForm">{{ csrf() }}
+                <input type="hidden" name="action" value="save"><input type="hidden" name="promotion_id" value="{{ p.id if p else '' }}">
+                <h2 class="h5 fw-bold text-warning">{{ '編輯活動' if p else '新增活動' }}</h2>
+                <div class="mb-2"><label class="form-label small" for="pm-name">活動名稱</label><input class="form-control form-control-sm" id="pm-name" name="name" value="{{ p.name if p else '' }}" required></div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6"><label class="form-label small" for="pm-kind">類型</label>
+                        <select class="form-select form-select-sm" id="pm-kind" name="kind" data-toggle-group="kind">{% for k, v in kinds.items() %}<option value="{{ k }}" {{ 'selected' if p and p.kind == k }}>{{ v }}</option>{% endfor %}</select></div>
+                    <div class="col-3"><label class="form-label small" for="pm-pri">優先順序</label><input class="form-control form-control-sm" id="pm-pri" type="number" name="priority" value="{{ p.priority if p else 0 }}"></div>
+                    <div class="col-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="pm-act" {{ 'checked' if not p or p.is_active }}><label class="form-check-label small" for="pm-act">啟用</label></div></div>
+                </div>
+                {% set kind = p.kind if p else 'bogo' %}
+                <div class="row g-2 mb-2 {{ 'd-none' if kind != 'bogo' }}" data-group="kind" data-when="bogo">
+                    <div class="col-6"><label class="form-label small" for="pm-buy">買 X</label><input class="form-control form-control-sm" id="pm-buy" type="number" min="1" name="buy_qty" value="{{ p.buy_qty if p else 1 }}"></div>
+                    <div class="col-6"><label class="form-label small" for="pm-get">送 Y (最便宜的 Y 件)</label><input class="form-control form-control-sm" id="pm-get" type="number" min="1" name="get_qty" value="{{ p.get_qty if p else 1 }}"></div>
+                </div>
+                <div class="row g-2 mb-2 {{ 'd-none' if kind not in ('nth_discount', 'threshold_discount') }}" data-group="kind" data-when="nth_discount,threshold_discount">
+                    <div class="col-6"><label class="form-label small" for="pm-nth">第 N 件 (第 N 件折扣用)</label><input class="form-control form-control-sm" id="pm-nth" type="number" min="2" name="nth" value="{{ p.nth if p else 2 }}"></div>
+                    <div class="col-6"><label class="form-label small" for="pm-pct">應付百分比 (60 = 六折)</label><input class="form-control form-control-sm" id="pm-pct" type="number" min="0" max="100" name="percent" value="{{ p.percent if p else 50 }}"></div>
+                </div>
+                <div class="row g-2 mb-2 {{ 'd-none' if kind not in ('threshold_discount', 'threshold_gift') }}" data-group="kind" data-when="threshold_discount,threshold_gift">
+                    <div class="col-4"><label class="form-label small" for="pm-th">門檻金額</label><input class="form-control form-control-sm" id="pm-th" type="number" min="0" name="threshold" value="{{ p.threshold if p else 0 }}"></div>
+                    <div class="col-4"><label class="form-label small" for="pm-amt">折抵金額 (滿額折)</label><input class="form-control form-control-sm" id="pm-amt" type="number" min="0" name="amount" value="{{ p.amount if p else 0 }}"></div>
+                    <div class="col-4"><label class="form-label small" for="pm-gift">贈品 (滿額贈)</label>
+                        <select class="form-select form-select-sm" id="pm-gift" name="gift_item_uuid"><option value="">--</option>{% for it in items %}<option value="{{ it.uuid }}" {{ 'selected' if p and p.gift_item_uuid == it.uuid }}>{{ it.name }}</option>{% endfor %}</select></div>
+                </div>
+                <div class="mb-2"><label class="form-label small" for="pm-target">適用品項</label>
+                    <select class="form-select form-select-sm mb-1" id="pm-target" name="target_type" data-toggle-group="target">
+                        {% for k, v in [('all', '全部餐點'), ('category', '指定分類'), ('items', '指定品項')] %}<option value="{{ k }}" {{ 'selected' if p and p.target_type == k }}>{{ v }}</option>{% endfor %}</select>
+                    {% set tt = p.target_type if p else 'all' %}
+                    {% set tv = (p.target_value if p else '').split(',') %}
+                    <div class="{{ 'd-none' if tt != 'category' }}" data-group="target" data-when="category"><div class="d-flex flex-wrap gap-2">
+                        {% for c in categories %}<div class="form-check"><input class="form-check-input" type="checkbox" name="target_categories" value="{{ c }}" id="pc-{{ loop.index }}" {{ 'checked' if c in tv }}><label class="form-check-label small" for="pc-{{ loop.index }}">{{ c }}</label></div>{% endfor %}
+                    </div></div>
+                    <select class="form-select form-select-sm {{ 'd-none' if tt != 'items' }}" name="target_items" multiple size="6" data-group="target" data-when="items" aria-label="指定品項">
+                        {% for it in items %}<option value="{{ it.uuid }}" {{ 'selected' if it.uuid in tv }}>{{ it.category }}｜{{ it.name }}</option>{% endfor %}</select>
+                </div>
+                <div class="row g-2 mb-2">
+                    <div class="col-6"><label class="form-label small" for="pm-sd">開始日</label><input class="form-control form-control-sm" id="pm-sd" type="date" name="start_date" value="{{ p.start_date if p and p.start_date else '' }}"></div>
+                    <div class="col-6"><label class="form-label small" for="pm-ed">結束日</label><input class="form-control form-control-sm" id="pm-ed" type="date" name="end_date" value="{{ p.end_date if p and p.end_date else '' }}"></div>
+                    <div class="col-6"><label class="form-label small" for="pm-st">每日開始</label><input class="form-control form-control-sm" id="pm-st" type="time" name="start_time" value="{{ p.start_time if p else '' }}"></div>
+                    <div class="col-6"><label class="form-label small" for="pm-et">每日結束</label><input class="form-control form-control-sm" id="pm-et" type="time" name="end_time" value="{{ p.end_time if p else '' }}"></div>
+                </div>
+                <div class="mb-2"><span class="small">星期：</span>
+                    {% for n in range(1, 8) %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="days" value="{{ n }}" id="pd-{{ n }}" {{ 'checked' if not p or (n|string) in p.days }}><label class="form-check-label small" for="pd-{{ n }}">{{ '一二三四五六日'[n - 1] }}</label></div>{% endfor %}</div>
+                <div class="mb-2"><span class="small">管道 (都不勾 = 全部)：</span>
+                    {% for k, v in channels %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="channels" value="{{ k }}" id="ch-{{ k }}" {{ 'checked' if p and k in (p.channels or '').split(',') }}><label class="form-check-label small" for="ch-{{ k }}">{{ v }}</label></div>{% endfor %}</div>
+                <div class="d-flex gap-3 mb-3">
+                    <div class="form-check"><input class="form-check-input" type="checkbox" name="member_only" value="1" id="pm-mo" {{ 'checked' if p and p.member_only }}><label class="form-check-label small" for="pm-mo">會員限定</label></div>
+                    <div class="form-check"><input class="form-check-input" type="checkbox" name="stack_with_coupon" value="1" id="pm-sc" {{ 'checked' if not p or p.stack_with_coupon }}><label class="form-check-label small" for="pm-sc">可與優惠券併用</label></div>
+                </div>
+                <div class="d-flex gap-2"><button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">儲存活動</button>
+                    {% if p %}<a class="btn btn-outline-light btn-sm" href="{{ url_for('promotions.manage') }}">取消編輯</a>{% endif %}</div>
+            </form>
+        </section>
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

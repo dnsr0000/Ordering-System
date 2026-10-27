@@ -5,7 +5,7 @@
 - /admin/tables/print  列印 QR code 桌卡 (店長以上)
 POS 的「桌位結帳」API 在 app/routes/pos.py。線上端沒有門市桌位，這些頁面一律 404。
 """
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template, request, url_for
 
 from sqlalchemy.exc import IntegrityError
 
@@ -16,7 +16,7 @@ from app.services import table_service
 from app.services.audit import record_staff_audit
 from app.sync import runtime as sync_runtime
 from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import role_required, safe_int
+from app.utils import get_json_dict, role_required, safe_int
 
 tables_bp = Blueprint('tables', __name__)
 MANAGERS = ('owner', 'manager')
@@ -40,6 +40,21 @@ def scan(token):
     table_service.bind_table(table)
     flash(f'您在 {table.label}：點餐後餐點會送到桌上，用餐後請至櫃檯結帳。', 'info')
     return redirect(url_for('customer.customer_index'))
+
+
+@tables_bp.route('/api/table/call', methods=['POST'], endpoint='call_service')
+@limiter.limit('10/minute')
+def call_service():
+    """顧客在桌邊點餐頁按「呼叫服務」(需已掃描有效的桌位 QR code)"""
+    from app.utils import get_json_dict
+    table = table_service.current_table()
+    if table is None:
+        raise AppError('請先掃描桌上的 QR code', 403)
+    data = get_json_dict()
+    call, created = table_service.call_service(table, str(data.get('kind') or 'help'), data.get('note'))
+    label = table_service.CALL_KINDS[call.kind]
+    return jsonify({'success': True, 'created': created,
+                    'message': f'已通知服務人員：{label}' if created else f'已通知過服務人員 ({label})，請稍候'})
 
 
 def _table(table_id):
@@ -78,6 +93,8 @@ def manage():
                 old = table.name
                 table_service.rename_table(table, request.form.get('name'))
                 table.sort_order = safe_int(request.form.get('sort_order'), table.sort_order)
+                table_service.update_table_details(table, request.form.get('seats', table.seats),
+                                                   request.form.get('area', table.area), request.form.get('shape', table.shape))
                 record_staff_audit('TABLE_CHANGE', details=f'桌位 {old} 改為 {table.name}')
                 flash(f'✅ 已更新 {table.label}', 'success')
             elif action == 'toggle':
@@ -109,7 +126,21 @@ def manage():
         saved_base_url=g.tenant.table_qr_base_url, suggested_base_url=table_service.suggest_base_url(),
         urls={t.id: table_service.table_url(t, base) for t in tables},
         unpaid_counts=table_service.table_counts(),
+        shapes=table_service.TABLE_SHAPES,
+        areas=sorted({t.area for t in tables if t.area}),
+        floor=[{'id': t.id, 'name': t.name, 'seats': t.seats, 'area': t.area, 'shape': t.shape, 'x': t.pos_x, 'y': t.pos_y}
+               for t in tables if t.is_active],
     )
+
+
+@tables_bp.route('/admin/tables/layout', methods=['POST'], endpoint='save_layout')
+@role_required(*MANAGERS)
+def save_layout():
+    """平面圖拖拉後儲存：{tables: [{id, x, y}]}"""
+    n = table_service.save_layout((get_json_dict() or {}).get('tables'))
+    record_staff_audit('TABLE_CHANGE', details=f'更新桌位平面圖 ({n} 桌)')
+    db.session.commit()
+    return jsonify({'success': True, 'updated': n})
 
 
 @tables_bp.route('/admin/tables/print', endpoint='print_cards')

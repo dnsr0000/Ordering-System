@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}結帳結果 - 自助點餐系統{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 560px">
+    <div class="card p-4 text-center" id="tablePayResult" data-status="{{ tp.status }}">
+        {% if tp.status == 'paid' %}
+        <i class="bi bi-check-circle-fill text-success display-3"></i>
+        <h1 class="h4 fw-bold mt-3">結帳完成</h1>
+        <p class="text-secondary">已付款 ${{ tp.amount }}，謝謝光臨！可以直接離開，不需要再到櫃檯結帳。</p>
+        {% elif tp.status == 'pending' %}
+        <i class="bi bi-hourglass-split text-warning display-3"></i>
+        <h1 class="h4 fw-bold mt-3">尚未收到付款結果</h1>
+        <p class="text-secondary">如果剛完成付款，請稍候重新整理；或直接到櫃檯結帳。</p>
+        {% elif tp.status == 'conflict' %}
+        <i class="bi bi-exclamation-triangle-fill text-warning display-3"></i>
+        <h1 class="h4 fw-bold mt-3">已收到付款，請洽櫃檯</h1>
+        <p class="text-secondary">付款期間這一桌的訂單有異動 (已結帳或已修改)，店家會為您處理或退款。</p>
+        {% else %}
+        <i class="bi bi-x-circle-fill text-danger display-3"></i>
+        <h1 class="h4 fw-bold mt-3">付款未完成</h1>
+        <p class="text-secondary">{{ tp.note or '可以重新付款，或到櫃檯結帳。' }}</p>
+        {% endif %}
+        <a class="btn btn-outline-light mt-2" href="{{ url_for('customer.customer_index') }}">回點餐頁</a>
+    </div>
+</main>
+{% endblock %}

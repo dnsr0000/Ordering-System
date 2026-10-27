@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}API 說明文件{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="developersPage" style="max-width: 1100px">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h1 class="h3 fw-bold mb-1"><i class="bi bi-code-slash text-warning me-2"></i>對外 API 說明文件</h1>
+            <div class="text-white-50 small">讓 ERP、會計軟體或自建 App 讀取訂單 / 菜單 / 會員，並以 Webhook 即時接收訂單事件</div>
+        </div>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('integrations.openapi') }}" id="openapiLink"><i class="bi bi-filetype-json me-1"></i>OpenAPI 3.0 規格 (JSON)</a>
+    </div>
+
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">開始使用</h2>
+        <ol class="small mb-2">
+            <li>店家負責人登入後台 → 系統設定 → <b>API 與 Webhook</b> → 建立 API 金鑰並勾選權限 (金鑰只顯示一次)。</li>
+            <li>呼叫時帶標頭 <code>Authorization: Bearer kk_…</code>；回應皆為 JSON，成功時 <code>success</code> 為 true。</li>
+            <li>每把金鑰每分鐘最多 120 次；要即時知道新訂單請用 Webhook，不要頻繁輪詢。</li>
+        </ol>
+        <pre class="small bg-black rounded-3 p-2 mb-0"><code>curl -H "Authorization: Bearer kk_你的金鑰" "{{ base_url }}/api/v1/orders?cursor=0&amp;limit=50"</code></pre>
+    </section>
+
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h6 fw-bold">權限範圍</h2>
+        <table class="table table-dark table-sm mb-0" id="scopeTable">
+            <tbody>{% for k, label in scopes.items() %}<tr><td><code>{{ k }}</code></td><td class="small">{{ label }}</td></tr>{% endfor %}</tbody>
+        </table>
+    </section>
+
+    <section class="mb-4" id="endpointList">
+        <h2 class="h6 fw-bold">端點</h2>
+        {% for ep in endpoints %}
+        <div class="card rounded-4 p-3 mb-3 api-endpoint" id="ep-{{ loop.index }}" data-method="{{ ep.method }}" data-path="{{ ep.path }}">
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                <span class="badge {{ 'bg-success' if ep.method == 'GET' else 'bg-warning text-dark' }}">{{ ep.method }}</span>
+                <code class="fs-6">{{ ep.path }}</code>
+                <span class="fw-bold">{{ ep.summary }}</span>
+                <span class="badge bg-secondary ms-auto">{{ ep.scope }}</span>
+            </div>
+            <div class="small text-white-50 mb-2">{{ ep.description }}</div>
+            {% if ep.params %}
+            <table class="table table-dark table-sm small mb-2">
+                <thead><tr><th>參數</th><th>位置</th><th>必填</th><th>說明</th></tr></thead>
+                <tbody>{% for p in ep.params %}<tr><td><code>{{ p.name }}</code></td><td>{{ 'URL 路徑' if p.where == 'path' else '查詢字串' }}</td>
+                    <td>{{ '是' if p.required else '' }}</td><td>{{ p.description }}{% if p.example %} <span class="text-white-50">例：{{ p.example }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
+            </table>
+            {% endif %}
+            {% if ep.body %}<div class="small mb-2">請求本文 (JSON)：<code>{{ ep.body | tojson }}</code></div>{% endif %}
+        </div>
+        {% endfor %}
+        <div class="small text-white-50">錯誤時回傳 <code>{"success": false, "message": "…"}</code>：
+            {% for code, label in errors %}<code>{{ code }}</code> {{ label }}{{ '、' if not loop.last }}{% endfor %}</div>
+    </section>
+
+    <section class="card rounded-4 p-3 mb-4" id="tryItCard">
+        <h2 class="h6 fw-bold">線上試打</h2>
+        <div class="small text-white-50 mb-2">金鑰只在您的瀏覽器中使用 (直接呼叫本站的 API，不會儲存)。建議使用只有讀取權限的金鑰。</div>
+        <form id="tryItForm" class="row g-2 align-items-end" autocomplete="off">
+            <div class="col-md-4"><label class="form-label small" for="tryKey">API 金鑰</label>
+                <input class="form-control form-control-sm" id="tryKey" type="password" placeholder="kk_…" required></div>
+            <div class="col-md-5"><label class="form-label small" for="tryEndpoint">端點</label>
+                <select class="form-select form-select-sm" id="tryEndpoint">
+                    {% for ep in endpoints %}<option value="{{ loop.index0 }}">{{ ep.method }} {{ ep.path }} — {{ ep.summary }}</option>{% endfor %}
+                </select></div>
+            <div class="col-md-3"><button class="btn btn-warning btn-sm w-100" type="submit" id="tryItSend"><i class="bi bi-send me-1"></i>送出</button></div>
+            <div class="col-12" id="tryParams"></div>
+            <div class="col-12 d-none" id="tryBodyBox"><label class="form-label small" for="tryBody">請求本文 (JSON)</label>
+                <textarea class="form-control form-control-sm font-monospace" id="tryBody" rows="3"></textarea></div>
+        </form>
+        <div class="small mt-2" id="tryStatus"></div>
+        <pre class="small bg-black rounded-3 p-2 mt-2 mb-0 d-none" id="tryResult" style="max-height: 420px; overflow: auto"></pre>
+    </section>
+
+    <section class="card rounded-4 p-3 mb-4" id="webhookDocs">
+        <h2 class="h6 fw-bold">Webhook 訂單事件</h2>
+        <div class="small mb-2">在後台新增 Webhook 網址 (需 https) 並勾選事件；系統以 POST JSON 送出，2xx 視為成功，失敗依 1、5、15、60、180 分鐘重試。</div>
+        <table class="table table-dark table-sm small mb-2">
+            <tbody>{% for k, label in events.items() %}<tr><td><code>{{ k }}</code></td><td>{{ label }}</td></tr>{% endfor %}
+            <tr><td><code>ping</code></td><td>後台按「測試」時送出</td></tr></tbody>
+        </table>
+        <div class="small fw-bold">標頭</div>
+        <table class="table table-dark table-sm small mb-2">
+            <tbody>{% for k, label in webhook_headers %}<tr><td><code>{{ k }}</code></td><td>{{ label }}</td></tr>{% endfor %}</tbody>
+        </table>
+        <div class="small fw-bold">本文</div>
+        <pre class="small bg-black rounded-3 p-2"><code>{"id": "…", "event": "order.paid", "created_at": "2026-10-24T12:00:00", "data": { 訂單欄位，同 GET /api/v1/orders/{uuid} 的 order }}</code></pre>
+        <div class="small fw-bold">驗證簽章 (Python 範例)</div>
+        <pre class="small bg-black rounded-3 p-2 mb-0" id="verifySample"><code>{{ verify_sample }}</code></pre>
+    </section>
+</main>
+{% endblock %}
+{% block page_data %}<script type="application/json" id="page-data">{{ {'endpoints': endpoints} | tojson }}</script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/api-docs.js') }}"></script>{% endblock %}

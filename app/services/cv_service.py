@@ -152,4 +152,4 @@ def find_best_match_vectorized(target_feature, candidate_users, threshold=0.363)
 
     except Exception as e:
         logger.exception("矩陣向量比對異常: %s", e)
-        return None, 0.0
+        return None, 0.0

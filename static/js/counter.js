@@ -12,7 +12,11 @@
     const speechToggleBtn = document.getElementById('speechToggleBtn');
     const speechStatusText = document.getElementById('speechStatusText');
 
-    let speechEnabled = true;
+    const voice = Kiosk.pageData();
+    const template = voice.template || '取餐號碼 {number}，請到櫃檯取餐';
+    const repeat = Math.max(1, Number(voice.repeat) || 1);
+    let speechEnabled = voice.enabled !== false;
+    let lastCalledIds = new Set();
     let isFirstLoad = true;
     let lastReadyIds = new Set();
     let lastReadySignature = null;
@@ -22,18 +26,31 @@
     const signature = (orders) => orders.map((o) => o.id).join(',');
 
     // ---------------------------------------------------------------- 語音叫號
-    function speak(text) {
+    function speak(text, times = 1) {
         if (!speechEnabled || !window.speechSynthesis) return;
         try {
             window.speechSynthesis.cancel();
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-TW';
-            utterance.rate = 0.85;
-            utterance.pitch = 1.0;
-            window.speechSynthesis.speak(utterance);
+            for (let i = 0; i < times; i += 1) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = 'zh-TW';
+                utterance.rate = 0.85;
+                utterance.pitch = 1.0;
+                window.speechSynthesis.speak(utterance);
+            }
         } catch (err) {
             console.warn('語音播放失敗:', err);
         }
+    }
+
+    function renderCalled(list) {
+        const box = document.getElementById('waitlistCalledBox');
+        if (!box) return;
+        box.classList.toggle('d-none', list.length === 0);
+        const fresh = list.filter((w) => !isFirstLoad && !lastCalledIds.has(w.id));
+        if (fresh.length) speak(`候位號碼 ${fresh.map((w) => w.label.split('').join(' ')).join('、')}，請至櫃檯入座`, repeat);
+        lastCalledIds = new Set(list.map((w) => w.id));
+        Kiosk.setHtml(document.getElementById('waitlistCalledList'), list.map((w) => html`
+            <span class="badge bg-info text-dark fs-4 px-3 py-2">${w.label} (${w.party_size} 位)</span>`));
     }
 
     function toggleSpeech() {
@@ -53,7 +70,7 @@
         // 新出餐的號碼合併成一次語音播報 (第一次載入不播)
         const newlyReady = orders.filter((o) => !isFirstLoad && !lastReadyIds.has(o.id))
             .map((o) => `${pad(o.pickup_number)} 號`);
-        if (newlyReady.length) speak(`請，取餐號碼 ${newlyReady.join('、')}，至櫃檯取餐`);
+        if (newlyReady.length) speak(template.replace('{number}', newlyReady.join('、')), repeat);
         lastReadyIds = new Set(orders.map((o) => o.id));
 
         noReadyMessage.classList.toggle('d-none', orders.length > 0);
@@ -93,12 +110,14 @@
             const data = await Kiosk.api('/api/counter_orders');
             renderReady(data.ready_orders || []);
             renderPreparing(data.preparing_orders || []);
+            renderCalled(data.called_waitlist || []);
             isFirstLoad = false;
         } catch (err) {
             console.warn('叫號看板同步失敗:', err.message);
         }
     }
 
+    speechStatusText.textContent = speechEnabled ? '已開啟' : '已靜音';
     Kiosk.on(document, 'click', { 'toggle-speech': () => toggleSpeech() });
     Kiosk.startClock(document.getElementById('counter-clock'));
     loadBoard();

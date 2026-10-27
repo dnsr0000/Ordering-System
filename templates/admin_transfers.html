@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}分店叫貨 / 調撥{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% macro line_rows(prefix) %}
+    {% for n in range(6) %}
+    <div class="row g-2 mb-1">
+        <div class="col-8"><input class="form-control form-control-sm" name="line_name" list="ingredientList" placeholder="原料名稱" aria-label="原料 {{ n + 1 }}" id="{{ prefix }}Name{{ n }}"></div>
+        <div class="col-4"><input class="form-control form-control-sm" name="line_qty" type="number" step="any" min="0" placeholder="數量" aria-label="數量 {{ n + 1 }}" id="{{ prefix }}Qty{{ n }}"></div>
+    </div>
+    {% endfor %}
+{% endmacro %}
+{% block content %}
+<main class="container py-4" id="transfersPage">
+    {% call page_header('分店叫貨 / 調撥', 'bi-arrow-left-right', '向總部中央廚房或其他分店叫貨；分店間調撥原料。出貨扣出貨方庫存、收貨加收貨方庫存') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('inventory.manage') }}">原物料與配方</a>
+    {% endcall %}
+    {% if not me %}
+    <div class="alert alert-secondary">叫貨 / 調撥用於多分店 (線上端 = 總部中央廚房，分店經同步交換單據)；單機模式請使用「供應商與採購單」。</div>
+    {% else %}
+    <datalist id="ingredientList">{% for ing in ingredients %}<option value="{{ ing.name }}">{{ ing.unit }}，庫存 {{ ing.stock|round(2) }}</option>{% endfor %}</datalist>
+    {% if todo_ship or todo_receive %}
+    <section class="card rounded-4 p-3 mb-3 border border-warning" id="transferTodo">
+        <h2 class="h6 fw-bold text-warning">待處理</h2>
+        {% for t in todo_ship %}<div class="small mb-1">📦 <a href="{{ url_for('branches.transfer_detail', transfer_id=t.id) }}">{{ t.number }}</a> {{ t.to_name }} 向本店叫貨 ({{ t.lines|length }} 項) — 請出貨或拒絕</div>{% endfor %}
+        {% for t in todo_receive %}<div class="small mb-1">🚚 <a href="{{ url_for('branches.transfer_detail', transfer_id=t.id) }}">{{ t.number }}</a> {{ t.from_name }} 已出貨 ({{ t.lines|length }} 項) — 到貨後請收貨入庫</div>{% endfor %}
+    </section>
+    {% endif %}
+    <div class="row g-3 mb-3">
+        <section class="col-lg-6"><form class="card rounded-4 p-3 h-100" method="POST" id="newRequestForm">
+            {{ csrf() }}<input type="hidden" name="action" value="create_request">
+            <h2 class="h6 fw-bold">叫貨 (本店收貨)</h2>
+            <label class="form-label small" for="reqSite">向誰叫貨</label>
+            <select class="form-select form-select-sm mb-2" id="reqSite" name="site" required>
+                {% for s in sites %}<option value="{{ s.uuid }}">{{ s.name }}</option>{% endfor %}
+            </select>
+            {{ line_rows('req') }}
+            <input class="form-control form-control-sm mt-1" name="note" maxlength="200" placeholder="備註 (例如：週五早上前到貨)" aria-label="備註">
+            <button class="btn btn-warning btn-sm fw-bold mt-2" type="submit">送出叫貨單</button>
+        </form></section>
+        <section class="col-lg-6"><form class="card rounded-4 p-3 h-100" method="POST" id="newTransferForm">
+            {{ csrf() }}<input type="hidden" name="action" value="create_transfer">
+            <h2 class="h6 fw-bold">調撥 (本店出貨，立即扣庫存)</h2>
+            <label class="form-label small" for="trSite">調撥給</label>
+            <select class="form-select form-select-sm mb-2" id="trSite" name="site" required>
+                {% for s in sites %}<option value="{{ s.uuid }}">{{ s.name }}</option>{% endfor %}
+            </select>
+            {{ line_rows('tr') }}
+            <input class="form-control form-control-sm mt-1" name="note" maxlength="200" placeholder="備註" aria-label="備註">
+            <button class="btn btn-outline-warning btn-sm fw-bold mt-2" type="submit">調撥出貨</button>
+        </form></section>
+    </div>
+    <section class="card rounded-4 p-3">
+        <h2 class="h6 fw-bold">單據</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="transferTable">
+            <thead><tr><th>單號</th><th>種類</th><th>出貨方</th><th>收貨方</th><th>品項</th><th>狀態</th><th>建立</th></tr></thead>
+            <tbody>
+            {% for t in rows %}
+            <tr data-transfer-id="{{ t.id }}">
+                <td><a href="{{ url_for('branches.transfer_detail', transfer_id=t.id) }}">{{ t.number }}</a></td>
+                <td>{{ '叫貨' if t.kind == 'request' else '調撥' }}</td>
+                <td>{{ t.from_name }}{{ ' (本店)' if t.from_site == me }}</td><td>{{ t.to_name }}{{ ' (本店)' if t.to_site == me }}</td>
+                <td class="small">{{ t.lines|map(attribute='name')|join('、')|truncate(40) }}</td>
+                <td><span class="badge bg-{{ {'requested': 'warning', 'shipped': 'info', 'received': 'success'}.get(t.status, 'secondary') }}">{{ labels.get(t.status, t.status) }}</span></td>
+                <td class="small text-white-50">{{ t.created_at.strftime('%m/%d %H:%M') }} {{ t.created_by }}</td>
+            </tr>
+            {% else %}<tr><td colspan="7" class="text-white-50">尚無叫貨 / 調撥單</td></tr>{% endfor %}
+            </tbody>
+        </table></div>
+    </section>
+    {% endif %}
+</main>
+{% endblock %}

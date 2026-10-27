@@ -39,14 +39,69 @@
                     </div>
                 </div>
                 <small class="text-white-50"><i class="bi bi-phone"></i> 會員帳號：{{ user.phone }}</small>
+                <div class="mt-2">
+                    <button type="button" class="btn btn-sm btn-outline-warning fw-bold" data-action="show-member-qr" id="memberQrBtn">
+                        <i class="bi bi-qr-code me-1"></i> 會員條碼 (櫃檯掃描)
+                    </button>
+                </div>
             </div>
             <div class="col-md-5 text-md-end mt-3 mt-md-0">
                 <div class="text-white-50 small">現有可用紅利</div>
                 <div class="points-number">
                     <i class="bi bi-star-fill text-warning fs-3 me-1"></i><span id="currentPoints">{{ user.points }}</span> <span class="fs-4 text-white-50">點</span>
                 </div>
+                {% if expiry %}
+                <div class="small text-warning" id="pointsExpiry"><i class="bi bi-hourglass-split me-1"></i>{{ expiry.amount }} 點將於 {{ expiry.date.strftime('%Y/%m/%d') }} 到期</div>
+                {% endif %}
             </div>
         </div>
+    </section>
+
+    {% if stamp and stamp.enabled %}
+    <!-- 集點卡 -->
+    <section class="voucher-box p-3 mb-4" id="stampCard">
+        <h6 class="fw-bold text-warning mb-2"><i class="bi bi-postage me-1"></i> {{ stamp.title }} <span class="text-white-50 small">({{ stamp.count }} / {{ stamp.size }})</span></h6>
+        <div class="d-flex flex-wrap gap-2" aria-label="已集 {{ stamp.count }} 章，共 {{ stamp.size }} 章">
+            {% for n in range(stamp.size) %}
+            <span class="stamp-dot {{ 'stamp-on' if n < stamp.count }}" aria-hidden="true"><i class="bi {{ 'bi-check-circle-fill' if n < stamp.count else 'bi-circle' }}"></i></span>
+            {% endfor %}
+        </div>
+        <div class="small text-white-50 mt-2">再集 {{ stamp.size - stamp.count }} 章即可兌換獎勵。</div>
+    </section>
+    {% endif %}
+
+    {% if passes %}
+    <!-- 寄杯 -->
+    <section class="voucher-box p-3 mb-4" id="passList">
+        <h6 class="fw-bold text-warning mb-2"><i class="bi bi-cup-hot me-1"></i> 我的寄杯</h6>
+        {% for p in passes %}
+        <div class="d-flex justify-content-between small py-1 border-bottom border-secondary">
+            <span>{{ p.name }}</span><span>剩 <strong class="text-warning">{{ p.remaining }}</strong> / {{ p.total_uses }} 次</span>
+        </div>
+        {% endfor %}
+        <div class="small text-white-50 mt-2">點餐時在購物車「我的寄杯」按「兌換一份」，或在櫃檯出示會員條碼兌換。</div>
+    </section>
+    {% endif %}
+
+    {% if referral %}
+    <!-- 推薦好友 -->
+    <section class="voucher-box p-3 mb-4" id="referralBox">
+        <h6 class="fw-bold text-warning mb-2"><i class="bi bi-people me-1"></i> 推薦好友</h6>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <span>我的推薦碼</span><code class="fs-5 text-warning" id="referralCode">{{ referral.code }}</code>
+            <span class="small text-white-50">好友註冊時填寫，完成第一筆消費後雙方都得點數 (已推薦 {{ referral.friends }} 位，共得 {{ referral.points }} 點)</span>
+        </div>
+    </section>
+    {% endif %}
+
+    <!-- 行銷訊息 (個資法第 20 條：可隨時拒絕) -->
+    <section class="voucher-box p-3 mb-4" id="marketingBox">
+        <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" role="switch" id="marketingOptIn"
+                   {{ 'checked' if not user.marketing_opt_out }}>
+            <label class="form-check-label" for="marketingOptIn">接收優惠活動訊息 (優惠券、LINE 推播)</label>
+        </div>
+        <div class="small text-white-50" id="marketingMsg">關閉後不再收到行銷優惠券與推播；訂單、點數到期等通知不受影響。</div>
     </section>
 
     {% if open_vouchers %}
@@ -78,6 +133,7 @@
         {% set has_sale = cp.reward_discount_points and cp.reward_discount_points > 0 %}
         {% set redeemed_count = user.user_coupons | selectattr('coupon_id', 'equalto', cp.id) | list | length %}
         {% set limit_reached = cp.per_user_limit and cp.per_user_limit > 0 and redeemed_count >= cp.per_user_limit %}
+        {% set held = held_coupons.get(cp.id) %}
         <div class="col-6 col-md-4 col-lg-3 reward-item" data-points="{{ cp_points }}">
             <div class="reward-card border-warning">
                 <div class="reward-img-container coupon-cover">
@@ -86,6 +142,9 @@
                     <span class="points-badge bg-danger text-white border-danger shadow-sm"><i class="bi bi-tag-fill"></i> 限時 {{ cp.reward_discount_points }} 點</span>
                     {% else %}
                     <span class="points-badge"><i class="bi bi-star-fill"></i> {{ cp.reward_points }} 點</span>
+                    {% endif %}
+                    {% if held %}
+                    <span class="held-badge badge bg-success shadow-sm"><i class="bi bi-ticket-perforated-fill me-1"></i>剩餘 {{ held.count }} 張</span>
                     {% endif %}
                 </div>
                 <div class="p-3 d-flex flex-column flex-grow-1">
@@ -102,8 +161,15 @@
                         <i class="bi bi-person-lock"></i> 每人限換 {{ cp.per_user_limit }} 次（已兌換 {{ redeemed_count }}/{{ cp.per_user_limit }}）
                     </div>
                     {% endif %}
+                    {% if held %}
+                    <div class="small text-success mb-1 held-note">
+                        <i class="bi bi-wallet2"></i> 您目前持有 {{ held.count }} 張未使用{% if held.expires %}，最快 {{ held.expires.strftime('%m/%d') }} 到期{% endif %}
+                    </div>
+                    {% endif %}
                     <small class="text-white-50 mb-2">
                         {% if cp.min_spend > 0 %}消費滿 ${{ cp.min_spend }} 可用{% else %}無消費門檻限制{% endif %}
+                        {% if cp.max_discount %}，最高折 ${{ cp.max_discount }}{% endif %}
+                        {% if cp.valid_days %}<br>兌換後 {{ cp.valid_days }} 天內有效{% endif %}
                     </small>
                     <div class="mb-3">
                         {% if has_sale %}
@@ -118,9 +184,9 @@
                     {% else %}
                     <button type="button" class="btn btn-redeem w-100 mt-auto py-2" data-action="redeem-coupon"
                             data-id="{{ cp.id }}" data-title="{{ cp.title }}" data-code="{{ cp.code }}"
-                            data-points="{{ cp_points }}"
+                            data-points="{{ cp_points }}" data-held="{{ held.count if held else 0 }}"
                             data-discount="{{ cp.discount_label ~ ' 元' if cp.discount_type == 'fixed' else '享 ' ~ cp.discount_label ~ '優惠' }}">
-                        立即兌換
+                        {{ '再兌換一張' if held else '立即兌換' }}
                     </button>
                     {% endif %}
                 </div>
@@ -177,7 +243,46 @@
         </div>
         {% endif %}
     </div>
+    <!-- 我的資料 (個資自主) -->
+    <section class="voucher-box p-3 mb-4" id="myDataBox">
+        <h6 class="fw-bold text-warning mb-2"><i class="bi bi-shield-check me-1"></i> 我的資料</h6>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <a class="btn btn-sm btn-outline-light" href="{{ url_for('privacy.my_data') }}" id="myDataDownload"><i class="bi bi-download me-1"></i>下載我的資料</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('privacy.notice') }}">隱私權告知</a>
+            <button class="btn btn-sm btn-outline-danger ms-auto" type="button" data-bs-toggle="collapse" data-bs-target="#deleteAccountBox" aria-expanded="false">刪除帳號</button>
+        </div>
+        <form class="collapse mt-3" id="deleteAccountBox" method="POST" action="{{ url_for('privacy.delete_account') }}"
+              data-confirm="確定要刪除會員帳號？點數、優惠券、集點將一併刪除且無法復原。">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="small text-white-50 mb-2">刪除後點數、優惠券、集點卡與人臉資料都會刪除且無法復原；歷史訂單依法保存但不再連結到您。</div>
+            <div class="row g-2">
+                <div class="col-sm-4"><input class="form-control form-control-sm" type="password" name="pin" inputmode="numeric" maxlength="6" placeholder="PIN 碼" aria-label="PIN 碼" required></div>
+                <div class="col-sm-4"><input class="form-control form-control-sm" name="confirm" placeholder="輸入「刪除」確認" aria-label="確認" required></div>
+                <div class="col-sm-4"><button class="btn btn-sm btn-danger w-100" type="submit" id="deleteAccountBtn">永久刪除帳號</button></div>
+            </div>
+        </form>
+    </section>
 </main>
+
+<!-- 會員動態條碼 Modal -->
+<div class="modal fade" id="memberQrModal" tabindex="-1" aria-hidden="true" aria-labelledby="memberQrTitle" data-bs-theme="light">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content text-dark text-center">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold" id="memberQrTitle"><i class="bi bi-qr-code me-1"></i>會員條碼</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <img id="memberQrImg" class="img-fluid member-qr" alt="會員條碼">
+                <div class="small text-muted mt-2" id="memberQrHint">請出示給櫃檯掃描；條碼每分鐘自動更新，截圖無法使用。</div>
+                <div class="small text-danger mt-1" id="memberQrMsg"></div>
+            </div>
+            <div class="modal-footer border-0 justify-content-center pt-0">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-action="rotate-member-qr" title="懷疑條碼外流時使用：舊條碼立即失效">重新產生</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- 兌換確認 Modal (白底) -->
 <div class="modal fade" id="redeemModal" tabindex="-1" aria-hidden="true" aria-labelledby="modalItemName" data-bs-theme="light">

@@ -1,0 +1,30 @@
+/* 進階功能頁面 (系統設定、交班、報表、庫存…) 共用樣式 */
+.narrow-page { max-width: 860px; }
+.feature-card { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.12); transition: border-color .15s, transform .15s; }
+a.feature-card:hover { border-color: var(--bs-warning); transform: translateY(-2px); }
+.stat-tile { background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 1rem; padding: 1rem; }
+.stat-tile .stat-value { font-size: 1.6rem; font-weight: 700; }
+.stat-tile .stat-label { font-size: .8rem; color: rgba(255, 255, 255, .6); }
+.bar-row { display: grid; grid-template-columns: 9rem 1fr 6rem; gap: .5rem; align-items: center; font-size: .85rem; }
+.bar-track { background: rgba(255, 255, 255, .08); border-radius: .25rem; height: .9rem; overflow: hidden; }
+.bar-fill { background: var(--bs-warning); height: 100%; }
+.heat-cell { width: 2rem; height: 1.6rem; font-size: .65rem; text-align: center; vertical-align: middle; }
+.table-dark td, .table-dark th { vertical-align: middle; }
+.kds-station-tabs .btn { min-width: 6rem; }
+.pro-modal .modal-content { background: #1f2329; color: #fff; border: 1px solid rgba(255, 255, 255, .15); }
+.wait-number { font-size: 4rem; font-weight: 800; letter-spacing: .1em; }
+.track-number { font-size: 5rem; font-weight: 800; }
+.offline-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3000; text-align: center; padding: .4rem; background: #b02a37; color: #fff; font-weight: 700; }
+.allergen-badge { font-size: .65rem; }
+.lang-switch .btn { padding: .1rem .5rem; }
+@media print {
+    .no-print { display: none !important; }
+    body { background: #fff !important; color: #000 !important; }
+}
+/* POS 客顯螢幕 */
+.customer-display { background: #111418; }
+.customer-display .cd-idle { padding-top: 18vh; }
+.customer-display .cd-welcome { font-size: 4.5rem; font-weight: 800; }
+.customer-display .cd-total { font-size: 3.5rem; font-weight: 800; }
+.customer-display .cd-table td, .customer-display .cd-table th { font-size: 1.4rem; }
+.customer-display .cd-paid-icon { font-size: 7rem; }

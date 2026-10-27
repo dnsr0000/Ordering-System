@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}忘記 PIN 碼{% endblock %}
+{% block content %}
+<main class="container py-5" id="forgot-pin-page" style="max-width: 460px">
+    <h1 class="h4 fw-bold mb-3"><i class="bi bi-key text-warning me-2"></i>以簡訊重設 PIN 碼</h1>
+    <form method="POST" class="card rounded-4 p-4" id="forgotPinForm" data-otp-purpose="reset_pin">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="form-label fw-bold" for="fpPhone">會員手機號碼</label>
+        <div class="input-group mb-3">
+            <input class="form-control" type="tel" id="fpPhone" name="phone" pattern="09[0-9]{8}" required data-otp-phone>
+            <button class="btn btn-outline-warning" type="button" data-action="send-otp">傳送驗證碼</button>
+        </div>
+        <label class="form-label fw-bold" for="fpCode">簡訊驗證碼</label>
+        <input class="form-control mb-3" id="fpCode" name="otp_code" inputmode="numeric" maxlength="6" required autocomplete="one-time-code">
+        <label class="form-label fw-bold" for="fpPin">新的 PIN 碼 (4~6 位數字)</label>
+        <input class="form-control mb-3" type="password" id="fpPin" name="pin" inputmode="numeric" pattern="\d{4,6}" required autocomplete="new-password">
+        <div class="small mb-2" data-otp-msg></div>
+        <button class="btn btn-warning fw-bold text-dark" type="submit">重設 PIN</button>
+    </form>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/member-extras.js') }}"></script>{% endblock %}

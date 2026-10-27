@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, status_badge %}
+{% block title %}交班與日結{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="shifts-page">
+    {{ page_header('交班與日結', 'bi-cash-coin', '開班 / 關班在 POS 右上角「交班」操作；這裡查看歷史班別與每日日結') }}
+    <section class="card rounded-4 p-3 mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <h2 class="h5 fw-bold text-info mb-0">日結報表 {{ daily.date }}</h2>
+            <form method="GET" class="d-flex gap-2 no-print">
+                <input class="form-control form-control-sm" type="date" name="day" value="{{ day }}" aria-label="日期">
+                <button class="btn btn-outline-info btn-sm" type="submit">查詢</button>
+                <button class="btn btn-outline-light btn-sm" type="button" data-action="print-page">列印</button>
+            </form>
+        </div>
+        <div class="row g-3 mb-3">
+            {% for label, value in [('營業額', daily.net_sales), ('商品小計', daily.gross), ('折扣', daily.discounts), ('服務費', daily.service_charge), ('退款', daily.refund_total), ('未收款', daily.unpaid)] %}
+            <div class="col-6 col-md-2"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">${{ '{:,}'.format(value) }}</div></div></div>
+            {% endfor %}
+        </div>
+        <div class="row g-3">
+            <div class="col-md-4">
+                <h3 class="h6 fw-bold">付款方式</h3>
+                <table class="table table-dark table-sm"><thead><tr><th>方式</th><th>收款</th><th>退款</th><th>淨額</th></tr></thead><tbody>
+                {% for m, v in daily.by_method.items() %}<tr><td>{{ m }}</td><td>${{ v.sales + v.topups }}</td><td>${{ v.refunds }}</td><td class="fw-bold">${{ v.net }}</td></tr>{% endfor %}
+                </tbody></table>
+                <h3 class="h6 fw-bold">點餐管道</h3>
+                <table class="table table-dark table-sm"><tbody>
+                {% for s, v in daily.by_source.items() %}<tr><td>{{ s }}</td><td>{{ v.count }} 單</td><td>${{ v.amount }}</td></tr>{% endfor %}
+                </tbody></table>
+                <div class="small text-white-50">訂單 {{ daily.order_count }} 張 (取消 {{ daily.cancelled_count }} 張)</div>
+            </div>
+            <div class="col-md-4">
+                <h3 class="h6 fw-bold">品項銷售</h3>
+                <table class="table table-dark table-sm"><tbody>
+                {% for it in daily['items'][:30] %}<tr><td>{{ it.name }}</td><td>{{ it.qty }}</td><td>${{ it.amount }}</td></tr>{% endfor %}
+                </tbody></table>
+            </div>
+            <div class="col-md-4">
+                <h3 class="h6 fw-bold">當日班別</h3>
+                <table class="table table-dark table-sm"><tbody>
+                {% for s in daily.shifts %}<tr><td><a href="{{ url_for('shifts.shift_detail', shift_id=s.id) }}">#{{ s.id }}</a></td><td>{{ s.opened_by }}</td>
+                    <td>{{ '開班中' if s.status == 'open' else '帳差 ' ~ ('%+d' % s.difference) }}</td></tr>{% else %}<tr><td class="text-white-50">沒有班別</td></tr>{% endfor %}
+                </tbody></table>
+            </div>
+        </div>
+    </section>
+    {% if current_report %}
+    <div class="alert alert-info">目前班別 #{{ current.id }} ({{ current.opened_by }} {{ current.opened_at.strftime('%m-%d %H:%M') }} 開班)：應有現金 ${{ current_report.expected_cash }}</div>
+    {% endif %}
+    <section class="card rounded-4 p-3">
+        <h2 class="h5 fw-bold mb-2">歷史班別</h2>
+        <table class="table table-dark table-striped table-sm" id="shiftsTable">
+            <thead><tr><th>#</th><th>開班</th><th>關班</th><th>零用金</th><th>應有現金</th><th>實點</th><th>帳差</th><th></th></tr></thead>
+            <tbody>
+            {% for s in shifts %}
+            <tr><td>{{ s.id }}</td><td class="small">{{ s.opened_at.strftime('%m-%d %H:%M') }} {{ s.opened_by }}</td>
+                <td class="small">{% if s.closed_at %}{{ s.closed_at.strftime('%m-%d %H:%M') }} {{ s.closed_by }}{% else %}{{ status_badge('開班中', 'success') }}{% endif %}</td>
+                <td>${{ s.opening_cash }}</td><td>${{ s.expected_cash }}</td><td>${{ s.counted_cash }}</td>
+                <td class="{{ 'text-danger' if s.difference < 0 else ('text-warning' if s.difference > 0 else '') }} fw-bold">{{ '%+d' % s.difference if s.status == 'closed' else '' }}</td>
+                <td><a class="btn btn-sm btn-outline-light" href="{{ url_for('shifts.shift_detail', shift_id=s.id) }}">報表</a></td></tr>
+            {% else %}<tr><td colspan="8" class="text-center text-white-50">尚無班別紀錄</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </section>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

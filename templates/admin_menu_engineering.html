@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header %}
+{% block title %}菜單工程分析{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="menuEngineeringPage">
+    {% call page_header('菜單工程分析', 'bi-grid-3x3-gap', '依人氣 (銷售份數) 與每份毛利把餐點分成明星 / 金牛 / 潛力 / 瘦狗四象限，找出該推、該調價、該下架的品項') %}
+    <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.menu_engineering', start=start, end=end, node=node, category=category or None, format='xlsx') }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel</a>
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('reports.index') }}">營運報表</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3 no-print" method="GET">
+        {% for p, l in [('', '近 7 天'), ('month', '本月'), ('last_month', '上月')] %}
+        <a class="btn btn-sm btn-outline-secondary text-white" href="{{ url_for('reports.menu_engineering', preset=p or None, node=node, category=category or None) }}">{{ l }}</a>{% endfor %}
+        <input class="form-control form-control-sm" type="date" name="start" value="{{ start }}" aria-label="起" style="width: 10rem">
+        <input class="form-control form-control-sm" type="date" name="end" value="{{ end }}" aria-label="迄" style="width: 10rem">
+        <select class="form-select form-select-sm" name="category" aria-label="分類" style="width: 10rem"><option value="">全部分類</option>
+            {% for c in r.categories %}<option value="{{ c }}" {{ 'selected' if category == c }}>{{ c }}</option>{% endfor %}</select>
+        {% if nodes %}<select class="form-select form-select-sm" name="node" aria-label="分店" style="width: 10rem"><option value="">全部分店</option>
+            {% for n in nodes %}<option value="{{ n.uuid }}" {{ 'selected' if node == n.uuid }}>{{ n.name }}</option>{% endfor %}</select>{% endif %}
+        <button class="btn btn-outline-info btn-sm" type="submit">查詢</button>
+        <button class="btn btn-outline-light btn-sm" type="button" data-action="print-page">列印</button>
+    </form>
+
+    <div class="row g-3 mb-3">
+        {% for key in class_order %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ classes[key].icon }} {{ classes[key].label }}</div>
+            <div class="stat-value" data-me-count="{{ key }}">{{ r.counts[key] }}</div>
+            <div class="small text-white-50">{{ classes[key].advice }}</div></div></div>
+        {% endfor %}
+    </div>
+    <div class="small text-white-50 mb-3">人氣門檻：每項 {{ r.pop_threshold }} 份 (平均佔比的 70%)；毛利門檻：每份 ${{ r.cm_threshold }} (加權平均)。
+        共 {{ r.total_qty }} 份、總毛利 ${{ '{:,}'.format(r.total_cm) }}。</div>
+    {% if r.missing_cost %}
+    <div class="alert alert-warning small py-2">以下餐點沒有設定配方或單位成本，毛利會被高估：{{ r.missing_cost|join('、') }}
+        (請到「原物料與配方」或「菜單進階設定」補上)</div>
+    {% endif %}
+
+    {% if r['items'] %}
+    <div class="row g-4">
+        <section class="col-xl-5"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">四象限 (橫軸：銷售份數；縱軸：每份毛利)</h2>
+            <svg viewBox="0 0 400 300" class="w-100" role="img" aria-label="菜單工程四象限圖" id="meChart">
+                <rect x="40" y="10" width="350" height="250" fill="none" stroke="rgba(255,255,255,.25)"></rect>
+                {% set tx = 40 + r.threshold_x * 3.5 %}{% set ty = 260 - r.threshold_y * 2.5 %}
+                <line x1="{{ tx }}" y1="10" x2="{{ tx }}" y2="260" stroke="rgba(255,193,7,.6)" stroke-dasharray="4 3"></line>
+                <line x1="40" y1="{{ ty }}" x2="390" y2="{{ ty }}" stroke="rgba(255,193,7,.6)" stroke-dasharray="4 3"></line>
+                <text x="385" y="24" text-anchor="end" fill="#ffc107" font-size="11">⭐ 明星</text>
+                <text x="48" y="24" fill="#0dcaf0" font-size="11">🧩 潛力</text>
+                <text x="385" y="252" text-anchor="end" fill="#adb5bd" font-size="11">🐂 金牛</text>
+                <text x="48" y="252" fill="#dc3545" font-size="11">🐕 瘦狗</text>
+                <text x="215" y="285" text-anchor="middle" fill="rgba(255,255,255,.6)" font-size="11">銷售份數 →</text>
+                <text x="14" y="135" text-anchor="middle" fill="rgba(255,255,255,.6)" font-size="11" transform="rotate(-90 14 135)">每份毛利 →</text>
+                {% set colors = {'star': '#ffc107', 'plowhorse': '#adb5bd', 'puzzle': '#0dcaf0', 'dog': '#dc3545'} %}
+                {% for it in r['items'] %}
+                <circle cx="{{ 40 + it.x * 3.5 }}" cy="{{ 260 - it.y * 2.5 }}" r="5" fill="{{ colors[it.cls] }}" data-me-point="{{ it.id }}"><title>{{ it.name }}：{{ it.qty }} 份、每份毛利 ${{ it.unit_cm }}</title></circle>
+                {% endfor %}
+            </svg>
+        </div></section>
+        <section class="col-xl-7"><div class="card rounded-4 p-3 h-100">
+            <h2 class="h6 fw-bold">品項明細</h2>
+            <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="meTable">
+                <thead><tr><th>象限</th><th>餐點</th><th class="text-end">份數</th><th class="text-end">佔比</th><th class="text-end">均價</th>
+                    <th class="text-end">每份毛利</th><th class="text-end">總毛利</th><th class="text-end">成本率</th></tr></thead>
+                <tbody>
+                {% for it in r['items'] %}
+                <tr data-me-row="{{ it.id }}" data-cls="{{ it.cls }}" title="{{ it.advice }}">
+                    <td class="text-nowrap">{{ it.icon }} {{ it.label }}</td>
+                    <td>{{ it.name }} <span class="small text-white-50">{{ it.category }}</span>{% if it.no_cost %} <span class="badge bg-warning text-dark">未設成本</span>{% endif %}</td>
+                    <td class="text-end">{{ it.qty }}</td><td class="text-end">{{ it.mix_pct }}%</td><td class="text-end">${{ it.avg_price }}</td>
+                    <td class="text-end">${{ it.unit_cm }}</td><td class="text-end fw-bold">${{ '{:,}'.format(it.cm) }}</td><td class="text-end">{{ it.food_cost_pct }}%</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </div></section>
+    </div>
+    {% else %}
+    <div class="text-white-50" id="meEmpty">此期間沒有銷售資料</div>
+    {% endif %}
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-pro.js') }}"></script>{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}建立團體預購 - {{ g.tenant.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="groupNewPage" style="max-width: 560px">
+    <h1 class="h4 fw-bold mb-1"><i class="bi bi-people-fill text-warning me-2"></i>{{ g.tenant.name }} 團體預購</h1>
+    <p class="small text-white-50">建立後把分享連結傳給同事，每個人自己選餐；截止時合併成一張訂單，取餐時到店一起付款。
+        取餐時間至少 {{ cfg.min_lead_minutes }} 分鐘後、最多 {{ cfg.max_days }} 天內；每團最多 {{ cfg.max_people }} 人。</p>
+    <form method="POST" class="card rounded-4 p-3" id="groupNewForm">{{ csrf() }}
+        {% include "_group_form_fields.html" %}
+        <button class="btn btn-warning fw-bold text-dark mt-3" type="submit">建立團購</button>
+        <div class="small text-white-50 mt-2">送出即表示同意本店依隱私權告知使用主揪的姓名與電話聯絡訂單事宜。</div>
+    </form>
+</main>
+{% endblock %}

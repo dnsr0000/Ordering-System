@@ -250,3 +250,7 @@
         padding: 2mm !important;
     }
 }
+
+/* 進階功能 */
+.rcpt-qr { width: 120px; height: 120px; background: #fff; }
+#posDeliveryBtn.active { background: var(--bs-warning); color: #000; }

@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.models.enums import OrderStatus
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
-from app.services.order_service import todays_range
+from app.services.order_service import todays_orders_condition, todays_range
 from app.utils import public_display_name, role_required
 
 pickup_bp = Blueprint('pickup', __name__)
@@ -26,7 +26,7 @@ def api_pickup_orders():
     """櫃檯取餐核銷：今日已出餐、等待顧客取餐的訂單 (含明細)"""
     start, end = todays_range()
     orders = (Order.query.options(selectinload(Order.items))
-              .filter(Order.status == OrderStatus.COMPLETED, Order.created_at >= start, Order.created_at < end)
+              .filter(Order.status == OrderStatus.COMPLETED, todays_orders_condition(start, end))
               .order_by(Order.id.asc()).all())
     return jsonify({'success': True, 'orders': [{
         'id': o.id,
@@ -42,15 +42,22 @@ def api_pickup_orders():
 
 @pickup_bp.route('/counter', endpoint='counter_display')
 def counter_display():
-    return render_template('counter.html')
+    from app.services import settings_service
+    cfg = settings_service.get('notify')
+    return render_template('counter.html', voice={
+        'enabled': bool(cfg.get('voice_enabled', True)),
+        'template': cfg.get('voice_template') or '取餐號碼 {number}，請到櫃檯取餐',
+        'repeat': max(1, min(5, int(cfg.get('voice_repeat') or 1))),
+    })
 
 
 @pickup_bp.route('/api/counter_orders')
 def api_counter_orders():
     """公開叫號看板 (免登入)：只回傳取餐號與遮罩後的名稱"""
     start, end = todays_range()
-    orders = (Order.query.filter(Order.created_at >= start, Order.created_at < end,
-                                 Order.status.in_([OrderStatus.PENDING, OrderStatus.COMPLETED]))
+    orders = (Order.query.filter(todays_orders_condition(start, end, include_future=False),
+                                 Order.status.in_([OrderStatus.PENDING, OrderStatus.COMPLETED]),
+                                 Order.payment_status.notin_(('pending', 'authorizing', 'expired')))
               .order_by(Order.id.desc()).all())
     board = {OrderStatus.PENDING: [], OrderStatus.COMPLETED: []}
     for o in orders:
@@ -61,8 +68,13 @@ def api_counter_orders():
             'user_name': public_display_name(o),
             'created_at': o.created_at.strftime('%H:%M'),
         })
+    from app.models.reservation import WaitlistEntry
+    from datetime import date
+    called = WaitlistEntry.query.filter_by(business_date=date.today(), status='called') \
+        .order_by(WaitlistEntry.called_at.desc()).limit(6).all()
     return jsonify({'success': True, 'ready_orders': board[OrderStatus.COMPLETED],
-                    'preparing_orders': board[OrderStatus.PENDING]})
+                    'preparing_orders': board[OrderStatus.PENDING],
+                    'called_waitlist': [{'id': w.id, 'label': w.label, 'party_size': w.party_size} for w in called]})
 
 
 @pickup_bp.route('/api/orders_stream')

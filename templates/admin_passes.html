@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}寄杯 / 多次券 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="passesPage">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <h1 class="h4 fw-bold mb-0"><i class="bi bi-cup-hot me-2 text-warning"></i>寄杯 / 多次券</h1>
+        <a class="btn btn-sm btn-outline-light" href="{{ url_for('settings_admin.index') }}">回系統設定</a>
+    </div>
+    <div class="alert alert-secondary small">會員一次購買 N 杯 (份)，之後在點餐機 / 桌邊 / 線上 / POS 每次兌換一份 (免費，只收加料)。
+        POS 綁定會員後可售出；寄杯屬預收款 (商品禮券)，依規定不設使用期限，上線前請確認履約保證 (DEPLOY.txt)。</div>
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">未兌換次數</div><div class="stat-value text-warning" id="passOutstanding">{{ outstanding }}</div></div></div>
+        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">未兌換預收金額 (估)</div><div class="stat-value text-warning" id="passLiability">${{ '{:,}'.format(liability) }}</div></div></div>
+    </div>
+
+    <section class="card rounded-4 p-3 mb-3">
+        <h2 class="h6 fw-bold">寄杯商品</h2>
+        <table class="table table-dark table-sm align-middle" id="passProducts">
+            <thead><tr><th>名稱</th><th>兌換餐點</th><th>次數</th><th>售價</th><th>狀態</th><th></th></tr></thead>
+            <tbody>
+            {% for p in products %}
+            <tr data-product-id="{{ p.id }}">
+                <td>{{ p.name }}</td><td>{{ p.menu_item.name if p.menu_item else '-' }}</td><td>{{ p.uses }}</td><td>${{ p.price }}</td>
+                <td>{% if p.is_active %}<span class="badge bg-success">販售中</span>{% else %}<span class="badge bg-secondary">已下架</span>{% endif %}</td>
+                <td class="text-end"><form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="toggle">
+                    <input type="hidden" name="product_id" value="{{ p.id }}"><button class="btn btn-sm btn-outline-light">{{ '下架' if p.is_active else '上架' }}</button></form></td>
+            </tr>
+            {% else %}<tr><td colspan="6" class="text-white-50">尚未建立寄杯商品</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        <form method="POST" class="row g-2 align-items-end" id="passProductForm">
+            {{ csrf() }}<input type="hidden" name="action" value="save">
+            <div class="col-md-3"><label class="form-label small" for="passName">名稱</label><input class="form-control form-control-sm" id="passName" name="name" placeholder="美式咖啡 10 杯" required></div>
+            <div class="col-md-3"><label class="form-label small" for="passItem">兌換餐點</label>
+                <select class="form-select form-select-sm" id="passItem" name="menu_item_id" required>
+                    {% for m in items %}<option value="{{ m.id }}">{{ m.category }} / {{ m.name }} (${{ m.price }})</option>{% endfor %}
+                </select></div>
+            <div class="col-md-2"><label class="form-label small" for="passUses">次數</label><input class="form-control form-control-sm" id="passUses" name="uses" type="number" min="2" max="100" value="10" required></div>
+            <div class="col-md-2"><label class="form-label small" for="passPrice">售價</label><input class="form-control form-control-sm" id="passPrice" name="price" type="number" min="0" required></div>
+            <div class="col-md-2"><button class="btn btn-sm btn-warning w-100 fw-bold" type="submit">新增</button></div>
+        </form>
+    </section>
+
+    <section class="card rounded-4 p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h6 fw-bold mb-0">已售出的寄杯</h2>
+            <form class="d-flex gap-2" method="GET"><input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="會員手機 / 姓名" aria-label="搜尋會員"><button class="btn btn-sm btn-outline-info">搜尋</button></form>
+        </div>
+        {% if detail %}
+        <div class="p-2 mb-2 rounded border border-secondary" id="passDetail">
+            <div class="fw-bold mb-1">{{ detail.user.name if detail.user else '' }}：{{ detail.name }} (剩 {{ detail.remaining }} / {{ detail.total_uses }})</div>
+            <table class="table table-dark table-sm mb-0"><tbody>
+                {% for e in entries %}
+                <tr><td>{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ {'sale': '購買', 'redeem': '兌換', 'cancel': '取消退回', 'void': '作廢'}.get(e.reason, e.reason) }}</td>
+                    <td class="{{ 'text-danger' if e.delta < 0 else 'text-success' }}">{{ e.delta }}</td>
+                    <td>{{ ('訂單 #' ~ e.order_id) if e.order_id else '' }}</td><td class="text-white-50">{{ e.staff_username }}</td></tr>
+                {% endfor %}
+            </tbody></table>
+        </div>
+        {% endif %}
+        <table class="table table-dark table-sm align-middle" id="memberPasses">
+            <thead><tr><th>購買日</th><th>會員</th><th>寄杯</th><th>剩餘</th><th>金額</th><th>狀態</th></tr></thead>
+            <tbody>
+            {% for mp in passes %}
+            <tr data-pass-id="{{ mp.id }}"><td>{{ mp.created_at.strftime('%Y-%m-%d') }}</td>
+                <td>{{ mp.user.name if mp.user else '' }}</td>
+                <td><a href="{{ url_for('passes.index', **{'pass': mp.id, 'q': q}) }}">{{ mp.name }}</a></td>
+                <td class="{{ 'text-danger' if mp.remaining < 0 else '' }}">{{ mp.remaining }} / {{ mp.total_uses }}</td>
+                <td>${{ mp.price_paid }}</td><td>{{ '可用' if mp.status == 'active' else '已作廢' }}</td></tr>
+            {% else %}<tr><td colspan="6" class="text-white-50">目前沒有已售出的寄杯</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    </section>
+</main>
+{% endblock %}

@@ -72,6 +72,8 @@ class TestConfig(Config):
     ECPAY_HASH_IV = ''
     PUBLIC_BASE_URL = ''
     PAYMENT_TIMEOUT_MINUTES = 15
+    DEFERRED_INLINE = True
+    BACKGROUND_JOBS = False
 
 
 def _reset_postgres(url):
@@ -176,6 +178,38 @@ def noon_clock(monkeypatch, request):
         if isinstance(getattr(module, 'datetime', None), type):
             monkeypatch.setattr(module, 'datetime', FrozenDateTime)
     return frozen
+
+
+@pytest.fixture
+def store_settings(app):
+    """
+    暫時修改預設店家的系統設定 (StoreSetting)：store_settings('pos', service_charge_percent=10)
+    測試結束後還原成原本的設定 (其他測試檔共用同一個資料庫)。
+    """
+    from app.extensions import db
+    from app.models.settings import StoreSetting
+    from app.services import settings_service
+    from tests.support import default_tenant_id
+    tid = default_tenant_id(app)
+    saved = {}
+
+    def setter(key, **values):
+        with app.app_context():
+            if key not in saved:
+                row = StoreSetting.query.filter_by(tenant_id=tid, key=key).first()
+                saved[key] = row.value if row else None
+            settings_service.put(key, values, tenant_id=tid)
+            db.session.commit()
+    yield setter
+    with app.app_context():
+        for key, value in saved.items():
+            row = StoreSetting.query.filter_by(tenant_id=tid, key=key).first()
+            if value is None:
+                if row is not None:
+                    db.session.delete(row)
+            else:
+                row.value = value
+        db.session.commit()
 
 
 def _staff_client(app, username, role):

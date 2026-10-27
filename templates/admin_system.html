@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf, status_badge %}
+{% block title %}系統監控{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="system-page">
+    {% call page_header('系統監控', 'bi-activity', '健康狀態、錯誤紀錄、自動備份與時鐘校驗；錯誤與警示會依「監控與錯誤通知」設定推送') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='monitor') }}">通知設定</a>
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='backup') }}">備份設定</a>
+    {% endcall %}
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">資料庫</div><div class="stat-value {{ 'text-success' if health.db_ok else 'text-danger' }}">{{ '正常' if health.db_ok else '異常' }}</div>
+            <div class="small text-white-50">{{ health.dialect }} • 版本 {{ health.revision }}{% if health.db_size %} • {{ (health.db_size / 1048576)|round(1) }} MB{% endif %}</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">磁碟剩餘</div><div class="stat-value {{ 'text-danger' if health.disk_free and health.disk_free < 2147483648 }}">{{ (health.disk_free / 1073741824)|round(1) if health.disk_free else '-' }} GB</div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">時鐘誤差 ({{ clock.server }})</div>
+            <div class="stat-value {{ 'text-danger' if clock.warn else 'text-success' }}" id="clockOffset">{{ '%+.1f 秒' % clock.offset if clock.offset is not none else '無法檢查' }}</div>
+            <div class="small text-white-50">{{ clock.error }} <a href="{{ url_for('system.status', clock=1) }}">重新檢查</a></div></div></div>
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">角色</div><div class="stat-value">{{ {'standalone': '單機', 'hub': '線上端', 'node': '分店'}.get(health.role, health.role) }}</div>
+            {% if health.role == 'node' %}<div class="small text-white-50">最後同步：{{ health.sync_last_ok or '-' }}{% if health.sync_last_error %}<br><span class="text-danger">{{ health.sync_last_error[:80] }}</span>{% endif %}</div>{% endif %}</div></div>
+    </div>
+    <div class="row g-3 mb-4">
+        {% for label, value, url in [('待開立發票', health.invoice_pending, url_for('invoices.list_invoices', status='pending')), ('開立失敗發票', health.invoice_failed, url_for('invoices.list_invoices', status='failed')),
+                                     ('列印失敗', health.print_failed, url_for('printing.manage')), ('待列印', health.print_queued, url_for('printing.manage')),
+                                     ('需人工退款', health.refund_manual, url_for('refunds.list_refunds', status='manual'))] %}
+        <div class="col-6 col-md"><a class="stat-tile d-block text-decoration-none" href="{{ url }}"><div class="stat-label">{{ label }}</div><div class="stat-value {{ 'text-warning' if value else 'text-white' }}">{{ value }}</div></a></div>
+        {% endfor %}
+    </div>
+    <div class="row g-4">
+        <section class="col-xl-8"><div class="card rounded-4 p-3">
+            <div class="d-flex justify-content-between align-items-center mb-2"><h2 class="h6 fw-bold mb-0">最近事件 (錯誤 / 警示 / 簡訊測試)</h2>
+                <form method="POST" action="{{ url_for('system.test_alert') }}">{{ csrf() }}<button class="btn btn-outline-info btn-sm" type="submit">送出測試通知</button></form></div>
+            <div class="table-responsive pro-scroll" style="max-height: 520px"><table class="table table-dark table-sm mb-0" id="eventsTable"><tbody>
+            {% for e in events %}<tr><td class="small text-nowrap">{{ e.at.replace('T', ' ') }}</td><td>{{ status_badge(e.level, {'error': 'danger', 'warning': 'warning'}.get(e.level, 'info')) }}</td>
+                <td class="small text-white-50">{{ e.source }}</td><td class="small">{{ e.message }}</td></tr>
+            {% else %}<tr><td class="text-white-50">沒有事件紀錄</td></tr>{% endfor %}
+            </tbody></table></div>
+        </div></section>
+        <section class="col-xl-4"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">自動備份 {% if backup_cfg.enabled %}<span class="badge bg-success">每天 {{ backup_cfg.time }}</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
+            {% if health.dialect == 'sqlite' %}
+            {% if current_user.role == 'owner' %}<form method="POST" action="{{ url_for('system.backup_now') }}" class="mb-2">{{ csrf() }}<button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">立即備份</button></form>{% endif %}
+            <table class="table table-dark table-sm mb-0" id="backupsTable"><tbody>
+            {% for b in backups %}<tr><td class="small">{{ b.at }}</td><td class="small">{{ (b.size / 1048576)|round(2) }} MB</td>
+                <td>{% if current_user.role == 'owner' %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('system.download_backup', name=b.name) }}">下載</a>{% endif %}</td></tr>
+            {% else %}<tr><td class="text-white-50 small">尚無自動備份</td></tr>{% endfor %}
+            </tbody></table>
+            <div class="small text-white-50 mt-2">備份位置：database/backups (保留 {{ backup_cfg.keep_days }} 天)。建議另外複製到雲端硬碟或隨身碟。還原：後台「匯入資料 → 整庫還原」選擇備份檔。</div>
+            {% else %}
+            <div class="small text-white-50">線上端 PostgreSQL 由 docker compose 的 backup 服務每天備份到 pg_backups volume，還原演練請執行 deploy/pg_restore_check.sh (說明見 DEPLOY.txt)。</div>
+            {% endif %}
+        </div></section>
+    </div>
+</main>
+{% endblock %}

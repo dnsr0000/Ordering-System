@@ -56,6 +56,15 @@ def ecpay_notify():
     return Response(payment_ecpay.handle_notification(request.form), mimetype='text/plain')
 
 
+@payment_bp.route('/payment/ecpay/info', methods=['POST'], endpoint='ecpay_info')
+@csrf.exempt
+@limiter.exempt
+def ecpay_info():
+    """綠界 ATM / 超商代碼取號結果 (PaymentInfoURL)：記下繳費期限與帳號 / 代碼，回應純文字 1|OK"""
+    _require_enabled()
+    return Response(payment_ecpay.handle_payment_info(request.form), mimetype='text/plain')
+
+
 @payment_bp.route('/payment/ecpay/result', methods=['POST'], endpoint='ecpay_result')
 @csrf.exempt
 def ecpay_result():
@@ -69,7 +78,8 @@ def ecpay_result():
     if not order_uuid:
         abort(400)
     if str(params.get('RtnCode')) == '1' and str(params.get('SimulatePaid', '0')) != '1':
-        payment_ecpay.mark_paid(order_uuid, params.get('TradeNo'), params.get('TradeAmt'))
+        payment_ecpay.mark_paid(order_uuid, params.get('TradeNo'), params.get('TradeAmt'),
+                                payment_type=params.get('PaymentType'))
     return redirect(url_for('payment.payment_return', order_uuid=order_uuid), code=303)
 
 

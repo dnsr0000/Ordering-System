@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}分店價格 / 上下架{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="branchMenuPage">
+    {% call page_header('分店價格 / 上下架', 'bi-shop', '總部為各分店設定不同售價 (例如機場店、百貨店) 或下架部分餐點；分店的通路價與特價依同一個價差加減') %}{% endcall %}
+    {% if mode == 'hub' %}
+        {% if not nodes %}
+        <div class="alert alert-secondary">尚未建立分店，請先到「分店管理」新增分店。</div>
+        {% else %}
+        <form method="GET" class="d-flex gap-2 align-items-end mb-3">
+            <div><label class="form-label small" for="bmNode">分店</label>
+                <select class="form-select form-select-sm" id="bmNode" name="node" style="width: 14rem">
+                    {% for n in nodes %}<option value="{{ n.uuid }}" {{ 'selected' if node and node.uuid == n.uuid }}>{{ n.name }}{{ '' if n.is_active else ' (停用)' }}</option>{% endfor %}
+                </select></div>
+            <button class="btn btn-sm btn-outline-info" type="submit">切換</button>
+        </form>
+        <div class="alert alert-secondary small">分店價格空白 = 與總部同價；填入的價格為該分店的內用價，外帶 / 線上 / 外送價與特價依「分店價 − 總部價」同步加減。
+            勾選「下架」後，該分店的點餐機、POS、桌邊掃碼與以該分店取餐的線上點餐都不會顯示這項餐點 (含此配餐的套餐也不能選)。
+            儲存後於下次同步 (約 20 秒內) 送到分店。</div>
+        <form method="POST" id="branchMenuForm">
+            {{ csrf() }}<input type="hidden" name="node" value="{{ node.uuid }}">
+            <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="branchMenuTable">
+                <thead><tr><th>分類</th><th>餐點</th><th class="text-end">總部價</th><th style="width: 9rem">分店價</th><th class="text-center">下架</th></tr></thead>
+                <tbody>
+                {% for i in items %}{% set ov = overrides.get(i.id) %}
+                <tr data-item-id="{{ i.id }}" class="{{ 'table-active' if ov and (ov.price is not none or ov.is_hidden) }}">
+                    <td class="small text-white-50">{{ i.category }}</td><td>{{ i.name }}</td><td class="text-end">${{ i.price }}</td>
+                    <td><input class="form-control form-control-sm" type="number" min="0" max="100000" name="price_{{ i.id }}"
+                               value="{{ ov.price if ov and ov.price is not none else '' }}" placeholder="同總部" aria-label="{{ i.name }} 分店價"></td>
+                    <td class="text-center"><input class="form-check-input" type="checkbox" name="hidden_{{ i.id }}" value="1" {{ 'checked' if ov and ov.is_hidden }} aria-label="{{ i.name }} 下架"></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            <button class="btn btn-warning fw-bold" type="submit" id="branchMenuSave">儲存【{{ node.name }}】的設定</button>
+        </form>
+        {% endif %}
+    {% elif mode == 'node' %}
+        <div class="alert alert-secondary small">分店價格與上下架由總部 (線上端) 設定，以下為總部目前對本分店的設定 (唯讀)。</div>
+        <table class="table table-dark table-sm" id="branchMenuReadonly">
+            <thead><tr><th>餐點</th><th class="text-end">總部價</th><th class="text-end">本分店價</th><th>狀態</th></tr></thead>
+            <tbody>
+            {% for i in items if overrides.get(i.id) and (overrides[i.id].price is not none or overrides[i.id].is_hidden) %}{% set ov = overrides[i.id] %}
+            <tr><td>{{ i.name }}</td><td class="text-end">${{ i.price }}</td><td class="text-end">{{ '$%d' % ov.price if ov.price is not none else '同總部' }}</td>
+                <td>{% if ov.is_hidden %}<span class="badge bg-secondary">本分店下架</span>{% else %}<span class="badge bg-success">販售中</span>{% endif %}</td></tr>
+            {% else %}<tr><td colspan="4" class="text-white-50">總部沒有為本分店另外設定價格或下架</td></tr>{% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <div class="alert alert-secondary">此功能用於多分店 (線上端 + 分店同步)：單機模式所有餐點都使用菜單管理中的價格。</div>
+    {% endif %}
+</main>
+{% endblock %}

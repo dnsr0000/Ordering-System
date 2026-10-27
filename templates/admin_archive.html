@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}舊資料封存{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4 narrow-page" id="archivePage">
+    {% call page_header('舊資料封存', 'bi-archive', '把舊的已結束訂單與日誌搬到封存檔，主資料庫保持輕量；封存檔可下載、可在下方查詢') %}
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='archive') }}">封存設定</a>
+    {% endcall %}
+    <div class="alert alert-warning small">帳簿憑證依法應保存 5 年以上：封存檔 (database/archive) 不會被刪除，請一併納入備份。
+        封存只清除本機資料，不會刪除線上端或其他分店的資料；會員點數、儲值金、等級不受影響。</div>
+    <section class="card rounded-4 p-3 mb-3">
+        <h2 class="h6 fw-bold">將封存 {{ cutoff.strftime('%Y-%m-%d') }} 以前的資料</h2>
+        <table class="table table-dark table-sm mb-2" id="archivePreview"><tbody>
+            {% for k, v in preview.items() if v %}<tr><td>{{ labels[k] }}</td><td class="text-end" data-archive-count="{{ k }}">{{ '{:,}'.format(v) }}</td></tr>
+            {% else %}<tr><td class="text-white-50">沒有需要封存的資料</td></tr>{% endfor %}
+        </tbody></table>
+        {% if preview.values()|sum %}
+        <form method="POST" data-confirm="確定封存？封存後這些資料不會出現在報表與訂單查詢 (可在下方查詢封存檔)。">{{ csrf() }}
+            <input type="hidden" name="action" value="run"><button class="btn btn-warning fw-bold" type="submit" id="archiveRunBtn">開始封存</button></form>
+        {% endif %}
+    </section>
+    <section class="card rounded-4 p-3">
+        <h2 class="h6 fw-bold">封存檔</h2>
+        {% if info %}
+        <div class="small mb-2" id="archiveInfo">訂單 {{ '{:,}'.format(info.orders) }} 張 ({{ (info.first or '')[:10] }} ~ {{ (info.last or '')[:10] }})，
+            {{ (info.size / 1048576)|round(1) }} MB，最後更新 {{ info.modified.strftime('%Y-%m-%d %H:%M') }}
+            <a class="btn btn-sm btn-outline-info ms-2" href="{{ url_for('archive.index', download=1) }}">下載</a></div>
+        <form method="GET" class="d-flex gap-2 mb-2"><input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="訂單編號 / uuid / 日期 YYYY-MM-DD / 會員手機" aria-label="查詢封存訂單">
+            <button class="btn btn-sm btn-outline-info" type="submit">查詢</button></form>
+        {% if q %}
+        <table class="table table-dark table-sm" id="archiveResults"><thead><tr><th>#</th><th>時間</th><th>取餐</th><th>狀態</th><th class="text-end">金額</th><th>品項</th></tr></thead><tbody>
+            {% for r in results %}<tr><td>{{ r.id }}</td><td class="small">{{ r.created_at }}</td><td>{{ r.pickup }}</td><td>{{ r.status }}</td><td class="text-end">${{ r.total }}</td><td class="small">{{ r['items']|join('、') }}</td></tr>
+            {% else %}<tr><td colspan="6" class="text-white-50">找不到</td></tr>{% endfor %}
+        </tbody></table>{% endif %}
+        {% else %}<div class="text-white-50 small">尚未封存過</div>{% endif %}
+    </section>
+</main>
+{% endblock %}

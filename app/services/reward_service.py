@@ -1,4 +1,6 @@
 """紅利商城：紅利設定、兌換優惠券、兌換商品憑證與退點"""
+from datetime import datetime
+
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AppError
@@ -33,8 +35,11 @@ def get_or_create_reward_setting(tenant_id, commit=True):
 def redeem_coupon(tenant_id, user_id, coupon_id):
     """以點數兌換紅利優惠券 (每人兌換上限以「扣點後再數一次」防止同時送出繞過)"""
     coupon = Coupon.query.filter_by(id=coupon_id, tenant_id=tenant_id).first()
-    if coupon is None or not coupon.is_reward:
+    if coupon is None or not coupon.is_reward or coupon.member_only:
         raise AppError('無效的優惠券！')
+    period_error = coupon.period_error()
+    if period_error:
+        raise AppError(f'❌ 此優惠券{period_error}，暫時無法兌換！')
     limit = coupon.per_user_limit or 0
     limit_msg = f'❌ 您已達此優惠券的兌換上限（每位會員限兌換 {limit} 次）！'
 
@@ -47,7 +52,9 @@ def redeem_coupon(tenant_id, user_id, coupon_id):
     if not adjust_points(tenant_id, user_id, -cost, reason='redeem_coupon'):
         db.session.rollback()
         raise AppError(f'紅利不足！需要 {cost} 點。')
-    db.session.add(UserCoupon(tenant_id=tenant_id, user_id=user_id, coupon_id=coupon.id, code=coupon.code))
+    now = datetime.now()
+    db.session.add(UserCoupon(tenant_id=tenant_id, user_id=user_id, coupon_id=coupon.id, code=coupon.code,
+                              created_at=now, expires_at=coupon.expires_for(now), source='reward'))
     db.session.flush()
     # 扣點的 UPDATE 已取得寫入鎖，這裡重新計數時其他請求的結果已可見；超過上限就整筆取消
     if limit and owned() > limit:

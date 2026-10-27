@@ -150,9 +150,14 @@ def test_concurrent_cancel_only_once(app):
 
 
 def test_role_transition_matrix(app, admin_client, manager_client, staff_client, kitchen_client):
-    """4 角色 × 16 種 (目前狀態 → 目標狀態) 逐一比對 200 / 403 / 409 與狀態是否改變"""
+    """
+    4 角色 × 16 種 (目前狀態 → 目標狀態) 逐一比對 200 / 403 / 409 與狀態是否改變。
+    櫃檯員工作廢已收款的訂單需主管核准 (未帶主管帳密 → 403，見 test_staff_void_needs_manager_approval)。
+    """
     all_pairs = {(c, t) for c, ts in LEGAL.items() for t in ts}
-    allowed = {'owner': all_pairs, 'manager': all_pairs, 'staff': all_pairs - {('PickedUp', 'Cancelled')},
+    staff_voids = {('Pending', 'Cancelled'), ('Completed', 'Cancelled')}
+    allowed = {'owner': all_pairs, 'manager': all_pairs,
+               'staff': all_pairs - {('PickedUp', 'Cancelled')},
                'kitchen': {('Pending', 'Completed')}}
     clients = {'owner': admin_client, 'manager': manager_client, 'staff': staff_client, 'kitchen': kitchen_client}
     reachable = {t for ts in LEGAL.values() for t in ts}
@@ -160,6 +165,8 @@ def test_role_transition_matrix(app, admin_client, manager_client, staff_client,
     def expected(role, cur, tgt):
         if tgt not in reachable:
             return 409
+        if role == 'staff' and (cur, tgt) in staff_voids:
+            return 403
         if tgt not in {t for _, t in allowed[role]}:
             return 403
         if tgt not in LEGAL[cur]:
@@ -204,7 +211,10 @@ def test_cancel_restores_only_applied_coupon(app, admin_client):
         db.session.add(uc)
         db.session.commit()
         ucid = uc.id
-    a, b = pos_checkout(admin_client, iid, uid, 'M15C').get_json(), pos_checkout(admin_client, iid, uid, 'M15C').get_json()
+    a = pos_checkout(admin_client, iid, uid, 'M15C').get_json()
+    again = pos_checkout(admin_client, iid, uid, 'M15C')
+    assert again.status_code == 409 and again.get_json()['coupon_unavailable'], '券已用掉：明確失敗，不會用原價成立'
+    b = pos_checkout(admin_client, iid, uid).get_json()
     with app.app_context():
         oa, ob = db.session.get(Order, a['order_id']), db.session.get(Order, b['order_id'])
         assert (oa.coupon_code, oa.applied_user_coupon_id) == ('M15C', ucid)
@@ -274,3 +284,33 @@ def test_daily_auto_close(app):
     with app.app_context():
         assert db.session.get(Order, late_id).status == 'Completed'
     assert order_service._auto_close_done_for['date'] == date.today()
+
+
+def test_staff_void_needs_manager_approval(app, staff_client):
+    """櫃檯員工作廢已收款訂單：需主管帳密核准 (錯誤密碼 403)，核准人寫入稽核；後台可關閉此規則"""
+    oid = old_order(app, 'Pending', table='核准作廢')
+    r = staff_client.post(f'/api/orders/{oid}/status', json={'status': 'Cancelled'})
+    assert r.status_code == 403 and r.get_json().get('need_approval') is True
+    login_staff(app, 'void_mgr', 'manager')   # 建立主管帳號 (密碼 StaffPass!2026)
+    r = staff_client.post(f'/api/orders/{oid}/status', json={'status': 'Cancelled', 'approver_username': 'void_mgr',
+                                                             'approver_password': 'wrong-password'})
+    assert r.status_code == 403
+    r = staff_client.post(f'/api/orders/{oid}/status', json={'status': 'Cancelled', 'approver_username': 'void_mgr',
+                                                             'approver_password': 'StaffPass!2026', 'reason': '客人改單'})
+    assert r.status_code == 200, r.get_json()
+    with app.app_context():
+        audit = StaffAuditLog.query.filter_by(action_type='CANCEL_ORDER', target_order_id=oid).first()
+        assert '核准：void_mgr' in audit.details and '客人改單' in audit.details
+        from app.models.payment import Refund
+        assert Refund.query.filter_by(order_id=oid, kind='cancel').first().approved_by == 'void_mgr'
+        from app.services import settings_service
+        settings_service.put('refund', {'void_requires_approval': False}, tenant_id=default_tenant_id(app))
+        db.session.commit()
+    try:
+        oid2 = old_order(app, 'Pending', table='免核准作廢')
+        assert staff_client.post(f'/api/orders/{oid2}/status', json={'status': 'Cancelled'}).status_code == 200
+    finally:
+        with app.app_context():
+            from app.services import settings_service
+            settings_service.put('refund', {'void_requires_approval': True}, tenant_id=default_tenant_id(app))
+            db.session.commit()

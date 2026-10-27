@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}打卡與排班{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="timeclock-admin-page">
+    {% call page_header('打卡與排班', 'bi-person-badge', '員工在 /timeclock 以帳號密碼打卡；這裡可修正打卡紀錄、排班與統計工時') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.punch') }}" target="_blank" rel="noopener">打卡頁</a>
+    <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('timeclock.export', start=start, end=end) }}">匯出 Excel</a>
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.staffing') }}">排班建議</a>
+    {% if current_user.role == 'owner' %}<a class="btn btn-outline-light btn-sm" href="{{ url_for('admin.staff_accounts') }}">員工權限</a>{% endif %}
+    {% endcall %}
+    <form method="GET" class="d-flex gap-2 mb-3"><input class="form-control form-control-sm" type="date" name="start" value="{{ start }}" aria-label="起" style="width: 10rem">
+        <input class="form-control form-control-sm" type="date" name="end" value="{{ end }}" aria-label="迄" style="width: 10rem"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></form>
+    <section class="card rounded-4 p-3 mb-4">
+        <h2 class="h5 fw-bold text-warning">班表</h2>
+        <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="scheduleGrid">
+            <thead><tr><th>員工</th>{% for d in days %}<th>{{ d.strftime('%m/%d') }} 週{{ '一二三四五六日'[d.weekday()] }}</th>{% endfor %}</tr></thead>
+            <tbody>{% for s in staff %}<tr><td class="fw-bold">{{ s.username }}</td>
+                {% for d in days %}<td>{% for w in grid.get((s.id, d), []) %}
+                    <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="delete_schedule"><input type="hidden" name="schedule_id" value="{{ w.id }}">
+                        <button class="btn btn-sm btn-outline-info py-0 px-1 mb-1" type="submit" title="點擊刪除">{{ w.start_time }}-{{ w.end_time }} ✕</button></form>{% endfor %}</td>{% endfor %}</tr>
+            {% endfor %}</tbody>
+        </table></div>
+        <form method="POST" class="row g-2 align-items-end" id="addScheduleForm">{{ csrf() }}<input type="hidden" name="action" value="add_schedule">
+            <div class="col-md-2"><label class="form-label small" for="sc-staff">員工</label><select class="form-select form-select-sm" id="sc-staff" name="staff_id">{% for s in staff %}<option value="{{ s.id }}">{{ s.username }}</option>{% endfor %}</select></div>
+            <div class="col-md-2"><label class="form-label small" for="sc-date">日期</label><input class="form-control form-control-sm" type="date" id="sc-date" name="work_date" value="{{ start }}" required></div>
+            <div class="col-md-2"><label class="form-label small" for="sc-st">上班</label><input class="form-control form-control-sm" type="time" id="sc-st" name="start_time" value="09:00" required></div>
+            <div class="col-md-2"><label class="form-label small" for="sc-en">下班</label><input class="form-control form-control-sm" type="time" id="sc-en" name="end_time" value="17:00" required></div>
+            <div class="col-md-2"><label class="form-label small" for="sc-rep">連續天數</label><select class="form-select form-select-sm" id="sc-rep" name="repeat_days">{% for n in range(7) %}<option value="{{ n }}">{{ n + 1 }} 天</option>{% endfor %}</select></div>
+            <div class="col-md-2"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">加入班表</button></div>
+        </form>
+    </section>
+    <div class="row g-4">
+        <section class="col-xl-4"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">工時統計</h2>
+            <table class="table table-dark table-sm mb-0" id="hoursSummary"><thead><tr><th>員工</th><th>天數</th><th>工時</th></tr></thead><tbody>
+            {% for v in summary.values() %}<tr><td>{{ v.name }}</td><td>{{ v.days }}</td><td>{{ v.hours }}{% if v.open %} <span class="badge bg-warning text-dark">{{ v.open }} 筆未下班</span>{% endif %}</td></tr>
+            {% else %}<tr><td class="text-white-50">無出勤紀錄</td></tr>{% endfor %}</tbody></table>
+        </div></section>
+        <section class="col-xl-8"><div class="card rounded-4 p-3">
+            <h2 class="h6 fw-bold">出勤紀錄</h2>
+            {% for r in records %}
+            <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="action" value="edit_record"><input type="hidden" name="record_id" value="{{ r.id }}">
+                <span class="fw-bold" style="width: 7rem">{{ r.staff.username if r.staff else '' }}</span>
+                <input class="form-control form-control-sm" type="datetime-local" name="clock_in" value="{{ r.clock_in.strftime('%Y-%m-%dT%H:%M') }}" aria-label="上班" style="width: 13rem">
+                <input class="form-control form-control-sm" type="datetime-local" name="clock_out" value="{{ r.clock_out.strftime('%Y-%m-%dT%H:%M') if r.clock_out else '' }}" aria-label="下班" style="width: 13rem">
+                <span class="small" style="width: 4rem">{{ '%.2f' % r.hours }}h</span>
+                <input class="form-control form-control-sm" name="note" value="{{ r.note }}" placeholder="備註" aria-label="備註" style="width: 10rem">
+                <button class="btn btn-sm btn-outline-light" type="submit">修正</button>
+                {% if r.edited_by %}<span class="small text-white-50">({{ r.edited_by }} 修改)</span>{% endif %}
+            </form>
+            {% else %}<div class="text-white-50 small">此期間沒有打卡</div>{% endfor %}
+        </div></section>
+    </div>
+</main>
+{% endblock %}

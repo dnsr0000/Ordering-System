@@ -63,7 +63,9 @@
             if (!btn) return;
             const enough = currentPoints >= Number(card.dataset.points);
             btn.disabled = !enough;
-            btn.textContent = enough ? '立即兌換' : '點數不足';
+            // 已持有同一種券時顯示「再兌換一張」(數量由伺服器帶在 data-held)
+            const again = Number(btn.dataset.held) > 0;
+            btn.textContent = enough ? (again ? '再兌換一張' : '立即兌換') : '點數不足';
         });
     }
 
@@ -119,11 +121,13 @@
 
     function promptRedeemCoupon(btn) {
         const { id, title, code, points, discount } = btn.dataset;
+        const held = Number(btn.dataset.held) || 0;
         selected = { type: 'coupon', id: Number(id), name: title };
         Kiosk.setHtml(modContent, '');
         modBox.classList.add('d-none');
         Kiosk.setHtml(modalAlert, html`
             ${discount ? html`<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
+            ${held ? html`<div class="text-warning fw-bold mb-1">您目前還有 ${held} 張未使用，兌換後共 ${held + 1} 張。</div>` : ''}
             兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！`);
         openModal(title, points);
     }
@@ -196,12 +200,55 @@
 
     modalEl.addEventListener('hidden.bs.modal', () => { selected = null; });
 
+    // ---------------------------------------------------------------- 會員動態條碼
+    let qrTimer = null;
+
+    async function loadMemberQr(rotate = false) {
+        const msg = document.getElementById('memberQrMsg');
+        msg.textContent = '';
+        try {
+            const data = rotate
+                ? await Kiosk.api('/api/member_qr', { json: { action: 'rotate' } })
+                : await Kiosk.api('/api/member_qr');
+            const img = document.getElementById('memberQrImg');
+            img.src = data.qr;
+            img.dataset.token = data.token;
+            clearTimeout(qrTimer);
+            qrTimer = setTimeout(() => loadMemberQr(), Math.max(5, data.expires_in) * 1000);
+        } catch (err) {
+            msg.textContent = err.message;
+        }
+    }
+
+    const qrModalEl = document.getElementById('memberQrModal');
+    if (qrModalEl) qrModalEl.addEventListener('hidden.bs.modal', () => clearTimeout(qrTimer));
+
     Kiosk.on(document, 'click', {
+        'show-member-qr': () => {
+            bootstrap.Modal.getOrCreateInstance(qrModalEl).show();
+            loadMemberQr();
+        },
+        'rotate-member-qr': () => loadMemberQr(true),
         'redeem-item': (el) => promptRedeemItem(el),
         'redeem-coupon': (el) => promptRedeemCoupon(el),
         'confirm-redeem': () => executeRedeem(),
         'refund-item': (el) => refundItem(el),
     });
+
+    // ---------------------------------------------------------------- 行銷訊息開關
+    const optIn = document.getElementById('marketingOptIn');
+    if (optIn) {
+        optIn.addEventListener('change', async () => {
+            const msg = document.getElementById('marketingMsg');
+            try {
+                const data = await Kiosk.api('/api/member/marketing', { json: { opt_in: optIn.checked } });
+                msg.textContent = data.message;
+            } catch (err) {
+                optIn.checked = !optIn.checked;
+                msg.textContent = err.message;
+            }
+        });
+    }
 
     updateRedeemButtons();
 })();

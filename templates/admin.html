@@ -89,7 +89,8 @@
     </div>
     <div class="mb-3">
         <label class="form-label small fw-bold" for="{{ prefix }}-code">促銷折扣代碼 (英文大寫/數字)</label>
-        <input type="text" class="form-control" name="code" id="{{ prefix }}-code" placeholder="例如：NEW50 或 VIP85" required>
+        <input type="text" class="form-control text-uppercase" name="code" id="{{ prefix }}-code" placeholder="例如：NEW50 或 VIP85" required
+               minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,29}" title="3~30 碼英文、數字、- 或 _">
     </div>
     <div class="row g-2 mb-3">
         <div class="col-6">
@@ -124,6 +125,38 @@
             <label class="form-label small fw-bold" for="{{ prefix }}-reward-discount">限時特惠點數 (無填 0)</label>
             <input type="number" min="0" class="form-control" name="reward_discount_points" id="{{ prefix }}-reward-discount" placeholder="0" value="0">
         </div>
+    </div>
+    <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" role="switch" name="member_only" value="1" id="{{ prefix }}-member-only">
+        <label class="form-check-label small fw-bold" for="{{ prefix }}-member-only">會員專屬券 (只能由後台發放，不在紅利商城、不能當公開代碼使用)</label>
+    </div>
+    <div class="p-3 rounded border border-secondary">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-calendar-range me-1"></i>使用期限 (都不填 = 永久有效)</div>
+        <div class="row g-2 mb-2">
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-from">活動開始日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_from" id="{{ prefix }}-valid-from">
+            </div>
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-until">活動結束日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_until" id="{{ prefix }}-valid-until">
+            </div>
+        </div>
+        <label class="form-label small" for="{{ prefix }}-valid-days">會員領取後幾天內有效 (0 = 不限)</label>
+        <input type="number" min="0" max="3650" class="form-control form-control-sm" name="valid_days" id="{{ prefix }}-valid-days" value="0">
+        <small class="text-white-50 hint-xs">活動結束後，會員已持有但未使用的券也一併失效；兩者都有時以較早者為準。</small>
+    </div>
+    <div class="p-3 rounded border border-secondary mt-3">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-shield-lock me-1"></i>防濫用</div>
+        <label class="form-label small" for="{{ prefix }}-max-discount">單筆最高折抵金額 (0 = 不限，建議百分比折扣設定)</label>
+        <input type="number" min="0" class="form-control form-control-sm mb-2" name="max_discount" id="{{ prefix }}-max-discount" value="0">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="login_required" value="1" id="{{ prefix }}-login-required">
+            <label class="form-check-label small" for="{{ prefix }}-login-required">公開代碼限登入會員使用 (訪客不能用)</label>
+        </div>
+        <label class="form-label small mt-2" for="{{ prefix }}-uses-per-member">公開代碼每位會員可使用次數 (0 = 不限；設定後自動限會員)</label>
+        <input type="number" min="0" max="1000" class="form-control form-control-sm" name="uses_per_member" id="{{ prefix }}-uses-per-member" value="0">
+        <small class="text-white-50 hint-xs">紅利券與會員專屬券本來就必須持有才能使用，每張只能用一次；以上兩項用於所有人都知道的公開代碼。</small>
     </div>
 {%- endmacro %}
 
@@ -205,6 +238,9 @@
                     <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">----/--/-- --:--:--</span>
                 </div>
                 <div class="d-flex align-items-center gap-2">
+                    <a href="{{ url_for('settings_admin.index') }}" class="btn btn-warning btn-sm fw-bold text-dark" id="nav-settings"><i class="bi bi-sliders me-1"></i>系統設定與進階功能</a>
+                    {% if current_user.role in ('owner', 'manager') %}<a href="{{ url_for('live.index') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-live"><i class="bi bi-speedometer2 me-1"></i>即時看板</a>{% endif %}
+                    <a href="{{ url_for('security.account') }}" class="btn btn-outline-light btn-sm fw-bold" id="nav-security"><i class="bi bi-shield-lock me-1"></i>帳號安全{% if not current_user.totp_enabled %} <span class="badge bg-danger">未啟用 2FA</span>{% endif %}</a>
                     {% if current_user.role == 'owner' %}
                     <a href="{{ url_for('admin.staff_accounts') }}" class="btn btn-outline-warning btn-sm fw-bold"><i class="bi bi-people me-1"></i>員工帳號</a>
                     {% endif %}
@@ -486,7 +522,7 @@
                                 {% for item in items %}
                                 {% for combo in item.combo_options %}
                                 {% set combo_count.n = combo_count.n + 1 %}
-                                {% set sides = combo.sides | selectattr('menu_item') | list %}
+                                {% set sides = combo.fixed_sides | selectattr('menu_item') | list %}
                                 <tr>
                                     <td><span class="badge bg-secondary">{{ item.name }}</span></td>
                                     <td class="fw-bold text-white">{{ combo.name }}</td>
@@ -512,6 +548,9 @@
                                         <span class="badge bg-secondary text-white-50 me-1">不可加購</span>
                                         {% endif %}
                                         <span class="badge bg-dark text-white-50 border border-secondary">{{ sides | length }}樣附餐</span>
+                                        {% for group, options in combo.choice_groups %}
+                                        <span class="badge bg-dark text-warning border border-warning ms-1">{{ group }} {{ options | length }} 選 1</span>
+                                        {% endfor %}
                                     </td>
                                     <td class="text-end text-nowrap">
                                         <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-combo"
@@ -524,6 +563,7 @@
                                                 data-item{{ loop.index }}="{{ side.menu_item_id }}"
                                                 data-item{{ loop.index }}-cust="{{ 1 if side.customizable else 0 }}"
                                                 {% endfor %}
+                                                data-choices="{{ combo.choices_text }}"
                                                 data-can-addon="{{ 1 if combo.can_addon else 0 }}">
                                             <i class="bi bi-pencil-square"></i> 編輯
                                         </button>
@@ -569,6 +609,7 @@
                                     <th>兌換所需點數</th>
                                     <th>限時特惠點數</th>
                                     <th>每人上限</th>
+                                    <th>使用期限</th>
                                     <th class="text-end">操作</th>
                                 </tr>
                             </thead>
@@ -579,7 +620,7 @@
                                     <td><code class="bg-dark px-2 py-1 rounded text-warning fw-bold">{{ cp.code }}</code></td>
                                     <td><span class="badge {{ 'bg-success' if cp.discount_type == 'fixed' else 'bg-info text-dark' }} fs-6">{{ cp.discount_label }}</span></td>
                                     <td class="text-white-50">滿 ${{ cp.min_spend }} 可用</td>
-                                    <td><span class="badge bg-warning text-dark fs-6">{{ cp.reward_points }} 點</span></td>
+                                    <td>{% if cp.member_only %}<span class="badge bg-info text-dark">會員專屬 (發放)</span>{% elif cp.is_reward %}<span class="badge bg-warning text-dark fs-6">{{ cp.reward_points }} 點</span>{% else %}<span class="badge bg-secondary">公開代碼</span>{% endif %}</td>
                                     <td>
                                         {% if cp.reward_discount_points and cp.reward_discount_points > 0 %}
                                         <span class="badge bg-danger fs-6">限時 {{ cp.reward_discount_points }} 點</span>
@@ -587,8 +628,18 @@
                                         <span class="text-white-50 small">無特價</span>
                                         {% endif %}
                                     </td>
-                                    <td class="text-white-50 small">{{ cp.limit_display }}</td>
+                                    <td class="text-white-50 small">{{ cp.limit_display }}{% if cp.usage_label %}<div class="text-info">{{ cp.usage_label }}</div>{% endif %}</td>
+                                    <td class="small">
+                                        {% set ended = cp.valid_until and cp.valid_until < today %}
+                                        <span class="{{ 'text-danger' if ended else 'text-white-50' }}">{{ cp.period_label }}{% if ended %} (已結束){% endif %}</span>
+                                    </td>
                                     <td class="text-end text-nowrap">
+                                        <button class="btn btn-outline-warning btn-sm me-1" type="button" data-action="issue-coupon"
+                                                data-id="{{ cp.id }}" data-title="{{ cp.title }}" data-code="{{ cp.code }}"
+                                                data-limit="{{ cp.per_user_limit or 0 }}" data-period="{{ cp.period_label }}"
+                                                {% if ended %}disabled title="活動已結束"{% endif %}>
+                                            <i class="bi bi-send"></i> 發放
+                                        </button>
                                         <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-coupon"
                                                 data-id="{{ cp.id }}"
                                                 data-title="{{ cp.title }}"
@@ -598,7 +649,14 @@
                                                 data-min-spend="{{ cp.min_spend }}"
                                                 data-reward-points="{{ cp.reward_points or 0 }}"
                                                 data-reward-discount-points="{{ cp.reward_discount_points or 0 }}"
-                                                data-per-user-limit="{{ cp.per_user_limit or 0 }}">
+                                                data-per-user-limit="{{ cp.per_user_limit or 0 }}"
+                                                data-member-only="{{ 1 if cp.member_only else 0 }}"
+                                                data-valid-from="{{ cp.valid_from.isoformat() if cp.valid_from else '' }}"
+                                                data-valid-until="{{ cp.valid_until.isoformat() if cp.valid_until else '' }}"
+                                                data-valid-days="{{ cp.valid_days or 0 }}"
+                                                data-login-required="{{ 1 if cp.login_required else 0 }}"
+                                                data-uses-per-member="{{ cp.uses_per_member or 0 }}"
+                                                data-max-discount="{{ cp.max_discount or 0 }}">
                                             <i class="bi bi-pencil-square"></i> 編輯
                                         </button>
                                         <form action="{{ url_for('admin.delete_coupon', id=cp.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除優惠券【{{ cp.title }}】嗎？">
@@ -608,7 +666,45 @@
                                     </td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="8" class="text-center py-4 text-white-50">目前尚無任何優惠券</td></tr>
+                                <tr><td colspan="9" class="text-center py-4 text-white-50">目前尚無任何優惠券</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 發放紀錄 -->
+                    <h6 class="fw-bold text-white mt-4 mb-2"><i class="bi bi-send-check me-1 text-warning"></i>最近的發放紀錄</h6>
+                    <div class="table-responsive">
+                        <table class="table table-dark-custom table-sm align-middle mb-0" id="couponBatchTable">
+                            <thead>
+                                <tr class="text-white-50 small">
+                                    <th>發放時間</th><th>優惠券</th><th>會員數</th><th>張數</th><th>已使用</th><th>未使用</th><th>已過期</th><th>到期</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for b in coupon_batches %}
+                                <tr>
+                                    <td class="small">{{ b.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                                    <td>{{ b.coupon }} <code class="text-warning small">{{ b.code }}</code></td>
+                                    <td>{{ b.members }}</td>
+                                    <td>{{ b.total }}</td>
+                                    <td class="text-success">{{ b.used }}</td>
+                                    <td>{{ b.unused }}</td>
+                                    <td class="text-white-50">{{ b.expired }}</td>
+                                    <td class="small text-white-50">{{ b.expires_at.strftime('%Y-%m-%d') if b.expires_at else '無' }}</td>
+                                    <td class="text-end">
+                                        {% if b.unused %}
+                                        <form action="{{ url_for('admin.revoke_coupon_batch', batch_id=b.batch_id) }}" method="POST" class="d-inline"
+                                              data-confirm="撤回這次發放中尚未使用的 {{ b.unused }} 張券？(已使用的保留)">
+                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-counterclockwise"></i> 撤回未使用</button>
+                                        </form>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr><td colspan="9" class="text-center py-3 text-white-50 small">尚未批量發放過優惠券 (在上方優惠券按「發放」)</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -725,7 +821,16 @@
                 </div>
 
                 <div class="card card-custom p-4">
-                    <h5 class="fw-bold mb-4 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券</h5>
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券
+                            <span class="small text-white-50 fw-normal ms-1">共 {{ member_total }} 位</span></h5>
+                        <form method="GET" action="{{ url_for('admin.admin_dashboard') }}" class="d-flex gap-2" id="memberSearchForm" role="search">
+                            <input type="hidden" name="tab" value="users">
+                            <input type="search" class="form-control form-control-sm" name="uq" value="{{ member_q }}" placeholder="搜尋姓名或手機" aria-label="搜尋會員">
+                            <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap"><i class="bi bi-search"></i> 搜尋</button>
+                            {% if member_q %}<a class="btn btn-sm btn-outline-secondary text-nowrap" href="{{ url_for('admin.admin_dashboard', tab='users') }}">清除</a>{% endif %}
+                        </form>
+                    </div>
                     <div class="table-responsive">
                         <table class="table table-dark-custom align-middle" id="memberTable">
                             <thead>
@@ -752,7 +857,7 @@
                                     <td>
                                         <button class="btn btn-outline-warning btn-sm fw-bold" type="button" data-action="user-coupons"
                                                 data-user-id="{{ u.id }}" data-user-name="{{ u.name }}">
-                                            <i class="bi bi-ticket-perforated"></i> 管理票券 ({{ u.user_coupons | length }})
+                                            <i class="bi bi-ticket-perforated"></i> 管理票券 ({{ coupon_counts.get(u.id, 0) }})
                                         </button>
                                     </td>
                                     <td>
@@ -781,11 +886,24 @@
                                     </td>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="8" class="text-center py-4 text-white-50">目前尚無會員</td></tr>
+                                <tr><td colspan="8" class="text-center py-4 text-white-50">{{ '找不到符合的會員' if member_q else '目前尚無會員' }}</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
                     </div>
+                    {% if member_pages > 1 %}
+                    <nav aria-label="會員分頁" id="memberPager">
+                        <ul class="pagination pagination-sm justify-content-center mb-0 mt-2">
+                            {% set first = [1, member_page - 3]|max %}{% set last = [member_pages, member_page + 3]|min %}
+                            <li class="page-item {{ 'disabled' if member_page == 1 }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=member_page - 1) }}">上一頁</a></li>
+                            {% for p in range(first, last + 1) %}
+                            <li class="page-item {{ 'active' if p == member_page }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=p) }}">{{ p }}</a></li>
+                            {% endfor %}
+                            <li class="page-item {{ 'disabled' if member_page == member_pages }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=member_page + 1) }}">下一頁</a></li>
+                        </ul>
+                        <div class="text-center small text-white-50 mt-1">第 {{ member_page }} / {{ member_pages }} 頁 (最新加入的會員在前)</div>
+                    </nav>
+                    {% endif %}
                 </div>
             </div>
 
@@ -920,6 +1038,65 @@
                     <div class="modal-footer border-secondary justify-content-between">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                         <button type="submit" class="btn btn-warning fw-bold text-dark px-4">建立並上架優惠券</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量發放優惠券 Modal -->
+    <div class="modal fade" id="issueCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('批量發放優惠券', 'bi-send') }}
+                <form id="issueCouponForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3 p-2 rounded bg-dark border border-secondary">
+                            <div class="fw-bold text-warning" id="issue-coupon-title"></div>
+                            <small class="text-white-50">代碼 <span id="issue-coupon-code"></span>｜每人上限 <span id="issue-coupon-limit"></span>｜期限 <span id="issue-coupon-period"></span></small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-target">發放對象</label>
+                            <select class="form-select" name="target" id="issue-target">
+                                {% for key, label in coupon_targets.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-tier-row">
+                            <label class="form-label small fw-bold" for="issue-tier">會員等級</label>
+                            <select class="form-select" name="tier_id" id="issue-tier">
+                                {% for t in member_tiers %}<option value="{{ t.id }}">{{ t.name }} (累積 ${{ t.min_spend }} 以上)</option>{% else %}<option value="">尚未建立會員等級</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-phones-row">
+                            <label class="form-label small fw-bold" for="issue-phones">手機號碼 (每行一個，或以逗號分隔)</label>
+                            <textarea class="form-control" name="phones" id="issue-phones" rows="4" placeholder="0912345678&#10;0987654321"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-quantity">每位會員發放張數</label>
+                            <input type="number" class="form-control" name="quantity" id="issue-quantity" min="1" max="10" value="1" required>
+                            <small class="text-white-50 hint-xs">已達「每人上限」的會員會略過 (上限包含之前兌換或發放的張數)。</small>
+                        </div>
+                        <div class="mb-3">
+                            <span class="form-label small fw-bold d-block mb-1">到期設定</span>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-coupon" value="coupon" checked>
+                                <label class="form-check-label small" for="issue-exp-coupon">依優惠券設定的使用期限</label></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-days" value="days">
+                                <label class="form-check-label small" for="issue-exp-days">發放後</label>
+                                <input type="number" class="form-control form-control-sm w-auto" name="valid_days" min="1" max="3650" value="30" aria-label="天數">
+                                <span class="small">天內有效</span></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-date" value="date">
+                                <label class="form-check-label small" for="issue-exp-date">指定到期日</label>
+                                <input type="date" class="form-control form-control-sm w-auto" name="expires_on" aria-label="到期日"></div>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" name="notify_line" value="1" id="issue-notify" {{ '' if line_push_ready else 'disabled' }}>
+                            <label class="form-check-label small" for="issue-notify">以 LINE 通知已綁定的會員{% if not line_push_ready %} (尚未設定 LINE 推播){% endif %}</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4"><i class="bi bi-send me-1"></i>確認發放</button>
                     </div>
                 </form>
             </div>
@@ -1167,6 +1344,12 @@
                             <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
                             {% for level in (1, 2, 3) %}{{ side_select('combo', level, items) }}{% endfor %}
                         </div>
+                        <div class="p-3 mb-3 rounded border border-warning panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-1" for="combo-choices"><i class="bi bi-ui-radios"></i> 任選群組 (選填)</label>
+                            <textarea class="form-control form-control-sm" name="choices" id="combo-choices" rows="2"
+                                      placeholder="每行一組「群組: 餐點, 餐點+加價」例如&#10;飲料: 紅茶, 綠茶, 珍珠奶茶+15"></textarea>
+                            <div class="form-text text-white-50 small">顧客點這個套餐時每組任選一項；餐點名稱需與菜單相同，「+15」為升級加價。</div>
+                        </div>
                         <div class="p-3 mb-3 rounded border border-secondary panel-dim">
                             <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
                             <div class="form-check form-switch">
@@ -1213,6 +1396,12 @@
                         <div class="p-3 mb-3 rounded border border-secondary panel-dim">
                             <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
                             {% for level in (1, 2, 3) %}{{ side_select('edit-combo', level, items) }}{% endfor %}
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-warning panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-1" for="edit-combo-choices"><i class="bi bi-ui-radios"></i> 任選群組 (選填)</label>
+                            <textarea class="form-control form-control-sm" name="choices" id="edit-combo-choices" rows="2"
+                                      placeholder="每行一組「群組: 餐點, 餐點+加價」例如&#10;飲料: 紅茶, 綠茶, 珍珠奶茶+15"></textarea>
+                            <div class="form-text text-white-50 small">顧客點這個套餐時每組任選一項；餐點名稱需與菜單相同，「+15」為升級加價。</div>
                         </div>
                         <div class="p-3 mb-3 rounded border border-secondary panel-dim">
                             <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
@@ -1480,7 +1669,7 @@
     'placeholderImg': PLACEHOLDER_IMG,
     'loginUrl': url_for('admin.admin_dashboard'),
     'menuItems': admin_menu_items,
-    'userCoupons': admin_user_coupons,
+    'couponHistoryDays': coupon_history_days,
 } | tojson }}</script>
 {% endif %}
 {% endblock %}
