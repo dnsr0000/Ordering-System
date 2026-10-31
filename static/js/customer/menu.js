@@ -168,7 +168,7 @@ export function proceedToModifiers(item, combo, isAddon, passId = 0) {
     Kiosk.setHtml($('modifierModalBody'), [
         hasSizes ? sizeSectionHtml(item) : '',
         hasMain ? modifierSectionHtml('main', mainTitle, item.modifiers) : '',
-        sides.map((side, i) => modifierSectionHtml(`side${i}`, `${ui.side}: ${side.name}`, side.modifiers)),
+        sides.map((side, i) => modifierSectionHtml(`side${i}`, `${ui.side}${side.name}`, side.modifiers)),
         choices.map((g, gi) => choiceSectionHtml(g, gi)),
     ]);
     syncChoiceMods();
