@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from tests.conftest import IS_SQLITE
 from tests.support import (default_tenant_id, guest_client, line, login_staff, make_item, make_member, member_client,
                            other_shop_owner_client)
 
@@ -44,7 +45,10 @@ def test_sqlite_backup_only_for_platform_admin(app, admin_client):
     assert other.post('/admin/system/backup').status_code == 403
     assert other.get('/admin/system/backup/menu-20261030-120000.zip').status_code == 403
     html = other.get('/admin/system').get_data(as_text=True)
-    assert 'menu-' not in html and '僅平台管理者' in html
+    assert '/admin/system/backup' not in html   # 沒有「立即備份」表單與下載連結
+    if not IS_SQLITE:   # 整庫備份只有 SQLite 門市主機有；線上端 PostgreSQL 由 docker compose 的 backup 服務處理
+        return
+    assert '僅平台管理者' in html
     # 平台管理者 (預設店家負責人) 仍可建立、看到清單並下載
     r = admin_client.post('/admin/system/backup')
     assert r.status_code in (302, 303)
