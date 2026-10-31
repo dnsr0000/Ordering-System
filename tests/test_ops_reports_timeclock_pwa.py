@@ -223,6 +223,10 @@ def test_menu_pro_and_i18n(app, admin_client, store_settings):
     c = guest_client(app)
     en = c.get('/?lang=en').get_data(as_text=True)
     assert 'Beef Noodle Soup' in en and 'Noodles' in en and 'Add to cart' in en
+    assert 'Clear' in en and '<built-in method clear' not in en
+    assert 'Order with ease' in en and 'Your cart is empty' in en
+    landing = app.test_client().get('/?lang=en').get_data(as_text=True)
+    assert 'landingLangSwitch' in landing and 'Member login' in landing
     assert 'Beef Noodle Soup' in c.get('/').get_data(as_text=True), '語言記在 session'
     ja = c.get('/?lang=ja').get_data(as_text=True)
     assert '牛肉麺' in ja and 'カートに追加' in ja

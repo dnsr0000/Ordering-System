@@ -48,14 +48,14 @@
         </div>
         <div class="d-flex align-items-center gap-1">
             {% if sold_out %}
-                <span class="badge bg-secondary">缺貨中</span>
+                <span class="badge bg-secondary">{{ ui.unavailable_now }}</span>
             {% else %}
                 {% if favorite %}
-                    <span class="badge bg-warning text-dark"><i class="bi bi-heart-fill text-danger me-1"></i>常點</span>
-                    {% if on_sale %}<span class="badge bg-danger">特價</span>{% endif %}
+                    <span class="badge bg-warning text-dark"><i class="bi bi-heart-fill text-danger me-1"></i>{{ ui.favorite }}</span>
+                    {% if on_sale %}<span class="badge bg-danger">{{ ui.sale }}</span>{% endif %}
                 {% else %}
-                    <span class="badge bg-danger">熱門</span>
-                    {% if on_sale %}<span class="badge bg-warning text-dark">特價</span>{% endif %}
+                    <span class="badge bg-danger">{{ ui.popular }}</span>
+                    {% if on_sale %}<span class="badge bg-warning text-dark">{{ ui.sale }}</span>{% endif %}
                 {% endif %}
                 <span class="btn btn-sm btn-warning rounded-circle p-1 d-flex align-items-center justify-content-center ms-1 quick-plus">
                     <i class="bi bi-plus-lg text-dark fw-bold"></i>
@@ -77,11 +77,11 @@
                 <div class="h5 mb-0 text-white">{{ tenant.name if tenant else "自助點餐系統" }}</div>
                 <small class="text-white-50">
                     {% if is_guest %}
-                        歡迎光臨，<strong>訪客</strong>！
+                        {{ ui.welcome_guest }}，<strong>{{ ui.guest }}</strong>！
                     {% else %}
-                        歡迎回來，<strong id="member-name">{{ session['user_name'] }}</strong>！
-                        <a href="{{ url_for('rewards.rewards_store') }}" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" title="點擊進入紅利回饋商店">
-                            <i class="bi bi-star-fill text-danger"></i> 紅利點數: <strong id="nav-user-points">{{ user_points }}</strong> 點 <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
+                        {{ ui.welcome_back }}，<strong id="member-name">{{ session['user_name'] }}</strong>！
+                        <a href="{{ url_for('rewards.rewards_store') }}" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" title="{{ ui.reward_points }}">
+                            <i class="bi bi-star-fill text-danger"></i> {{ ui.reward_points }}: <strong id="nav-user-points">{{ user_points }}</strong> {{ ui.points }} <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
                         </a>
                     {% endif %}
                 </small>
@@ -93,9 +93,9 @@
                 {% for l in langs %}<a class="btn {{ 'btn-warning text-dark' if l == lang else 'btn-outline-light' }}" href="{{ url_for('customer.customer_index', lang=l) }}">{{ lang_labels[l] }}</a>{% endfor %}
             </div>
             {% endif %}
-            {% if pro.a11yButton %}<button type="button" class="btn btn-outline-light a11y-toggle me-1" data-action="toggle-a11y" aria-pressed="false" id="a11yToggle" title="大字 / 高對比"><i class="bi bi-type"></i> 大字</button>{% endif %}
+            {% if pro.a11yButton %}<button type="button" class="btn btn-outline-light a11y-toggle me-1" data-action="toggle-a11y" aria-pressed="false" id="a11yToggle" title="{{ ui.large_text }}"><i class="bi bi-type"></i> {{ ui.large_text }}</button>{% endif %}
             {% if not is_guest and pro.lineLogin and not pro.lineBound %}
-            <a class="btn btn-success btn-sm me-1" href="{{ url_for('member_auth.line_start') }}" id="lineBindBtn"><i class="bi bi-line"></i> 綁定 LINE</a>
+            <a class="btn btn-success btn-sm me-1" href="{{ url_for('member_auth.line_start') }}" id="lineBindBtn"><i class="bi bi-line"></i> {{ ui.line_bind }}</a>
             {% endif %}
             <button class="btn btn-outline-warning me-1" type="button" data-action="my-orders">
                 <i class="bi bi-receipt"></i> {{ ui.my_orders }}
@@ -117,29 +117,29 @@
         <!-- 尚未同意 (或已更新) 隱私權告知的會員 -->
         <div class="alert alert-warning d-flex flex-wrap align-items-center gap-2" id="privacy-consent-banner">
             <i class="bi bi-shield-exclamation fs-5"></i>
-            <span class="flex-grow-1">請閱讀本店的<a class="alert-link" href="{{ url_for('privacy.notice') }}">隱私權告知</a> (會員資料的蒐集與使用方式)。</span>
+            <span class="flex-grow-1">{{ ui.privacy_prompt }} <a class="alert-link" href="{{ url_for('privacy.notice') }}">{{ ui.privacy_notice }}</a>{{ ui.privacy_details }}</span>
             <form method="POST" action="{{ url_for('privacy.consent') }}" class="m-0">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-sm btn-dark fw-bold" type="submit">我已閱讀並同意</button>
+                <button class="btn btn-sm btn-dark fw-bold" type="submit">{{ ui.privacy_consent }}</button>
             </form>
         </div>
         {% endif %}
         {% if table_expired %}
         <div class="alert alert-warning d-flex align-items-center gap-2" id="table-expired-banner">
             <i class="bi bi-qr-code-scan fs-5"></i>
-            <span>桌位 QR code 已失效 (掃碼超過 4 小時、桌位已停用或已更換 QR code)，請重新掃描桌上的 QR code 後再點餐。</span>
+            <span>{{ ui.table_expired }}</span>
         </div>
         {% endif %}
         {% if dining_table %}
         <!-- 桌邊掃碼點餐：餐點送到這一桌，餐後至櫃檯結帳 -->
         <div class="alert alert-info d-flex align-items-center gap-2" id="table-banner">
             <i class="bi bi-qr-code fs-5"></i>
-            <span>桌號 <strong>{{ dining_table.name }}</strong>：內用，餐點完成後送到桌上；用餐後請至櫃檯結帳。</span>
-            <div class="ms-auto d-flex flex-wrap gap-1" id="serviceCallBox" role="group" aria-label="呼叫服務">
-                <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="water"><i class="bi bi-cup-straw me-1"></i>加水 / 餐具</button>
-                <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="bill"><i class="bi bi-receipt me-1"></i>想結帳</button>
-                <button type="button" class="btn btn-sm btn-dark" data-action="call-service" data-kind="help"><i class="bi bi-bell me-1"></i>呼叫服務</button>
-                {% if table_pay_enabled %}<button type="button" class="btn btn-sm btn-warning fw-bold" data-action="table-bill" id="tableBillBtn"><i class="bi bi-phone me-1"></i>線上結帳</button>{% endif %}
+            <span>{{ ui.table_order_notice }} <strong>{{ dining_table.name }}</strong>：{{ ui.table_order_delivery }}</span>
+            <div class="ms-auto d-flex flex-wrap gap-1" id="serviceCallBox" role="group" aria-label="{{ ui.service_help }}">
+                <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="water"><i class="bi bi-cup-straw me-1"></i>{{ ui.service_water }}</button>
+                <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="bill"><i class="bi bi-receipt me-1"></i>{{ ui.service_checkout }}</button>
+                <button type="button" class="btn btn-sm btn-dark" data-action="call-service" data-kind="help"><i class="bi bi-bell me-1"></i>{{ ui.service_help }}</button>
+                {% if table_pay_enabled %}<button type="button" class="btn btn-sm btn-warning fw-bold" data-action="table-bill" id="tableBillBtn"><i class="bi bi-phone me-1"></i>{{ ui.online_checkout }}</button>{% endif %}
             </div>
         </div>
         {% endif %}
@@ -147,25 +147,25 @@
         <!-- 線上點餐：選擇取餐分店 (菜單供應狀況依該分店回報的庫存) -->
         <section class="pickup-node-bar card bg-dark border-warning text-white p-3 mb-3" id="pickup-node-bar">
             {% if not pickup_nodes %}
-            <div class="text-warning fw-bold"><i class="bi bi-shop me-1"></i>目前沒有開放線上點餐的分店，請稍後再試或直接至門市點餐。</div>
+            <div class="text-warning fw-bold"><i class="bi bi-shop me-1"></i>{{ ui.no_online_branches }}</div>
             {% else %}
             <form method="POST" action="{{ url_for('customer.set_pickup_node') }}" class="d-flex flex-wrap align-items-center gap-2" id="pickupNodeForm">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if pickup_nodes | length == 1 %}
-                <span class="fw-bold text-warning"><i class="bi bi-shop me-1"></i>取餐分店</span>
+                <span class="fw-bold text-warning"><i class="bi bi-shop me-1"></i>{{ ui.pickup_branch }}</span>
                 <span class="fw-bold" id="pickup-node-name">{{ pickup_node.name }}</span>
                 {% else %}
-                <label class="fw-bold text-warning mb-0" for="pickupNodeSelect"><i class="bi bi-shop me-1"></i>取餐分店</label>
+                <label class="fw-bold text-warning mb-0" for="pickupNodeSelect"><i class="bi bi-shop me-1"></i>{{ ui.pickup_branch }}</label>
                 <select class="form-select form-select-sm w-auto" id="pickupNodeSelect" name="node_uuid" required>
-                    {% if not pickup_node %}<option value="" selected disabled>-- 請選擇取餐分店 --</option>{% endif %}
+                    {% if not pickup_node %}<option value="" selected disabled>{{ ui.choose_pickup_branch }}</option>{% endif %}
                     {% for n in pickup_nodes %}
                     <option value="{{ n.uuid }}" {{ 'selected' if pickup_node and pickup_node.uuid == n.uuid }}>{{ n.name }}</option>
                     {% endfor %}
                 </select>
-                <button class="btn btn-sm btn-warning fw-bold text-dark" type="submit">{{ '更換分店' if pickup_node else '確定' }}</button>
-                {% if pickup_node %}<span class="small text-white-50">目前：<strong class="text-white" id="pickup-node-name">{{ pickup_node.name }}</strong></span>{% endif %}
+                <button class="btn btn-sm btn-warning fw-bold text-dark" type="submit">{{ ui.change_branch if pickup_node else ui.confirm }}</button>
+                {% if pickup_node %}<span class="small text-white-50">{{ ui.current }}：<strong class="text-white" id="pickup-node-name">{{ pickup_node.name }}</strong></span>{% endif %}
                 {% endif %}
-                <span class="small text-white-50 ms-md-auto">取餐號碼於分店接單後產生，可在「我的訂單」查看。</span>
+                <span class="small text-white-50 ms-md-auto">{{ ui.pickup_order_hint }}</span>
             </form>
             {% endif %}
         </section>
@@ -174,16 +174,16 @@
         <div class="hero text-white text-center p-4 mb-4">
             <div>
                 {% if is_guest %}
-                    <h1 class="display-6">快速自助點餐</h1>
-                    <p class="lead mb-0">請自由挑選喜愛的餐點，加入購物車後即可快速結帳！</p>
+                    <h1 class="display-6">{{ ui.hero_guest_title }}</h1>
+                    <p class="lead mb-0">{{ ui.hero_guest_description }}</p>
                 {% else %}
-                    <h1 class="display-6">快速點餐，會員專屬積點折抵</h1>
+                    <h1 class="display-6">{{ ui.hero_member_title }}</h1>
                     <p class="lead mb-0">
-                        消費每滿 ${{ reward_setting.spend_per_point }} 即贈送 1 點紅利
+                        {{ ui.earn_points_prefix }} ${{ reward_setting.spend_per_point }} {{ ui.earn_points_suffix }}
                         {% if reward_setting.is_enabled %}
-                            （{{ reward_setting.points_per_dollar }} 點 = $1）{% if reward_setting.max_discount_per_order > 0 %}，單筆最高折抵 ${{ reward_setting.max_discount_per_order }}{% endif %}，結帳直接折現！
+                            （{{ reward_setting.points_per_dollar }} {{ ui.points_equals }} $1）{% if reward_setting.max_discount_per_order > 0 %}，{{ ui.max_discount_label }} ${{ reward_setting.max_discount_per_order }}{% endif %}，{{ ui.checkout_discount }}
                         {% else %}
-                            ，累積點數可至紅利商城兌換專屬優惠！
+                            {{ ui.redeem_rewards }}
                         {% endif %}
                     </p>
                 {% endif %}
@@ -193,7 +193,7 @@
         {% if is_online and not pickup_node %}
         <div class="text-center text-white-50 py-5" id="pickup-node-required">
             <i class="bi bi-shop display-4 text-warning d-block mb-2"></i>
-            請先在上方選擇取餐分店，即可查看該分店的菜單供應狀況並開始點餐。
+            {{ ui.choose_branch_prompt }}
         </div>
         {% else %}
         {% set hot_items = [] %}
@@ -213,8 +213,8 @@
         {% if not is_guest %}
         <div class="mb-4" id="favorite-items">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h5 class="mb-0 fw-bold text-white"><span class="text-warning">⭐</span> 專屬於您的常點餐點</h5>
-                <small class="text-white-50"><i class="bi bi-heart-fill text-danger"></i> 依您的歷史點餐偏好精選推薦</small>
+                <h5 class="mb-0 fw-bold text-white"><span class="text-warning">⭐</span> {{ ui.favorites_title }}</h5>
+                <small class="text-white-50"><i class="bi bi-heart-fill text-danger"></i> {{ ui.favorites_subtitle }}</small>
             </div>
             {% if personalized_items %}
             <div class="row gy-2">
@@ -223,7 +223,7 @@
             {% else %}
             <div class="favorite-empty p-3 rounded-3 text-center border border-secondary">
                 <i class="bi bi-cup-hot text-warning fs-3 mb-1 d-block"></i>
-                <div class="text-white-50 small">您目前尚無點餐紀錄，完成首筆訂單後，系統將自動為您統計最常點選的專屬餐點！</div>
+                <div class="text-white-50 small">{{ ui.no_favorite_orders }}</div>
             </div>
             {% endif %}
         </div>
@@ -251,7 +251,7 @@
                 </div>
             </div>
             <div class="col-md-2 d-flex justify-content-end mb-2">
-                <button class="btn btn-outline-light" type="button" data-action="reset-filters"><i class="bi bi-arrow-counterclockwise"></i> {{ ui.clear }}</button>
+                <button class="btn btn-outline-light" type="button" data-action="reset-filters"><i class="bi bi-arrow-counterclockwise"></i> {{ ui['clear'] }}</button>
             </div>
         </div>
 
@@ -260,7 +260,7 @@
             <button class="btn btn-sm sort-btn" type="button" data-action="sort" data-mode="new">{{ ui.sort_new }}</button>
             <button class="btn btn-sm sort-btn" type="button" data-action="sort" data-mode="discount">{{ ui.sort_discount }}</button>
             <button class="btn btn-sm price-sort-btn" type="button" id="priceSortBtn" data-action="price-sort">
-                <i class="bi bi-arrow-down-up"></i> 價格 ⇅
+                <i class="bi bi-arrow-down-up"></i> {{ ui.price_sort }} ⇅
             </button>
         </div>
 
@@ -271,7 +271,7 @@
         {% set tr = item.translated(lang) %}
         {% set on_sale = item.is_discount and (item.discount_price or 0) > 0 %}
         {% set popular = item.is_recommended or item.is_manual_popular %}
-        <div class="col-md-6 menu-row" data-id="{{ item.id }}" data-category="{{ (item.category or '未分類') | trim }}"
+        <div class="col-md-6 menu-row" data-id="{{ item.id }}" data-category="{{ (item.category or ui.unknown_category) | trim }}"
              data-price="{{ item.unit_price }}" data-popular="{{ 1 if popular else 0 }}"
              data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ 1 if on_sale else 0 }}">
             <div class="menu-card p-3 {{ 'menu-card-sold-out' if sold_out }}">
@@ -285,7 +285,7 @@
                                     {{ tr[0] }}
                                     {% if sold_out %}<span class="badge bg-secondary ms-1">{{ off_hint or ui.sold_out }}</span>{% endif %}
                                 </h5>
-                                <small class="badge bg-secondary">{{ cat_labels.get(item.category, item.category) or '未分類' }}</small>
+                                <small class="badge bg-secondary">{{ cat_labels.get(item.category, item.category) or ui.unknown_category }}</small>
                                 {% if popular %}<span class="badge bg-danger">{{ ui.popular }}</span>{% endif %}
                                 {% if item.is_new %}<span class="badge bg-info">{{ ui.new }}</span>{% endif %}
                                 {% if on_sale %}<span class="badge bg-warning text-dark">{{ ui.sale }}</span>{% endif %}
@@ -325,11 +325,11 @@
 <div class="offcanvas offcanvas-end bg-dark text-white" tabindex="-1" id="cart-sidebar" aria-labelledby="cartLabel">
     <div class="offcanvas-header border-secondary border-bottom py-2 px-3">
         <h6 id="cartLabel" class="mb-0 fw-bold text-warning"><i class="bi bi-cart3 me-1"></i> {{ ui.cart_title }}</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="關閉"></button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="{{ ui.close }}"></button>
     </div>
     <div class="offcanvas-body d-flex flex-column p-3">
         <div id="cart-items" class="overflow-y-auto mb-2 pe-1">
-            <div class="text-center text-white-50 py-4">購物車目前空空如也</div>
+            <div class="text-center text-white-50 py-4">{{ ui.cart_empty }}</div>
         </div>
         <div id="addon-recommend-container"></div>
 
@@ -338,11 +338,11 @@
                 {% if member_passes %}
                 <!-- 我的寄杯：每按一次兌換一份 (免費，只收加料) -->
                 <div class="mb-2 p-2 rounded border border-info" id="passBox">
-                    <small class="text-info fw-bold cart-small"><i class="bi bi-cup-hot"></i> 我的寄杯</small>
+                    <small class="text-info fw-bold cart-small"><i class="bi bi-cup-hot"></i> {{ ui.my_passes }}</small>
                     {% for p in member_passes %}
                     <div class="d-flex justify-content-between align-items-center mt-1 cart-small">
-                        <span>{{ p.name }} <span class="text-white-50">剩 <span data-pass-left="{{ p.id }}">{{ p.remaining }}</span> 次</span></span>
-                        <button type="button" class="btn btn-sm btn-outline-info py-0" data-action="use-pass" data-pass-id="{{ p.id }}">兌換一份</button>
+                        <span>{{ p.name }} <span class="text-white-50">{{ ui.remaining }} <span data-pass-left="{{ p.id }}">{{ p.remaining }}</span></span></span>
+                        <button type="button" class="btn btn-sm btn-outline-info py-0" data-action="use-pass" data-pass-id="{{ p.id }}">{{ ui.redeem_one }}</button>
                     </div>
                     {% endfor %}
                 </div>
@@ -350,14 +350,14 @@
                 <!-- 優惠券與代碼 -->
                 <div class="mb-2">
                     <div class="d-flex justify-content-between align-items-center mb-1">
-                        <small class="text-white-50 fw-bold cart-small"><i class="bi bi-ticket-perforated"></i> 促銷優惠碼</small>
+                        <small class="text-white-50 fw-bold cart-small"><i class="bi bi-ticket-perforated"></i> {{ ui.promo_codes }}</small>
                         {% if not is_guest %}<span id="user-coupon-badge" class="cart-tiny"></span>{% endif %}
                     </div>
                     <div class="row g-1">
                         {% if not is_guest %}
                         <div class="col-7">
                             <select id="userCouponSelect" class="form-select form-select-sm bg-dark text-warning border-secondary cart-small" data-action="pick-coupon">
-                                <option value="" disabled selected>-- 尚無可用優惠券 --</option>
+                                <option value="" disabled selected>{{ ui.no_coupon }}</option>
                             </select>
                         </div>
                         <div class="col-5">
@@ -365,8 +365,8 @@
                         <div class="col-12">
                         {% endif %}
                             <div class="input-group input-group-sm">
-                                <input type="text" id="promoInput" class="form-control bg-dark text-white border-secondary px-1 cart-small" placeholder="輸入促銷折扣碼">
-                                <button class="btn btn-warning btn-sm fw-bold text-dark px-2" type="button" data-action="apply-promo">套用</button>
+                                <input type="text" id="promoInput" class="form-control bg-dark text-white border-secondary px-1 cart-small" placeholder="{{ ui.promo_placeholder }}">
+                                <button class="btn btn-warning btn-sm fw-bold text-dark px-2" type="button" data-action="apply-promo">{{ ui.apply }}</button>
                             </div>
                         </div>
                     </div>
@@ -380,19 +380,19 @@
                         <div class="form-check form-switch mb-0">
                             <input class="form-check-input cursor-pointer" type="checkbox" id="usePointsToggle" data-action="toggle-points">
                             <label class="form-check-label text-white fw-bold cart-small cursor-pointer" for="usePointsToggle">
-                                紅利折抵 ({{ reward_setting.points_per_dollar }}點=$1)
+                                {{ ui.points_redeem }} ({{ reward_setting.points_per_dollar }} {{ ui.points }} = $1)
                             </label>
                         </div>
-                        <span class="badge bg-warning text-dark cart-small">現有 <span id="cart-user-points">{{ user_points }}</span> 點</span>
+                        <span class="badge bg-warning text-dark cart-small">{{ ui.current_balance }} <span id="cart-user-points">{{ user_points }}</span> {{ ui.points }}</span>
                     </div>
                     <div id="points-input-box" class="mt-1 d-none">
                         <div class="input-group input-group-sm">
-                            <span class="input-group-text py-0 cart-small">使用點數</span>
+                            <span class="input-group-text py-0 cart-small">{{ ui.use_points }}</span>
                             <input type="number" id="pointsToUse" class="form-control py-0 cart-small" min="0" value="0" data-action="recalc">
                         </div>
                         <div class="text-white-50 mt-1 cart-tiny">
-                            每 {{ reward_setting.points_per_dollar }} 點折 $1
-                            {% if reward_setting.max_discount_per_order > 0 %}・單筆最高折抵 ${{ reward_setting.max_discount_per_order }}{% endif %}
+                            {{ reward_setting.points_per_dollar }} {{ ui.points }} = $1
+                            {% if reward_setting.max_discount_per_order > 0 %}・{{ ui.max_discount_label }} ${{ reward_setting.max_discount_per_order }}{% endif %}
                         </div>
                     </div>
                 </div>
@@ -407,18 +407,18 @@
                         <span>{{ ui.promotion }} <span id="cart-promotion-names"></span></span><span>-$<span id="cart-promotion">0</span></span>
                     </div>
                     <div class="d-flex justify-content-between small text-info cart-small">
-                        <span>優惠券折扣</span><span>-$<span id="cart-promo-discount">0</span></span>
+                        <span>{{ ui.coupon_discount }}</span><span>-$<span id="cart-promo-discount">0</span></span>
                     </div>
                     <div class="d-flex justify-content-between small text-info cart-small d-none" id="cart-tier-row">
                         <span>{{ ui.member_discount }} ({{ pro.tierName }})</span><span>-$<span id="cart-tier">0</span></span>
                     </div>
                     {% if not is_guest and reward_setting.is_enabled %}
                     <div class="d-flex justify-content-between small text-success cart-small">
-                        <span>紅利折抵</span><span>-$<span id="cart-points-discount">0</span></span>
+                        <span>{{ ui.points_discount }}</span><span>-$<span id="cart-points-discount">0</span></span>
                     </div>
                     {% endif %}
                     <div class="d-flex justify-content-between small text-white-50 cart-small d-none" id="cart-delivery-row">
-                        <span>外送費</span><span>+$<span id="cart-delivery">0</span></span>
+                        <span>{{ ui.delivery_fee }}</span><span>+$<span id="cart-delivery">0</span></span>
                     </div>
                     <div class="d-flex justify-content-between small text-white-50 cart-small d-none" id="cart-service-row">
                         <span>{{ ui.service_charge }} ({{ pro.serviceChargePercent }}%)</span><span>+$<span id="cart-service">0</span></span>
@@ -429,12 +429,12 @@
                         <span class="fw-bold text-warning fs-4">$<span id="cart-final">0</span></span>
                     </div>
                     <div class="d-flex justify-content-between small text-white-50 cart-small d-none" id="cart-calories-row">
-                        <span><i class="bi bi-fire me-1"></i>熱量合計 (約)</span><span><span id="cart-calories">0</span> 大卡</span>
+                        <span><i class="bi bi-fire me-1"></i>{{ ui.calories_total }}</span><span><span id="cart-calories">0</span> kcal</span>
                     </div>
                     {% if not is_guest %}
                     <div class="d-flex justify-content-between text-warning small cart-small">
-                        <span>預估獲得紅利</span>
-                        <span>+<span id="cart-earned-points">0</span> 點</span>
+                        <span>{{ ui.estimated_points }}</span>
+                        <span>+<span id="cart-earned-points">0</span> {{ ui.points }}</span>
                     </div>
                     {% endif %}
                 </div>
@@ -447,7 +447,7 @@
                 <input type="hidden" id="orderType" value="內用">
                 <input type="hidden" id="paymentMethod" value="Cash">
                 <div class="small text-info fw-bold mb-2" id="table-checkout-hint">
-                    <i class="bi bi-qr-code me-1"></i>{{ dining_table.name }} 桌 • 內用 • 用餐後至櫃檯結帳
+                    <i class="bi bi-qr-code me-1"></i>{{ ui.table_order_notice }} {{ dining_table.name }} • {{ ui.dine_in }} • {{ ui.table_order_delivery }}
                 </div>
                 {% else %}
                 <div class="row g-1 mb-2">
@@ -455,22 +455,22 @@
                         <select id="orderType" class="form-select form-select-sm bg-dark text-white border-secondary cart-small" data-action="order-type">
                             <option value="內用">{{ ui.dine_in }}</option>
                             <option value="外帶">{{ ui.take_out }}</option>
-                            {% if pro.homeDelivery %}<option value="外送到府">外送到府</option>{% endif %}
+                            {% if pro.homeDelivery %}<option value="外送到府">{{ ui.home_delivery }}</option>{% endif %}
                         </select>
                     </div>
                     <div class="col-6">
                         <select id="paymentMethod" class="form-select form-select-sm bg-dark text-white border-secondary cart-small">
-                            {% set pay_labels = {'Cash': '現金 Cash', 'Credit Card': '信用卡', 'Line Pay': 'Line Pay', '街口支付': '街口支付', 'Apple Pay': 'Apple Pay', '儲值金': '儲值金 ($' ~ pro.walletBalance ~ ')'} %}
+                            {% set pay_labels = {'Cash': ui.pay_cash, 'Credit Card': ui.pay_credit_card, 'Line Pay': ui.pay_line_pay, '街口支付': ui.pay_jko, 'Apple Pay': ui.pay_apple_pay, '儲值金': ui.pay_wallet ~ ' ($' ~ pro.walletBalance ~ ')'} %}
                             {% for m in pro.methods %}<option value="{{ m }}">{{ pay_labels.get(m, m) }}</option>{% endfor %}
                         </select>
                     </div>
                 </div>
                 {% if is_online and pro.pickupSlots %}
                 <div class="mb-2" id="pickupTimeBox">
-                    <label for="pickupTime" class="form-label text-white-50 small mb-1"><i class="bi bi-clock me-1"></i>取餐時間</label>
+                    <label for="pickupTime" class="form-label text-white-50 small mb-1"><i class="bi bi-clock me-1"></i>{{ ui.pickup_time }}</label>
                     <select id="pickupTime" class="form-select form-select-sm bg-dark text-white border-secondary cart-small">
-                        <option value="">盡快 (付款後開始製作)</option>
-                        {% for s in pro.pickupSlots %}<option value="{{ s.value }}">預約 {{ s.label }}</option>{% endfor %}
+                        <option value="">{{ ui.asap }}</option>
+                        {% for s in pro.pickupSlots %}<option value="{{ s.value }}">{{ ui.scheduled }} {{ s.label }}</option>{% endfor %}
                     </select>
                 </div>
                 {% endif %}
@@ -478,24 +478,24 @@
 
                 {% if pro.homeDelivery %}
                 <div id="homeDeliveryBox" class="mb-2 d-none">
-                    <input type="text" id="deliveryAddress" class="form-control form-control-sm bg-dark text-white border-secondary mb-1" maxlength="200" placeholder="外送地址 (含樓層)" aria-label="外送地址" autocomplete="street-address">
+                    <input type="text" id="deliveryAddress" class="form-control form-control-sm bg-dark text-white border-secondary mb-1" maxlength="200" placeholder="{{ ui.delivery_address }}" aria-label="{{ ui.delivery_address }}" autocomplete="street-address">
                     <div class="row g-1">
-                        <div class="col-6"><input type="tel" id="deliveryPhone" class="form-control form-control-sm bg-dark text-white border-secondary" maxlength="20" value="{{ pro.homeDelivery.phone }}" placeholder="聯絡電話" aria-label="聯絡電話"></div>
-                        <div class="col-6"><select id="deliveryZone" class="form-select form-select-sm bg-dark text-white border-secondary" data-action="recalc-delivery" aria-label="配送區域">
-                            {% for z in pro.homeDelivery.zones %}<option value="{{ z.name }}" data-fee="{{ z.fee }}" data-min="{{ z.min_spend }}">{{ z.name }} (+${{ z.fee }}{% if z.min_spend %}，滿 ${{ z.min_spend }}{% endif %})</option>{% endfor %}
+                        <div class="col-6"><input type="tel" id="deliveryPhone" class="form-control form-control-sm bg-dark text-white border-secondary" maxlength="20" value="{{ pro.homeDelivery.phone }}" placeholder="{{ ui.contact_phone }}" aria-label="{{ ui.contact_phone }}"></div>
+                        <div class="col-6"><select id="deliveryZone" class="form-select form-select-sm bg-dark text-white border-secondary" data-action="recalc-delivery" aria-label="{{ ui.delivery_zone }}">
+                            {% for z in pro.homeDelivery.zones %}<option value="{{ z.name }}" data-fee="{{ z.fee }}" data-min="{{ z.min_spend }}">{{ z.name }} (+${{ z.fee }}{% if z.min_spend %}，{{ ui.min_spend }} ${{ z.min_spend }}{% endif %})</option>{% endfor %}
                         </select></div>
                     </div>
-                    <div class="small text-white-50 mt-1">預估 {{ pro.homeDelivery.eta }} 分鐘送達{% if pro.homeDelivery.freeOver %}；商品滿 ${{ pro.homeDelivery.freeOver }} 免外送費{% endif %}</div>
+                    <div class="small text-white-50 mt-1">{{ ui.eta_minutes }} {{ pro.homeDelivery.eta }} {{ ui.minutes }}{% if pro.homeDelivery.freeOver %}；{{ ui.free_delivery_over }} ${{ pro.homeDelivery.freeOver }} {{ ui.free_delivery }}{% endif %}</div>
                 </div>
                 {% endif %}
                 <div id="takeoutExtraBox" class="mb-2 d-none">
                     <div class="form-check form-switch mb-2">
                         <input class="form-check-input" type="checkbox" id="needCutlery" checked>
-                        <label class="form-check-label text-white small fw-bold" for="needCutlery">需要餐具</label>
+                        <label class="form-check-label text-white small fw-bold" for="needCutlery">{{ ui.need_cutlery }}</label>
                     </div>
                     <div>
-                        <label for="takeoutNote" class="form-label text-white-50 small mb-1">備註</label>
-                        <textarea id="takeoutNote" class="form-control form-control-sm bg-dark text-white border-secondary" rows="2" maxlength="200" placeholder="例如：不要太辣、請幫我裝袋、外送時間請盡快"></textarea>
+                        <label for="takeoutNote" class="form-label text-white-50 small mb-1">{{ ui.takeout_note }}</label>
+                        <textarea id="takeoutNote" class="form-control form-control-sm bg-dark text-white border-secondary" rows="2" maxlength="200" placeholder="{{ ui.takeout_note_placeholder }}"></textarea>
                     </div>
                 </div>
 
@@ -513,14 +513,14 @@
     <div class="modal-content combo-modal-content">
       <div class="modal-header border-secondary border-opacity-50 pb-2">
         <div class="d-flex align-items-center gap-2">
-          <span class="badge bg-warning text-dark px-2 py-1 fw-bold"><i class="bi bi-box-seam me-1"></i>組合設定</span>
-          <h5 class="modal-title fw-bold text-white mb-0" id="comboModalTitle">請選擇享用方式</h5>
+                    <span class="badge bg-warning text-dark px-2 py-1 fw-bold"><i class="bi bi-box-seam me-1"></i>{{ ui.combo_setup }}</span>
+                    <h5 class="modal-title fw-bold text-white mb-0" id="comboModalTitle">{{ ui.choose_combo_style }}</h5>
         </div>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
       </div>
       <div class="modal-body p-4">
         <div class="text-white-50 small mb-3">
-          <i class="bi bi-hand-index-thumb text-warning"></i> 點選卡片即可直接進入下一步選項（客製化 Modifiers 或加入購物車）：
+          <i class="bi bi-hand-index-thumb text-warning"></i> {{ ui.combo_hint }}
         </div>
         <div class="row g-3" id="combo-cards-container"></div>
       </div>
@@ -533,12 +533,12 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content bg-dark text-white">
       <div class="modal-header">
-        <h5 class="modal-title" id="modifierModalTitle">客製化選擇</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+        <h5 class="modal-title" id="modifierModalTitle">{{ ui.customize }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
       </div>
       <div class="modal-body" id="modifierModalBody"></div>
       <div class="modal-footer">
-        <button class="btn btn-warning w-100 fw-bold" type="button" data-action="confirm-modifiers">確認加入購物車</button>
+        <button class="btn btn-warning w-100 fw-bold" type="button" data-action="confirm-modifiers">{{ ui.confirm_modifiers }}</button>
       </div>
     </div>
   </div>
@@ -550,25 +550,25 @@
     <div class="modal-content bg-dark text-white">
       <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-clipboard-check"></i> {{ ui.confirm_title }}</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
       </div>
       <div class="modal-body">
         <div id="preview-items"></div>
         <div class="mt-3 p-3 bg-secondary bg-opacity-25 rounded text-end">
-            <div>商品小計: $<span id="preview-subtotal">0</span></div>
+            <div>{{ ui.item_subtotal }}: $<span id="preview-subtotal">0</span></div>
             <div class="text-warning d-none" id="preview-promotion-row">{{ ui.promotion }}: -$<span id="preview-promotion">0</span></div>
-            <div class="text-info">促銷折扣: -$<span id="preview-promo">0</span></div>
+            <div class="text-info">{{ ui.promo_discount }}: -$<span id="preview-promo">0</span></div>
             <div class="text-info d-none" id="preview-tier-row">{{ ui.member_discount }}: -$<span id="preview-tier">0</span></div>
             <div class="d-none" id="preview-service-row">{{ ui.service_charge }}: +$<span id="preview-service">0</span></div>
-            <div class="d-none" id="preview-delivery-row">外送費: +$<span id="preview-delivery">0</span></div>
+            <div class="d-none" id="preview-delivery-row">{{ ui.delivery_fee }}: +$<span id="preview-delivery">0</span></div>
             {% if not is_guest %}
-            <div class="text-success">點數折抵: -$<span id="preview-points">0</span></div>
+            <div class="text-success">{{ ui.points_discount }}: -$<span id="preview-points">0</span></div>
             {% endif %}
-            <div class="fw-bold fs-4 text-warning">應付總額: $<span id="preview-final">0</span></div>
-            <div class="text-info d-none" id="preview-pickup-row"><i class="bi bi-clock me-1"></i>取餐時間：<span id="preview-pickup"></span></div>
-            <div class="small text-white-50 d-none" id="preview-calories-row">約 <span id="preview-calories">0</span> 大卡</div>
+            <div class="fw-bold fs-4 text-warning">{{ ui.payable_total }}: $<span id="preview-final">0</span></div>
+            <div class="text-info d-none" id="preview-pickup-row"><i class="bi bi-clock me-1"></i>{{ ui.pickup_time_label }} <span id="preview-pickup"></span></div>
+            <div class="small text-white-50 d-none" id="preview-calories-row">{{ ui.about }} <span id="preview-calories">0</span> kcal</div>
             {% if not is_guest %}
-            <div class="text-warning small">結帳預估新增點數: +<span id="preview-earned">0</span> 點</div>
+            <div class="text-warning small">{{ ui.estimated_points }}: +<span id="preview-earned">0</span> {{ ui.points }}</div>
             {% endif %}
         </div>
       </div>
@@ -576,10 +576,10 @@
       <div class="px-3 pb-2" id="invoiceBox">
         <div class="fw-bold small mb-1"><i class="bi bi-receipt me-1"></i>{{ ui.invoice }}</div>
         <div class="row g-1">
-          <div class="col-5"><select id="invoiceType" class="form-select form-select-sm bg-dark text-white border-secondary" aria-label="發票類型">
-            <option value="">紙本 / 依店家預設</option><option value="mobile">手機條碼載具</option><option value="company">打統一編號</option><option value="donate">捐贈發票</option>
+                    <div class="col-5"><select id="invoiceType" class="form-select form-select-sm bg-dark text-white border-secondary" aria-label="{{ ui.invoice_type }}">
+                        <option value="">{{ ui.paper_invoice }}</option><option value="mobile">{{ ui.mobile_carrier }}</option><option value="company">{{ ui.company_id }}</option><option value="donate">{{ ui.donate_invoice }}</option>
           </select></div>
-          <div class="col-7"><input type="text" id="invoiceValue" class="form-control form-control-sm bg-dark text-white border-secondary d-none" maxlength="16" autocomplete="off" aria-label="載具 / 統編 / 愛心碼"></div>
+                    <div class="col-7"><input type="text" id="invoiceValue" class="form-control form-control-sm bg-dark text-white border-secondary d-none" maxlength="16" autocomplete="off" aria-label="{{ ui.invoice_value }}"></div>
         </div>
       </div>
       {% endif %}
@@ -600,52 +600,52 @@
       </div>
       <div class="modal-body p-4">
         <div class="text-center mb-3">
-          <h6 class="text-muted mb-1">訂單編號</h6>
-          <h3 class="fw-bold text-success mb-0">取餐編號：<span id="receipt-pickup">#000</span></h3>
-          <small class="text-muted">系統單號：<span id="receipt-order-id">#0</span></small>
+          <h6 class="text-muted mb-1">{{ ui.order_number }}</h6>
+          <h3 class="fw-bold text-success mb-0">{{ ui.pickup_number_label }}：<span id="receipt-pickup">#000</span></h3>
+          <small class="text-muted">{{ ui.order_id_label }}：<span id="receipt-order-id">#0</span></small>
           <div class="mt-2 d-none" id="receipt-node-row">
-            <span class="badge bg-dark"><i class="bi bi-shop me-1"></i>取餐分店：<span id="receipt-node"></span></span>
-            <div class="small text-muted mt-1 d-none" id="receipt-pending-hint">分店接單後會產生取餐號碼，請稍後於「我的訂單」查看。</div>
+            <span class="badge bg-dark"><i class="bi bi-shop me-1"></i>{{ ui.store_pickup }}：<span id="receipt-node"></span></span>
+            <div class="small text-muted mt-1 d-none" id="receipt-pending-hint">{{ ui.pickup_pending_hint }}</div>
           </div>
         </div>
         <hr>
         <div class="row mb-2">
-          <div class="col-6"><strong>顧客姓名：</strong> <span id="receipt-user"></span></div>
-          <div class="col-6"><strong>用餐方式：</strong> <span id="receipt-type" class="badge bg-primary"></span></div>
+          <div class="col-6"><strong>{{ ui.customer_name }}：</strong> <span id="receipt-user"></span></div>
+          <div class="col-6"><strong>{{ ui.order_type }}：</strong> <span id="receipt-type" class="badge bg-primary"></span></div>
         </div>
         <div class="row mb-3">
-          <div class="col-12"><strong>付款方式：</strong> <span id="receipt-payment"></span></div>
-          <div class="col-12 small text-muted d-none" id="receipt-note-row">備註：<span id="receipt-note"></span></div>
-          <div class="col-12 fw-bold text-primary d-none" id="receipt-delivery-row"><i class="bi bi-scooter me-1"></i>外送到府：<span id="receipt-delivery"></span></div>
-          <div class="col-12 fw-bold text-primary d-none" id="receipt-pickup-at-row"><i class="bi bi-clock me-1"></i>預約取餐：<span id="receipt-pickup-at"></span></div>
+          <div class="col-12"><strong>{{ ui.payment_method }}：</strong> <span id="receipt-payment"></span></div>
+          <div class="col-12 small text-muted d-none" id="receipt-note-row">{{ ui.note }}：<span id="receipt-note"></span></div>
+          <div class="col-12 fw-bold text-primary d-none" id="receipt-delivery-row"><i class="bi bi-scooter me-1"></i>{{ ui.delivery_label }}：<span id="receipt-delivery"></span></div>
+          <div class="col-12 fw-bold text-primary d-none" id="receipt-pickup-at-row"><i class="bi bi-clock me-1"></i>{{ ui.scheduled_pickup }}：<span id="receipt-pickup-at"></span></div>
         </div>
 
-        <h6><strong>點餐明細：</strong></h6>
+        <h6><strong>{{ ui.order_details }}：</strong></h6>
         <div class="table-responsive">
           <table class="table table-sm align-middle">
             <thead class="table-light">
-              <tr><th>品項</th><th>數量</th><th>單價</th><th>小計</th></tr>
+              <tr><th>{{ ui.item }}</th><th>{{ ui.quantity }}</th><th>{{ ui.unit_price }}</th><th>{{ ui.subtotal }}</th></tr>
             </thead>
             <tbody id="receipt-items-body"></tbody>
           </table>
         </div>
 
         <div class="bg-light p-3 rounded mt-2">
-            <div class="d-flex justify-content-between small"><span>小計：</span><span>$<span id="receipt-subtotal">0</span></span></div>
-            <div class="d-flex justify-content-between small text-success"><span>總折扣（促銷/點數）：</span><span>-$<span id="receipt-discount">0</span></span></div>
+            <div class="d-flex justify-content-between small"><span>{{ ui.subtotal }}：</span><span>$<span id="receipt-subtotal">0</span></span></div>
+            <div class="d-flex justify-content-between small text-success"><span>{{ ui.total_discount }}：</span><span>-$<span id="receipt-discount">0</span></span></div>
             <div class="d-flex justify-content-between small d-none" id="receipt-service-row"><span>{{ ui.service_charge }}：</span><span>+$<span id="receipt-service">0</span></span></div>
             <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
-                <h5 class="mb-0">實付金額：</h5>
+                <h5 class="mb-0">{{ ui.paid_amount }}：</h5>
                 <h4 class="mb-0 text-danger fw-bold">$<span id="receipt-total">0</span></h4>
             </div>
             {% if not is_guest %}
             <div class="d-flex justify-content-between small fw-bold mt-2 pt-2 border-top receipt-points">
-                <span>🌟 本次獲得紅利點數：</span>
-                <strong id="receipt-earned-points">+0 點</strong>
+                <span>🌟 {{ ui.earned_points }}：</span>
+                <strong id="receipt-earned-points">+0 {{ ui.points }}</strong>
             </div>
             <div class="d-flex justify-content-between small text-muted">
-                <span>目前點數餘額：</span>
-                <strong id="receipt-current-points">0 點</strong>
+                <span>{{ ui.points_balance }}：</span>
+                <strong id="receipt-current-points">0 {{ ui.points }}</strong>
             </div>
             {% endif %}
         </div>
@@ -668,13 +668,13 @@
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title fw-bold" id="tableBillTitle"><i class="bi bi-receipt me-1"></i>本桌帳單</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+                <h5 class="modal-title fw-bold" id="tableBillTitle"><i class="bi bi-receipt me-1"></i>{{ ui.table_bill }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
             </div>
             <div class="modal-body" id="tableBillBody"></div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">關閉</button>
-                <button type="button" class="btn btn-warning fw-bold" data-action="table-pay" id="tablePayBtn">前往付款</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ ui.close }}</button>
+                <button type="button" class="btn btn-warning fw-bold" data-action="table-pay" id="tablePayBtn">{{ ui.go_to_payment }}</button>
             </div>
         </div>
     </div>
@@ -684,8 +684,8 @@
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header bg-dark text-white">
-        <h5 class="modal-title"><i class="bi bi-clock-history"></i> 我的歷史訂單記錄</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+        <h5 class="modal-title"><i class="bi bi-clock-history"></i> {{ ui.order_history }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
       </div>
       <div class="modal-body p-4" id="history-modal-body"></div>
     </div>
@@ -695,39 +695,46 @@
 {% else %}
 
 <div class="container py-5">
+    {% if langs|length > 1 %}
+    <div class="d-flex justify-content-end mb-3" id="landingLangSwitch" role="group" aria-label="Language">
+        <div class="btn-group btn-group-sm lang-switch">
+            {% for l in langs %}<a class="btn {{ 'btn-warning text-dark' if l == lang else 'btn-outline-light' }}" href="{{ url_for('customer.customer_index', lang=l) }}">{{ lang_labels[l] }}</a>{% endfor %}
+        </div>
+    </div>
+    {% endif %}
     {% if table_expired %}
     <div class="alert alert-warning text-center" id="table-expired-banner">
-        <i class="bi bi-qr-code-scan me-1"></i>桌位 QR code 已失效，請重新掃描桌上的 QR code 後再點餐。
+        <i class="bi bi-qr-code-scan me-1"></i>{{ ui.table_expired }}
     </div>
     {% endif %}
     {% if dining_table %}
     <div class="alert alert-info text-center" id="table-banner">
-        <i class="bi bi-qr-code me-1"></i>您在 <strong>{{ dining_table.name }}</strong> 桌：請選擇以訪客或會員身分點餐，用餐後至櫃檯結帳。
-        <div class="d-flex flex-wrap justify-content-center gap-1 mt-2" id="serviceCallBox" role="group" aria-label="呼叫服務">
-            <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="water"><i class="bi bi-cup-straw me-1"></i>加水 / 餐具</button>
-            <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="bill"><i class="bi bi-receipt me-1"></i>想結帳</button>
-            <button type="button" class="btn btn-sm btn-dark" data-action="call-service" data-kind="help"><i class="bi bi-bell me-1"></i>呼叫服務</button>
+        <i class="bi bi-qr-code me-1"></i>{{ ui.table_order_notice }} <strong>{{ dining_table.name }}</strong>：{{ ui.table_order_delivery }}
+        <div class="d-flex flex-wrap justify-content-center gap-1 mt-2" id="serviceCallBox" role="group" aria-label="{{ ui.service_help }}">
+            <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="water"><i class="bi bi-cup-straw me-1"></i>{{ ui.service_water }}</button>
+            <button type="button" class="btn btn-sm btn-outline-dark" data-action="call-service" data-kind="bill"><i class="bi bi-receipt me-1"></i>{{ ui.service_checkout }}</button>
+            <button type="button" class="btn btn-sm btn-dark" data-action="call-service" data-kind="help"><i class="bi bi-bell me-1"></i>{{ ui.service_help }}</button>
         </div>
     </div>
     {% endif %}
     <div class="hero hero-landing text-white text-center p-4 mb-4">
         <div>
-            <h1 class="display-5">歡迎使用自助點餐系統</h1>
-            <p class="lead">加入會員可累積點數！消費滿 ${{ reward_setting.spend_per_point if reward_setting else 100 }} 積 1 點</p>
+            <h1 class="display-5">{{ ui.landing_title }}</h1>
+            <p class="lead">{{ ui.landing_rewards }} ${{ reward_setting.spend_per_point if reward_setting else 100 }} {{ ui.landing_rewards_suffix }}</p>
             <div class="d-flex justify-content-center gap-2 mt-3">
                 {% if is_online %}
                 {# 線上點餐只限會員 (可線上以手機 + PIN 註冊)；沒有門市相機，不提供人臉登入 #}
-                <a class="btn btn-register btn-lg" href="{{ url_for('auth.register') }}">加入會員</a>
-                <a class="btn btn-login btn-lg" href="{{ url_for('auth.member_login') }}">會員登入</a>
-                {% if member_features().line_login %}<a class="btn btn-success btn-lg" href="{{ url_for('member_auth.line_start') }}"><i class="bi bi-line"></i> LINE 登入</a>{% endif %}
+                <a class="btn btn-register btn-lg" href="{{ url_for('auth.register') }}">{{ ui.join_member }}</a>
+                <a class="btn btn-login btn-lg" href="{{ url_for('auth.member_login') }}">{{ ui.member_login }}</a>
+                {% if member_features().line_login %}<a class="btn btn-success btn-lg" href="{{ url_for('member_auth.line_start') }}"><i class="bi bi-line"></i> {{ ui.line_login }}</a>{% endif %}
                 {% else %}
-                <a class="btn btn-register btn-lg" href="{{ url_for('auth.register') }}">加入會員</a>
-                <a class="btn btn-login btn-lg" href="{{ url_for('auth.face_login') }}">會員登入</a>
-                {% if member_features().line_login %}<a class="btn btn-success btn-lg" href="{{ url_for('member_auth.line_start') }}"><i class="bi bi-line"></i> LINE 登入</a>{% endif %}
+                <a class="btn btn-register btn-lg" href="{{ url_for('auth.register') }}">{{ ui.join_member }}</a>
+                <a class="btn btn-login btn-lg" href="{{ url_for('auth.face_login') }}">{{ ui.member_login }}</a>
+                {% if member_features().line_login %}<a class="btn btn-success btn-lg" href="{{ url_for('member_auth.line_start') }}"><i class="bi bi-line"></i> {{ ui.line_login }}</a>{% endif %}
                 <form method="post" action="{{ url_for('auth.guest_login') }}" class="d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-outline-warning btn-lg">
-                        <i class="bi bi-person-fill"></i> 訪客直接點餐
+                        <i class="bi bi-person-fill"></i> {{ ui.guest_order }}
                     </button>
                 </form>
                 {% endif %}
@@ -735,13 +742,13 @@
         </div>
     </div>
     {% if is_online %}
-    <div class="text-center text-white-50 mb-2" id="online-member-hint">線上點餐僅限會員：請以手機號碼 + PIN 登入，或先加入會員。訪客請至門市點餐。</div>
+    <div class="text-center text-white-50 mb-2" id="online-member-hint">{{ ui.online_members_only }}</div>
     {% endif %}
-    {% if pro.a11yButton %}<div class="text-center mb-3"><button type="button" class="btn btn-outline-light a11y-toggle btn-lg" data-action="toggle-a11y" aria-pressed="false" id="a11yToggleLanding" title="大字 / 高對比"><i class="bi bi-type"></i> 大字</button></div>{% endif %}
-    {% if group_order_enabled %}<div class="text-center mb-2"><a class="btn btn-outline-info" id="groupOrderLink" href="{{ url_for('group_orders.new', shop=tenant.slug) }}"><i class="bi bi-people-fill"></i> 團體預購 (多人一起訂、一起取餐)</a></div>{% endif %}
-    <div class="text-center small mb-2"><a class="text-white-50" href="{{ url_for('privacy.notice') }}">隱私權告知</a></div>
-    <div class="text-center text-white-50">點擊後台管理可進入店家管理</div>
-    <div class="text-center mt-3"><a class="text-white" href="{{ url_for('admin.admin_dashboard') }}">後台管理</a></div>
+    {% if pro.a11yButton %}<div class="text-center mb-3"><button type="button" class="btn btn-outline-light a11y-toggle btn-lg" data-action="toggle-a11y" aria-pressed="false" id="a11yToggleLanding" title="{{ ui.large_text }}"><i class="bi bi-type"></i> {{ ui.large_text }}</button></div>{% endif %}
+    {% if group_order_enabled %}<div class="text-center mb-2"><a class="btn btn-outline-info" id="groupOrderLink" href="{{ url_for('group_orders.new', shop=tenant.slug) }}"><i class="bi bi-people-fill"></i> {{ ui.group_order }} {{ ui.group_order_description }}</a></div>{% endif %}
+    <div class="text-center small mb-2"><a class="text-white-50" href="{{ url_for('privacy.notice') }}">{{ ui.privacy_notice }}</a></div>
+    <div class="text-center text-white-50">{{ ui.admin_entry_hint }}</div>
+    <div class="text-center mt-3"><a class="text-white" href="{{ url_for('admin.admin_dashboard') }}">{{ ui.admin_entry }}</a></div>
 </div>
 {% if attract and attract.slides %}
 <!-- 點餐機待機輪播：閒置後全螢幕顯示推薦餐點，觸碰任一處回到首頁 -->
