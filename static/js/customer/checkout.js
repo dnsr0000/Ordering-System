@@ -186,7 +186,7 @@ export function handleCheckoutError(err) {
     if (data.price_changed) {
         modal('confirmModal').hide();
         applyServerPrices(data);
-        alert(`⚠️ ${ui.price_changed_notice}`);
+        alert(`⚠️ ${ui.price_changed_notice.replace('{total}', Math.round(Number(data.server_total) || 0))}`);
         bootstrap.Offcanvas.getOrCreateInstance($('cart-sidebar')).show();
         return;
     }
@@ -360,7 +360,7 @@ export function orderCardHtml(o) {
                     <small class="text-muted">
                         ${ui.total_discount}: -$${Math.round(o.discount_amount || 0)} ${ptsUsed > 0 ? `(${ui.deducted_points} ${ptsUsed} ${ui.points})` : ''} | ${ui.earned_points}: +${o.points_earned} ${ui.points}
                     </small>
-                    <div class="fw-bold text-danger fs-6">${ui.actual_paid}: $${Math.round(o.total_price)}</div>
+                    <div class="fw-bold text-danger fs-6">${ui.actual_paid}$${Math.round(o.total_price)}</div>
                 </div>
             </div>
         </div>`;
