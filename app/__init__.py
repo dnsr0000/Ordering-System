@@ -1,6 +1,7 @@
 import logging
 import os
 import posixpath
+import re
 import sqlite3
 
 from flask import Flask, abort, request
@@ -116,6 +117,11 @@ def create_app(config_class=Config):
     register_error_handlers(app)
     _register_security_hooks(app)
 
+    @app.template_filter('flash_text')
+    def flash_text(message):
+        """提示訊息的圖示由 _flashes.html 依類別加上；AppError 等仍帶 ✅ ❌ 開頭的訊息先去掉，避免重複"""
+        return re.sub(r'^(?:✅|❌|⚠️|ℹ️)\s*', '', str(message or ''))
+
     from app.tenant_context import install_tenant_context
     install_tenant_context(app)
 
@@ -145,6 +151,13 @@ def create_app(config_class=Config):
     if app.config['SYNC_ROLE'] == 'hub' and app.config.get('ONLINE_PAYMENT') and not app.config.get('ECPAY_STAGE') \
             and not all(app.config.get(k) for k in ('ECPAY_MERCHANT_ID', 'ECPAY_HASH_KEY', 'ECPAY_HASH_IV')):
         raise RuntimeError('ECPAY_STAGE=0 (正式收款) 必須同時設定 ECPAY_MERCHANT_ID、ECPAY_HASH_KEY、ECPAY_HASH_IV')
+    if app.config['SYNC_ROLE'] == 'hub' and app.config.get('ONLINE_PAYMENT') and not app.testing:
+        from app.services.payment_ecpay import test_keys_blocked
+        with app.app_context():
+            if test_keys_blocked():
+                logging.getLogger(__name__).warning(
+                    '綠界使用公開測試金鑰且未設定 ECPAY_ALLOW_TEST_KEYS=1：線上付款、桌邊線上結帳、訂位訂金的付款頁與通知一律拒絕 '
+                    '(測試環境請設 ECPAY_ALLOW_TEST_KEYS=1；正式收款請設 ECPAY_STAGE=0 並填入正式特店資料)')
     if app.config['SYNC_ROLE'] == 'hub' and not app.testing and not app.config.get('SESSION_COOKIE_SECURE'):
         logging.getLogger(__name__).warning('線上端未設定 SESSION_COOKIE_SECURE=1：登入 Cookie 可能經由 http 明文傳送')
     hub_url = app.config.get('SYNC_HUB_URL', '')

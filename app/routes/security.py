@@ -29,7 +29,7 @@ def enforce_required_2fa():
     message = '本店要求您的帳號啟用兩步驟驗證，請先在「帳號安全」頁完成設定'
     if wants_json():
         return jsonify({'success': False, 'message': message, 'need_2fa_setup': True}), 403
-    flash(f'⚠️ {message}', 'warning')
+    flash(f'{message}', 'warning')
     return redirect(url_for('security.account'))
 
 
@@ -49,21 +49,21 @@ def two_factor():
     if request.method == 'GET':
         return render_template('admin_2fa.html', username=staff.username)
     keys = auth_throttle.staff_keys(staff.username, request.remote_addr or '-')
-    remaining = auth_throttle.lock_remaining(keys.values())
+    remaining = auth_throttle.staff_lock_remaining(keys)
     if remaining:
         session.pop(security_service.PENDING_KEY, None)
         minutes = max(1, int((remaining.total_seconds() + 59) // 60))
-        flash(f'⚠️ 驗證碼錯誤次數過多，此帳號已暫時鎖定，請於 {minutes} 分鐘後再試。', 'danger')
+        flash(f'驗證碼錯誤次數過多，此帳號已暫時鎖定，請於 {minutes} 分鐘後再試。', 'danger')
         return redirect(url_for('admin.admin_dashboard'))
     method = security_service.verify_second_factor(staff, request.form.get('code'))
     if method is None:
         auth_throttle.record_staff_failure(keys)
-        flash('❌ 驗證碼不正確 (或已使用過)，請輸入驗證 App 上目前的 6 位數，或一組備用碼', 'danger')
+        flash('驗證碼不正確 (或已使用過)，請輸入驗證 App 上目前的 6 位數，或一組備用碼', 'danger')
         return render_template('admin_2fa.html', username=staff.username), 401
     auth_throttle.clear_keys(keys['device'], keys['account'])
     session.pop(security_service.PENDING_KEY, None)
     if method == 'backup':
-        flash(f'⚠️ 已使用一組備用碼登入，剩下 {security_service.remaining_backup_codes(staff)} 組；'
+        flash(f'已使用一組備用碼登入，剩下 {security_service.remaining_backup_codes(staff)} 組；'
               f'手機遺失請到「帳號安全」重新設定驗證 App', 'warning')
     from app.routes.admin import complete_staff_login
     return complete_staff_login(staff)
@@ -102,7 +102,7 @@ def account():
             session.pop(SETUP_KEY, None)
             record_staff_audit('STAFF_2FA_ENABLE', details=f'{staff.username} 啟用兩步驟驗證')
             db.session.commit()
-            flash('✅ 已啟用兩步驟驗證。請立即抄下備用碼並妥善保存 (只顯示這一次)', 'success')
+            flash('已啟用兩步驟驗證。請立即抄下備用碼並妥善保存 (只顯示這一次)', 'success')
         elif action == 'regen_backup':
             counter = security_service.match_totp(staff.totp_secret, request.form.get('code'), staff.totp_last_counter)
             if counter is None:
@@ -111,7 +111,7 @@ def account():
             new_codes, staff.totp_backup_codes = security_service.new_backup_codes()
             record_staff_audit('STAFF_2FA_BACKUP', details=f'{staff.username} 重新產生備用碼')
             db.session.commit()
-            flash('✅ 已產生新的備用碼，舊的備用碼全部失效', 'success')
+            flash('已產生新的備用碼，舊的備用碼全部失效', 'success')
         elif action == 'disable_2fa':
             if security_service.required_for(staff):
                 raise AppError('本店要求您的角色必須啟用兩步驟驗證，無法停用 (可重新設定驗證 App)')
@@ -124,7 +124,7 @@ def account():
         elif action == 'revoke_session':
             row = security_service.revoke_session(staff, int(request.form.get('session_id') or 0))
             db.session.commit()
-            flash(f'✅ 已登出 {row.device} ({row.ip_address})', 'success')
+            flash(f'已登出 {row.device} ({row.ip_address})', 'success')
             return redirect(url_for('security.account'))
         elif action == 'logout_others':
             current = security_service.current_session_row()
@@ -134,7 +134,7 @@ def account():
                     security_service.revoke_session(staff, row.id, '登出其他裝置')
                     n += 1
             db.session.commit()
-            flash(f'✅ 已登出其他 {n} 個裝置', 'success')
+            flash(f'已登出其他 {n} 個裝置', 'success')
             return redirect(url_for('security.account'))
         elif action == 'logout_all':
             security_service.logout_everywhere(staff)

@@ -9,6 +9,7 @@ from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template
 
 from sqlalchemy.exc import IntegrityError
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.table import DiningTable
@@ -16,10 +17,9 @@ from app.services import table_service
 from app.services.audit import record_staff_audit
 from app.sync import runtime as sync_runtime
 from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import get_json_dict, role_required, safe_int
+from app.utils import get_json_dict, get_own, role_required, safe_int
 
 tables_bp = Blueprint('tables', __name__)
-MANAGERS = ('owner', 'manager')
 
 
 @tables_bp.before_request
@@ -58,14 +58,11 @@ def call_service():
 
 
 def _table(table_id):
-    table = db.session.get(DiningTable, safe_int(table_id, 0))
-    if table is None or table.tenant_id != g.tenant_id:
-        abort(404)
-    return table
+    return get_own(DiningTable, table_id, '桌位')
 
 
 @tables_bp.route('/admin/tables', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def manage():
     if request.method == 'POST':
         action = request.form.get('action')
@@ -86,7 +83,7 @@ def manage():
         elif action == 'base_url':
             g.tenant.table_qr_base_url = table_service.normalize_base_url(request.form.get('base_url'))
             db.session.commit()
-            flash('✅ 已更新 QR code 使用的門市網址 (已印出的 QR code 需重新列印)', 'success')
+            flash('已更新 QR code 使用的門市網址 (已印出的 QR code 需重新列印)', 'success')
         else:
             table = _table(request.form.get('table_id'))
             if action == 'rename':
@@ -96,20 +93,20 @@ def manage():
                 table_service.update_table_details(table, request.form.get('seats', table.seats),
                                                    request.form.get('area', table.area), request.form.get('shape', table.shape))
                 record_staff_audit('TABLE_CHANGE', details=f'桌位 {old} 改為 {table.name}')
-                flash(f'✅ 已更新 {table.label}', 'success')
+                flash(f'已更新 {table.label}', 'success')
             elif action == 'toggle':
                 table.is_active = not table.is_active
                 record_staff_audit('TABLE_CHANGE', details=f"{'啟用' if table.is_active else '停用'}桌位 {table.name}")
-                flash(f"✅ {table.label}已{'啟用' if table.is_active else '停用 (掃碼後無法點餐)'}", 'success')
+                flash(f"{table.label}已{'啟用' if table.is_active else '停用 (掃碼後無法點餐)'}", 'success')
             elif action == 'rotate':
                 table_service.rotate_token(table)
                 record_staff_audit('TABLE_CHANGE', details=f'重新產生桌位 {table.name} 的 QR code')
-                flash(f'✅ 已重新產生 {table.label}的 QR code：舊的 QR code 已失效，請重新列印', 'success')
+                flash(f'已重新產生 {table.label}的 QR code：舊的 QR code 已失效，請重新列印', 'success')
             elif action == 'delete':
                 name = table.name
                 table_service.delete_table(table)
                 record_staff_audit('TABLE_CHANGE', details=f'刪除桌位 {name}')
-                flash(f'✅ 已刪除 {name} 桌', 'success')
+                flash(f'已刪除 {name} 桌', 'success')
             else:
                 abort(400)
             try:
@@ -134,7 +131,7 @@ def manage():
 
 
 @tables_bp.route('/admin/tables/layout', methods=['POST'], endpoint='save_layout')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def save_layout():
     """平面圖拖拉後儲存：{tables: [{id, x, y}]}"""
     n = table_service.save_layout((get_json_dict() or {}).get('tables'))
@@ -144,7 +141,7 @@ def save_layout():
 
 
 @tables_bp.route('/admin/tables/print', endpoint='print_cards')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def print_cards():
     ids = {safe_int(i, 0) for i in request.args.getlist('id')}
     query = DiningTable.query.filter_by(is_active=True)

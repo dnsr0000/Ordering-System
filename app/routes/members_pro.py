@@ -4,28 +4,26 @@ from datetime import date
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.member import MemberTier, WalletLedger
 from app.models.user import User
 from app.services import line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
-from app.utils import role_required, safe_float, safe_int
+from app.utils import get_own, role_required, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
-MANAGERS = ('owner', 'manager')
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
 
 
 def _user(uid):
-    user = db.session.get(User, safe_int(uid, 0))
-    if user is None or user.tenant_id != g.tenant_id:
-        raise AppError('查無此會員', 404)
+    user = get_own(User, uid, '會員')
     return user
 
 
 @members_pro_bp.route('/admin/members_pro', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def manage():
     if request.method == 'POST':
         f = request.form
@@ -40,26 +38,22 @@ def manage():
                                       points_multiplier=min(10.0, max(0.0, safe_float(f.get('points_multiplier'), 1.0))),
                                       discount_percent=min(50, max(0, safe_int(f.get('discount_percent'), 0))),
                                       color=f.get('color') if f.get('color') in TIER_COLORS else 'secondary'))
-            flash(f'✅ 已新增等級「{name}」', 'success')
+            flash(f'已新增等級「{name}」', 'success')
         elif action == 'edit_tier':
-            tier = db.session.get(MemberTier, safe_int(f.get('tier_id'), 0))
-            if tier is None or tier.tenant_id != g.tenant_id:
-                raise AppError('查無此等級', 404)
+            tier = get_own(MemberTier, f.get('tier_id'), '等級')
             tier.name = (f.get('name') or tier.name).strip()[:30]
             tier.min_spend = max(0, safe_int(f.get('min_spend'), tier.min_spend))
             tier.points_multiplier = min(10.0, max(0.0, safe_float(f.get('points_multiplier'), tier.points_multiplier)))
             tier.discount_percent = min(50, max(0, safe_int(f.get('discount_percent'), tier.discount_percent)))
             tier.color = f.get('color') if f.get('color') in TIER_COLORS else tier.color
-            flash('✅ 已更新等級', 'success')
+            flash('已更新等級', 'success')
         elif action == 'delete_tier':
-            tier = db.session.get(MemberTier, safe_int(f.get('tier_id'), 0))
-            if tier is None or tier.tenant_id != g.tenant_id:
-                raise AppError('查無此等級', 404)
+            tier = get_own(MemberTier, f.get('tier_id'), '等級')
             db.session.delete(tier)
             flash(f'已刪除等級「{tier.name}」', 'success')
         elif action == 'recompute_tiers':
             upgraded = sum(1 for u in User.query.all() if wallet_service.refresh_tier(u))
-            flash(f'✅ 已重新計算累積消費，{upgraded} 位會員升級', 'success')
+            flash(f'已重新計算累積消費，{upgraded} 位會員升級', 'success')
         elif action == 'member':
             user = _user(f.get('user_id'))
             raw = (f.get('birthday') or '').strip()
@@ -69,16 +63,14 @@ def manage():
                 raise AppError('生日格式不正確')
             tier_id = safe_int(f.get('tier_id'), 0)
             if tier_id:
-                tier = db.session.get(MemberTier, tier_id)
-                if tier is None or tier.tenant_id != g.tenant_id:
-                    raise AppError('查無此等級', 404)
+                tier = get_own(MemberTier, tier_id, '等級')
                 user.tier_id = tier.id
             else:
                 user.tier_id = None
             if f.get('unbind_line'):
                 user.line_user_id = ''
             record_staff_audit('EDIT_USER', target_user_id=user.id, details=f'會員 {user.name}：生日 / 等級 / LINE 綁定更新')
-            flash(f'✅ 已更新會員「{user.name}」', 'success')
+            flash(f'已更新會員「{user.name}」', 'success')
         elif action == 'wallet_adjust':
             if current_user.role != 'owner':
                 raise AppError('只有負責人可以直接調整儲值金', 403)
@@ -91,10 +83,10 @@ def manage():
                                              staff=current_user.username) is None:
                 raise AppError('扣除金額超過目前餘額')
             record_staff_audit('WALLET_ADJUST', target_user_id=user.id, details=f'儲值金調整 {delta:+d}：{note}')
-            flash(f'✅ 已調整「{user.name}」的儲值金 {delta:+d}', 'success')
+            flash(f'已調整「{user.name}」的儲值金 {delta:+d}', 'success')
         elif action == 'birthday_now':
             sent = wallet_service.grant_birthday_gifts(g.tenant_id)
-            flash(f'✅ 已送出 {sent} 份生日禮 (本月壽星且今年尚未贈送)', 'success')
+            flash(f'已送出 {sent} 份生日禮 (本月壽星且今年尚未贈送)', 'success')
         elif action == 'broadcast':
             text = (f.get('message') or '').strip()
             if not text:
@@ -111,7 +103,7 @@ def manage():
                 raise AppError('沒有符合條件且已綁定 LINE 的會員')
             sent = line_service.multicast_text(g.tenant_id, ids, text)
             record_staff_audit('LINE_BROADCAST', details=f'LINE 推播給 {sent} 位會員：{text[:100]}')
-            flash(f'✅ 已推播給 {sent} 位會員', 'success')
+            flash(f'已推播給 {sent} 位會員', 'success')
         else:
             raise AppError('不支援的操作')
         db.session.commit()

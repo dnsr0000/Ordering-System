@@ -116,6 +116,8 @@ class Config:
     ECPAY_MERCHANT_ID = _env("ECPAY_MERCHANT_ID")             # 留空 = 綠界公開的測試特店
     ECPAY_HASH_KEY = _env("ECPAY_HASH_KEY")
     ECPAY_HASH_IV = _env("ECPAY_HASH_IV")
+    # 綠界測試金鑰是公開的，任何人都能偽造付款通知：非測試環境要用測試金鑰收款 (含桌邊結帳、訂位訂金) 必須明確設 1
+    ECPAY_ALLOW_TEST_KEYS = _env_flag("ECPAY_ALLOW_TEST_KEYS", False)
     # ---- Webhook：只送 https 且不送內網位址；自架內網整合才開啟 (見 app/services/webhook_service.py) ----
     WEBHOOK_ALLOW_PRIVATE = _env_flag("WEBHOOK_ALLOW_PRIVATE", False)
     WEBHOOK_ALLOW_HTTP = _env_flag("WEBHOOK_ALLOW_HTTP", False)
@@ -153,6 +155,8 @@ class Config:
     RESET_ADMIN_PASSWORD_ON_START = _env_flag("RESET_ADMIN_PASSWORD_ON_START", False)
 
     # ---- 安全性 ----
+    # 公開的「建立新店家」頁 (/tenant/register)：線上端 (多店家平台) 預設開放；門市主機預設關閉，只有平台管理者登入後可建立
+    ALLOW_TENANT_REGISTER = _env_flag("ALLOW_TENANT_REGISTER", SYNC_ROLE == "hub")
     # 反向代理層數：0 = 不信任 X-Forwarded-*。部署在 Nginx / Cloudflare 之後設為 1。
     TRUSTED_PROXY_COUNT = max(0, _env_int("TRUSTED_PROXY_COUNT", 0))
     SESSION_COOKIE_HTTPONLY = True

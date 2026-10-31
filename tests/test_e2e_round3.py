@@ -61,7 +61,7 @@ def test_kiosk_combo_choice(app, page, combo_menu):
     page.locator('#receiptModal.show').wait_for()
     assert req.value.post_data_json['items'][0]['combo_choices'] == [m['latte_choice']]
     with app.app_context():
-        order = Order.query.filter_by(uuid=req.value.post_data_json['client_order_id']).one()
+        order = Order.query.filter_by(client_order_id=req.value.post_data_json['client_order_id']).one()
         assert order.total_price == 185
     assert (_stock(app, m['latte']), _stock(app, m['tea'])) == (29, 30)
 

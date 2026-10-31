@@ -275,7 +275,7 @@ def test_top_items_with_revenue(app, admin_client):
     assert a['top_items'][0]['name'] == '香檸氣泡飲' and len(build_order_analytics(orders, limit=1)['top_items']) == 1
 
     # 前端讀取的 analytics.<欄位> 必須都由後端提供 (模板與靜態 JS 都檢查)
-    sources = [open(os.path.join(BASE_DIR, 'templates', 'admin.html'), encoding='utf-8').read()]
+    sources = [open(os.path.join(BASE_DIR, 'templates', name), encoding='utf-8').read() for name in ('admin.html', '_admin_modals.html')]
     js_dir = os.path.join(BASE_DIR, 'static', 'js')
     if os.path.isdir(js_dir):
         sources += [open(os.path.join(js_dir, f), encoding='utf-8').read() for f in os.listdir(js_dir) if f.endswith('.js')]

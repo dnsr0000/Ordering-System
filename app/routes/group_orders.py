@@ -4,12 +4,13 @@ from datetime import datetime, timedelta
 from flask import Blueprint, abort, flash, g, make_response, redirect, render_template, request, session, url_for
 from flask_login import current_user
 
+from app.models.enums import POS_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.group_order import GROUP_STATUS_LABELS, GroupOrder
 from app.services import group_order_service as svc
 from app.services.audit import record_staff_audit
-from app.utils import role_required, safe_int
+from app.utils import get_own, role_required, safe_int
 
 group_bp = Blueprint('group_orders', __name__)
 MANAGE_SESSION, ENTRY_SESSION = 'group_manage', 'group_entries'
@@ -26,7 +27,7 @@ def _remember(key, token, value=True):
 
 
 def _is_manager(group):
-    staff = current_user.is_authenticated and getattr(current_user, 'role', '') in ('owner', 'manager', 'staff')
+    staff = current_user.is_authenticated and getattr(current_user, 'role', '') in POS_ROLES
     return bool((session.get(MANAGE_SESSION) or {}).get(group.token)) or staff
 
 
@@ -95,7 +96,7 @@ def join(shop, token):
             db.session.commit()
             keys = list((session.get(ENTRY_SESSION) or {}).get(group.token) or []) + [raw]
             _remember(ENTRY_SESSION, group.token, keys[-10:])
-            flash(f'✅ 已加入「{entry.name}」的餐點 (可在下方修改)', 'success')
+            flash(f'已加入「{entry.name}」的餐點 (可在下方修改)', 'success')
         elif action in ('update', 'delete'):
             entry = mine.get(f.get('entry_key'))
             if entry is None:
@@ -104,7 +105,7 @@ def join(shop, token):
                 raise AppError('這個團購已截止，無法修改', 409)
             if action == 'update':
                 svc.save_entry(group, f.get('name'), svc.parse_lines(g.tenant_id, group, f), f.get('note'), entry=entry)
-                flash('✅ 已更新您的點餐', 'success')
+                flash('已更新您的點餐', 'success')
             else:
                 svc.lock_open(group)
                 db.session.delete(entry)
@@ -150,12 +151,12 @@ def manage(shop, token):
         elif action == 'toggle_auto':
             group.auto_submit = not group.auto_submit
             db.session.commit()
-            flash('✅ 截止時會自動送單' if group.auto_submit else '已關閉自動送單 (截止後請按「送單」)', 'success')
+            flash('截止時會自動送單' if group.auto_submit else '已關閉自動送單 (截止後請按「送單」)', 'success')
         elif action == 'submit':
             group, error = svc.submit(group.id, by=current_user.username if current_user.is_authenticated else '')
             if error:
                 raise AppError(f'送單失敗：{error}', 409)
-            flash(f'✅ 已送單，取餐號 #{group.order.pickup_number:03d}，請於 {group.pickup_at:%m/%d %H:%M} 到店取餐付款',
+            flash(f'已送單，取餐號 #{group.order.pickup_number:03d}，請於 {group.pickup_at:%m/%d %H:%M} 到店取餐付款',
                   'success')
         elif action == 'cancel':
             svc.cancel(group)
@@ -180,7 +181,7 @@ def print_list(shop, token):
 # 後台列表 (店員可代客建立、送單、取消)
 # ---------------------------------------------------------------------------
 @group_bp.route('/admin/group-orders', methods=['GET', 'POST'], endpoint='admin')
-@role_required('owner', 'manager', 'staff')
+@role_required(*POS_ROLES)
 def admin():
     from app.sync import runtime as sync_runtime
     if sync_runtime.is_hub():
@@ -193,18 +194,16 @@ def admin():
             group, _key = svc.create(g.tenant_id, f, staff=current_user.username)
             record_staff_audit('GROUP_ORDER', details=f'代客建立團體預購「{group.title}」{group.organizer_name}')
             db.session.commit()
-            flash(f'✅ 已建立團購「{group.title}」，請把分享連結傳給客人', 'success')
+            flash(f'已建立團購「{group.title}」，請把分享連結傳給客人', 'success')
             return redirect(url_for('group_orders.admin', created=group.token))
-        group = db.session.get(GroupOrder, safe_int(f.get('group_id'), 0))
-        if group is None or group.tenant_id != g.tenant_id:
-            raise AppError('查無此團購', 404)
+        group = get_own(GroupOrder, f.get('group_id'), '團購')
         if action == 'submit':
             group, error = svc.submit(group.id, by=current_user.username)
             if error:
                 raise AppError(f'送單失敗：{error}', 409)
             record_staff_audit('GROUP_ORDER', details=f'團體預購「{group.title}」送單 (訂單 #{group.order_id})')
             db.session.commit()
-            flash('✅ 已送單', 'success')
+            flash('已送單', 'success')
         elif action == 'cancel':
             svc.cancel(group)
             record_staff_audit('GROUP_ORDER', details=f'取消團體預購「{group.title}」')

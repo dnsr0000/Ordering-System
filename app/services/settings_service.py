@@ -192,6 +192,8 @@ SECTIONS = {s.key: s for s in (
                 Field('birthday_message', '生日推播 (LINE)', default='{name} 生日快樂！{shop} 送上生日禮，已放入您的會員帳戶。'),
                 Field('wallet_enabled', '啟用儲值金', 'bool', False,
                       help='儲值金屬預收款，依法需提供履約保證並揭露於定型化契約，啟用前請確認'),
+                Field('pos_verify', 'POS 動用儲值金 / 點數 / 寄杯需驗證會員身分', 'bool', True,
+                      help='掃描會員手機的動態條碼或由會員輸入 PIN；都不行時由店長 (或有「免驗證會員身分」權限的員工) 核准。關閉 = 只憑手機號碼即可 (信任櫃檯)'),
                 Field('topup_bonus', '加值贈送 (金額:贈送，逗號分隔)', placeholder='例如 1000:100, 3000:400'),
                 Field('wallet_max_balance', '儲值金餘額上限', 'int', 10000, min=0, max=1000000),
                 Field('points_expire_months', '點數有效期限 (月，0 = 永不到期)', 'int', 0, min=0, max=60,
@@ -245,6 +247,9 @@ SECTIONS = {s.key: s for s in (
                 Field('otp_on_register', '註冊時需簡訊驗證手機', 'bool', False),
                 Field('allow_pin_reset', '允許以簡訊重設 PIN', 'bool', False),
                 Field('template', '簡訊內容', default='【{shop}】驗證碼 {code}，10 分鐘內有效，請勿提供給他人。'),
+                Field('tenant_hourly_limit', '全店每小時驗證碼上限', 'int', 60, min=1, max=100000,
+                      help='每支手機另有每小時 5 次的限制；達到上限會暫停發送並通知，避免被惡意灌簡訊消耗點數'),
+                Field('tenant_daily_limit', '全店每天驗證碼上限', 'int', 300, min=1, max=1000000),
             ), enabled_field='provider'),
     # ------------------------------------------------------------------ F 通路
     Section('delivery', '外送平台', 'F 通路', 'bi-bicycle',
@@ -445,11 +450,6 @@ def _row(model, tid, key):
 def _is_node():
     from app.sync import runtime as sync_runtime
     return sync_runtime.is_node()
-
-
-def _is_hub():
-    from app.sync import runtime as sync_runtime
-    return sync_runtime.is_hub()
 
 
 def source(key, tenant_id=None):

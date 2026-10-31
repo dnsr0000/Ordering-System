@@ -12,8 +12,8 @@ from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.sync import runtime as sync_runtime
-from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import safe_int
+from app.tenant_context import tenant_bypass
+from app.utils import get_own, safe_int
 
 reservations_bp = Blueprint('reservations', __name__)
 
@@ -46,21 +46,17 @@ def board():
             r = reservation_service.create_reservation(g.tenant_id, f.get('name'), f.get('phone'), safe_int(f.get('party_size'), 0),
                                                        when, f.get('note'), 'staff', f.get('table_name'))
             record_staff_audit('RESERVATION', details=f'新增訂位：{r.name} {r.party_size} 位 {when:%m-%d %H:%M}')
-            flash(f'✅ 已新增訂位：{r.name} {r.party_size} 位', 'success')
+            flash(f'已新增訂位：{r.name} {r.party_size} 位', 'success')
         elif action == 'reservation_status':
-            r = db.session.get(Reservation, safe_int(f.get('reservation_id'), 0))
-            if r is None or r.tenant_id != g.tenant_id:
-                raise AppError('查無此訂位', 404)
+            r = get_own(Reservation, f.get('reservation_id'), '訂位')
             msg = reservation_service.set_reservation_status(r, f.get('status'), f.get('table_name'))
             if msg:
                 flash(f'{r.name}：{msg}', 'info')
         elif action == 'waitlist_add':
             e = reservation_service.join_waitlist(g.tenant_id, f.get('name'), f.get('phone'), safe_int(f.get('party_size'), 0))
-            flash(f'✅ 候位號碼 {e.label}', 'success')
+            flash(f'候位號碼 {e.label}', 'success')
         elif action == 'waitlist_status':
-            e = db.session.get(WaitlistEntry, safe_int(f.get('entry_id'), 0))
-            if e is None or e.tenant_id != g.tenant_id:
-                raise AppError('查無此候位', 404)
+            e = get_own(WaitlistEntry, f.get('entry_id'), '候位')
             reservation_service.set_waitlist_status(e, f.get('status'), f.get('table_name'))
             if e.status == 'called':
                 reservation_service.notify_called(e, g.tenant_id)
@@ -129,11 +125,11 @@ def deposit_pay(token):
     r = _by_token(token)
     if r.deposit_status != 'pending':
         return redirect(url_for('reservations.reservation_status', token=r.token))
+    payment_ecpay.require_keys_allowed()
     with tenant_bypass():   # 每次開啟付款頁都換新的交易編號 (綠界不接受重複編號；重新整理 / 付款失敗再試都可以)
         deposit_service.new_attempt(r)
         db.session.commit()
-    base_url = current_app.config.get('PUBLIC_BASE_URL') or request.url_root.rstrip('/')
-    resp = Response(render_template('reservation_pay.html', r=r, fields=deposit_service.form_fields(r, base_url),
+    resp = Response(render_template('reservation_pay.html', r=r, fields=deposit_service.form_fields(r),
                                     action=payment_ecpay.checkout_url(), stage=current_app.config.get('ECPAY_STAGE', True),
                                     minutes=deposit_service.PENDING_MINUTES))
     from app import CSP_POLICY
@@ -154,10 +150,10 @@ def deposit_notify():
 @csrf.exempt
 def deposit_result():
     """顧客付款後由綠界頁面帶回 (已簽章)：完成訂金付款並導向訂位資訊"""
-    params = dict(request.form.items())
-    if not payment_ecpay.verify(params):
+    params, status = payment_ecpay.parse_result(request.form, '訂金 (瀏覽器帶回)')
+    if status == 'bad_mac':
         abort(400)
-    if str(params.get('RtnCode')) == '1' and str(params.get('SimulatePaid', '0')) != '1':
+    if status == 'paid':
         deposit_service.mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
                                   params.get('CustomField1'))
     r = deposit_service.find(params.get('MerchantTradeNo'), params.get('CustomField1'))

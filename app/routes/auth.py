@@ -163,7 +163,7 @@ def face_login():
                                               threshold=FACE_MATCH_THRESHOLD)
     if user is None:
         raise AppError('人臉比對未通過，請先註冊或重新對準鏡頭！', 401)
-    login_member(user)
+    login_member(user, factor='face')
     return jsonify({'success': True, 'user_name': user.name, 'points': user.points})
 
 

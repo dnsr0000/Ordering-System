@@ -1,6 +1,7 @@
 from flask import Blueprint, g, jsonify
 from flask_login import current_user
 
+from app.models.enums import ALL_STAFF_ROLES
 from app.services import approval_service
 from app.services.order_service import change_order_status
 from app.utils import get_json_dict, role_required
@@ -9,7 +10,7 @@ orders_bp = Blueprint('orders', __name__)
 
 
 @orders_bp.route('/api/orders/<int:order_id>/status', methods=['POST'])
-@role_required('owner', 'manager', 'staff', 'kitchen')
+@role_required(*ALL_STAFF_ROLES)
 def api_update_order_status(order_id):
     """
     全系統唯一的訂單狀態更新端點 (廚房、取餐、POS、後台共用)。

@@ -29,6 +29,7 @@ import requests
 from flask import current_app
 from sqlalchemy import select, update
 
+from app.errors import AppError
 from app.extensions import db
 from app.models.enums import OrderStatus, PaymentMethod
 from app.models.order import Order, OrderItem
@@ -44,7 +45,39 @@ TEST_MERCHANT = ('3002607', 'pwFHCqoQZGmho4w6', 'EkRm7iFT261dpevs')
 _DOTNET_SAFE = {'%2d': '-', '%5f': '_', '%2e': '.', '%21': '!', '%2a': '*', '%28': '(', '%29': ')'}
 
 
+TEST_KEYS_MESSAGE = ('綠界目前使用公開的測試金鑰，任何人都能偽造付款通知；正式收款請設定 ECPAY_STAGE=0 與正式特店資料，'
+                     '測試環境要收測試付款請在 .env 設定 ECPAY_ALLOW_TEST_KEYS=1')
+
+
+class TestKeysNotAllowed(AppError):
+    def __init__(self):
+        super().__init__(TEST_KEYS_MESSAGE, 503)
+
+
+def using_test_keys():
+    """是否以綠界公開測試特店 (3002607) 收款：特店編號 / HashKey / HashIV 任一未設定"""
+    cfg = current_app.config
+    return not all(cfg.get(k) for k in ('ECPAY_MERCHANT_ID', 'ECPAY_HASH_KEY', 'ECPAY_HASH_IV'))
+
+
+def test_keys_blocked():
+    """
+    測試金鑰是公開的 (寫在綠界文件與本檔最上方)：任何人只要知道訂單編號與金額就能算出正確的檢查碼，
+    把訂單 / 桌邊結帳 / 訂位訂金標記為已付款。因此未明確設定 ECPAY_ALLOW_TEST_KEYS=1 時，
+    付款表單不產生、付款通知一律視為檢查碼錯誤。
+    """
+    return using_test_keys() and not current_app.config.get('ECPAY_ALLOW_TEST_KEYS')
+
+
+def require_keys_allowed():
+    """開始一筆付款前呼叫：測試金鑰未被允許時拋出 AppError (503)，不建立付款紀錄"""
+    _cfg()
+
+
 def _cfg():
+    if test_keys_blocked():
+        logger.warning('綠界付款功能已停用：%s', TEST_KEYS_MESSAGE)
+        raise TestKeysNotAllowed()
     cfg = current_app.config
     merchant_id = cfg.get('ECPAY_MERCHANT_ID') or TEST_MERCHANT[0]
     hash_key = cfg.get('ECPAY_HASH_KEY') or TEST_MERCHANT[1]
@@ -59,7 +92,8 @@ def is_enabled():
 
 
 def checkout_url():
-    return _cfg()[3] + '/Cashier/AioCheckOut/V5'
+    base = STAGE_URL if current_app.config.get('ECPAY_STAGE', True) else PROD_URL
+    return base + '/Cashier/AioCheckOut/V5'
 
 
 def check_mac_value(params, hash_key, hash_iv):
@@ -74,7 +108,11 @@ def check_mac_value(params, hash_key, hash_iv):
 
 
 def verify(params):
-    _merchant, hash_key, hash_iv, _base = _cfg()
+    try:
+        _merchant, hash_key, hash_iv, _base = _cfg()
+    except TestKeysNotAllowed:
+        logger.warning('拒絕綠界通知 %s：使用公開測試金鑰且未設定 ECPAY_ALLOW_TEST_KEYS=1', params.get('MerchantTradeNo'))
+        return False
     given = str(params.get('CheckMacValue', ''))
     return bool(given) and secrets.compare_digest(given.upper(), check_mac_value(params, hash_key, hash_iv))
 
@@ -86,8 +124,7 @@ def _new_trade_no():
 
 
 def _item_name(order):
-    names = '#'.join(f'{i.item_name} x{i.quantity}' for i in order.items) or '餐點'
-    return names[:180]  # 上限 400 字元，超過會被截斷並造成檢查碼錯誤；中文保守截短
+    return '#'.join(f'{i.item_name} x{i.quantity}' for i in order.items) or '餐點'
 
 
 # 綠界 AIO 的付款方式代碼 (ChoosePayment=ALL 時以 IgnorePayment 排除未啟用的)
@@ -104,40 +141,76 @@ def payment_choice(tenant_id):
     return 'ALL', '#'.join(m for m in ECPAY_METHODS if m not in methods)
 
 
-def build_payment_form(order, base_url):
-    """產生送到綠界付款頁的表單欄位 (每次呼叫都換新的特店訂單編號)"""
-    from app.services import settings_service
+def public_base_url():
+    """綠界回傳 / LINE 回呼用的公開網址：PUBLIC_BASE_URL 優先，否則目前請求的網址"""
+    from flask import request
+    return (current_app.config.get('PUBLIC_BASE_URL') or request.url_root).rstrip('/')
+
+
+def aio_form(trade_no, amount, item_name, desc, custom, return_path, result_path, base_url=None, choose='Credit', extra=None):
+    """
+    AioCheckOut V5 的表單欄位 (含檢查碼)。線上點餐、桌邊結帳、訂位訂金三種付款都用這一份，差別只在
+    TradeDesc / CustomField1 (通知回來時用來找回訂單) 與通知路徑。
+    """
     merchant_id, hash_key, hash_iv, _base = _cfg()
-    trade_no = _new_trade_no()
-    order.payment_ref = trade_no
-    db.session.commit()
-    base_url = base_url.rstrip('/')
+    base_url = (base_url or public_base_url()).rstrip('/')
     params = {
         'MerchantID': merchant_id,
         'MerchantTradeNo': trade_no,
         'MerchantTradeDate': datetime.now().strftime('%Y/%m/%d %H:%M:%S'),
         'PaymentType': 'aio',
-        'TotalAmount': str(int(order.total_price)),
-        'TradeDesc': 'OnlineOrder',
-        'ItemName': _item_name(order),
-        'ReturnURL': f'{base_url}/payment/ecpay/notify',
-        'OrderResultURL': f'{base_url}/payment/ecpay/result',
-        'ChoosePayment': 'Credit',
+        'TotalAmount': str(int(amount)),
+        'TradeDesc': desc,
+        'ItemName': str(item_name)[:180],   # 上限 400 字元，超過會被截斷並造成檢查碼錯誤；中文保守截短
+        'ReturnURL': f'{base_url}{return_path}',
+        'OrderResultURL': f'{base_url}{result_path}',
+        'ChoosePayment': choose,
         'EncryptType': '1',
-        'CustomField1': order.uuid,
+        'CustomField1': custom,
         'NeedExtraPaidInfo': 'N',
     }
-    choose, ignore = payment_choice(order.tenant_id)
-    params['ChoosePayment'] = choose
-    if ignore:
-        params['IgnorePayment'] = ignore
-    if choose in ('ALL', 'ATM', 'CVS'):
-        cfg = settings_service.get('payments', order.tenant_id)
-        params['PaymentInfoURL'] = f'{base_url}/payment/ecpay/info'
-        params['ExpireDate'] = str(int(cfg.get('atm_expire_days') or 1))
-        params['StoreExpireDate'] = str(int(cfg.get('cvs_expire_minutes') or 120))
+    params.update(extra or {})
     params['CheckMacValue'] = check_mac_value(params, hash_key, hash_iv)
     return params
+
+
+def build_payment_form(order, base_url=None):
+    """線上點餐：產生送到綠界付款頁的表單欄位 (每次呼叫都換新的特店訂單編號)"""
+    from app.services import settings_service
+    trade_no = _new_trade_no()
+    order.payment_ref = trade_no
+    db.session.commit()
+    choose, ignore = payment_choice(order.tenant_id)
+    extra = {'IgnorePayment': ignore} if ignore else {}
+    if choose in ('ALL', 'ATM', 'CVS'):
+        cfg = settings_service.get('payments', order.tenant_id)
+        extra.update(PaymentInfoURL=f"{(base_url or public_base_url()).rstrip('/')}/payment/ecpay/info",
+                     ExpireDate=str(int(cfg.get('atm_expire_days') or 1)),
+                     StoreExpireDate=str(int(cfg.get('cvs_expire_minutes') or 120)))
+    return aio_form(trade_no, order.total_price, _item_name(order), 'OnlineOrder', order.uuid,
+                    '/payment/ecpay/notify', '/payment/ecpay/result', base_url, choose=choose, extra=extra)
+
+
+# 通知 / 瀏覽器帶回的結果：parse_result 的狀態 → 要回應綠界的字串 (paid 由各自的 mark_paid 決定)
+RESULT_REPLY = {'bad_mac': '0|CheckMacValue Error', 'failed': '1|OK', 'simulated': '1|OK'}
+
+
+def parse_result(form, label='付款'):
+    """
+    驗證綠界的伺服器通知 (ReturnURL) 或瀏覽器帶回的結果 (OrderResultURL)。
+    回傳 (params, status)：status 為 'bad_mac' (檢查碼錯誤或測試金鑰未允許) / 'failed' (RtnCode != 1) /
+    'simulated' (綠界後台的模擬付款，不出貨) / 'paid'。
+    """
+    params = {k: v for k, v in form.items()}
+    if not verify(params):
+        logger.warning('綠界%s通知檢查碼錯誤：%s', label, params.get('MerchantTradeNo'))
+        return params, 'bad_mac'
+    if str(params.get('RtnCode')) != '1':
+        return params, 'failed'
+    if str(params.get('SimulatePaid', '0')) == '1':
+        logger.info('綠界模擬%s通知 (不出貨)：%s', label, params.get('MerchantTradeNo'))
+        return params, 'simulated'
+    return params, 'paid'
 
 
 def _touch_order_rows(order):
@@ -220,16 +293,10 @@ def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
 
 
 def handle_notification(form):
-    """ReturnURL：回傳要回應綠界的字串"""
-    params = {k: v for k, v in form.items()}
-    if not verify(params):
-        logger.warning('綠界通知檢查碼錯誤：%s', params.get('MerchantTradeNo'))
-        return '0|CheckMacValue Error'
-    if str(params.get('RtnCode')) != '1':
-        return '1|OK'  # 付款失敗：訂單維持待付款，逾時後取消
-    if str(params.get('SimulatePaid', '0')) == '1':
-        logger.info('綠界模擬付款通知 (不出貨)：%s', params.get('MerchantTradeNo'))
-        return '1|OK'
+    """ReturnURL：回傳要回應綠界的字串 (付款失敗：訂單維持待付款，逾時後取消)"""
+    params, status = parse_result(form, '線上付款')
+    if status != 'paid':
+        return RESULT_REPLY[status]
     paid_at = None
     try:
         paid_at = datetime.strptime(params.get('PaymentDate', ''), '%Y/%m/%d %H:%M:%S')
@@ -285,7 +352,10 @@ def handle_payment_info(form):
 
 def query_trade(trade_no):
     """向綠界查詢訂單 (QueryTradeInfo V5)；回傳 dict，查詢失敗回傳 None"""
-    merchant_id, hash_key, hash_iv, base = _cfg()
+    try:
+        merchant_id, hash_key, hash_iv, base = _cfg()
+    except TestKeysNotAllowed:
+        return None
     params = {'MerchantID': merchant_id, 'MerchantTradeNo': trade_no, 'TimeStamp': str(int(time.time()))}
     params['CheckMacValue'] = check_mac_value(params, hash_key, hash_iv)
     try:

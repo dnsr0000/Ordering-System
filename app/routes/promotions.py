@@ -3,6 +3,7 @@ from datetime import date
 
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.menu import MenuItem
@@ -13,10 +14,9 @@ from app.services.customer_session import current_member
 from app.services.order_service import _parse_lines
 from app.services.settings_service import TIME_RE
 from app.sync import runtime as sync_runtime
-from app.utils import get_json_dict, role_required, safe_int
+from app.utils import find_own, get_json_dict, get_own, role_required, safe_int
 
 promotions_bp = Blueprint('promotions', __name__)
-MANAGERS = ('owner', 'manager')
 CHANNELS = (('kiosk', '點餐機'), ('pos', 'POS'), ('table', '桌邊掃碼'), ('online', '線上點餐'))
 
 
@@ -73,26 +73,22 @@ def _apply(p, f):
 
 
 @promotions_bp.route('/admin/promotions', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def manage():
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'save':
             pid = safe_int(request.form.get('promotion_id'), 0)
             if pid:
-                p = db.session.get(Promotion, pid)
-                if p is None or p.tenant_id != g.tenant_id:
-                    raise AppError('查無此活動', 404)
+                p = get_own(Promotion, pid, '活動')
             else:
                 p = Promotion(tenant_id=g.tenant_id)
                 db.session.add(p)
             _apply(p, request.form)
             record_staff_audit('PROMOTION_CHANGE', details=f"{'編輯' if pid else '新增'}促銷活動：{p.name} ({p.kind_label})")
-            flash(f'✅ 已儲存活動「{p.name}」', 'success')
+            flash(f'已儲存活動「{p.name}」', 'success')
         elif action in ('toggle', 'delete'):
-            p = db.session.get(Promotion, safe_int(request.form.get('promotion_id'), 0))
-            if p is None or p.tenant_id != g.tenant_id:
-                raise AppError('查無此活動', 404)
+            p = get_own(Promotion, request.form.get('promotion_id'), '活動')
             if action == 'toggle':
                 p.is_active = not p.is_active
             else:
@@ -103,7 +99,7 @@ def manage():
         db.session.commit()
         return redirect(url_for('promotions.manage'))
     items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all()
-    edit = db.session.get(Promotion, safe_int(request.args.get('edit'), 0)) if request.args.get('edit') else None
+    edit = find_own(Promotion, request.args.get('edit')) if request.args.get('edit') else None
     return render_template('admin_promotions.html', promotions=Promotion.query.order_by(Promotion.priority.desc(), Promotion.id).all(),
                            items=items, item_by_uuid={i.uuid: i for i in items},
                            categories=sorted({(i.category or '').strip() for i in items if i.category}),

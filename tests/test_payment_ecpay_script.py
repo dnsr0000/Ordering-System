@@ -103,8 +103,8 @@ class HubEnv:
             RATELIMIT_ENABLED=False, GEMINI_API_KEY='', LOCAL_MODEL_PATH='', WTF_CSRF_ENABLED=csrf,
             TRUSTED_PROXY_COUNT=0, SESSION_COOKIE_SECURE=False,
             SYNC_ROLE='hub', SYNC_AUTOSTART=False, ONLINE_PAYMENT=True, PAYMENT_TIMEOUT_MINUTES=15,
-            # 一律使用綠界公開的測試特店
-            ECPAY_STAGE=True, ECPAY_MERCHANT_ID='', ECPAY_HASH_KEY='', ECPAY_HASH_IV='',
+            # 一律使用綠界公開的測試特店 (公開金鑰需明確允許，見 payment_ecpay.test_keys_blocked)
+            ECPAY_STAGE=True, ECPAY_MERCHANT_ID='', ECPAY_HASH_KEY='', ECPAY_HASH_IV='', ECPAY_ALLOW_TEST_KEYS=True,
             PUBLIC_BASE_URL=public_url.rstrip('/'),
         ))
         self.app = create_app(cfg)

@@ -14,6 +14,8 @@ def is_configured(tenant_id=None):
 
 def _connect(cfg):
     """建立 SMTP 連線 (測試時以 monkeypatch 取代)"""
+    from app.services.webhook_service import check_public_host_on_hub
+    check_public_host_on_hub(cfg['host'])   # 線上端：不可拿寄信設定連內網
     port = int(cfg.get('port') or 587)
     if port == 465:
         server = smtplib.SMTP_SSL(cfg['host'], port, timeout=20, context=ssl.create_default_context())

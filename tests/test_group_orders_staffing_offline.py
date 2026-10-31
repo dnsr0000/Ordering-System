@@ -161,7 +161,7 @@ def test_group_order_create_join_edit_manage_and_submit(app):
     with app.app_context():
         grp = db.session.get(GroupOrder, gid)
         order = grp.order
-        assert grp.status == 'submitted' and order.uuid == grp.uuid and order.pickup_at == pickup
+        assert grp.status == 'submitted' and order.client_order_id == grp.uuid and order.pickup_at == pickup
         assert order.order_type == '外帶' and order.total_price == 455 and order.payment_status in ('', None)
         lines = sorted((i.item_name, i.quantity, i.customization or '') for i in order.items)
         assert lines[0][:2] == ('團購紅茶', 2) and '大杯' in lines[0][2] and '少冰' in lines[0][2]
@@ -264,7 +264,7 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
     assert sorted(results) == ['', '這個團購已送單或已取消']
     with _ctx(app, tid):
         grp = db.session.get(GroupOrder, race)
-        assert Order.query.filter_by(uuid=grp.uuid).count() == 1 and grp.status == 'submitted'
+        assert Order.query.filter_by(client_order_id=grp.uuid).count() == 1 and grp.status == 'submitted'
 
 
 def test_group_order_admin_page_staff_create_and_actions(app):
@@ -395,7 +395,7 @@ def test_kiosk_offline_order_replay(app):
     # 只回傳點餐機需要的欄位 (不含會員、付款、發票)
     assert set(data) == {'success', 'replayed', 'code', 'order_id', 'pickup_number', 'total_price'}
     with app.app_context():
-        order = Order.query.filter_by(uuid=body['order']['client_order_id']).one()
+        order = Order.query.filter_by(client_order_id=body['order']['client_order_id']).one()
         # 一律訪客、現金、不用點數 / 優惠券；金額以補送當下為準
         assert order.user_id is None and order.payment_method == 'Cash' and order.total_price == 160
         assert order.note.startswith('[斷線暫存 AB12 ') and order.note.endswith('少冰') and order.table_number == '暫存單 AB12'
@@ -420,18 +420,20 @@ def test_kiosk_offline_order_replay(app):
     utc = _offline_body(item, queued_at=(datetime.now().astimezone() - timedelta(minutes=1)).isoformat())
     assert g.post('/api/kiosk/offline_order', json=utc).status_code == 200
     # 會員訂單的編號 (追蹤頁網址上看得到)：不可藉暫存單補送查到別人的收據
-    member_order = member.post('/submit_order', json={'client_order_id': str(uuid.uuid4()),
+    member_cid = str(uuid.uuid4())
+    member_order = member.post('/submit_order', json={'client_order_id': member_cid,
                                                       'items': [{'menu_item_id': item, 'quantity': 1}]}).get_json()
     with app.app_context():
-        member_uuid = db.session.get(Order, member_order['order_id']).uuid
+        member_db = db.session.get(Order, member_order['order_id'])
+        assert member_db.client_order_id == member_cid and member_db.uuid != member_cid   # uuid 由伺服器產生
     peek = _offline_body(item)
-    peek['order']['client_order_id'] = member_uuid
+    peek['order']['client_order_id'] = member_cid
     leaked = g.post('/api/kiosk/offline_order', json=peek)
     assert leaked.status_code == 409 and '斷線會員' not in leaked.get_data(as_text=True)
     # 不是本機的訂單編號 (例如 POS 單) 不回傳內容
     with app.app_context():
         pos_order = Order.query.filter(Order.order_source == 'POS').first()
-    if pos_order is not None:
+    if pos_order is not None and pos_order.client_order_id:
         clash = _offline_body(item)
-        clash['order']['client_order_id'] = pos_order.uuid
+        clash['order']['client_order_id'] = pos_order.client_order_id
         assert g.post('/api/kiosk/offline_order', json=clash).status_code == 409

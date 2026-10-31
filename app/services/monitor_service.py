@@ -17,6 +17,7 @@ from datetime import datetime
 
 import requests
 
+from app.errors import AppError
 from app.services import settings_service
 
 logger = logging.getLogger(__name__)
@@ -109,13 +110,14 @@ def send_alert_now(tenant_id, level, message):
     text = f"[點餐系統{'錯誤' if level == 'error' else '通知'}] {message}"
     sent = []
     if cfg.get('webhook_url'):
+        from app.services.webhook_service import check_public
         try:
-            requests.post(cfg['webhook_url'], json={'text': text, 'content': text[:1900]}, timeout=10)
+            check_public(cfg['webhook_url'])   # 不可指向內網 / 本機 (與 API Webhook 相同；WEBHOOK_ALLOW_PRIVATE=1 放寬)
+            requests.post(cfg['webhook_url'], json={'text': text, 'content': text[:1900]}, timeout=10, allow_redirects=False)
             sent.append('webhook')
-        except requests.RequestException as exc:
-            logger.warning('Webhook 通知失敗：%s', exc)
+        except (requests.RequestException, AppError) as exc:
+            logger.warning('Webhook 通知失敗：%s', getattr(exc, 'message', exc))
     if cfg.get('email_recipients'):
-        from app.errors import AppError
         from app.services import mail_service
         try:
             mail_service.send_mail(tenant_id, cfg['email_recipients'], '點餐系統通知', text)
@@ -144,16 +146,6 @@ def flush_alerts(max_items=50):
             logger.warning('送出通知失敗', exc_info=True)
         count += 1
     return count
-
-
-def reset_throttle():
-    with _lock:
-        _last_sent.clear()
-    while not _alert_queue.empty():
-        try:
-            _alert_queue.get_nowait()
-        except queue.Empty:
-            break
 
 
 class AlertLogHandler(logging.Handler):
@@ -189,6 +181,8 @@ NTP_EPOCH_DELTA = 2208988800
 
 def query_ntp(server, timeout=3):
     """回傳 (本機時鐘誤差秒數, 往返延遲)；正值代表本機比標準時間快"""
+    from app.services.webhook_service import check_public_host_on_hub
+    check_public_host_on_hub(server)
     packet = b'\x1b' + 47 * b'\0'
     addr = socket.getaddrinfo(server, 123, socket.AF_INET, socket.SOCK_DGRAM)[0][4]
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -214,8 +208,8 @@ def clock_status(tenant_id=None, max_age=600, force=False):
         try:
             offset, _delay = query_ntp(server)
             _clock_cache.update(offset=round(offset, 2), error='')
-        except OSError as exc:
-            _clock_cache.update(offset=None, error=f'無法連線校時伺服器：{exc}')
+        except (OSError, AppError) as exc:
+            _clock_cache.update(offset=None, error=f'無法連線校時伺服器：{getattr(exc, "message", exc)}')
         _clock_cache.update(at=time.monotonic(), server=server)
     offset = _clock_cache['offset']
     warn = offset is not None and abs(offset) > (cfg.get('clock_warn_seconds') or 60)

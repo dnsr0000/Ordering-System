@@ -10,22 +10,18 @@ from app.models.inventory import Ingredient, PurchaseOrder, Supplier
 from app.services import forecast_service, purchasing_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import safe_float, safe_int
+from app.utils import get_own, safe_float, safe_int
 
 purchasing_bp = Blueprint('purchasing', __name__)
 
 
 def _supplier(sid):
-    sup = db.session.get(Supplier, safe_int(sid, 0))
-    if sup is None or sup.tenant_id != g.tenant_id:
-        raise AppError('查無此供應商', 404)
+    sup = get_own(Supplier, sid, '供應商')
     return sup
 
 
 def _po(po_id):
-    po = db.session.get(PurchaseOrder, safe_int(po_id, 0))
-    if po is None or po.tenant_id != g.tenant_id:
-        raise AppError('查無此採購單', 404)
+    po = get_own(PurchaseOrder, po_id, '採購單')
     return po
 
 
@@ -57,19 +53,19 @@ def index():
             sup = Supplier(tenant_id=g.tenant_id)
             _supplier_form(sup, f)
             db.session.add(sup)
-            flash(f'✅ 已新增供應商「{sup.name}」', 'success')
+            flash(f'已新增供應商「{sup.name}」', 'success')
         elif action == 'edit_supplier':
             sup = _supplier(f.get('supplier_id'))
             _supplier_form(sup, f)
             sup.is_active = bool(f.get('is_active'))
-            flash('✅ 已更新供應商', 'success')
+            flash('已更新供應商', 'success')
         elif action == 'suggest':
             created = purchasing_service.create_suggested_orders(g.tenant_id, current_user.username)
             if not created:
                 flash('目前沒有需要補貨的原料 (或已在未收貨的採購單中)', 'info')
             else:
                 record_staff_audit('PO_SUGGEST', details=f'依低庫存建立 {len(created)} 張採購單草稿')
-                flash(f'✅ 已依供應商建立 {len(created)} 張採購單草稿，請確認數量後送出', 'success')
+                flash(f'已依供應商建立 {len(created)} 張採購單草稿，請確認數量後送出', 'success')
         elif action == 'new_po':
             sup = _supplier(f.get('supplier_id')) if f.get('supplier_id') else None
             po = PurchaseOrder(tenant_id=g.tenant_id, supplier_id=sup.id if sup else None, created_by=current_user.username,
@@ -107,11 +103,11 @@ def po(po_id):
                 order.note = (f.get('note') or '').strip()[:200]
                 if 'supplier_id' in f:
                     order.supplier_id = _supplier(f.get('supplier_id')).id if f.get('supplier_id') else None
-            flash('✅ 已儲存', 'success')
+            flash('已儲存', 'success')
         elif action == 'send':
             emailed = purchasing_service.send(order, current_user.username)
             record_staff_audit('PO_SEND', details=f'送出採購單 {order.number}')
-            flash(f'✅ 採購單已送出{"，並寄給供應商" if emailed else ""}', 'success')
+            flash(f'採購單已送出{"，並寄給供應商" if emailed else ""}', 'success')
         elif action == 'receive':
             received = {}
             for ln in order.lines:
@@ -124,7 +120,7 @@ def po(po_id):
                 received[ln.id] = (safe_float(f.get(f'recv__{ln.id}'), ln.quantity), exp)
             purchasing_service.receive(order, received, current_user.username)
             record_staff_audit('PO_RECEIVE', details=f'採購單 {order.number} 收貨入庫')
-            flash('✅ 已收貨入庫 (已建立批號)', 'success')
+            flash('已收貨入庫 (已建立批號)', 'success')
         elif action == 'cancel':
             purchasing_service.cancel(order)
             record_staff_audit('PO_CANCEL', details=f'取消採購單 {order.number}')

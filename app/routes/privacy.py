@@ -3,11 +3,12 @@ import json
 
 from flask import Blueprint, Response, flash, g, redirect, render_template, request, url_for
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.services import privacy_service
 from app.services.audit import record_staff_audit
-from app.services.customer_session import current_member
+from app.services.customer_session import current_member, needs_pin_confirm, require_confirmed
 from app.utils import role_required
 
 privacy_bp = Blueprint('privacy', __name__)
@@ -17,7 +18,7 @@ privacy_bp = Blueprint('privacy', __name__)
 def notice():
     member = current_member()
     return render_template('privacy.html', p=privacy_service.notice_context(g.tenant_id), member=member,
-                           needs_consent=privacy_service.needs_consent(member))
+                           needs_consent=privacy_service.needs_consent(member), needs_pin=needs_pin_confirm())
 
 
 @privacy_bp.route('/privacy/consent', methods=['POST'], endpoint='consent')
@@ -35,13 +36,14 @@ def consent():
     return redirect(target)
 
 
-@privacy_bp.route('/privacy/my_data', endpoint='my_data')
+@privacy_bp.route('/privacy/my_data', methods=['GET', 'POST'], endpoint='my_data')
 @limiter.limit('10/minute')
 def my_data():
-    """會員下載自己的個人資料 (JSON)"""
+    """會員下載自己的個人資料 (JSON)；人臉登入的工作階段需以 POST 附上 PIN"""
     member = current_member()
     if member is None:
         return redirect(url_for('auth.member_login'))
+    require_confirmed(member, request.form.get('pin'), '下載個人資料')
     body = json.dumps(privacy_service.export_member_data(member), ensure_ascii=False, indent=2)
     return Response(body, mimetype='application/json',
                     headers={'Content-Disposition': 'attachment; filename="my_member_data.json"',
@@ -79,7 +81,7 @@ def delete_face():
 
 
 @privacy_bp.route('/admin/privacy', methods=['GET', 'POST'], endpoint='settings')
-@role_required('owner', 'manager')
+@role_required(*MANAGER_ROLES)
 def settings():
     if request.method == 'POST':
         privacy_service.save_setting(g.tenant_id, request.form)

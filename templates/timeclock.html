@@ -17,10 +17,10 @@
     </form>
     <div class="row g-3">
         <div class="col-md-6"><h2 class="h6 fw-bold">今日班表</h2>
-            <ul class="list-group">{% for s in schedules %}<li class="list-group-item bg-dark text-white border-secondary">{{ s.staff.username if s.staff else '' }} {{ s.start_time }}~{{ s.end_time }}</li>
+            <ul class="list-group">{% for s in schedules %}<li class="list-group-item bg-dark text-white border-secondary">{{ show_name(s.staff.username) if s.staff else '' }} {{ s.start_time }}~{{ s.end_time }}</li>
             {% else %}<li class="list-group-item bg-dark text-white-50 border-secondary">今日無排班</li>{% endfor %}</ul></div>
         <div class="col-md-6"><h2 class="h6 fw-bold">今日打卡</h2>
-            <ul class="list-group">{% for r in records %}<li class="list-group-item bg-dark text-white border-secondary">{{ r.staff.username if r.staff else '' }} {{ r.clock_in.strftime('%H:%M') }} ~ {{ r.clock_out.strftime('%H:%M') if r.clock_out else '上班中' }}</li>
+            <ul class="list-group">{% for r in records %}<li class="list-group-item bg-dark text-white border-secondary">{{ show_name(r.staff.username) if r.staff else '' }} {{ r.clock_in.strftime('%H:%M') }} ~ {{ r.clock_out.strftime('%H:%M') if r.clock_out else '上班中' }}</li>
             {% else %}<li class="list-group-item bg-dark text-white-50 border-secondary">尚無打卡</li>{% endfor %}</ul></div>
     </div>
 </main>

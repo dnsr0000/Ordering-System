@@ -4,9 +4,8 @@ from flask import Blueprint, g, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy.orm import selectinload
 
-from app.errors import AppError
 from app.extensions import db
-from app.models.enums import OrderStatus
+from app.models.enums import ALL_STAFF_ROLES, KITCHEN_ROLES, OrderStatus
 from app.models.menu import MenuItem
 from app.models.order import Order
 from app.models.printing import KitchenStation
@@ -14,10 +13,9 @@ from app.services import kitchen_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.order_service import complete_all_pending_orders, todays_orders_condition, todays_range
-from app.utils import get_json_dict, role_required, safe_int
+from app.utils import get_json_dict, get_own, role_required, safe_int
 
 kitchen_bp = Blueprint('kitchen', __name__)
-KITCHEN_ROLES = ('owner', 'manager', 'kitchen')
 # 尚未完成付款的訂單 (線上待付款、LINE Pay 扣款中) 不送廚房
 HIDDEN_PAYMENT_STATUSES = ('pending', 'authorizing', 'expired')
 PREP_LEAD_MINUTES = 15   # 預約取餐的訂單在廚房看板以「取餐前 15 分鐘」排序
@@ -27,9 +25,7 @@ def _station_arg():
     sid = safe_int(request.args.get('station'), 0)
     if not sid:
         return None
-    station = db.session.get(KitchenStation, sid)
-    if station is None or station.tenant_id != g.tenant_id:
-        raise AppError('查無此工作站', 404)
+    station = get_own(KitchenStation, sid, '工作站')
     return station
 
 
@@ -112,7 +108,7 @@ def api_station_done(order_id):
 
 
 @kitchen_bp.route('/api/kitchen/orders/<int:order_id>/rush', methods=['POST'])
-@role_required('owner', 'manager', 'staff', 'kitchen')
+@role_required(*ALL_STAFF_ROLES)
 def api_kitchen_rush(order_id):
     data = get_json_dict()
     order = kitchen_service.set_rush(order_id, g.tenant_id, data.get('is_rush', True))

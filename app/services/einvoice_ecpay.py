@@ -361,13 +361,6 @@ def print_url(invoice_id):
     return result['InvoiceHtml']
 
 
-def check_barcode(code, tenant_id=None):
-    """手機條碼是否存在 (財政部)"""
-    cfg = settings_service.get('einvoice', tenant_id)
-    result = call(cfg, '/B2CInvoice/CheckBarcode', {'BarCode': code})
-    return str(result.get('RtnCode')) == '1' and result.get('IsExist') == 'Y'
-
-
 def retry_pending(tenant_id=None, older_than_seconds=60, limit=20):
     """背景重送：待開立 (pending) 且建立超過一分鐘的發票"""
     deadline = datetime.now() - timedelta(seconds=older_than_seconds)

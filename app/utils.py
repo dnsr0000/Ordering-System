@@ -1,7 +1,7 @@
 import re
 from functools import wraps
 
-from flask import request
+from flask import g, request
 from flask_login import current_user
 
 from app.errors import AppError
@@ -26,6 +26,26 @@ def role_required(*roles):
             return fn(*args, **kwargs)
         return wrapped
     return decorator
+
+
+def get_own(model, obj_id, label='資料', status=404):
+    """
+    以主鍵取得「本店」的資料列，不存在或屬於其他店家時拋出 404 (AppError)。
+    租戶自動過濾 (app/tenant_context.py) 對 db.session.get 只在真的查資料庫時生效：同一請求先以 tenant_bypass()
+    載入過其他店的物件時，session.get 會從 identity map 直接回傳，所以這裡一律再比對 tenant_id。
+    """
+    from app.extensions import db
+    obj = db.session.get(model, safe_int(obj_id, 0))
+    if obj is None or getattr(obj, 'tenant_id', None) != g.tenant_id:
+        raise AppError(f'查無此{label}', status)
+    return obj
+
+
+def find_own(model, obj_id):
+    """同 get_own，但不存在或屬於其他店家時回傳 None (供「可選的」查詢參數使用)"""
+    from app.extensions import db
+    obj = db.session.get(model, safe_int(obj_id, 0))
+    return obj if obj is not None and getattr(obj, 'tenant_id', None) == g.tenant_id else None
 
 
 def is_platform_admin(staff=None):

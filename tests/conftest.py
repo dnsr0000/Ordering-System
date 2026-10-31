@@ -70,6 +70,8 @@ class TestConfig(Config):
     ECPAY_MERCHANT_ID = ''
     ECPAY_HASH_KEY = ''
     ECPAY_HASH_IV = ''
+    ECPAY_ALLOW_TEST_KEYS = True   # 測試以綠界公開測試金鑰驗證付款流程 (專門的測試會暫時關閉)
+    ALLOW_TENANT_REGISTER = True   # 多個測試以公開註冊建立其他店家 (test_security_audit2 會暫時關閉)
     PUBLIC_BASE_URL = ''
     PAYMENT_TIMEOUT_MINUTES = 15
     DEFERRED_INLINE = True
@@ -98,6 +100,14 @@ def app():
         _reset_postgres(DATABASE_URL)
     from app import create_app
     application = create_app(TestConfig)
+    # POS 動用儲值金 / 點數的會員身分驗證 (掃條碼 / PIN / 主管核准) 只在 test_security_audit2 開啟：
+    # 其他 POS 測試沿用「只憑手機號碼」的舊流程，不必每個測試都帶會員 PIN
+    with application.app_context():
+        from app.extensions import db
+        from app.services import settings_service
+        from tests.support import default_tenant_id
+        settings_service.put('member', {'pos_verify': False}, tenant_id=default_tenant_id(application))
+        db.session.commit()
     yield application
     shutil.rmtree(TMP_DIR, ignore_errors=True)
 

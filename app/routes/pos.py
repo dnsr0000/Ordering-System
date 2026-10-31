@@ -6,14 +6,14 @@ from sqlalchemy.orm import selectinload
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.coupon import Coupon
-from app.models.enums import OrderSource
+from app.models.enums import OrderSource, POS_ROLES
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.user import User
 from app.routes.sync_admin import node_name_map
-from app.services import (approval_service, coupon_service, giftcard_service, loyalty_service, order_service,
-                          own_delivery_service, pass_service, payment_service, print_service, settings_service,
-                          shift_service, wallet_service)
+from app.services import (approval_service, coupon_service, giftcard_service, loyalty_service, member_verify_service,
+                          order_service, own_delivery_service, pass_service, payment_service, print_service,
+                          settings_service, shift_service, wallet_service)
 from app.services.audit import record_staff_audit
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.menu_service import menu_categories, storefront_payload
@@ -21,10 +21,9 @@ from app.services.order_service import find_promo, process_checkout, todays_orde
 from app.services import table_service
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
-from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, role_required, safe_int, validate_pin
+from app.utils import get_json_dict, get_own, is_weak_pin, role_required, safe_int, validate_pin, WEAK_PIN_MESSAGE
 
 pos_bp = Blueprint('pos', __name__)
-POS_ROLES = ('owner', 'manager', 'staff')
 
 
 def _member_dict(user):
@@ -86,9 +85,7 @@ def pos_settings_payload():
 
 
 def _get_member(user_id):
-    user = db.session.get(User, safe_int(user_id, 0))
-    if user is None or user.tenant_id != g.tenant_id:
-        raise AppError('查無此會員！', 404)
+    user = get_own(User, user_id, '會員')
     return user
 
 
@@ -136,8 +133,9 @@ def api_pos_member_lookup():
     if not q:
         raise AppError('請輸入會員手機號碼或姓名！')
     from app.services import member_qr_service
-    if member_qr_service.looks_like_token(q):   # 掃描會員手機上的動態條碼
+    if member_qr_service.looks_like_token(q):   # 掃描會員手機上的動態條碼：等同會員本人出示，之後可動用儲值金 / 點數
         user = member_qr_service.resolve(q)
+        member_verify_service.mark_verified(user.id)
         return jsonify({'success': True, 'multiple': False, 'member': _member_dict(user), 'via_qr': True})
     exact = User.query.filter_by(phone=q).first()
     matches = [exact] if exact else (
@@ -183,6 +181,10 @@ def api_pos_verify_promo():
 @limiter.limit('30/minute')
 def api_pos_checkout():
     data = get_json_dict()
+    # 動用會員儲值金 / 點數 / 寄杯：需掃過會員動態條碼、會員輸入 PIN 或主管核准 (member_verify_service)
+    if safe_int(data.get('user_id'), 0) > 0 and member_verify_service.uses_member_assets(data):
+        member_verify_service.require_verified(_get_member(data.get('user_id')), data)
+        db.session.commit()   # 保存 PIN 錯誤次數 / 核准稽核
     order, replayed = process_checkout(
         tenant_id=g.tenant_id,
         items=data.get('items'),
@@ -328,9 +330,7 @@ def api_pos_floor():
 # 作廢 / 部分退款 / 補印
 # ------------------------------------------------------------------------------
 def _order(order_id):
-    order = db.session.get(Order, order_id)
-    if order is None or order.tenant_id != g.tenant_id:
-        raise AppError('查無此訂單！', 404)
+    order = get_own(Order, order_id, '訂單')
     return order
 
 
@@ -539,7 +539,6 @@ def api_gift_card_lookup():
 @approval_service.permission_required('delivery')
 @limiter.limit('30/minute')
 def api_delivery_order():
-    from app.models.enums import OrderSource
     data = get_json_dict()
     platform = str(data.get('platform') or '').strip()[:30]
     ref = str(data.get('external_ref') or '').strip()[:60]

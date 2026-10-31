@@ -6,7 +6,7 @@ from flask import Blueprint, abort, current_app, jsonify, render_template, reque
 
 from app.errors import AppError
 from app.extensions import csrf, db, limiter
-from app.models.enums import DELIVERY_SOURCES
+from app.models.enums import DELIVERY_SOURCES, MANAGER_ROLES
 from app.models.menu import MenuItem
 from app.models.order import Order
 from app.services import delivery_service, settings_service
@@ -64,7 +64,7 @@ def foodpanda_webhook(vendor_code):
 
 
 @delivery_bp.route('/admin/delivery', endpoint='manage')
-@role_required('owner', 'manager')
+@role_required(*MANAGER_ROLES)
 def manage():
     from flask import g
     cfg = settings_service.get('delivery')

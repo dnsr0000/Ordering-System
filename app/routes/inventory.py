@@ -10,7 +10,7 @@ from app.models.menu import MenuItem
 from app.services import inventory_service, settings_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import safe_float, safe_int
+from app.utils import find_own, get_own, safe_float, safe_int
 
 inventory_bp = Blueprint('inventory', __name__)
 
@@ -19,9 +19,7 @@ REASON_LABELS = {'purchase': '進貨', 'consume': '銷售扣料', 'restore': '�
 
 
 def _ingredient(ing_id):
-    ing = db.session.get(Ingredient, safe_int(ing_id, 0))
-    if ing is None or ing.tenant_id != g.tenant_id:
-        raise AppError('查無此原料', 404)
+    ing = get_own(Ingredient, ing_id, '原料')
     return ing
 
 
@@ -41,7 +39,7 @@ def manage():
                                       stock=round(safe_float(f.get('stock'), 0), 4),
                                       low_threshold=max(0.0, safe_float(f.get('low_threshold'), 0)),
                                       unit_cost=max(0.0, safe_float(f.get('unit_cost'), 0))))
-            flash(f'✅ 已新增原料「{name}」', 'success')
+            flash(f'已新增原料「{name}」', 'success')
         elif action == 'edit':
             ing = _ingredient(f.get('ingredient_id'))
             ing.name = (f.get('name') or ing.name).strip()[:60]
@@ -56,7 +54,7 @@ def manage():
                 ing.par_level = max(0.0, safe_float(f.get('par_level'), ing.par_level))
             if 'pack_size' in f:
                 ing.pack_size = max(0.0, safe_float(f.get('pack_size'), ing.pack_size)) or 1
-            flash('✅ 已更新原料', 'success')
+            flash('已更新原料', 'success')
         elif action == 'delete':
             ing = _ingredient(f.get('ingredient_id'))
             db.session.delete(ing)
@@ -75,7 +73,7 @@ def manage():
                     raise AppError('有效期限格式不正確')
             inventory_service.adjust(ing, qty, action, f.get('note'), unit_cost=cost, expires_on=expires_on)
             record_staff_audit('INVENTORY_' + action.upper(), details=f'{REASON_LABELS[action]}：{ing.name} {qty:+g} {ing.unit}')
-            flash(f'✅ {REASON_LABELS[action]}：{ing.name} {qty:+g} {ing.unit}', 'success')
+            flash(f'{REASON_LABELS[action]}：{ing.name} {qty:+g} {ing.unit}', 'success')
         elif action == 'stocktake':
             changed = []
             for ing in Ingredient.query.all():
@@ -85,18 +83,14 @@ def manage():
                     if delta:
                         changed.append(f'{ing.name} {delta:+g}')
             record_staff_audit('INVENTORY_STOCKTAKE', details='盤點調整：' + ('、'.join(changed) or '無差異'))
-            flash(f"✅ 盤點完成：{len(changed)} 項有差異", 'success')
+            flash(f"盤點完成：{len(changed)} 項有差異", 'success')
         elif action == 'discard_lot':
-            lot = db.session.get(IngredientLot, safe_int(f.get('lot_id'), 0))
-            if lot is None or lot.tenant_id != g.tenant_id:
-                raise AppError('查無此批號', 404)
+            lot = get_own(IngredientLot, f.get('lot_id'), '批號')
             qty = inventory_service.discard_lot(lot)
             record_staff_audit('INVENTORY_WASTE', details=f'批號報廢：{lot.ingredient.name} -{qty:g} (有效期限 {lot.expires_on})')
-            flash(f'✅ 已報廢 {lot.ingredient.name} {qty:g} {lot.ingredient.unit}', 'success')
+            flash(f'已報廢 {lot.ingredient.name} {qty:g} {lot.ingredient.unit}', 'success')
         elif action == 'recipe':
-            item = db.session.get(MenuItem, safe_int(f.get('menu_item_id'), 0))
-            if item is None or item.tenant_id != g.tenant_id:
-                raise AppError('查無此餐點', 404)
+            item = get_own(MenuItem, f.get('menu_item_id'), '餐點')
             RecipeLine.query.filter_by(menu_item_id=item.id).delete(synchronize_session=False)
             for ing_id, qty in zip(f.getlist('ingredient_id'), f.getlist('quantity')):
                 q = safe_float(qty, 0)
@@ -105,7 +99,7 @@ def manage():
                     db.session.add(RecipeLine(tenant_id=g.tenant_id, menu_item_id=item.id, ingredient_id=ing.id,
                                               quantity=round(q, 4)))
             record_staff_audit('RECIPE_CHANGE', details=f'更新「{item.name}」的配方')
-            flash(f'✅ 已更新「{item.name}」的配方', 'success')
+            flash(f'已更新「{item.name}」的配方', 'success')
         else:
             raise AppError('不支援的操作')
         db.session.commit()
@@ -115,7 +109,7 @@ def manage():
     recipes = {}
     for rl in RecipeLine.query.all():
         recipes.setdefault(rl.menu_item_id, []).append(rl)
-    selected = db.session.get(MenuItem, safe_int(request.args.get('item'), 0)) if request.args.get('item') else None
+    selected = find_own(MenuItem, request.args.get('item')) if request.args.get('item') else None
     movements = StockMovement.query.order_by(StockMovement.id.desc()).limit(100).all()
     costs = {i.id: inventory_service.item_unit_cost(i) for i in items if i.id in recipes}
     return render_template('admin_inventory.html', ingredients=ingredients, items=items, recipes=recipes,

@@ -112,6 +112,7 @@ PERMISSIONS = {
     'reservations': '訂位 / 候位',
     'wallet': '會員儲值',
     'delivery': '外送平台訂單登錄',
+    'member_verify': '免驗證會員身分動用儲值金 / 點數 / 寄杯 (免主管核准)',
 }
 ROLE_DEFAULT_PERMISSIONS = {
     'owner': set(PERMISSIONS),
@@ -121,8 +122,9 @@ ROLE_DEFAULT_PERMISSIONS = {
 }
 
 
-class StaffRole(StrEnum):
-    OWNER = 'owner'
-    MANAGER = 'manager'
-    STAFF = 'staff'
-    KITCHEN = 'kitchen'
+# 員工角色 (owner / manager / staff / kitchen) 與各頁面的存取範圍；路由以 role_required(*XXX_ROLES) 使用
+MANAGER_ROLES = ('owner', 'manager')                       # 店長以上：後台、設定、報表
+POS_ROLES = ('owner', 'manager', 'staff')                  # 櫃檯 POS、取餐管理、外送派車
+KITCHEN_ROLES = ('owner', 'manager', 'kitchen')            # 廚房顯示器
+ALL_STAFF_ROLES = ('owner', 'manager', 'staff', 'kitchen')  # 訂單狀態更新等所有員工共用
+CREATABLE_STAFF_ROLES = frozenset({'manager', 'staff', 'kitchen'})   # 負責人可在員工帳號頁建立的角色 (負責人只有一位)

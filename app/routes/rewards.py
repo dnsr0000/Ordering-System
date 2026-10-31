@@ -26,9 +26,10 @@ def rewards_store():
     member = current_member()
     if member is None:
         return redirect(member_login_url())
+    from app.services.customer_session import needs_pin_confirm
     return render_template(
         'rewards.html',
-        user=member,
+        user=member, needs_pin=needs_pin_confirm(),
         reward_items=MenuItem.query.filter_by(is_reward=True).all(),
         reward_coupons=[c for c in Coupon.query.filter_by(is_reward=True, member_only=False).all() if c.period_error() is None],
         held_coupons=_held_summary(member.id),
@@ -68,10 +69,13 @@ def _referral(member):
 def member_qr():
     """會員動態條碼 (QR 圖檔 data URI)；POST action=rotate 重新產生金鑰讓舊碼 (含截圖) 立即失效"""
     from app.services import member_qr_service, table_service
+    from app.services.customer_session import require_confirmed
     member = _require_member()
-    if request.method == 'POST':
-        if get_json_dict().get('action') != 'rotate':
-            raise AppError('不支援的操作')
+    data = get_json_dict() if request.method == 'POST' else {}
+    require_confirmed(member, data.get('pin'), '出示會員條碼')   # 條碼等同本人出示 (可動用儲值金)：人臉登入要再輸入 PIN
+    if request.method == 'POST' and data.get('action') not in (None, '', 'rotate', 'confirm'):
+        raise AppError('不支援的操作')
+    if data.get('action') == 'rotate':
         member_qr_service.rotate_secret(member)
     token = member_qr_service.make_token(member)
     db.session.commit()

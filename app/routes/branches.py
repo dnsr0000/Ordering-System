@@ -2,6 +2,7 @@
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.branch import HQ_SITE, TRANSFER_STATUS_LABELS
@@ -14,14 +15,13 @@ from app.sync import runtime as sync_runtime
 from app.utils import role_required
 
 branches_bp = Blueprint('branches', __name__)
-MANAGERS = ('owner', 'manager')
 
 
 # ---------------------------------------------------------------------------
 # 分店價格 / 上下架
 # ---------------------------------------------------------------------------
 @branches_bp.route('/admin/branch-menu', methods=['GET', 'POST'], endpoint='menu')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def branch_menu():
     role = sync_runtime.role()
     items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all()
@@ -39,7 +39,7 @@ def branch_menu():
             if changed:
                 record_staff_audit('BRANCH_MENU', details=f'{node.name} 分店價格 / 上下架：' + '、'.join(notes)[:400])
             db.session.commit()
-            flash(f'✅ 已更新【{node.name}】{changed} 項分店價格 / 上下架 (下次同步時送到分店)' if changed
+            flash(f'已更新【{node.name}】{changed} 項分店價格 / 上下架 (下次同步時送到分店)' if changed
                   else '沒有變更', 'success' if changed else 'info')
             return redirect(url_for('branches.menu', node=node.uuid))
         overrides = branch_service.overrides_for(g.tenant_id, node.uuid) if node else {}

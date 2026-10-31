@@ -65,7 +65,15 @@ def check_public(url):
     """送出前檢查目標的所有 IP 都是公開網際網路位址；回傳連線要固定使用的 IP (允許內網時為 None)"""
     if current_app.config.get('WEBHOOK_ALLOW_PRIVATE'):
         return None
-    host = urlparse(url).hostname or ''
+    return check_public_host(urlparse(url).hostname or '')
+
+
+def check_public_host(host):
+    """
+    主機名稱 / IP 必須解析到公開網際網路位址，否則拋出 AppError；回傳第一個 IP。
+    店家可自行設定的對外連線 (監控 Webhook、線上端的寄信伺服器 / 校時伺服器 / 網路印表機) 都經過這裡，
+    避免線上端上任一店家負責人拿來連線上端的內網服務 (資料庫、Redis、雲端中繼資料位址)。
+    """
     try:
         ips = sorted(resolve_ips(host))
     except OSError as exc:
@@ -75,8 +83,15 @@ def check_public(url):
     for ip in ips:
         addr = ipaddress.ip_address(ip.split('%')[0])
         if not addr.is_global or addr.is_multicast:   # 內網、本機、保留、共用 (100.64/10)、雲端中繼資料位址
-            raise AppError(f'不可送到內網或本機位址 ({ip})')
+            raise AppError(f'不可送到內網或本機位址 ({host} → {ip})')
     return ips[0]
+
+
+def check_public_host_on_hub(host):
+    """線上端 (多店家共用主機) 才限制為公開位址；門市主機連自己區網內的印表機 / 寄信伺服器是正常的"""
+    from app.sync import runtime as sync_runtime
+    if sync_runtime.is_hub():
+        check_public_host(host)
 
 
 def save_endpoint(ep, form, staff=''):

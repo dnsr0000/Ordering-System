@@ -242,12 +242,18 @@
     ONLINE_PAYMENT                    1 = 線上點餐需先付款 (付款後才送分店)
     ECPAY_STAGE                       1 = 綠界測試環境 (預設，免註冊、不扣款)；0 = 正式收款 (需填下面三項)
     ECPAY_MERCHANT_ID / _HASH_KEY / _HASH_IV   綠界正式特店資料
+    ECPAY_ALLOW_TEST_KEYS             1 = 允許以綠界「公開測試金鑰」收款 (測試環境用)。測試金鑰是公開的，任何人都能
+                                      偽造付款通知，因此未設定時付款頁與通知一律拒絕 (線上付款 / 桌邊結帳 / 訂位訂金)
     PUBLIC_BASE_URL                   綠界付款通知用的公開網址 (留空使用目前網址)；門市使用桌邊線上結帳 / 訂位訂金時
                                       門市主機也要設定 (對外 HTTPS)，訂位提醒簡訊的取消連結也用這個網址
     PAYMENT_TIMEOUT_MINUTES           逾時未付款自動取消 (預設 15 分鐘)
   Webhook (說明見 app/services/webhook_service.py)
-    WEBHOOK_ALLOW_PRIVATE             1 = 允許送到內網 / 本機位址 (只限自架內網整合；預設只送公開網際網路位址)
+    WEBHOOK_ALLOW_PRIVATE             1 = 允許送到內網 / 本機位址 (只限自架內網整合；預設只送公開網際網路位址；
+                                      監控通知的 Webhook 也依此檢查)
     WEBHOOK_ALLOW_HTTP                1 = 允許 http:// 網址 (預設只允許 https)
+  安全性
+    ALLOW_TENANT_REGISTER             1 = 開放公開的「建立新店家」頁 (/tenant/register)。線上端預設 1；門市主機預設 0
+                                      (任何連得到主機的人都能建店並取得負責人權限)，平台管理者登入後仍可建立新店
   選用
     GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議)
 
@@ -310,7 +316,7 @@ Project Root/
 │   │   ├── order_service.py   結帳與訂單的對外入口 (只匯出，實作在下列四個模組；呼叫端一律 import 這裡)
 │   │   ├── order_pricing.py   優惠碼、加購配額、購物車明細解析與計價、通路價 / 服務費 / 整單折扣
 │   │   ├── order_stock.py     取餐號、條件式扣 / 回補庫存、分店庫存快照、線上取餐分店
-│   │   ├── order_checkout.py  原子結帳 process_checkout (各通路共用)
+│   │   ├── order_checkout.py  原子結帳 process_checkout (各通路共用；分 _prepare / _validate / _reserve / _price / _persist / _after_commit 階段，共用狀態在 Checkout 物件)
 │   │   ├── order_lifecycle.py 訂單狀態機、取消回補、單品作廢、一鍵出餐、換日自動結案
 │   │   ├── points_service.py  會員點數 (異動帳)
 │   │   ├── reward_service.py、voucher_service.py   紅利兌換
@@ -412,11 +418,12 @@ Project Root/
 │                              0019 會員分群與自動行銷、訂位訂金 / 提醒
 │                              0020 API 金鑰 / Webhook、裝置管理、封存訂單累積消費
 │                              0021 營業費用、原料成本 / 售價歷史、0022 團體預購、
-│                              0023 訂單預約取餐時間索引 (負載測試後新增)
+│                              0023 訂單預約取餐時間索引 (負載測試後新增)、0024 訂單 client_order_id 獨立欄位
 ├── templates/                 頁面樣板 (全部繼承 base.html)
 ├── static/
 │   ├── css/、js/              各頁面樣式與程式 (theme.css、common.js 為共用；pos.js 為 POS 的進入點 (ES module)，
-│   │                          功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live)；floor-plan.js 桌位平面圖、
+│   │                          功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live)；customer.js 為點餐機的
+│   │                          進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout)；floor-plan.js 桌位平面圖、
 │   │                          device.js 已註冊裝置的心跳與鎖定畫面、
 │   │                          api-docs.js API 說明文件的線上試打、kiosk-offline.js 點餐機斷線暫存與補送)
 │   ├── img/                   預設圖片
@@ -470,6 +477,10 @@ Project Root/
                 test_web_security               CSRF (全路由掃描)、安全標頭、訊息跳脫、錯誤輸入不出 500
                 test_rate_limits_and_lockout    登入頻率限制、PIN 鎖定、X-Forwarded-For 信任
                 test_tenants_and_isolation      新店家註冊、店家入口、跨店資料隔離
+                test_security_audit2            資安審查第二輪：整庫備份限平台管理者、門市不開放公開建店、綠界測試金鑰需明確允許、
+                                                LINE 待綁定清除 / 逾時、打卡頁遮罩帳號、已註冊裝置不受帳號鎖定、
+                                                POS 動用儲值金 / 點數需會員驗證 (條碼 / PIN / 核准)、訂單 uuid 由伺服器產生、
+                                                監控 Webhook 與線上端寄信 / 校時 / 印表機不可連內網、簡訊全店上限
                 test_backup_restore             整庫備份 / 還原、惡意備份檔、舊版備份還原
   菜單與會員    test_menu_admin                 菜單、套餐、手動售完
                 test_member_accounts            會員註冊、欄位驗證、後台編輯 / 刪除與稽核
@@ -572,12 +583,18 @@ Project Root/
   - 動態 HTML 一律用 Kiosk.html`...` (自動跳脫) 或 textContent。
   - API 用 Kiosk.api(url, {json})：自動帶 CSRF Token，失敗時丟出含後端訊息的錯誤。
   - 刪除確認用 <form data-confirm="…">；圖片備援用 <img data-fallback="預設圖網址">。
-  - POS 前端是 ES module (templates/pos.html 以 type="module" 載入 js/pos.js)：新增功能放進 js/pos/ 對應的模組並 export，
-    其他模組以 import 使用；共用狀態只放 core.js 的 state (跨模組不可重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。
+  - POS 與點餐機前端是 ES module (templates/pos.html、customer.html 以 type="module" 載入 js/pos.js、js/customer.js)：
+    新增功能放進 js/pos/、js/customer/ 對應的模組並 export，其他模組以 import 使用；共用狀態只放 core.js 的 state
+    (跨模組不可重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。
+  - 後台儀表板 (admin.html) 的對話框與表單巨集在 templates/_admin_modals.html。
+  - 提示訊息 flash(文字, 類別)：圖示由 _flashes.html 依類別 (success / danger / warning / info) 自動加上，文字不要再寫 ✅ ❌。
 - 後端：
   - 錯誤一律 raise AppError(訊息, 狀態碼)：API 回 {"success": false, "message": …}；表單的 400/409 flash 後導回。
-  - 權限用 @role_required('owner', 'manager')；整庫備份等用 @platform_admin_required。
+  - 權限用 @role_required(*MANAGER_ROLES) (角色組合定義在 app/models/enums.py：MANAGER_ROLES / POS_ROLES / KITCHEN_ROLES /
+    ALL_STAFF_ROLES，不要在各檔自己寫元組)；整庫備份等用 @platform_admin_required。
   - 查詢自動加上目前店家條件；系統工作需要跨店時用 with tenant_bypass():。
+  - 路由以主鍵取單筆資料一律用 app/utils.py 的 get_own(Model, id, '標籤') (不存在或其他店家 → 404) 或 find_own (回 None)，
+    不要自己寫 db.session.get + tenant_id 比對 (session.get 命中 identity map 時不經過租戶過濾)。
   - 結帳一律走 order_service.process_checkout，訂單狀態一律走 order_service.change_order_status
     (實作分在 order_pricing / order_stock / order_checkout / order_lifecycle，下層不可匯入上層，有測試檢查)。
   - 加減會員點數一律用 points_service.change_points (寫入點數異動帳)。
@@ -638,7 +655,7 @@ Project Root/
   取消會在同一交易內回補庫存、退還點數、還原會員券、扣回贈點，只執行一次。
 
 結帳  POST /submit_order (點餐頁)、POST /api/pos/checkout (POS)
-  {"client_order_id": "<UUID，重送沿用>",
+  {"client_order_id": "<前端產生的去重識別，重送沿用；訂單 uuid 由伺服器另外產生>",
    "items": [{"menu_item_id": 1, "quantity": 2, "modifier_ids": [3], "combo_option_id": null,
               "is_add_on": false, "is_reward": false, "customization": "備註"}],
    "payment_method": "Cash", "order_type": "內用", "promo_code": "", "use_points": 0, "note": ""}
@@ -664,7 +681,7 @@ Project Root/
   POST /api/kitchen/orders/<id>/station_done {station_id}           工作站完成
   POST /api/promotions/preview                                      促銷試算 (點餐頁 / POS 即時顯示)
   POST /webhooks/ubereats (X-Uber-Signature)、/webhooks/foodpanda/<店家代碼> (Bearer 權杖)   外送平台
-  GET  /track/<訂單 uuid>、/api/track/<訂單 uuid>                      出餐追蹤 (公開，uuid 無法猜測)
+  GET  /track/<訂單 uuid>、/api/track/<訂單 uuid>                      出餐追蹤 (公開，uuid 由伺服器產生、無法猜測)
 
 第三輪功能
   POST /api/pos/orders/<id>/void_item {item_id, quantity, reason, method}   單品作廢 (需作廢權限 / 主管核准)

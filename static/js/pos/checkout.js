@@ -136,8 +136,9 @@ export async function submitOrder() {
     }
     setSubmitting(true);
     try {
-        const res = await window.PosPro.withApproval(
-            (extra) => api('/api/pos/checkout', { json: { ...payload, ...extra, client_order_id: state.checkout.id } }));
+        // 主管核准 (改價、折扣…) 與會員身分驗證 (儲值金 / 點數 / 寄杯) 都可能要求補資料後重送
+        const res = await window.PosPro.withApproval((extra) => window.PosPro.withMemberVerify(
+            (verify) => api('/api/pos/checkout', { json: { ...payload, ...extra, ...verify, client_order_id: state.checkout.id } })));
         state.checkout = null;
         if (state.member && res.wallet_balance !== undefined) state.member.wallet_balance = res.wallet_balance;
         showReceipt(res, res.replayed ? '此筆訂單先前已結帳 • 收據預覽' : '結帳成功 • 收據預覽');

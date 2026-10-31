@@ -17,14 +17,6 @@ from app.models.mixins import TenantScoped
 from app.models.tenant import Tenant
 
 
-def current_tenant_id():
-    """目前請求的店家 ID；不在請求中或尚未決定店家時拋出例外 (不可猜成 1 號店)"""
-    tid = getattr(g, 'tenant_id', None) if has_request_context() else None
-    if tid is None:
-        raise RuntimeError('缺少店家資訊 (tenant)')
-    return tid
-
-
 @contextmanager
 def tenant_bypass():
     """暫時關閉租戶自動過濾 (僅供系統工作使用)"""

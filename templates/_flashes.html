@@ -1,9 +1,13 @@
+{#- 提示訊息：圖示依類別自動加上 (success / danger / warning / info)，訊息文字本身不必再寫 ✅ ❌ -#}
 {% with messages = get_flashed_messages(with_categories=true) %}
   {% if messages %}
+  {% set styles = {'success': ('success', 'bi-check-circle-fill'), 'danger': ('danger', 'bi-x-circle-fill'),
+                   'error': ('danger', 'bi-x-circle-fill'), 'warning': ('warning', 'bi-exclamation-triangle-fill')} %}
   <div class="flash-stack" role="status" aria-live="polite">
     {% for category, message in messages %}
-    <div class="alert alert-{{ 'success' if category == 'success' else 'danger' if category in ('danger', 'error') else 'info' }} alert-dismissible fade show shadow" role="alert">
-      <span class="flash-text">{{ message }}</span>
+    {% set style, icon = styles.get(category, ('info', 'bi-info-circle-fill')) %}
+    <div class="alert alert-{{ style }} alert-dismissible fade show shadow" role="alert">
+      <i class="bi {{ icon }} me-1" aria-hidden="true"></i><span class="flash-text">{{ message|flash_text }}</span>
       <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="關閉"></button>
     </div>
     {% endfor %}

@@ -12,7 +12,7 @@ from sqlalchemy import or_, update
 from app.errors import AppError
 from app.extensions import db, ip_key, limiter
 from app.models.coupon import Coupon, UserCoupon, parse_discount_value
-from app.models.enums import DiscountType, OrderSource
+from app.models.enums import CREATABLE_STAFF_ROLES, DiscountType, MANAGER_ROLES, OrderSource
 from app.models.menu import ComboOption, MenuItem
 from app.models.order import Order
 from app.models.tenant import StaffAccount, Tenant
@@ -28,13 +28,11 @@ from app.services.order_service import todays_range
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
 from app.services.upload_paths import remove_upload, upload_file_path
-from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, is_platform_admin, is_weak_pin,
+from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, get_own, is_platform_admin, is_weak_pin,
                        platform_admin_required, role_required, safe_int, validate_phone, validate_pin)
 
 MEMBER_PAGE_SIZE = 50
 admin_bp = Blueprint('admin', __name__)
-MANAGERS = ('owner', 'manager')
-STAFF_ROLES = {'manager', 'staff', 'kitchen'}
 
 
 def _dashboard(tab=None):
@@ -81,7 +79,7 @@ def admin_dashboard():
 
     if not current_user.is_authenticated:
         return render_template('admin.html', is_admin=False)
-    if current_user.role not in MANAGERS:
+    if current_user.role not in MANAGER_ROLES:
         # 後台含會員個資與稽核紀錄：櫃檯與廚房直接進入各自的工作畫面
         return redirect(url_for('kitchen.kitchen_display' if current_user.role == 'kitchen' else 'pos.pos_terminal'))
 
@@ -136,17 +134,17 @@ def _staff_login():
     username = request.form.get('username', '').strip()
     password = request.form.get('password') or ''
     keys = auth_throttle.staff_keys(username, request.remote_addr or '-')
-    remaining = auth_throttle.lock_remaining(keys.values())
-    if remaining:  # 鎖定期間連正確密碼也不放行
+    remaining = auth_throttle.staff_lock_remaining(keys)
+    if remaining:  # 鎖定期間連正確密碼也不放行 (已註冊的店內裝置只受同 IP 的鎖定)
         minutes = max(1, int((remaining.total_seconds() + 59) // 60))
-        flash(f'⚠️ 密碼錯誤次數過多，此帳號已暫時鎖定，請於 {minutes} 分鐘後再試。', 'danger')
+        flash(f'密碼錯誤次數過多，此帳號已暫時鎖定，請於 {minutes} 分鐘後再試。', 'danger')
         return render_template('admin.html', is_admin=False), 429
     staff = StaffAccount.query.filter_by(username=username).first()
     if staff is None:
         auth_throttle.spend_hash_time(password)
     if staff is None or not staff.check_password(password) or not staff.can_login:
         auth_throttle.record_staff_failure(keys)  # 帳號不存在也同樣計數，無法藉此列舉帳號
-        flash('❌ 帳號或密碼錯誤！', 'danger')
+        flash('帳號或密碼錯誤！', 'danger')
         return render_template('admin.html', is_admin=False), 401
     auth_throttle.clear_keys(keys['device'], keys['account'])
     if staff.totp_enabled:   # 兩步驟驗證：密碼正確後再輸入驗證 App 的 6 位數
@@ -199,6 +197,13 @@ def admin_logout():
 @admin_bp.route('/tenant/register', methods=['GET', 'POST'], endpoint='tenant_register')
 @limiter.limit('10/hour', methods=['POST'], key_func=ip_key)
 def tenant_register():
+    # 門市主機預設不開放公開註冊 (任何連得到主機的人都能建店並取得負責人權限)；平台管理者登入後仍可建立
+    if not current_app.config.get('ALLOW_TENANT_REGISTER') and not is_platform_admin():
+        if request.method == 'GET':
+            flash('本主機未開放公開建立店家：請以平台管理者 (預設店家負責人) 登入後再建立，或在 .env 設定 ALLOW_TENANT_REGISTER=1。',
+                  'warning')
+            return redirect(url_for('admin.admin_dashboard'))
+        raise AppError('本主機未開放公開建立店家 (ALLOW_TENANT_REGISTER=0)', 403)
     if request.method == 'GET':
         return render_template('tenant_register.html')
     shop_name = request.form.get('shop_name', '').strip()
@@ -221,6 +226,9 @@ def tenant_register():
     db.session.add(owner)
     seed_tenant_defaults(tenant.id)
     db.session.commit()
+    if current_user.is_authenticated:   # 平台管理者替別人建店：不切換成新店的負責人
+        flash(f'已建立店家「{tenant.name}」(代號 {tenant.slug})，負責人帳號 {owner.username}', 'success')
+        return redirect(_dashboard())
     session.clear()
     login_user(owner)
     session.permanent = True
@@ -243,7 +251,7 @@ def staff_accounts():
         username = request.form.get('username', '').strip()
         role = request.form.get('role', 'staff')
         password = request.form.get('password', '')
-        if role not in STAFF_ROLES or not username or len(password) < 10:
+        if role not in CREATABLE_STAFF_ROLES or not username or len(password) < 10:
             raise AppError('❌ 帳號必填，密碼至少 10 個字元，且角色需合法！', redirect_to=back)
         if StaffAccount.query.filter_by(username=username).first():
             raise AppError('❌ 該員工帳號名稱已被使用！', 409, redirect_to=back)
@@ -267,32 +275,32 @@ def staff_accounts():
             raise AppError('❌ 新密碼長度至少需 10 個字元！', redirect_to=back)
         acc.set_password(new_pwd)
         record_staff_audit('STAFF_RESET_PASSWORD', details=f"重設員工帳號密碼：{acc.username}")
-        flash(f'✅ 已成功重設員工【{acc.username}】的密碼！', 'success')
+        flash(f'已成功重設員工【{acc.username}】的密碼！', 'success')
     elif action == 'logout_all':
         from app.services import security_service
         security_service.logout_everywhere(acc, f'由 {current_user.username} 強制登出')
         record_staff_audit('STAFF_LOGOUT_ALL', details=f"強制登出員工 {acc.username} 的所有裝置")
-        flash(f'✅【{acc.username}】已在所有裝置登出', 'success')
+        flash(f'【{acc.username}】已在所有裝置登出', 'success')
     elif action == 'reset_2fa':
         if acc.role == 'owner':
             raise AppError('❌ 負責人帳號的兩步驟驗證請以備用碼登入後自行重設', 403, redirect_to=back)
         acc.totp_secret, acc.totp_enabled, acc.totp_backup_codes, acc.totp_last_counter = '', False, '[]', 0
         record_staff_audit('STAFF_2FA_RESET', details=f"重設員工 {acc.username} 的兩步驟驗證")
-        flash(f'✅ 已重設【{acc.username}】的兩步驟驗證', 'success')
+        flash(f'已重設【{acc.username}】的兩步驟驗證', 'success')
     elif action == 'permissions':
         from app.models.enums import PERMISSIONS
         perms = sorted({p for p in request.form.getlist('perm') if p in PERMISSIONS})
         before = acc.permissions or ''
         acc.permissions = ','.join(perms)
         record_staff_audit('STAFF_PERMISSIONS', details=f"員工 {acc.username} 額外權限：{before or '無'} → {acc.permissions or '無'}")
-        flash(f'✅ 已更新【{acc.username}】的權限', 'success')
+        flash(f'已更新【{acc.username}】的權限', 'success')
     elif action == 'wage':
         wage = safe_int(request.form.get('hourly_wage'), 0)
         if not 0 <= wage <= 100000:
             raise AppError('時薪需介於 0 ~ 100,000', redirect_to=back)
         acc.hourly_wage = wage
         record_staff_audit('STAFF_WAGE', details=f"設定員工 {acc.username} 時薪 ${wage}")
-        flash(f'✅ 已設定【{acc.username}】時薪 ${wage}', 'success')
+        flash(f'已設定【{acc.username}】時薪 ${wage}', 'success')
     elif action == 'delete_account':
         # 軟刪除：保留帳號列 (稽核可追溯、id 不重用)，立即停用、使密碼失效並釋出帳號名稱
         record_staff_audit('STAFF_DELETE_ACCOUNT', details=f"刪除員工帳號：{acc.username} ({acc.role})，帳號ID={acc.id}")
@@ -321,7 +329,7 @@ def _store_uploaded_image(item):
 
 
 @admin_bp.route('/admin/add', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def add_item():
     item = menu_service.apply_menu_form(MenuItem(tenant_id=g.tenant_id, image_path=''), request.form, form_flag)
     _store_uploaded_image(item)
@@ -331,7 +339,7 @@ def add_item():
 
 
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def edit_item(id):
     item = db.get_or_404(MenuItem, id)
     menu_service.apply_menu_form(item, request.form, form_flag)
@@ -343,7 +351,7 @@ def edit_item(id):
 
 
 @admin_bp.route('/admin/delete/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def delete_item(id):
     item = db.get_or_404(MenuItem, id)
     if item.image_path:
@@ -355,18 +363,18 @@ def delete_item(id):
 
 
 @admin_bp.route('/admin/add_combo', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def add_combo():
     combo = menu_service.save_combo(ComboOption(tenant_id=g.tenant_id), request.form, form_flag)
     db.session.add(combo)
     record_staff_audit('COMBO_CHANGE', details=f"新增套餐：{combo.name} (主餐 #{combo.main_item_id}，加價 ${combo.additional_price})")
     db.session.commit()
-    flash('✅ 成功為餐點新增套餐組合！', 'success')
+    flash('成功為餐點新增套餐組合！', 'success')
     return redirect(_dashboard('menu'))
 
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def edit_combo(id):
     combo = menu_service.save_combo(db.get_or_404(ComboOption, id), request.form, form_flag)
     record_staff_audit('COMBO_CHANGE', details=f"編輯套餐 #{combo.id}：{combo.name} (主餐 #{combo.main_item_id}，加價 ${combo.additional_price})")
@@ -375,7 +383,7 @@ def edit_combo(id):
 
 
 @admin_bp.route('/admin/delete_combo/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def delete_combo(id):
     combo = db.get_or_404(ComboOption, id)
     record_staff_audit('COMBO_CHANGE', details=f"刪除套餐 #{combo.id}：{combo.name}")
@@ -385,7 +393,7 @@ def delete_combo(id):
 
 
 @admin_bp.route('/admin/add_reward', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def add_reward():
     item = db.get_or_404(MenuItem, safe_int(request.form.get('item_id')))
     menu_service.set_item_reward_status(item, True, request.form.get('reward_points'), request.form.get('reward_discount_points'))
@@ -394,7 +402,7 @@ def add_reward():
 
 
 @admin_bp.route('/admin/remove_reward/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def remove_reward_item(id):
     menu_service.set_item_reward_status(db.get_or_404(MenuItem, id), False)
     db.session.commit()
@@ -447,7 +455,7 @@ def _coupon_desc(c):
 
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def add_coupon():
     coupon = _apply_coupon_form(Coupon(tenant_id=g.tenant_id))
     db.session.add(coupon)
@@ -457,7 +465,7 @@ def add_coupon():
 
 
 @admin_bp.route('/admin/edit_coupon/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def edit_coupon(id):
     coupon = db.get_or_404(Coupon, id)
     before = _coupon_desc(coupon)
@@ -468,7 +476,7 @@ def edit_coupon(id):
 
 
 @admin_bp.route('/admin/delete_coupon/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def delete_coupon(id):
     coupon = db.get_or_404(Coupon, id)
     record_staff_audit('COUPON_CHANGE', details=f"刪除優惠券：{coupon.title} ({coupon.code})，連同會員已領取的 {len(coupon.user_coupons)} 張持券")
@@ -481,7 +489,7 @@ def delete_coupon(id):
 # 會員
 # ==============================================================================
 @admin_bp.route('/admin/delete_user/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def delete_user(id):
     user = db.get_or_404(User, id)
     if user.photo_path:
@@ -497,7 +505,7 @@ def delete_user(id):
 
 
 @admin_bp.route('/admin/edit_user/<int:id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def edit_user(id):
     user = db.get_or_404(User, id)
     old = (user.name, user.phone, user.points or 0)
@@ -547,12 +555,10 @@ def edit_user(id):
 
 
 @admin_bp.route('/admin/coupons/<int:coupon_id>/issue', methods=['POST'], endpoint='issue_coupon')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def issue_coupon(coupon_id):
     """批量發放會員券"""
-    coupon = db.session.get(Coupon, coupon_id)
-    if coupon is None or coupon.tenant_id != g.tenant_id:
-        raise AppError('查無此優惠券', 404)
+    coupon = get_own(Coupon, coupon_id, '優惠券')
     f = request.form
     users, desc, missing = coupon_service.resolve_targets(g.tenant_id, f.get('target'), safe_int(f.get('tier_id'), 0),
                                                           f.get('phones'))
@@ -583,18 +589,18 @@ def issue_coupon(coupon_id):
 
 
 @admin_bp.route('/admin/coupon_batches/<batch_id>/revoke', methods=['POST'], endpoint='revoke_coupon_batch')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def revoke_coupon_batch(batch_id):
     """撤回一次發放中尚未使用的券 (發錯對象時使用；已使用的保留)"""
     n = coupon_service.revoke_batch(g.tenant_id, str(batch_id)[:36])
     record_staff_audit('COUPON_REVOKE', details=f'撤回批次 {str(batch_id)[:8]} 尚未使用的會員券 {n} 張')
     db.session.commit()
-    flash(f'✅ 已撤回 {n} 張尚未使用的券 (已使用的保留)', 'success')
+    flash(f'已撤回 {n} 張尚未使用的券 (已使用的保留)', 'success')
     return redirect(_dashboard('rewards'))
 
 
 @admin_bp.route('/admin/users/<int:user_id>/coupons', endpoint='user_coupons')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def user_coupons(user_id):
     """會員票券視窗的資料 (開啟時才載入)"""
     user = db.get_or_404(User, user_id)
@@ -603,7 +609,7 @@ def user_coupons(user_id):
 
 
 @admin_bp.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def toggle_user_coupon(uc_id):
     uc = db.get_or_404(UserCoupon, uc_id)
     uc.is_used = not uc.is_used
@@ -617,7 +623,7 @@ def toggle_user_coupon(uc_id):
 
 
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def update_reward_setting():
     s = get_or_create_reward_setting(g.tenant_id)
     before = (s.is_enabled, s.points_per_dollar, s.max_discount_per_order, s.spend_per_point)
@@ -662,13 +668,13 @@ def restore_backup():
         raise
     except Exception as e:  # noqa: BLE001  (訊息可能含備份包內使用者可控的檔名，由模板自動跳脫)
         raise AppError(f'❌ 還原過程發生錯誤：{e}', 500)
-    flash(f"✅ 系統備份還原完成！資料庫：{'已還原 (還原前的資料庫已另存為 database/menu.db.bak-時間)' if db_restored else '未更動'}；"
+    flash(f"系統備份還原完成！資料庫：{'已還原 (還原前的資料庫已另存為 database/menu.db.bak-時間)' if db_restored else '未更動'}；"
           f"會員相片 {photos} 張；餐點相片 {menu_photos} 張", 'success')
     return redirect(_dashboard())
 
 
 @admin_bp.route('/admin/export_excel', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def export_excel():
     tables = request.form.getlist('tables')
     if not tables:
@@ -681,13 +687,13 @@ def export_excel():
 
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def import_smart():
     file = request.files.get('file')
     if not file or not file.filename:
         raise AppError('❌ 請選擇 Excel / CSV 檔案！')
     counts = excel_service.import_workbook(file)
-    flash(f"✅ 智慧匯入完成！會員 {counts['User']} 筆、菜單 {counts['MenuItem']} 筆、優惠券 {counts['Coupon']} 筆", 'success')
+    flash(f"智慧匯入完成！會員 {counts['User']} 筆、菜單 {counts['MenuItem']} 筆、優惠券 {counts['Coupon']} 筆", 'success')
     return redirect(_dashboard('menu'))
 
 
@@ -695,7 +701,7 @@ def import_smart():
 # 前端即時資料與 AI 文案
 # ==============================================================================
 @admin_bp.route('/api/admin_live_orders')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def api_admin_live_orders():
     orders = analytics_service.load_dashboard_orders()
     start, end = todays_range()
@@ -727,7 +733,7 @@ def api_admin_live_orders():
 
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def api_generate_item_description():
     data = get_json_dict()
     name = str(data.get('name', '')).strip()

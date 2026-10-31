@@ -64,23 +64,29 @@ def test_scripts_escape_dynamic_html(path):
     assert not re.search(r'\.innerHTML\s*\+?=\s*[^`;]*\+', src), '不可用字串相加組 HTML'
 
 
-POS_MODULES = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', 'pos', '*.js')))
-
-
-def test_pos_modules_import_only_existing_exports():
-    """POS 拆成 ES 模組 (static/js/pos.js + static/js/pos/)：每個 import 的名稱都要在對方模組 export，不可漏 / 拼錯"""
+def _check_es_modules(folder, entry, template, required):
+    """拆成 ES 模組的頁面 (static/js/<entry>.js + static/js/<folder>/)：每個 import 的名稱都要在對方模組 export，不可漏 / 拼錯；每檔 500 行內"""
+    modules = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', folder, '*.js')))
     exports = {}
-    for path in POS_MODULES:
+    for path in modules:
         src = _read(path)
         names = set(re.findall(r'^export (?:async function|function|const|let)\s+([A-Za-z_$][\w$]*)', src, re.M))
         for group in re.findall(r'^export const \{([^}]*)\}', src, re.M):
             names |= {n.strip() for n in group.split(',') if n.strip()}
         exports[os.path.basename(path)] = names
-    assert set(exports) >= {'core.js', 'menu.js', 'cart.js', 'member.js', 'totals.js', 'checkout.js', 'live.js'}
-    for path in POS_MODULES + [os.path.join(ROOT, 'static', 'js', 'pos.js')]:
+    assert set(exports) >= required
+    for path in modules + [os.path.join(ROOT, 'static', 'js', entry)]:
         src = _read(path)
-        for names, target in re.findall(r"^import \{([^}]*)\} from '\./(?:pos/)?([a-z]+\.js)';", src, re.M):
+        for names, target in re.findall(r"^import \{([^}]*)\} from '\./(?:" + folder + r"/)?([a-z]+\.js)';", src, re.M):
             for name in (n.strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
                 assert name in exports[target], f'{os.path.basename(path)} 匯入的 {name} 不在 {target}'
         assert len(src.split('\n')) <= 500, f'{os.path.basename(path)} 超過 500 行，請再拆分'
-    assert 'type="module"' in _read(os.path.join(ROOT, 'templates', 'pos.html')).split('js/pos.js')[0].rsplit('<script', 1)[1]
+    assert 'type="module"' in _read(os.path.join(ROOT, 'templates', template)).split('js/' + entry)[0].rsplit('<script', 1)[1]
+
+
+def test_pos_modules_import_only_existing_exports():
+    _check_es_modules('pos', 'pos.js', 'pos.html', {'core.js', 'menu.js', 'cart.js', 'member.js', 'totals.js', 'checkout.js', 'live.js'})
+
+
+def test_customer_modules_import_only_existing_exports():
+    _check_es_modules('customer', 'customer.js', 'customer.html', {'core.js', 'cart.js', 'totals.js', 'menu.js', 'checkout.js'})

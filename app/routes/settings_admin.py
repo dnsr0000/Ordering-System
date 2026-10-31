@@ -2,6 +2,7 @@
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.services import settings_service
@@ -10,7 +11,6 @@ from app.sync import runtime as sync_runtime
 from app.utils import role_required
 
 settings_bp = Blueprint('settings_admin', __name__)
-MANAGERS = ('owner', 'manager')
 
 # 系統設定首頁的功能入口：(群組, 名稱, endpoint, 圖示, 說明, 需要的權限 (None = 店長以上))
 FEATURE_PAGES = (
@@ -62,7 +62,7 @@ def _section(key):
 
 
 @settings_bp.route('/admin/settings', endpoint='index')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def index():
     endpoints = current_app.view_functions
     pages = [dict(group=g_, name=n, url=url_for(e) if e in endpoints else '', icon=i, desc=d)
@@ -77,7 +77,7 @@ def index():
 
 
 @settings_bp.route('/admin/settings/<key>', methods=['GET', 'POST'], endpoint='edit')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def edit(key):
     section = _section(key)
     if request.method == 'POST':
@@ -87,7 +87,7 @@ def edit(key):
             settings_service.revert_to_hq(key)
             record_staff_audit('SETTINGS_CHANGE', details=f'系統設定「{section.title}」改回使用總部設定')
             db.session.commit()
-            flash(f'✅「{section.title}」已改回使用總部設定', 'success')
+            flash(f'「{section.title}」已改回使用總部設定', 'success')
             return redirect(url_for('settings_admin.edit', key=key))
         values = settings_service.parse_form(key, request.form)
         settings_service.put(key, values, changed_by=current_user.username)
@@ -96,7 +96,7 @@ def edit(key):
         record_staff_audit('SETTINGS_CHANGE', details=f'修改系統設定「{section.title}」({changed[:300]})'
                                                       + ('；已下發到所有分店' if published else ''))
         db.session.commit()
-        flash(f'✅ 已儲存「{section.title}」' + ('，並下發到所有分店 (分店自訂的除外)' if published else ''), 'success')
+        flash(f'已儲存「{section.title}」' + ('，並下發到所有分店 (分店自訂的除外)' if published else ''), 'success')
         return redirect(url_for('settings_admin.edit', key=key))
     managed = settings_service.hq_managed(key)
     return render_template('admin_setting_form.html', section=section, values=settings_service.form_view(key),
@@ -106,7 +106,7 @@ def edit(key):
 
 
 @settings_bp.route('/admin/settings/<key>/test', methods=['POST'], endpoint='test')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def test(key):
     _section(key)
     tester = settings_service.TESTERS.get(key)
@@ -114,8 +114,8 @@ def test(key):
         abort(404)
     try:
         message = tester(settings_service.get(key))
-        flash(f'✅ 測試成功：{message}', 'success')
+        flash(f'測試成功：{message}', 'success')
     except AppError as err:
         db.session.rollback()
-        flash(f'❌ 測試失敗：{err.message}', 'danger')
+        flash(f'測試失敗：{err.message}', 'danger')
     return redirect(url_for('settings_admin.edit', key=key))

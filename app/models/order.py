@@ -9,8 +9,9 @@ REWARD_LABEL = '[點數兌換]'
 
 class Order(TenantScoped, db.Model):
     """
-    訂單。uuid 由前端在送單時產生 (client_order_id)：同一個 uuid 重送只會建立一張訂單，
-    之後同步到線上時也以 uuid 作為跨資料庫的訂單識別。
+    訂單。uuid 由伺服器產生 (同步到線上時作為跨資料庫的訂單識別，也是 /track 追蹤頁的憑證)；
+    前端送單時另外帶 client_order_id：同一個 client_order_id 重送只會建立一張訂單 (本機去重，不同步)。
+    舊版把 client_order_id 直接當 uuid，前端可自訂 (非 https 的點餐機還是用 Math.random 產生)，追蹤頁網址因此可能被猜到。
     status：Pending (製作中) → Completed (已出餐) → PickedUp (已取餐)；任一階段可 Cancelled。
     """
     __tablename__ = 'order'
@@ -40,6 +41,9 @@ class Order(TenantScoped, db.Model):
     customer_log_id = db.Column(db.Integer, db.ForeignKey('customer_log.id', ondelete='SET NULL'), nullable=True)
     # 負責出餐的分店 (sync_node.uuid)：分店自己建立的訂單為本分店；線上點餐為顧客選的取餐分店；未啟用同步時為空
     node_uuid = db.Column(db.String(36), nullable=True, index=True)
+    # 前端送單時產生的去重識別 (同店唯一；沒有帶時為 NULL)
+    client_order_id = db.Column(db.String(36), nullable=True)
+    __table_args__ = (db.Index('ix_order_tenant_client_order_id', 'tenant_id', 'client_order_id', unique=True),)
     # 付款狀態：'' 已在點餐時處理 (點餐機 / POS) / unpaid 掃碼點餐尚未結帳 / settled 已於櫃檯結帳 /
     # 線上付款 (線上端的線上點餐)：pending 待付款 / paid 已付款 / expired 逾時未付 /
     # refund_required 已付款但訂單取消 (需人工退款)。待付款的訂單不會送到分店。

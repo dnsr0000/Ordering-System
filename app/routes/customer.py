@@ -17,7 +17,7 @@ from app.services import (branch_service, coupon_service, i18n_service, inventor
                           table_pay_service, table_service)
 from app.services.customer_session import current_member
 from app.services.menu_service import menu_categories, storefront_payload
-from app.services.order_service import find_promo, process_checkout
+from app.services.order_service import find_by_client_order_id, find_promo, process_checkout
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
 from app.utils import get_json_dict
@@ -97,11 +97,11 @@ def set_pickup_node():
     uuid = (request.form.get('node_uuid') or '').strip()
     node = next((n for n in _online_nodes() if n.uuid == uuid), None)
     if node is None:
-        flash('❌ 此分店目前不開放線上點餐，請重新選擇取餐分店！', 'danger')
+        flash('此分店目前不開放線上點餐，請重新選擇取餐分店！', 'danger')
         session.pop(PICKUP_NODE_KEY, None)
     else:
         session[PICKUP_NODE_KEY] = node.uuid
-        flash(f'✅ 取餐分店：{node.name} (菜單已改為顯示該分店的供應狀況)', 'success')
+        flash(f'取餐分店：{node.name} (菜單已改為顯示該分店的供應狀況)', 'success')
     return redirect(url_for('customer.customer_index'))
 
 
@@ -322,7 +322,7 @@ def offline_order():
     if any(isinstance(i, dict) and (i.get('is_reward') or i.get('pass_id')) for i in items):
         raise AppError('紅利兌換與寄杯無法以暫存單補送', 409)
     code = re.sub(r'[^0-9A-Z]', '', str(data.get('code') or '').upper())[:6]
-    existing = Order.query.filter_by(uuid=client_order_id[:36]).first()
+    existing = find_by_client_order_id(g.tenant_id, client_order_id)
     if existing is not None:   # 斷線前其實已送達 (只是沒收到回應) 或重複補送
         return _offline_replayed(existing, code)
     order_type = payload.get('order_type') if payload.get('order_type') in (OrderType.DINE_IN, OrderType.TAKE_OUT) \
@@ -337,7 +337,7 @@ def offline_order():
             invoice_info=payload.get('invoice') or None)
     except AppError as exc:
         # 原本的 /submit_order 還在處理中 (逾時後補送)：同一個訂單編號先完成的那張就是這張暫存單
-        same = Order.query.filter_by(uuid=client_order_id[:36]).first() if exc.status == 409 else None
+        same = find_by_client_order_id(g.tenant_id, client_order_id) if exc.status == 409 else None
         if same is None:
             raise
         return _offline_replayed(same, code)
@@ -356,7 +356,7 @@ def _offline_result(order, replayed, code):
 
 
 def _offline_replayed(order, code):
-    # 只有點餐機的訪客訂單可能是這張暫存單 (訂單編號在追蹤頁網址上是公開的，不可藉此查到別人的訂單)
+    # 只有點餐機的訪客訂單可能是這張暫存單 (不可藉此查到別人的訂單)
     if order.order_source != OrderSource.KIOSK or order.user_id is not None:
         raise AppError('這張暫存單的訂單編號已被其他訂單使用，請店員確認', 409)
     return jsonify(_offline_result(order, True, code))

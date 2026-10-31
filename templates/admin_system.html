@@ -40,11 +40,11 @@
         <section class="col-xl-4"><div class="card rounded-4 p-3">
             <h2 class="h6 fw-bold">自動備份 {% if backup_cfg.enabled %}<span class="badge bg-success">每天 {{ backup_cfg.time }}</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
             {% if health.dialect == 'sqlite' %}
-            {% if current_user.role == 'owner' %}<form method="POST" action="{{ url_for('system.backup_now') }}" class="mb-2">{{ csrf() }}<button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">立即備份</button></form>{% endif %}
+            {% if is_platform_admin %}<form method="POST" action="{{ url_for('system.backup_now') }}" class="mb-2">{{ csrf() }}<button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">立即備份</button></form>{% endif %}
             <table class="table table-dark table-sm mb-0" id="backupsTable"><tbody>
             {% for b in backups %}<tr><td class="small">{{ b.at }}</td><td class="small">{{ (b.size / 1048576)|round(2) }} MB</td>
-                <td>{% if current_user.role == 'owner' %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('system.download_backup', name=b.name) }}">下載</a>{% endif %}</td></tr>
-            {% else %}<tr><td class="text-white-50 small">尚無自動備份</td></tr>{% endfor %}
+                <td>{% if is_platform_admin %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('system.download_backup', name=b.name) }}">下載</a>{% endif %}</td></tr>
+            {% else %}<tr><td class="text-white-50 small">{% if is_platform_admin %}尚無自動備份{% else %}整庫備份含所有店家的資料，僅平台管理者 (預設店家負責人) 可建立與下載；本店資料請用 Excel 匯出{% endif %}</td></tr>{% endfor %}
             </tbody></table>
             <div class="small text-white-50 mt-2">備份位置：database/backups (保留 {{ backup_cfg.keep_days }} 天)。建議另外複製到雲端硬碟或隨身碟。還原：後台「匯入資料 → 整庫還原」選擇備份檔。</div>
             {% else %}

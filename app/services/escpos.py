@@ -16,18 +16,6 @@ def text_width(text):
     return sum(char_width(c) for c in text)
 
 
-def fit(text, width):
-    """截斷到指定寬度 (不切半個中文字)"""
-    out, used = [], 0
-    for c in text:
-        w = char_width(c)
-        if used + w > width:
-            break
-        out.append(c)
-        used += w
-    return ''.join(out)
-
-
 def wrap(text, width):
     lines, current, used = [], [], 0
     for c in str(text):

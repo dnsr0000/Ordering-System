@@ -18,7 +18,7 @@
 import logging
 import secrets
 from calendar import monthrange
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 

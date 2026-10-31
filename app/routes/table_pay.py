@@ -16,10 +16,6 @@ def _table():
     return table
 
 
-def _base_url():
-    return current_app.config.get('PUBLIC_BASE_URL') or request.url_root.rstrip('/')
-
-
 @table_pay_bp.route('/api/table/bill')
 def bill():
     """本桌未結帳的訂單與合計 (掃碼點餐的手機)"""
@@ -45,7 +41,7 @@ def pay_page(trade_no):
         abort(404)
     if tp.status != 'pending':
         return redirect(url_for('table_pay.status', trade_no=tp.trade_no))
-    fields = table_pay_service.form_fields(tp, _base_url())
+    fields = table_pay_service.form_fields(tp)
     from app.services import settings_service
     resp = Response(render_template('table_pay.html', tp=tp, table=table, fields=fields,
                                     action=payment_ecpay.checkout_url(), stage=current_app.config.get('ECPAY_STAGE', True),
@@ -67,11 +63,11 @@ def notify():
 @csrf.exempt
 def result():
     """顧客付款後由綠界頁面帶回：驗證後導向結果頁 (門市主機收不到綠界通知時，以這裡帶回的已簽章結果完成結帳)"""
-    params = dict(request.form.items())
-    if not payment_ecpay.verify(params):
+    params, status = payment_ecpay.parse_result(request.form, '桌邊結帳 (瀏覽器帶回)')
+    if status == 'bad_mac':
         abort(400)
     trade_no = params.get('MerchantTradeNo')
-    if str(params.get('RtnCode')) == '1' and str(params.get('SimulatePaid', '0')) != '1':
+    if status == 'paid':
         table_pay_service.mark_paid(trade_no, params.get('TradeNo'), params.get('TradeAmt'), params.get('PaymentType'))
     return redirect(url_for('table_pay.status', trade_no=trade_no), code=303)
 

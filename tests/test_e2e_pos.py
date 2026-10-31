@@ -287,3 +287,37 @@ def test_pos_xss_names_render_as_text(app, page):
     # 當日訂單與即時庫存走 POS 專用的輕量 API，不再呼叫會計算整份營運分析的後台 API
     assert any('/api/pos/today_orders' in u for u in api_calls)
     assert not any('/api/admin_live_orders' in u for u in api_calls)
+
+
+def test_pos_points_require_member_pin_modal(app, page, store_settings):
+    """會員經營開啟「POS 動用儲值金 / 點數需驗證」：點數折抵結帳時跳出會員 PIN 視窗，PIN 錯誤留在視窗、正確後出收據"""
+    store_settings('member', pos_verify=True)
+    with app.app_context():
+        member = User.query.filter_by(phone='0911222333').first()
+        member.points = max(member.points or 0, 100)
+        db.session.commit()
+        member_id = member.id
+    open_pos(page)
+    page.fill('#posMemberQuery', '0911222333')
+    page.keyboard.press('Enter')
+    expect(page.locator('#posMemberStatusBadge')).to_have_text('已綁定會員')
+    click_item(page, '示範雞塊')
+    page.locator('#posUsePointsToggle').check()
+    page.fill('#posPointsInput', '10')
+    page.locator('#posPointsInput').dispatch_event('input')
+    page.keyboard.press('F2')
+
+    modal = page.locator('#posMemberVerifyModal')
+    expect(modal).to_be_visible()
+    expect(page.locator('#posMemberVerifyName')).to_contain_text('示範會員')
+    page.fill('#posMemberVerifyPin', '0000')
+    page.locator('#posMemberVerifySubmit').click()
+    expect(page.locator('#posMemberVerifyMsg')).to_contain_text('PIN')   # 錯誤：視窗保持開啟
+    expect(modal).to_be_visible()
+    page.fill('#posMemberVerifyPin', '2468')
+    page.locator('#posMemberVerifySubmit').click()
+    expect(modal).to_be_hidden()
+    order, _items = receipt_order(app, page)
+    assert order['user_id'] == member_id and order['points_used'] == 10
+    close_receipt(page)
+    page.problems[:] = [p for p in page.problems if 'status of 403' not in p]   # need_member_pin 的 403 是預期的

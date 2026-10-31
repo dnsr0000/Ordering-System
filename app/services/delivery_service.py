@@ -74,8 +74,8 @@ def map_items(tenant_id, products):
 
 def platform_order_uuid(tenant_id, source, external_ref):
     """
-    平台訂單的訂單 uuid 由「店家 + 平台 + 平台單號」決定：平台重送通知、同時送達兩次、或店員同時手動登錄同一張單，
-    都會落在同一個 uuid (資料庫唯一索引)，只會建立一張訂單、只扣一次庫存。
+    平台訂單的去重識別 (client_order_id) 由「店家 + 平台 + 平台單號」決定：平台重送通知、同時送達兩次、或店員同時手動登錄同一張單，
+    都會落在同一個識別 (同店唯一索引)，只會建立一張訂單、只扣一次庫存。
     """
     tenant = db.session.get(Tenant, tenant_id)
     key = f'{tenant.uuid if tenant else tenant_id}:{source}:{str(external_ref).strip().lower()}'
@@ -84,7 +84,7 @@ def platform_order_uuid(tenant_id, source, external_ref):
 
 def find_platform_order(tenant_id, source, external_ref):
     cid = platform_order_uuid(tenant_id, source, external_ref)
-    return (Order.query.filter_by(uuid=cid).execution_options(skip_tenant_filter=True).first()
+    return (Order.query.filter_by(tenant_id=tenant_id, client_order_id=cid).execution_options(skip_tenant_filter=True).first()
             or Order.query.filter_by(tenant_id=tenant_id, external_ref=external_ref, order_source=source)
             .execution_options(skip_tenant_filter=True).first())
 

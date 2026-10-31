@@ -10,6 +10,7 @@ from functools import wraps
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy import func
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.sync import NodeStock, SyncNode
@@ -102,7 +103,7 @@ def nodes_action():
         branch_service.refresh_sites(g.tenant_id)
         db.session.commit()
         _show_token_once(node, token)
-        flash(f'✅ 已新增分店【{node.name}】，請立即複製下方的權杖 (只會顯示這一次)。', 'success')
+        flash(f'已新增分店【{node.name}】，請立即複製下方的權杖 (只會顯示這一次)。', 'success')
         return redirect(back)
 
     node = SyncNode.query.filter_by(id=safe_int(request.form.get('node_id')), tenant_id=g.tenant_id).first_or_404()
@@ -111,7 +112,7 @@ def nodes_action():
         record_staff_audit('SYNC_NODE_ROTATE_TOKEN', details=f'重新產生分店權杖：{node.name} ({node.uuid})')
         db.session.commit()
         _show_token_once(node, token)
-        flash(f'✅ 已重新產生【{node.name}】的權杖，舊權杖已失效；請更新該分店的 SYNC_NODE_TOKEN。', 'success')
+        flash(f'已重新產生【{node.name}】的權杖，舊權杖已失效；請更新該分店的 SYNC_NODE_TOKEN。', 'success')
         return redirect(back)
     if action == 'toggle_online':
         node.accepts_online_orders = not node.accepts_online_orders
@@ -138,7 +139,7 @@ def nodes_action():
 # 分店端：同步狀態
 # ==============================================================================
 @sync_admin_bp.route('/admin/sync', methods=['GET'], endpoint='sync_status')
-@role_required('owner', 'manager')
+@role_required(*MANAGER_ROLES)
 @only_role(runtime.NODE)
 def sync_status_page():
     status = sync_status()
@@ -154,14 +155,14 @@ def sync_status_page():
 
 
 @sync_admin_bp.route('/admin/sync/run', methods=['POST'], endpoint='sync_run')
-@role_required('owner', 'manager')
+@role_required(*MANAGER_ROLES)
 @only_role(runtime.NODE)
 def sync_run():
     back = url_for('sync_admin.sync_status')
     worker = current_app.extensions.get('sync_worker')
     if worker is not None:
         worker.local_change.set()
-        flash('✅ 已通知背景同步立即執行，請稍候幾秒後重新整理本頁查看結果。', 'success')
+        flash('已通知背景同步立即執行，請稍候幾秒後重新整理本頁查看結果。', 'success')
         return redirect(back)
     try:
         pushed, pulled = NodeSync(make_transport(current_app)).run_once()
@@ -170,8 +171,8 @@ def sync_run():
             record_error(exc)
         except Exception:  # noqa: BLE001
             db.session.rollback()
-        flash(f'❌ 同步失敗：{exc}', 'danger')
+        flash(f'同步失敗：{exc}', 'danger')
         return redirect(back)
     record_ok()
-    flash(f'✅ 同步完成：上傳 {pushed} 筆、下載 {pulled} 筆變更。', 'success')
+    flash(f'同步完成：上傳 {pushed} 筆、下載 {pulled} 筆變更。', 'success')
     return redirect(back)

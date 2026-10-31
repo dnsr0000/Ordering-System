@@ -781,7 +781,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/customer.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/customer.js') }}"></script>
 {% if not is_online and not dining_table %}<script src="{{ url_for('static', filename='js/kiosk-offline.js') }}" data-shop="{{ g.tenant.slug }}"></script>{% endif %}
 {% if not session.get('user_name') %}<script src="{{ url_for('static', filename='js/kiosk-attract.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>

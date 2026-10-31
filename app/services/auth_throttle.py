@@ -91,6 +91,19 @@ def staff_keys(username, ip):
     return {'device': f"staff:dev:{name}:{ip}", 'account': f"staff:acct:{name}"}
 
 
+def staff_lock_remaining(keys):
+    """
+    員工帳號的鎖定狀態。帳號層級 (不分 IP 累計) 的鎖定是防止換 IP 猜密碼，但也讓知道帳號名稱的人
+    (例如打卡看板、收據上的收銀員) 能故意連錯把店員鎖在外面；因此在後台「裝置管理」註冊過的店內裝置
+    (POS、點餐機、廚房) 只受裝置層級 (同 IP 同帳號 5 次) 的鎖定，不受帳號層級鎖定影響。
+    """
+    from app.services import device_service
+    device = device_service.current()
+    if device is not None and not device.is_locked:
+        return lock_remaining([keys['device']])
+    return lock_remaining(keys.values())
+
+
 def record_staff_failure(keys):
     record_failure(keys['device'], STAFF_DEVICE_MAX_FAILS)
     record_failure(keys['account'], STAFF_ACCOUNT_MAX_FAILS)

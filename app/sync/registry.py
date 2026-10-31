@@ -68,7 +68,7 @@ SPECS = (
               natural_key=('phone',)),
     TableSpec(UserCoupon),
     TableSpec(CustomerLog, direction='up'),
-    TableSpec(Order, merge='order', local_only=frozenset({'dining_table_id', 'shift_id', 'settlement_id'})),
+    TableSpec(Order, merge='order', local_only=frozenset({'dining_table_id', 'shift_id', 'settlement_id', 'client_order_id'})),
     # 訂單明細：新增後只有「單品作廢」會改 (作廢份數只增不減，見 engine._merge)
     TableSpec(OrderItem, merge='order_item', local_only=frozenset({'prepared_at'})),
     TableSpec(OrderFeedback, direction='up', merge='insert_only'),

@@ -11,7 +11,8 @@
 - 取餐號：每店每日一列計數，條件式 UPDATE 取號 (同時結帳自然排隊)。
 - 庫存 / 點數 / 憑證 / 優惠券：皆為「WHERE 剩餘量足夠」的條件式 UPDATE，rowcount 為 0 即失敗。
 - 訂單狀態：WHERE status = 目前狀態 的 CAS 更新，同一張單同時操作只有一方成功。
-- 重送：前端每次結帳產生一個 client_order_id (存為 Order.uuid，具唯一索引)，重送時直接回傳同一張訂單。
+- 重送：前端每次結帳產生一個 client_order_id (存為 Order.client_order_id，同店唯一索引)，重送時直接回傳同一張訂單；
+  Order.uuid 由伺服器產生 (追蹤頁憑證)。
 """
 from app.services.order_pricing import (  # noqa: F401
     NON_MAIN_ADDON_CATEGORIES, _PRICE_TAG, _COMBO_TAG, PromoResult, normalize_code, find_promo, _addon_qualifies,
@@ -24,7 +25,8 @@ from app.services.order_stock import (  # noqa: F401
     _change_node_stock, online_pickup_node, order_stock_demands,
 )
 from app.services.order_checkout import (  # noqa: F401
-    _replay, process_checkout,
+    Checkout, _after_commit, _persist, _prepare, _price, _replay, _reserve, _validate, find_by_client_order_id,
+    process_checkout,
 )
 from app.services.order_lifecycle import (  # noqa: F401
     LEGAL_TRANSITIONS, _ALL_TRANSITIONS, ROLE_TRANSITIONS, change_order_status, system_cancel, void_item,
@@ -35,7 +37,7 @@ from app.services.order_lifecycle import (  # noqa: F401
 __all__ = [
     'NON_MAIN_ADDON_CATEGORIES', 'PromoResult', 'normalize_code', 'find_promo', 'CheckoutLine', 'PICKUP_COUNTER',
     'MAX_PICKUP_NUMBER', 'next_pickup_number', 'consume_stock_unchecked', 'online_pickup_node', 'order_stock_demands',
-    'process_checkout', 'LEGAL_TRANSITIONS', 'ROLE_TRANSITIONS', 'change_order_status', 'system_cancel', 'void_item',
+    'process_checkout', 'find_by_client_order_id', 'LEGAL_TRANSITIONS', 'ROLE_TRANSITIONS', 'change_order_status', 'system_cancel', 'void_item',
     'flag_refund_if_paid', 'complete_all_pending_orders', 'auto_close_stale_orders', 'ensure_daily_auto_close',
     'todays_range', 'todays_orders_condition',
 ]

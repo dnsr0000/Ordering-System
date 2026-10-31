@@ -4,11 +4,15 @@ from datetime import datetime
 
 from flask import g, request, session
 
+from app.errors import AppError
 from app.extensions import db
 from app.models.user import CustomerLog, User
 from app.services.voucher_service import refund_open_vouchers
 
-CUSTOMER_SESSION_KEYS = ('user_id', 'user_name', 'is_guest', 'customer_log_id')
+# line_pending：LINE 授權後尚未綁定的帳號，登出時一併清除 (共用點餐機上不可留給下一位顧客)
+# auth_factor：這次登入用的方式 (pin / face / line)；人臉不是秘密因子，敏感操作 (個資下載、會員條碼、解除 LINE) 要再輸入 PIN
+CUSTOMER_SESSION_KEYS = ('user_id', 'user_name', 'is_guest', 'customer_log_id', 'line_pending', 'auth_factor')
+WEAK_FACTORS = ('face',)
 
 
 def _start(user_type, identifier):
@@ -20,14 +24,42 @@ def _start(user_type, identifier):
     session['customer_log_id'] = log.id
 
 
-def login_member(user):
-    """會員登入：先退回上次未結帳的兌換憑證點數，再開始新的進場紀錄"""
+def login_member(user, factor='pin'):
+    """會員登入：先退回上次未結帳的兌換憑證點數，再開始新的進場紀錄。factor：pin / face / line"""
     refund_open_vouchers(g.tenant_id, user.id)
     user.last_login_at = datetime.now()
     user.last_logout_at = None
     db.session.commit()
     _start('會員', f"{user.name} ({user.phone})")
-    session.update(user_id=user.id, user_name=user.name, is_guest=False)
+    session.update(user_id=user.id, user_name=user.name, is_guest=False, auth_factor=factor)
+
+
+def needs_pin_confirm():
+    """這次登入只靠人臉 (可能誤認、且點餐機是共用裝置)：敏感操作前要再輸入 PIN"""
+    return session.get('auth_factor') in WEAK_FACTORS
+
+
+def require_confirmed(member, pin=None, label='此操作'):
+    """
+    敏感操作的身分確認：以 PIN 登入 / LINE 登入的工作階段直接通過；人臉登入的工作階段需提供正確 PIN
+    (與 phone_login 相同的鎖定規則)，通過後整個工作階段升級為已確認。沒有 PIN 時拋 403 (need_pin=True)。
+    """
+    if not needs_pin_confirm():
+        return
+    pin = str(pin or '').strip()
+    if not pin:
+        raise AppError(f'{label}需輸入 PIN 碼確認身分 (您是以人臉辨識登入)', 403, need_pin=True)
+    from app.services import auth_throttle
+    keys = auth_throttle.pin_keys(member.tenant_id, member.phone, request.remote_addr or '-')
+    if auth_throttle.lock_remaining(keys.values()):
+        raise AppError('PIN 碼錯誤次數過多，已暫時鎖定，請稍後再試', 429, need_pin=True)
+    if not member.pin_hash:
+        raise AppError('您的帳號尚未設定 PIN 碼，請洽櫃檯協助設定後再操作', 403, need_pin=True)
+    if not member.check_pin(pin):
+        auth_throttle.record_pin_failure(keys)
+        raise AppError('PIN 碼不正確', 403, need_pin=True)
+    auth_throttle.clear_keys(keys['device'], keys['account'])
+    session['auth_factor'] = 'pin'
 
 
 def login_guest():

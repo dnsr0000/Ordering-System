@@ -6,6 +6,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, send_
 from flask_login import current_user
 from openpyxl import Workbook
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db, ip_key, limiter
 from app.models.staff import TimeClock, WorkSchedule
@@ -13,10 +14,9 @@ from app.models.tenant import StaffAccount
 from app.services import auth_throttle
 from app.services.audit import record_staff_audit
 from app.services.settings_service import TIME_RE
-from app.utils import neutralize_formulas, role_required, safe_int
+from app.utils import get_own, neutralize_formulas, role_required, safe_int
 
 timeclock_bp = Blueprint('timeclock', __name__)
-MANAGERS = ('owner', 'manager')
 
 
 def _open_record(staff_id):
@@ -30,7 +30,7 @@ def punch():
         username = (request.form.get('username') or '').strip()
         password = request.form.get('password') or ''
         keys = auth_throttle.staff_keys(username, request.remote_addr or '-')
-        if auth_throttle.lock_remaining(keys.values()):
+        if auth_throttle.staff_lock_remaining(keys):
             raise AppError('密碼錯誤次數過多，請稍後再試', 429)
         staff = StaffAccount.query.filter_by(username=username).first()
         if staff is None:
@@ -59,7 +59,12 @@ def punch():
     start = datetime.combine(today, datetime.min.time())
     records = TimeClock.query.filter(TimeClock.clock_in >= start).order_by(TimeClock.clock_in.desc()).all()
     schedules = WorkSchedule.query.filter_by(work_date=today).order_by(WorkSchedule.start_time).all()
-    return render_template('timeclock.html', records=records, schedules=schedules, tenant=g.tenant)
+    # 打卡頁不需登入：帳號名稱只在已登入員工或已註冊的店內裝置上完整顯示，其他人看到遮罩 (帳號名稱可被拿來猜密碼 / 鎖帳號)
+    from app.services import device_service
+    from app.utils import mask_name
+    reveal = current_user.is_authenticated or device_service.current() is not None
+    return render_template('timeclock.html', records=records, schedules=schedules, tenant=g.tenant,
+                           show_name=(lambda name: name) if reveal else mask_name)
 
 
 def _range():
@@ -87,15 +92,13 @@ def _summary(records):
 
 
 @timeclock_bp.route('/admin/timeclock', methods=['GET', 'POST'], endpoint='admin')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def admin():
     if request.method == 'POST':
         f = request.form
         action = f.get('action')
         if action == 'edit_record':
-            rec = db.session.get(TimeClock, safe_int(f.get('record_id'), 0))
-            if rec is None or rec.tenant_id != g.tenant_id:
-                raise AppError('查無紀錄', 404)
+            rec = get_own(TimeClock, f.get('record_id'), '紀錄')
             try:
                 rec.clock_in = datetime.fromisoformat(f.get('clock_in'))
                 rec.clock_out = datetime.fromisoformat(f.get('clock_out')) if f.get('clock_out') else None
@@ -107,9 +110,7 @@ def admin():
             rec.edited_by = current_user.username
             record_staff_audit('TIMECLOCK_EDIT', details=f'修改出勤紀錄 #{rec.id} ({rec.staff.username if rec.staff else ""})')
         elif action == 'add_schedule':
-            staff = db.session.get(StaffAccount, safe_int(f.get('staff_id'), 0))
-            if staff is None or staff.tenant_id != g.tenant_id:
-                raise AppError('查無此員工', 404)
+            staff = get_own(StaffAccount, f.get('staff_id'), '員工')
             try:
                 day = date.fromisoformat(f.get('work_date') or '')
             except ValueError:
@@ -122,14 +123,12 @@ def admin():
                 db.session.add(WorkSchedule(tenant_id=g.tenant_id, staff_account_id=staff.id, work_date=day + timedelta(days=i),
                                             start_time=st, end_time=en, note=(f.get('note') or '').strip()[:100]))
         elif action == 'delete_schedule':
-            ws = db.session.get(WorkSchedule, safe_int(f.get('schedule_id'), 0))
-            if ws is None or ws.tenant_id != g.tenant_id:
-                raise AppError('查無班表', 404)
+            ws = get_own(WorkSchedule, f.get('schedule_id'), '班表')
             db.session.delete(ws)
         else:
             raise AppError('不支援的操作')
         db.session.commit()
-        flash('✅ 已更新', 'success')
+        flash('已更新', 'success')
         return redirect(url_for('timeclock.admin', start=request.args.get('start'), end=request.args.get('end')))
     start, end = _range()
     t0, t1 = datetime.combine(start, datetime.min.time()), datetime.combine(end + timedelta(days=1), datetime.min.time())
@@ -146,7 +145,7 @@ def admin():
 
 
 @timeclock_bp.route('/admin/timeclock/export', endpoint='export')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def export():
     start, end = _range()
     t0, t1 = datetime.combine(start, datetime.min.time()), datetime.combine(end + timedelta(days=1), datetime.min.time())
@@ -171,7 +170,7 @@ def export():
 
 
 @timeclock_bp.route('/admin/staffing', methods=['GET', 'POST'], endpoint='staffing')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def staffing():
     """排班建議 (說明見 app/services/staffing_service.py)"""
     from app.services import staffing_service
@@ -196,7 +195,7 @@ def staffing():
         n = staffing_service.apply_shifts(g.tenant_id, target, assignments)
         record_staff_audit('SCHEDULE_SUGGEST', details=f'依排班建議新增 {target} 班表 {n} 筆')
         db.session.commit()
-        flash(f'✅ 已加入 {n} 筆班表', 'success')
+        flash(f'已加入 {n} 筆班表', 'success')
         return redirect(url_for('timeclock.staffing', date=target.isoformat()))
     staff = StaffAccount.query.filter_by(tenant_id=g.tenant_id, deleted_at=None, is_active=True) \
         .order_by(StaffAccount.username).all()

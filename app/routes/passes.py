@@ -3,6 +3,7 @@ from flask import Blueprint, flash, g, jsonify, redirect, render_template, reque
 from flask_login import current_user
 from sqlalchemy import func
 
+from app.models.enums import MANAGER_ROLES, POS_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.member import MemberPass, PassLedger, PassProduct
@@ -10,36 +11,30 @@ from app.models.menu import MenuItem
 from app.models.user import User
 from app.services import pass_service
 from app.services.audit import record_staff_audit
-from app.utils import get_json_dict, role_required, safe_int
+from app.utils import find_own, get_json_dict, get_own, role_required, safe_int
 
 passes_bp = Blueprint('passes', __name__)
-MANAGERS = ('owner', 'manager')
-POS_ROLES = ('owner', 'manager', 'staff')
 
 
 @passes_bp.route('/admin/passes', methods=['GET', 'POST'], endpoint='index')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def index():
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'save':
             pid = safe_int(request.form.get('product_id'), 0)
-            product = db.session.get(PassProduct, pid) if pid else PassProduct(tenant_id=g.tenant_id)
-            if product is None or product.tenant_id != g.tenant_id:
-                raise AppError('查無此寄杯商品', 404)
+            product = get_own(PassProduct, pid, '寄杯商品') if pid else PassProduct(tenant_id=g.tenant_id)
             pass_service.save_product(product, request.form)
             db.session.add(product)
             record_staff_audit('PASS_PRODUCT', details=f'{"編輯" if pid else "新增"}寄杯商品 {product.name} '
                                                        f'({product.uses} 次 ${product.price})')
             db.session.commit()
-            flash(f'✅ 已儲存寄杯商品「{product.name}」', 'success')
+            flash(f'已儲存寄杯商品「{product.name}」', 'success')
         elif action == 'toggle':
-            product = db.session.get(PassProduct, safe_int(request.form.get('product_id'), 0))
-            if product is None or product.tenant_id != g.tenant_id:
-                raise AppError('查無此寄杯商品', 404)
+            product = get_own(PassProduct, request.form.get('product_id'), '寄杯商品')
             product.is_active = not product.is_active
             db.session.commit()
-            flash(f"✅ 寄杯商品「{product.name}」已{'上架' if product.is_active else '下架'} (已售出的寄杯照常可用)", 'success')
+            flash(f"寄杯商品「{product.name}」已{'上架' if product.is_active else '下架'} (已售出的寄杯照常可用)", 'success')
         else:
             raise AppError('不支援的操作')
         return redirect(url_for('passes.index'))
@@ -57,9 +52,7 @@ def index():
                     if mp.total_uses)
     detail = None
     if request.args.get('pass'):
-        detail = db.session.get(MemberPass, safe_int(request.args.get('pass'), 0))
-        if detail is not None and detail.tenant_id != g.tenant_id:
-            detail = None
+        detail = find_own(MemberPass, request.args.get('pass'))
     entries = PassLedger.query.filter_by(member_pass_id=detail.id).order_by(PassLedger.id).all() if detail else []
     items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all()
     return render_template('admin_passes.html', products=products, passes=passes, q=q, outstanding=outstanding,

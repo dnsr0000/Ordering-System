@@ -54,26 +54,11 @@ def check_no_show_limit(tenant_id, phone, now=None):
 # ---------------------------------------------------------------------------
 # 付款
 # ---------------------------------------------------------------------------
-def form_fields(r, base_url):
-    merchant_id, hash_key, hash_iv, _base = payment_ecpay._cfg()
-    base_url = base_url.rstrip('/')
-    params = {
-        'MerchantID': merchant_id,
-        'MerchantTradeNo': r.deposit_trade_no,
-        'MerchantTradeDate': datetime.now().strftime('%Y/%m/%d %H:%M:%S'),
-        'PaymentType': 'aio',
-        'TotalAmount': str(int(r.deposit_amount)),
-        'TradeDesc': 'ReservationDeposit',
-        'ItemName': f'訂位訂金 {r.reserved_at:%m/%d %H:%M} {r.party_size} 位',
-        'ReturnURL': f'{base_url}/payment/ecpay/reservation_notify',
-        'OrderResultURL': f'{base_url}/payment/ecpay/reservation_result',
-        'ChoosePayment': 'Credit',
-        'EncryptType': '1',
-        'CustomField1': f'R:{r.token}',   # 每次付款嘗試的交易編號不同 (綠界不可重複)，以訂位代碼找回訂位
-        'NeedExtraPaidInfo': 'N',
-    }
-    params['CheckMacValue'] = payment_ecpay.check_mac_value(params, hash_key, hash_iv)
-    return params
+def form_fields(r, base_url=None):
+    # CustomField1 帶訂位代碼：每次付款嘗試的交易編號不同 (綠界不可重複)，通知回來時以代碼找回訂位
+    return payment_ecpay.aio_form(r.deposit_trade_no, r.deposit_amount, f'訂位訂金 {r.reserved_at:%m/%d %H:%M} {r.party_size} 位',
+                                  'ReservationDeposit', f'R:{r.token}',
+                                  '/payment/ecpay/reservation_notify', '/payment/ecpay/reservation_result', base_url)
 
 
 def new_attempt(r):
@@ -144,12 +129,9 @@ def mark_paid(trade_no, provider_no, amount, custom=''):
 
 
 def handle_notification(form):
-    params = {k: v for k, v in form.items()}
-    if not payment_ecpay.verify(params):
-        logger.warning('綠界訂金通知檢查碼錯誤：%s', params.get('MerchantTradeNo'))
-        return '0|CheckMacValue Error'
-    if str(params.get('RtnCode')) != '1' or str(params.get('SimulatePaid', '0')) == '1':
-        return '1|OK'
+    params, status = payment_ecpay.parse_result(form, '訂金')
+    if status != 'paid':
+        return payment_ecpay.RESULT_REPLY[status]
     result = mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
                        params.get('CustomField1'))
     return '0|NotFound' if result == 'missing' else '1|OK'

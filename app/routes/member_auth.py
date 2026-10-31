@@ -3,9 +3,9 @@
 - LINE 登入 / 綁定 (/auth/line → LINE 授權 → /auth/line/callback)
 - 簡訊驗證碼 (/api/otp/send、/api/otp/verify)，註冊驗證手機、忘記 PIN 以簡訊重設 (/forgot_pin)
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from flask import Blueprint, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, session, url_for
 
 from app.errors import AppError
 from app.extensions import db, limiter
@@ -19,6 +19,8 @@ from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, validate_pho
 member_auth_bp = Blueprint('member_auth', __name__)
 LINE_STATE_KEY = 'line_login'
 LINE_PENDING_KEY = 'line_pending'
+# LINE 授權後必須在這段時間內登入 / 註冊才會綁定；逾時或登出後作廢 (共用點餐機上不可留給下一位顧客)
+LINE_PENDING_TTL = timedelta(minutes=10)
 
 
 @member_auth_bp.app_context_processor
@@ -29,24 +31,40 @@ def inject_member_features():
             'otp_register': sms.get('provider', 'none') != 'none' and bool(sms.get('otp_on_register')),
             'pin_reset': sms.get('provider', 'none') != 'none' and bool(sms.get('allow_pin_reset')),
             'line_login': line_service.login_enabled(),
-            'line_pending': bool(session.get(LINE_PENDING_KEY)),
+            'line_pending': pending_line() is not None,
+            'line_pending_name': (pending_line() or {}).get('name') or '',
         }
     return {'member_features': member_features}
 
 
 def _callback_url():
-    base = current_app.config.get('PUBLIC_BASE_URL') or request.url_root.rstrip('/')
-    return base + url_for('member_auth.line_callback')
+    from app.services.payment_ecpay import public_base_url
+    return public_base_url() + url_for('member_auth.line_callback')
+
+
+def pending_line():
+    """目前有效的 LINE 待綁定資料 (同店、未逾時)；無效時清除並回傳 None"""
+    pending = session.get(LINE_PENDING_KEY)
+    if not isinstance(pending, dict) or not pending.get('user_id') or pending.get('tenant_id') != g.tenant_id:
+        session.pop(LINE_PENDING_KEY, None)
+        return None
+    try:
+        at = datetime.fromisoformat(str(pending.get('at')))
+    except (TypeError, ValueError):
+        at = None
+    if at is None or datetime.now() - at > LINE_PENDING_TTL:
+        session.pop(LINE_PENDING_KEY, None)
+        return None
+    return pending
 
 
 def bind_pending_line(user):
-    """登入 / 註冊成功後，把剛才 LINE 授權的帳號綁定到這位會員"""
-    pending = session.pop(LINE_PENDING_KEY, None)
-    if not pending or not isinstance(pending, dict):
+    """登入 / 註冊成功後，把剛才 (10 分鐘內) LINE 授權的帳號綁定到這位會員"""
+    pending = pending_line()
+    session.pop(LINE_PENDING_KEY, None)
+    if pending is None:
         return False
-    line_id = pending.get('user_id')
-    if not line_id or pending.get('tenant_id') != g.tenant_id:
-        return False
+    line_id = pending['user_id']
     other = User.query.filter(User.line_user_id == line_id, User.id != user.id).first()
     if other is not None:
         other.line_user_id = ''
@@ -78,13 +96,13 @@ def line_callback():
     member = current_member()
     user = User.query.filter_by(line_user_id=profile['user_id']).first()
     if user is not None:
-        login_member(user)
+        login_member(user, factor='line')
         flash(f'歡迎回來，{user.name}！(LINE 登入)', 'success')
         return redirect(url_for('customer.customer_index'))
     if member is not None:
         member.line_user_id = profile['user_id']
         db.session.commit()
-        flash('✅ 已綁定 LINE，之後可用 LINE 登入並接收取餐通知', 'success')
+        flash('已綁定 LINE，之後可用 LINE 登入並接收取餐通知', 'success')
         return redirect(url_for('customer.customer_index'))
     session[LINE_PENDING_KEY] = {'user_id': profile['user_id'], 'name': profile['name'], 'tenant_id': g.tenant_id,
                                  'at': datetime.now().isoformat()}
@@ -92,11 +110,21 @@ def line_callback():
     return redirect(url_for('auth.member_login') if request.args.get('register') is None else url_for('auth.register'))
 
 
+@member_auth_bp.route('/auth/line/pending/discard', methods=['POST'], endpoint='line_pending_discard')
+def line_pending_discard():
+    """顧客不是剛才授權 LINE 的人：取消待綁定 (登入後不會綁到別人的 LINE)"""
+    session.pop(LINE_PENDING_KEY, None)
+    flash('已取消 LINE 綁定；登入後不會綁定任何 LINE 帳號。', 'info')
+    return redirect(url_for('auth.member_login'))
+
+
 @member_auth_bp.route('/auth/line/unbind', methods=['POST'], endpoint='line_unbind')
 def line_unbind():
     member = current_member()
     if member is None:
         return redirect(url_for('customer.customer_index'))
+    from app.services.customer_session import require_confirmed
+    require_confirmed(member, request.form.get('pin'), '解除 LINE 綁定')
     member.line_user_id = ''
     db.session.commit()
     flash('已解除 LINE 綁定', 'success')
@@ -148,5 +176,5 @@ def forgot_pin():
                        details=f'會員 {user.name} 以簡訊驗證重設 PIN')
     db.session.commit()
     clear_pin_lockout(g.tenant_id, phone)
-    flash('✅ 已重設 PIN，請用新的 PIN 登入', 'success')
+    flash('已重設 PIN，請用新的 PIN 登入', 'success')
     return redirect(url_for('auth.member_login'))

@@ -161,6 +161,6 @@ def test_edit_user_audit_only_changes(app, admin_client):
     admin_client.post(f'/admin/edit_user/{uid}', data={'name': '模組15稽核會員', 'phone': '0933150024', 'points': '55', 'loaded_points': '55'})
     with app.app_context():
         assert StaffAuditLog.query.filter_by(action_type='EDIT_USER', target_user_id=uid).count() == n
-    html = open(os.path.join(BASE_DIR, 'templates', 'admin.html'), encoding='utf-8').read()
+    html = open(os.path.join(BASE_DIR, 'templates', '_admin_modals.html'), encoding='utf-8').read()   # 後台對話框的子樣板
     pin_input = re.search(r'<input[^>]*id="edit-user-pin"[^>]*>', html).group(0)
     assert 'autocomplete="new-password"' in pin_input

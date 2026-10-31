@@ -61,7 +61,7 @@ def test_kiosk_price_changed_after_adding_to_cart(app, page):
     page.locator('#receiptModal.show').wait_for()
     oid = req.value.post_data_json['client_order_id']
     with app.app_context():
-        assert Order.query.filter_by(uuid=oid).one().total_price == 120
+        assert Order.query.filter_by(client_order_id=oid).one().total_price == 120
 
     # 購物車留在瀏覽器時改價：重新整理頁面就以新價格重算 (不必等送出才發現)
     page.locator('[data-action="finish"]').click()

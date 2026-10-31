@@ -28,7 +28,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.webhook_service import order_payload
 from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import get_json_dict, safe_int
+from app.utils import get_json_dict, get_own, safe_int
 
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 csrf.exempt(api_v1)
@@ -136,9 +136,7 @@ def menu():
 @scope('menu:write')
 def menu_availability(item_id):
     from app.services.audit import record_staff_audit
-    item = db.session.get(MenuItem, item_id)
-    if item is None or item.tenant_id != g.tenant_id:
-        raise AppError('查無此餐點', 404)
+    item = get_own(MenuItem, item_id, '餐點')
     data = get_json_dict()
     changes = []
     if 'sold_out' in data:

@@ -5,7 +5,7 @@
 2. 參加者打開分享連結，填名字並選餐點份數 (可選規格、備註)，送出後可用同一個瀏覽器 (或個人修改連結) 修改 / 刪除。
 3. 截止時自動 (或主揪按「送單」) 把所有人的餐點合併成一張預約取餐訂單 (現場付款)，備註列出每個人點的內容，
    店員可列印分裝清單。送單以條件式更新搶 open → submitting，同時按兩次 / 排程同時執行只會送出一次；
-   訂單以團購的 uuid 為 client_order_id (訂單 uuid)，重試也不會重複建單。
+   訂單以團購的 uuid 為 client_order_id (去重識別)，重試也不會重複建單。
 4. 送單失敗 (售完、庫存不足、時段已過…) → 狀態「送單失敗」並通知店家，主揪調整後可再送。
 金額以送單當下的價格為準 (頁面顯示的是預估)。
 """
@@ -246,8 +246,8 @@ def _submit_claimed(group_id, group, by, now):
         error = '沒有人點餐'
     elif group.pickup_at <= now:
         error = '取餐時間已過'
-    from app.models.order import Order
-    existing = Order.query.filter_by(uuid=group.uuid).first()
+    from app.services.order_service import find_by_client_order_id
+    existing = find_by_client_order_id(group.tenant_id, group.uuid)
     if existing is not None:   # 之前已建單 (送單後狀態未及更新)：直接連結
         group.status, group.order_id, group.submitted_at, group.error = 'submitted', existing.id, now, ''
         db.session.commit()

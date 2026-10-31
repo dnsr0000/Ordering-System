@@ -271,7 +271,14 @@
 
 業務 / 法規面
 [ ] 線上付款 (見第五節)：目前預設為綠界「測試環境」。正式收款前需向綠界申請正式特店 (需公司/商號資料)，
-    設定 ECPAY_STAGE=0 與正式的 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV，並用小額真卡測試一次
+    設定 ECPAY_STAGE=0 與正式的 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV，並用小額真卡測試一次。
+    綠界公開測試金鑰任何人都能偽造付款通知：未設 ECPAY_ALLOW_TEST_KEYS=1 時系統一律拒絕以測試金鑰收款，
+    正式環境請確認 .env.hub / 門市 .env 沒有這個設定
+[ ] 公開建立店家：線上端預設開放 /tenant/register (ALLOW_TENANT_REGISTER=1，無審核；不需要時設 0，由平台管理者建店)；
+    門市主機預設關閉
+[ ] 整庫備份 (系統監控頁的「立即備份 / 下載」與後台「匯出系統完整備份包」) 只有平台管理者 (預設店家負責人) 可用
+[ ] POS 動用會員儲值金 / 點數 / 寄杯預設需驗證會員身分 (掃會員動態條碼或會員輸入 PIN，否則店長核准)；
+    小店信任櫃檯可在「系統設定 → 會員經營」關閉
 [ ] 訂位訂金：門市主機要能從外部以 HTTPS 連線 (綠界回傳 /payment/ecpay/reservation_notify)，門市 .env 設定 PUBLIC_BASE_URL
     與綠界正式特店 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV、ECPAY_STAGE=0；退款失敗會通知，請到綠界後台處理。
     訂金不退的規則 (幾小時前可退、未到不退) 請在訂位頁或店內公告。

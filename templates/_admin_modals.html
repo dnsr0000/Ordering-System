@@ -1,0 +1,791 @@
+{#- 後台儀表板的對話框 (由 admin.html include)：優惠券 / 紅利商品 / 餐點 / 套餐 / 裁圖 / 會員 / 持券 / 匯出 / 匯入，
+    以及它們共用的表單巨集。變數 (items、users、reward_coupons、member_tiers…) 來自 admin.admin_dashboard。 -#}
+{% set SIDE_CATEGORIES = ['飲料', '點心', '副餐', '配餐'] %}
+{% set PLACEHOLDER_IMG = url_for('static', filename='img/placeholder.svg') %}
+
+{% macro side_select(prefix, level, items) -%}
+    <div class="mb-3" id="{{ prefix }}-side{{ level }}-group"{% if level > 1 %} style="display: none;"{% endif %}>
+        <select class="form-select form-select-sm combo-side-select" name="item{{ level }}_id" id="{{ prefix }}-side{{ level }}"
+                data-prefix="{{ prefix }}" data-level="{{ level }}">
+            <option value="">-- {% if level > 1 %}➕ {% endif %}請選擇第{{ '一二三'[level - 1] }}項配餐 (選填) --</option>
+            {% for it in items if it.category in SIDE_CATEGORIES %}
+            <option value="{{ it.id }}" data-modifiers="{{ it.modifiers or 'none' }}">[{{ it.category }}] {{ it.name }}</option>
+            {% endfor %}
+        </select>
+        <div class="form-check form-switch mt-1" style="display: none;">
+            <input class="form-check-input" type="checkbox" name="item{{ level }}_customizable" value="1" id="{{ prefix }}-side{{ level }}-cust">
+            <label class="form-check-label small text-warning" for="{{ prefix }}-side{{ level }}-cust">開放此配餐客製化 (例如冰塊/甜度)</label>
+        </div>
+    </div>
+{%- endmacro %}
+
+{% macro main_item_select(items, id=None) -%}
+    <select class="form-select border-warning" name="main_item_id"{% if id %} id="{{ id }}"{% endif %} required>
+        <option value="" disabled selected>請選擇要綁定套餐的主餐...</option>
+        {% for it in items if it.category not in SIDE_CATEGORIES %}
+        <option value="{{ it.id }}">[{{ it.category }}] {{ it.name }} (${{ it.price }})</option>
+        {% endfor %}
+    </select>
+{%- endmacro %}
+
+{% macro modifier_select(id=None) -%}
+    <select class="form-select" name="modifiers"{% if id %} id="{{ id }}"{% endif %}>
+        <option value="none">無客製化</option>
+        <option value="ice_sugar">飲料 (冰塊 / 甜度)</option>
+        <option value="spicy">辣度選擇</option>
+        <option value="addons">主餐加料 (加蛋 / 起司)</option>
+    </select>
+{%- endmacro %}
+
+{% macro addon_block(prefix) -%}
+    <div class="row g-2 mb-3 bg-secondary bg-opacity-25 p-2 rounded border border-secondary">
+        <div class="col-6 d-flex align-items-center">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" name="can_be_add_on" value="1" id="{{ prefix }}-can-addon">
+                <label class="form-check-label small fw-bold text-info" for="{{ prefix }}-can-addon">開放作為加購品</label>
+            </div>
+        </div>
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-addon-price">加購專屬價 (NT$)</label>
+            <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="{{ prefix }}-addon-price" placeholder="例如：30" value="0">
+        </div>
+        <div class="col-12 mt-2 pt-2 border-top border-secondary" id="{{ prefix }}-addon-rules" style="display: none;">
+            <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm w-50 addon-type-select" name="addon_trigger_type" id="{{ prefix }}-addon-type" data-prefix="{{ prefix }}">
+                    <option value="any">購買任一餐點皆可</option>
+                    <option value="category">需購買特定分類</option>
+                    <option value="item">需購買特定餐點</option>
+                </select>
+                <select class="form-select form-select-sm w-50" name="addon_trigger_target" id="{{ prefix }}-addon-target" style="display: none;"></select>
+            </div>
+        </div>
+    </div>
+{%- endmacro %}
+
+{% macro item_flags(prefix, recommended_id) -%}
+    <div class="d-flex flex-wrap gap-3 mb-3">
+        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_sold_out" value="1" id="{{ prefix }}-sold-out"><label class="form-check-label small text-danger fw-bold" for="{{ prefix }}-sold-out">🚫 標記為售完</label></div>
+        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_recommended" value="1" id="{{ recommended_id }}"><label class="form-check-label small" for="{{ recommended_id }}">🔥 熱門推薦</label></div>
+        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_new" value="1" id="{{ prefix }}-new"><label class="form-check-label small" for="{{ prefix }}-new">✨ 新品上市</label></div>
+        <div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_discount" value="1" id="{{ prefix }}-discount"><label class="form-check-label small text-warning fw-bold" for="{{ prefix }}-discount">🏷️ 限時特價</label></div>
+    </div>
+{%- endmacro %}
+
+{% macro coupon_fields(prefix) -%}
+    {# prefix 為 coupon (新增) 或 edit-coupon (編輯)；折扣提示由 admin-members.js 依 prefix 綁定 #}
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-title">優惠券名稱</label>
+        <input type="text" class="form-control" name="title" id="{{ prefix }}-title" placeholder="例如：全單現折 $50 優惠券" required>
+    </div>
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-code">促銷折扣代碼 (英文大寫/數字)</label>
+        <input type="text" class="form-control text-uppercase" name="code" id="{{ prefix }}-code" placeholder="例如：NEW50 或 VIP85" required
+               minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,29}" title="3~30 碼英文、數字、- 或 _">
+    </div>
+    <div class="row g-2 mb-3">
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-disc-type">折抵模式</label>
+            <select class="form-select coupon-disc-type" name="discount_type" id="{{ prefix }}-disc-type" data-prefix="{{ prefix }}">
+                <option value="fixed">折抵固定金額 (元)</option>
+                <option value="percent">打折 (折數)</option>
+            </select>
+        </div>
+        <div class="col-6">
+            <label class="form-label small fw-bold" id="{{ prefix }}-disc-val-label" for="{{ prefix }}-disc-val">折抵金額 (NT$)</label>
+            <input type="number" step="1" min="0" class="form-control coupon-disc-val" name="discount_value" id="{{ prefix }}-disc-val" data-prefix="{{ prefix }}" placeholder="50" required>
+            <div id="{{ prefix }}-disc-hint" class="small mt-1 fw-bold" style="display: none;"></div>
+        </div>
+    </div>
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-min-spend">最低消費門檻 (NT$)</label>
+        <input type="number" min="0" class="form-control" name="min_spend" id="{{ prefix }}-min-spend" placeholder="例如：滿 200 元可用" value="0">
+    </div>
+    <div class="mb-3 text-start">
+        <label class="form-label small fw-bold text-white" for="{{ prefix }}-per-user-limit">每位會員可兌換次數上限</label>
+        <input type="text" class="form-control per-user-limit" id="{{ prefix }}-per-user-limit" name="per_user_limit"
+               value="無上限" placeholder="輸入次數或填無上限">
+        <small class="text-white-50 hint-xs">填寫「無上限」或 0 代表不限制；填寫數字（例如 1）代表每位會員限換 1 次。</small>
+    </div>
+    <div class="row g-2 mb-3">
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-reward-points">兌換所需點數</label>
+            <input type="number" min="0" class="form-control" name="reward_points" id="{{ prefix }}-reward-points" placeholder="例如：45" required>
+        </div>
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-reward-discount">限時特惠點數 (無填 0)</label>
+            <input type="number" min="0" class="form-control" name="reward_discount_points" id="{{ prefix }}-reward-discount" placeholder="0" value="0">
+        </div>
+    </div>
+    <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" role="switch" name="member_only" value="1" id="{{ prefix }}-member-only">
+        <label class="form-check-label small fw-bold" for="{{ prefix }}-member-only">會員專屬券 (只能由後台發放，不在紅利商城、不能當公開代碼使用)</label>
+    </div>
+    <div class="p-3 rounded border border-secondary">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-calendar-range me-1"></i>使用期限 (都不填 = 永久有效)</div>
+        <div class="row g-2 mb-2">
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-from">活動開始日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_from" id="{{ prefix }}-valid-from">
+            </div>
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-until">活動結束日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_until" id="{{ prefix }}-valid-until">
+            </div>
+        </div>
+        <label class="form-label small" for="{{ prefix }}-valid-days">會員領取後幾天內有效 (0 = 不限)</label>
+        <input type="number" min="0" max="3650" class="form-control form-control-sm" name="valid_days" id="{{ prefix }}-valid-days" value="0">
+        <small class="text-white-50 hint-xs">活動結束後，會員已持有但未使用的券也一併失效；兩者都有時以較早者為準。</small>
+    </div>
+    <div class="p-3 rounded border border-secondary mt-3">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-shield-lock me-1"></i>防濫用</div>
+        <label class="form-label small" for="{{ prefix }}-max-discount">單筆最高折抵金額 (0 = 不限，建議百分比折扣設定)</label>
+        <input type="number" min="0" class="form-control form-control-sm mb-2" name="max_discount" id="{{ prefix }}-max-discount" value="0">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="login_required" value="1" id="{{ prefix }}-login-required">
+            <label class="form-check-label small" for="{{ prefix }}-login-required">公開代碼限登入會員使用 (訪客不能用)</label>
+        </div>
+        <label class="form-label small mt-2" for="{{ prefix }}-uses-per-member">公開代碼每位會員可使用次數 (0 = 不限；設定後自動限會員)</label>
+        <input type="number" min="0" max="1000" class="form-control form-control-sm" name="uses_per_member" id="{{ prefix }}-uses-per-member" value="0">
+        <small class="text-white-50 hint-xs">紅利券與會員專屬券本來就必須持有才能使用，每張只能用一次；以上兩項用於所有人都知道的公開代碼。</small>
+    </div>
+{%- endmacro %}
+
+{% macro modal_head(title, icon, color='text-warning') -%}
+    <div class="modal-header border-secondary">
+        <h5 class="modal-title fw-bold {{ color }}"><i class="bi {{ icon }} me-2"></i>{{ title }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+    </div>
+{%- endmacro %}
+
+    <!-- 新增優惠券 Modal -->
+    <div class="modal fade" id="createCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('新增回饋優惠券', 'bi-ticket-perforated-fill') }}
+                <form action="{{ url_for('admin.add_coupon') }}" method="POST" id="createCouponForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">{{ coupon_fields('coupon') }}</div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">建立並上架優惠券</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量發放優惠券 Modal -->
+    <div class="modal fade" id="issueCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('批量發放優惠券', 'bi-send') }}
+                <form id="issueCouponForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3 p-2 rounded bg-dark border border-secondary">
+                            <div class="fw-bold text-warning" id="issue-coupon-title"></div>
+                            <small class="text-white-50">代碼 <span id="issue-coupon-code"></span>｜每人上限 <span id="issue-coupon-limit"></span>｜期限 <span id="issue-coupon-period"></span></small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-target">發放對象</label>
+                            <select class="form-select" name="target" id="issue-target">
+                                {% for key, label in coupon_targets.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-tier-row">
+                            <label class="form-label small fw-bold" for="issue-tier">會員等級</label>
+                            <select class="form-select" name="tier_id" id="issue-tier">
+                                {% for t in member_tiers %}<option value="{{ t.id }}">{{ t.name }} (累積 ${{ t.min_spend }} 以上)</option>{% else %}<option value="">尚未建立會員等級</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-phones-row">
+                            <label class="form-label small fw-bold" for="issue-phones">手機號碼 (每行一個，或以逗號分隔)</label>
+                            <textarea class="form-control" name="phones" id="issue-phones" rows="4" placeholder="0912345678&#10;0987654321"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-quantity">每位會員發放張數</label>
+                            <input type="number" class="form-control" name="quantity" id="issue-quantity" min="1" max="10" value="1" required>
+                            <small class="text-white-50 hint-xs">已達「每人上限」的會員會略過 (上限包含之前兌換或發放的張數)。</small>
+                        </div>
+                        <div class="mb-3">
+                            <span class="form-label small fw-bold d-block mb-1">到期設定</span>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-coupon" value="coupon" checked>
+                                <label class="form-check-label small" for="issue-exp-coupon">依優惠券設定的使用期限</label></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-days" value="days">
+                                <label class="form-check-label small" for="issue-exp-days">發放後</label>
+                                <input type="number" class="form-control form-control-sm w-auto" name="valid_days" min="1" max="3650" value="30" aria-label="天數">
+                                <span class="small">天內有效</span></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-date" value="date">
+                                <label class="form-check-label small" for="issue-exp-date">指定到期日</label>
+                                <input type="date" class="form-control form-control-sm w-auto" name="expires_on" aria-label="到期日"></div>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" name="notify_line" value="1" id="issue-notify" {{ '' if line_push_ready else 'disabled' }}>
+                            <label class="form-check-label small" for="issue-notify">以 LINE 通知已綁定的會員{% if not line_push_ready %} (尚未設定 LINE 推播){% endif %}</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4"><i class="bi bi-send me-1"></i>確認發放</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯優惠券 Modal -->
+    <div class="modal fade" id="editCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯回饋優惠券', 'bi-pencil-square') }}
+                <form id="editCouponForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">{{ coupon_fields('edit-coupon') }}</div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上架商品至商城 Modal -->
+    <div class="modal fade" id="addRewardModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('上架餐點至回饋商城', 'bi-gift-fill') }}
+                <form action="{{ url_for('admin.add_reward') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-item">選擇菜單品項</label>
+                            <select class="form-select" name="item_id" id="add-reward-item" required>
+                                <option value="" disabled selected>請選擇要上架的餐點...</option>
+                                {% for it in items %}
+                                <option value="{{ it.id }}">{{ it.name }} (原價 ${{ it.price }}) - {{ it.category }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-points">兌換所需點數</label>
+                            <input type="number" min="1" class="form-control" name="reward_points" id="add-reward-points" placeholder="例如：50" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-discount">限時優惠點數 (無特價請填 0)</label>
+                            <input type="number" min="0" class="form-control" name="reward_discount_points" id="add-reward-discount" placeholder="例如：30" value="0">
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">確認上架商城</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新增品項 Modal -->
+    <div class="modal fade" id="addItemModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('新增品項', 'bi-plus-circle') }}
+                <form id="addItemForm" action="{{ url_for('admin.add_item') }}" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-name">餐點名稱</label>
+                            <input type="text" class="form-control" name="name" id="add-name" placeholder="例如：招牌牛肉漢堡" required>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="add-category">分類</label>
+                                <input type="text" class="form-control" name="category" id="add-category" list="menu-category-list" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="add-price">原單價 (NT$)</label>
+                                <input type="number" min="0" class="form-control" name="price" id="add-price" required>
+                            </div>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="add-stock">剩餘數量 (庫存)</label>
+                                <input type="number" min="0" class="form-control" name="stock" id="add-stock" value="50" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="add-total-stock">總量 (初始庫存)</label>
+                                <input type="number" min="0" class="form-control" name="total_stock" id="add-total-stock" value="50" required>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold text-warning" for="add-discount-price">特價金額 (NT$)</label>
+                            <input type="number" min="0" class="form-control" name="discount_price" id="add-discount-price" placeholder="無特價填 0" value="0">
+                        </div>
+                        {{ addon_block('add') }}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-modifiers">客製化群組</label>
+                            {{ modifier_select('add-modifiers') }}
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0" for="add-description">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold btn-ai" id="btn-ai-add" data-action="ai-description" data-mode="add">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
+                                </button>
+                            </div>
+                            <textarea class="form-control auto-expand-desc" name="description" id="add-description" rows="1" maxlength="200" placeholder="簡短餐點介紹，或輸入名稱後點擊上方按鈕自動生成"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-image-file">餐點照片</label>
+                            <input type="file" class="form-control crop-input" name="image" id="add-image-file" accept="image/*" data-preview="add-preview-img">
+                            <img id="add-preview-img" class="mt-2 rounded-3 object-fit-cover preview-img" alt="" hidden>
+                        </div>
+                        {{ item_flags('add', 'add-rec') }}
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存並上架</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯品項 Modal -->
+    <div class="modal fade" id="editItemModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯品項設定', 'bi-pencil-square') }}
+                <form id="editItemForm" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="from_tab" id="edit-from-tab" value="menu">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-name">餐點名稱</label>
+                            <input type="text" class="form-control" name="name" id="edit-name" required>
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="edit-category">分類</label>
+                                <input type="text" class="form-control" name="category" id="edit-category" list="menu-category-list" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="edit-price">原單價 (NT$)</label>
+                                <input type="number" min="0" class="form-control" name="price" id="edit-price" required>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold text-warning" for="edit-discount-price">特價金額 (NT$)</label>
+                            <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
+                        </div>
+                        {{ addon_block('edit') }}
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="edit-stock">剩餘數量 (庫存)</label>
+                                <input type="number" min="0" class="form-control" name="stock" id="edit-stock" required>
+                                <!-- 開啟視窗當下的庫存：後端只套用「差額」，編輯期間被顧客買走的數量不會被蓋掉 -->
+                                <input type="hidden" name="loaded_stock" id="edit-loaded-stock">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-bold" for="edit-total-stock">總量 (初始庫存)</label>
+                                <input type="number" min="0" class="form-control" name="total_stock" id="edit-total-stock" required>
+                                <input type="hidden" name="loaded_total_stock" id="edit-loaded-total-stock">
+                            </div>
+                        </div>
+
+                        <!-- 紅利商城設定 -->
+                        <div class="card bg-dark border-warning mb-3">
+                            <div class="card-header border-warning text-warning fw-bold small">
+                                <i class="bi bi-gift-fill me-1"></i> 紅利商城設定
+                            </div>
+                            <div class="card-body p-3">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" id="edit-is-reward" name="is_reward" value="1">
+                                    <label class="form-check-label text-white fw-bold" for="edit-is-reward">開放紅利點數兌換此商品</label>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50 mb-1" for="edit-reward-points">兌換所需點數</label>
+                                        <input type="number" min="0" class="form-control form-control-sm" id="edit-reward-points" name="reward_points">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50 mb-1" for="edit-reward-discount">限時優惠點數 (無填 0)</label>
+                                        <input type="number" min="0" class="form-control form-control-sm" id="edit-reward-discount" name="reward_discount_points">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-modifiers">客製化群組</label>
+                            {{ modifier_select('edit-modifiers') }}
+                        </div>
+                        <div class="mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold mb-0" for="edit-description">商品描述</label>
+                                <button type="button" class="btn btn-outline-warning btn-sm py-0 px-2 fw-bold btn-ai" id="btn-ai-edit" data-action="ai-description" data-mode="edit">
+                                    <i class="bi bi-stars text-warning"></i> AI 生成文案
+                                </button>
+                            </div>
+                            <textarea class="form-control auto-expand-desc" name="description" id="edit-description" rows="1" maxlength="200"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-image-file">餐點照片 (更換)</label>
+                            <input type="file" class="form-control crop-input" name="image" id="edit-image-file" accept="image/*" data-preview="edit-image-preview">
+                            <img id="edit-image-preview" class="mt-2 rounded-3 object-fit-cover" width="80" height="80" alt="" src="{{ PLACEHOLDER_IMG }}">
+                        </div>
+                        {{ item_flags('edit', 'edit-recommended') }}
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <datalist id="menu-category-list">
+        {% for c in items | map(attribute='category') | reject('none') | unique | sort %}<option value="{{ c }}">{% endfor %}
+    </datalist>
+
+    <!-- 新增套餐組合 Modal -->
+    <div class="modal fade" id="addComboModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('新增套餐組合設定', 'bi-box-seam', 'text-success') }}
+                <form action="{{ url_for('admin.add_combo') }}" method="POST" id="addComboForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="combo-main">關聯主餐 (Main Item)</label>
+                            {{ main_item_select(items, 'combo-main') }}
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-8">
+                                <label class="form-label small fw-bold" for="combo-name">套餐名稱 (Combo Name)</label>
+                                <input type="text" class="form-control" name="name" id="combo-name" placeholder="例如：超值A餐" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small fw-bold" for="combo-price">加購價 (NT$)</label>
+                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="combo-price" placeholder="60" min="0" required>
+                            </div>
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-secondary panel-dim">
+                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
+                            {% for level in (1, 2, 3) %}{{ side_select('combo', level, items) }}{% endfor %}
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-warning panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-1" for="combo-choices"><i class="bi bi-ui-radios"></i> 任選群組 (選填)</label>
+                            <textarea class="form-control form-control-sm" name="choices" id="combo-choices" rows="2"
+                                      placeholder="每行一組「群組: 餐點, 餐點+加價」例如&#10;飲料: 紅茶, 綠茶, 珍珠奶茶+15"></textarea>
+                            <div class="form-text text-white-50 small">顧客點這個套餐時每組任選一項；餐點名稱需與菜單相同，「+15」為升級加價。</div>
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-secondary panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="combo-can-addon" checked>
+                                <label class="form-check-label small fw-bold text-info" for="combo-can-addon"><i class="bi bi-bag-plus"></i> 開放加購</label>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold" for="combo-desc">自訂文字描述 (Description)</label>
+                            <textarea class="form-control" name="description" id="combo-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-success fw-bold text-white px-4">儲存套餐設定</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯套餐組合 Modal -->
+    <div class="modal fade" id="editComboModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯套餐組合設定', 'bi-pencil-square') }}
+                <form id="editComboForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-combo-main">關聯主餐 (Main Item)</label>
+                            {{ main_item_select(items, 'edit-combo-main') }}
+                        </div>
+                        <div class="row g-2 mb-3">
+                            <div class="col-8">
+                                <label class="form-label small fw-bold" for="edit-combo-name">套餐名稱 (Combo Name)</label>
+                                <input type="text" class="form-control" name="name" id="edit-combo-name" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small fw-bold" for="edit-combo-price">加購價 (NT$)</label>
+                                <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="edit-combo-price" min="0" required>
+                            </div>
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-secondary panel-dim">
+                            <label class="form-label small fw-bold text-info mb-2"><i class="bi bi-link"></i> 綁定套餐附屬配餐 (至多三項)</label>
+                            {% for level in (1, 2, 3) %}{{ side_select('edit-combo', level, items) }}{% endfor %}
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-warning panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-1" for="edit-combo-choices"><i class="bi bi-ui-radios"></i> 任選群組 (選填)</label>
+                            <textarea class="form-control form-control-sm" name="choices" id="edit-combo-choices" rows="2"
+                                      placeholder="每行一組「群組: 餐點, 餐點+加價」例如&#10;飲料: 紅茶, 綠茶, 珍珠奶茶+15"></textarea>
+                            <div class="form-text text-white-50 small">顧客點這個套餐時每組任選一項；餐點名稱需與菜單相同，「+15」為升級加價。</div>
+                        </div>
+                        <div class="p-3 mb-3 rounded border border-secondary panel-dim">
+                            <label class="form-label small fw-bold text-warning mb-2"><i class="bi bi-tags-fill me-1"></i> 套餐標籤設定</label>
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" name="can_addon" value="1" id="edit-combo-can-addon" checked>
+                                <label class="form-check-label small fw-bold text-info" for="edit-combo-can-addon"><i class="bi bi-bag-plus"></i> 開放加購</label>
+                            </div>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold" for="edit-combo-desc">自訂文字描述 (Description)</label>
+                            <textarea class="form-control" name="description" id="edit-combo-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 圖片裁切 Modal -->
+    <div class="modal fade" id="cropModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('裁切 1:1 圖片', 'bi-crop', 'text-white') }}
+                <div class="modal-body p-3 text-center">
+                    <div class="crop-stage">
+                        <img id="crop-image-target" alt="">
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary justify-content-between">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-warning fw-bold text-dark px-4" data-action="confirm-crop">完成裁切</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯會員 Modal -->
+    <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯會員資料', 'bi-person-gear') }}
+                <form id="editUserForm" method="POST" autocomplete="off">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-name">會員姓名</label>
+                            <input type="text" class="form-control" name="name" id="edit-user-name" maxlength="100" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-phone">手機號碼</label>
+                            <input type="tel" class="form-control" name="phone" id="edit-user-phone" pattern="09[0-9]{8}" maxlength="10" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-points">紅利點數 (點)</label>
+                            <input type="number" min="0" class="form-control" name="points" id="edit-user-points" required>
+                            <!-- 開啟視窗當下的點數：後端只套用「差額」，期間顧客消費賺到/花掉的點數不會被蓋掉 -->
+                            <input type="hidden" name="loaded_points" id="edit-user-loaded-points">
+                            <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-pin">重設手機登入 PIN 碼 (選填，4~6位數字)</label>
+                            <input type="password" class="form-control" name="pin" id="edit-user-pin" placeholder="不修改請留空" pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存會員變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 會員專屬票券管理 Modal (內容由 admin-members.js 產生) -->
+    <div class="modal fade" id="userCouponsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning" id="userCouponsModalTitle">會員票券管理</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-4" id="userCouponsModalBody"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匯出資料 Modal (Excel 報表 / 完整系統備份包 ZIP) -->
+    <div class="modal fade" id="unifiedExportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('資料匯出與備份中心', 'bi-cloud-arrow-down-fill') }}
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-export-excel-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-export-excel">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出 Excel 營業報表 (.xlsx)
+                            </button>
+                        </li>
+                        {% if is_platform_admin and backup_available %}
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-export-zip-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-export-zip">
+                                <i class="bi bi-archive-fill me-1"></i> 匯出系統完整備份包 (.zip)
+                            </button>
+                        </li>
+                        {% endif %}
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel 報表匯出 -->
+                        <div class="tab-pane fade show active" id="pane-export-excel">
+                            <form action="{{ url_for('admin.export_excel') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <h6 class="fw-bold text-white-50 mb-2">勾選欲匯出的資料表：</h6>
+                                <div class="row g-2 mb-3">
+                                    {% for value, label in [('MenuItem', '菜單品項'), ('User', '會員資料'), ('Order', '訂單總覽'), ('OrderItem', '訂單明細'),
+                                                            ('Coupon', '優惠券'), ('UserCoupon', '會員持券'), ('Analytics', '營運分析'), ('AdminLog', '進出與稽核')] %}
+                                    <div class="col-6 col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="tables" value="{{ value }}" id="ex_{{ value }}" checked>
+                                            <label class="form-check-label" for="ex_{{ value }}">{{ label }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50" for="export-start-date">開始日期 (留空為不限)</label>
+                                        <input type="date" name="start_date" id="export-start-date" class="form-control form-control-sm">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50" for="export-end-date">結束日期 (留空為不限)</label>
+                                        <input type="date" name="end_date" id="export-end-date" class="form-control form-control-sm">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-warning fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-download me-1"></i> 下載 Excel 營業報表 (.xlsx)
+                                </button>
+                            </form>
+                            {% if is_platform_admin and not backup_available %}
+                            <div class="alert alert-info small mt-3 mb-0 backup-unavailable">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                目前使用 {{ db_dialect }} 資料庫，整庫備份包 (.zip) 只適用於本機 SQLite；請改用 <code>pg_dump</code> 或雲端資料庫的備份功能。
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if is_platform_admin and backup_available %}
+                        <!-- 分頁 B：完整備份包 ZIP (含所有店家資料，僅平台管理者可見) -->
+                        <div class="tab-pane fade" id="pane-export-zip">
+                            <div class="p-3 rounded bg-black bg-opacity-25 border border-secondary mb-3">
+                                <h6 class="fw-bold text-warning mb-2"><i class="bi bi-info-circle me-1"></i>備份包收錄內容：</h6>
+                                <ul class="small text-white-50 mb-0 ps-3">
+                                    <li><strong>SQLite 資料庫檔案 (<code>menu.db</code>)</strong>：完整包含所有菜單、會員、點數、訂單與優惠券紀錄。</li>
+                                    <li><strong>會員註冊人臉照片 (<code>uploads/member/</code>)</strong>：會員人臉辨識用照片。</li>
+                                    <li><strong>餐點商品相片 (<code>uploads/menu/</code>)</strong>：菜單展示圖檔。</li>
+                                </ul>
+                            </div>
+                            <form action="{{ url_for('admin.backup_system') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
+                                    <i class="bi bi-file-zip-fill me-1"></i> 下載完整備份包 (.zip)
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匯入資料 Modal (Excel 智慧同步 / ZIP 系統還原) -->
+    <div class="modal fade" id="unifiedImportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('資料匯入與系統還原', 'bi-cloud-arrow-up-fill', 'text-info') }}
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-import-excel-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-import-excel">
+                                <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel / CSV 資料同步
+                            </button>
+                        </li>
+                        {% if is_platform_admin and backup_available %}
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-restore-zip-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-restore-zip">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> 還原 ZIP 備份包 (覆蓋還原)
+                            </button>
+                        </li>
+                        {% endif %}
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel/CSV 智慧匯入 -->
+                        <div class="tab-pane fade show active" id="pane-import-excel">
+                            <p class="small text-white-50 mb-3">
+                                支援上傳先前後台匯出的 <code>Kiosk_Export_*.xlsx</code> 報表或自訂菜單 <code>.csv</code> 檔案，系統將自動比對並更新現有品項與資料。
+                            </p>
+                            <form action="{{ url_for('admin.import_smart') }}" method="POST" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="mb-3">
+                                    <label class="form-label small text-white-50" for="import-file">選擇 Excel / CSV 檔案</label>
+                                    <input type="file" name="file" id="import-file" class="form-control" accept=".xlsx,.xls,.csv" required>
+                                </div>
+                                <button type="submit" class="btn btn-info fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-upload me-1"></i> 開始智慧辨識並匯入
+                                </button>
+                            </form>
+                            {% if is_platform_admin and not backup_available %}
+                            <div class="alert alert-info small mt-3 mb-0 backup-unavailable">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                目前使用 {{ db_dialect }} 資料庫，整庫還原 (.zip) 只適用於本機 SQLite；請改用資料庫本身的還原工具 (例如 <code>pg_restore</code>)。
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if is_platform_admin and backup_available %}
+                        <!-- 分頁 B：ZIP 完整還原 (覆蓋資料庫與相片；僅平台管理者可見) -->
+                        <div class="tab-pane fade" id="pane-restore-zip">
+                            <div class="alert alert-danger py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                <strong>注意</strong>：此操作將還原 SQLite 資料庫檔案與相片，請確保備份來源正確無誤。
+                            </div>
+                            <form action="{{ url_for('admin.restore_backup') }}" method="POST" enctype="multipart/form-data"
+                                  data-confirm="⚠️ 警告：還原將覆蓋現有資料庫與相片，確定要繼續嗎？">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="mb-3">
+                                    <label class="form-label small text-white-50" for="restore-file">選取先前下載的 <code>Kiosk_Full_Backup_*.zip</code> 備份檔</label>
+                                    <input type="file" name="backup_zip" id="restore-file" class="form-control" accept=".zip" required>
+                                </div>
+                                <div class="row g-2 mb-3 small text-white-50">
+                                    {% for name, label in [('restore_db', '還原資料庫 (menu.db)'), ('restore_photos', '還原會員照片'),
+                                                           ('restore_menu_photos', '還原餐點照片'), ('overwrite_photos', '覆蓋同名照片')] %}
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="{{ name }}" value="1" id="r_{{ name }}" checked>
+                                            <label class="form-check-label text-white" for="r_{{ name }}">{{ label }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
+                                    <i class="bi bi-arrow-repeat me-1"></i> 確認上傳並執行系統還原
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

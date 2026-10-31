@@ -20,7 +20,6 @@ from flask import current_app
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import OrderStatus
-from app.models.order import Order
 from app.models.user import User
 from app.services import settings_service
 

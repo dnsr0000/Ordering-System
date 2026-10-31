@@ -22,6 +22,33 @@
     </div>
 </div>
 
+<!-- 會員身分驗證 (動用儲值金 / 點數 / 寄杯：會員輸入 PIN，或改由主管核准) -->
+<div class="modal fade no-print pro-modal" id="posMemberVerifyModal" tabindex="-1" aria-hidden="true" aria-labelledby="posMemberVerifyTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <form class="modal-content" id="posMemberVerifyForm" autocomplete="off">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-info" id="posMemberVerifyTitle"><i class="bi bi-person-check me-1"></i>會員身分驗證</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-white-50 mb-2" id="posMemberVerifyReason">動用儲值金 / 點數 / 寄杯需驗證會員身分</p>
+                <div class="fw-bold text-warning mb-2" id="posMemberVerifyName"></div>
+                <input type="password" inputmode="numeric" class="form-control form-control-lg text-center" id="posMemberVerifyPin"
+                       placeholder="請會員輸入 PIN 碼" maxlength="6" autocomplete="off">
+                <div class="small text-white-50 mt-1">或請會員在手機「紅利商城」開啟動態條碼，掃描後即可結帳。</div>
+                <div class="small text-danger mt-2" id="posMemberVerifyMsg"></div>
+            </div>
+            <div class="modal-footer border-secondary justify-content-between">
+                <button type="button" class="btn btn-outline-warning btn-sm" id="posMemberVerifyOverride" title="會員沒帶手機或忘記 PIN 時由主管核准">主管核准</button>
+                <div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-info fw-bold text-dark" id="posMemberVerifySubmit">確認</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- 整單折扣 -->
 <div class="modal fade no-print pro-modal" id="posDiscountModal" tabindex="-1" aria-hidden="true" aria-labelledby="posDiscountTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">

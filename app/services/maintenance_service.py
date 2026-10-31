@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from flask import current_app
 
@@ -167,7 +167,7 @@ def run_daily_jobs(now=None):
     done = []
     for tid in _tenant_ids():
         cfg = settings_service.get('backup', tid)
-        due, mark = _due_today(f'backup', cfg.get('time') or '03:30', now)
+        due, mark = _due_today('backup', cfg.get('time') or '03:30', now)
         if cfg.get('enabled', True) and due and db.engine.dialect.name == 'sqlite':
             mark(now.date().isoformat())
             db.session.commit()

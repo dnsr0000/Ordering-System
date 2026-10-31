@@ -4,7 +4,7 @@ from flask import Blueprint, Response, g, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy.orm import selectinload
 
-from app.models.enums import OrderStatus
+from app.models.enums import OrderStatus, POS_ROLES
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
 from app.services.order_service import todays_orders_condition, todays_range
@@ -15,13 +15,13 @@ SSE_KEEPALIVE_SECONDS = 15
 
 
 @pickup_bp.route('/pickup', endpoint='pickup_management')
-@role_required('owner', 'manager', 'staff')
+@role_required(*POS_ROLES)
 def pickup_management():
     return render_template('pickup.html')
 
 
 @pickup_bp.route('/api/pickup_orders')
-@role_required('owner', 'manager', 'staff')
+@role_required(*POS_ROLES)
 def api_pickup_orders():
     """櫃檯取餐核銷：今日已出餐、等待顧客取餐的訂單 (含明細)"""
     start, end = todays_range()

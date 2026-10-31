@@ -64,9 +64,9 @@ def export():
 def send_now():
     try:
         n = report_service.send_scheduled_report(g.tenant_id, force=True)
-        flash(f'✅ 已寄出報表給 {n} 位收件者', 'success')
+        flash(f'已寄出報表給 {n} 位收件者', 'success')
     except AppError as exc:
-        flash(f'❌ {exc.message}', 'danger')
+        flash(f'{exc.message}', 'danger')
     return redirect(url_for('reports.index'))
 
 

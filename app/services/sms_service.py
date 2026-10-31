@@ -28,6 +28,9 @@ OTP_TTL = timedelta(minutes=10)
 OTP_MAX_ATTEMPTS = 5
 RESEND_AFTER = timedelta(seconds=60)
 MAX_PER_HOUR = 5
+# 全店每小時 / 每天的驗證碼上限 (後台可調)：換 IP、換號碼也不能無限制消耗店家的簡訊點數 (SMS pumping)
+DEFAULT_TENANT_HOURLY_LIMIT = 60
+DEFAULT_TENANT_DAILY_LIMIT = 300
 VERIFIED_TTL = timedelta(minutes=30)
 
 
@@ -80,6 +83,7 @@ def send_otp(tenant_id, phone, purpose, ip=''):
         raise AppError(f'驗證碼已寄出，請 {wait} 秒後再重新發送', 429)
     if len(recent) >= MAX_PER_HOUR:
         raise AppError('這支手機一小時內已寄送太多次驗證碼，請稍後再試', 429)
+    _check_tenant_quota(tenant_id, now)
     code = f'{secrets.randbelow(1000000):06d}'
     db.session.add(OtpCode(tenant_id=tenant_id, phone=phone, purpose=purpose, code_hash=generate_password_hash(code),
                            expires_at=now + OTP_TTL, ip_address=ip[:50]))
@@ -88,6 +92,21 @@ def send_otp(tenant_id, phone, purpose, ip=''):
     db.session.flush()
     send_sms(tenant_id, phone, template.replace('{code}', code).replace('{shop}', shop.name if shop else ''))
     return code
+
+
+def _check_tenant_quota(tenant_id, now):
+    """全店的驗證碼寄送量：超過上限時拒絕並通知店家 (可能是被拿來灌簡訊)"""
+    cfg = settings_service.get('sms', tenant_id)
+    hourly = int(cfg.get('tenant_hourly_limit') or DEFAULT_TENANT_HOURLY_LIMIT)
+    daily = int(cfg.get('tenant_daily_limit') or DEFAULT_TENANT_DAILY_LIMIT)
+    base = OtpCode.query.filter(OtpCode.tenant_id == tenant_id).execution_options(skip_tenant_filter=True)
+    last_hour = base.filter(OtpCode.created_at >= now - timedelta(hours=1)).count()
+    last_day = base.filter(OtpCode.created_at >= now - timedelta(days=1)).count()
+    if last_hour >= hourly or last_day >= daily:
+        monitor_service.alert(f'簡訊驗證碼已達全店上限 (一小時 {last_hour}/{hourly}、一天 {last_day}/{daily})，暫停發送；'
+                              f'若非活動期間請確認是否被惡意灌簡訊 (系統設定 → 簡訊驗證 可調整上限)',
+                              key=f'sms-quota-{tenant_id}', tenant_id=tenant_id, level='warning', source='sms')
+        raise AppError('本店簡訊驗證碼暫時額滿，請稍後再試或洽櫃檯', 429)
 
 
 def verify_otp(phone, purpose, code):

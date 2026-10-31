@@ -203,13 +203,28 @@
     // ---------------------------------------------------------------- 會員動態條碼
     let qrTimer = null;
 
+    function fetchQr(rotate, pin) {
+        const json = rotate || pin ? { action: rotate ? 'rotate' : 'confirm', pin: pin || '' } : null;
+        return json ? Kiosk.api('/api/member_qr', { json }) : Kiosk.api('/api/member_qr');
+    }
+
     async function loadMemberQr(rotate = false) {
         const msg = document.getElementById('memberQrMsg');
         msg.textContent = '';
         try {
-            const data = rotate
-                ? await Kiosk.api('/api/member_qr', { json: { action: 'rotate' } })
-                : await Kiosk.api('/api/member_qr');
+            let data;
+            try {
+                data = await fetchQr(rotate);
+            } catch (err) {
+                // 人臉登入的工作階段：後端要求 PIN (確認一次後整個工作階段有效)
+                if (!(err.data && err.data.need_pin)) throw err;
+                const pin = window.prompt(`${err.message}\n請輸入 PIN 碼：`, '');
+                if (!pin) {
+                    msg.textContent = '需輸入 PIN 碼才能出示會員條碼';
+                    return;
+                }
+                data = await fetchQr(rotate, pin.trim());
+            }
             const img = document.getElementById('memberQrImg');
             img.src = data.qr;
             img.dataset.token = data.token;

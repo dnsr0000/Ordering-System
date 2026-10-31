@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from app.models.enums import MANAGER_ROLES, POS_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.order import Order
@@ -15,12 +16,11 @@ from app.models.shift import CashShift
 from app.services import einvoice_ecpay, payment_service, settings_service, shift_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import role_required, safe_int
+from app.utils import get_own, role_required, safe_int
 
 invoices_bp = Blueprint('invoices', __name__)
 refunds_bp = Blueprint('refunds', __name__)
 shifts_bp = Blueprint('shifts', __name__)
-MANAGERS = ('owner', 'manager')
 
 INVOICE_STATUS_LABELS = {
     InvoiceStatus.WAITING: ('等待付款', 'secondary'), InvoiceStatus.PENDING: ('待開立', 'warning'),
@@ -50,7 +50,7 @@ def _date_range(default_days=7):
 # 電子發票
 # ==============================================================================
 @invoices_bp.route('/admin/invoices', endpoint='list_invoices')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def list_invoices():
     start, end = _date_range(30)
     status = request.args.get('status') or ''
@@ -66,14 +66,12 @@ def list_invoices():
 
 
 def _invoice(invoice_id):
-    inv = db.session.get(Invoice, invoice_id)
-    if inv is None or inv.tenant_id != g.tenant_id:
-        raise AppError('查無此發票', 404)
+    inv = get_own(Invoice, invoice_id, '發票')
     return inv
 
 
 @invoices_bp.route('/admin/invoices/<int:invoice_id>/action', methods=['POST'], endpoint='invoice_action')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def invoice_action(invoice_id):
     inv = _invoice(invoice_id)
     action = request.form.get('action')
@@ -85,7 +83,7 @@ def invoice_action(invoice_id):
             inv.status, inv.attempts = InvoiceStatus.PENDING, 0
             db.session.commit()
         status = einvoice_ecpay.issue_invoice(inv.id)
-        flash('✅ 已開立發票' if status == InvoiceStatus.ISSUED else f'❌ 開立未成功：{inv.last_error}',
+        flash('已開立發票' if status == InvoiceStatus.ISSUED else f'開立未成功：{inv.last_error}',
               'success' if status == InvoiceStatus.ISSUED else 'danger')
     elif action == 'void':
         reason = (request.form.get('reason') or '').strip() or '作廢'
@@ -115,26 +113,24 @@ def invoice_action(invoice_id):
         if inv.status == InvoiceStatus.FAILED:
             inv.status, inv.attempts = InvoiceStatus.PENDING, 0
         db.session.commit()
-        flash('✅ 已更新發票資料，請按「重送」開立', 'success')
+        flash('已更新發票資料，請按「重送」開立', 'success')
     else:
         raise AppError('不支援的操作')
     return redirect(back)
 
 
 @invoices_bp.route('/admin/invoices/<int:invoice_id>/print', endpoint='invoice_print')
-@role_required(*MANAGERS, 'staff')
+@role_required(*POS_ROLES)
 def invoice_print(invoice_id):
     """導向綠界的發票證明聯列印頁"""
     return redirect(einvoice_ecpay.print_url(_invoice(invoice_id).id))
 
 
 @invoices_bp.route('/admin/orders/<int:order_id>/invoice', methods=['POST'], endpoint='issue_for_order')
-@role_required(*MANAGERS, 'staff')
+@role_required(*POS_ROLES)
 def issue_for_order(order_id):
     """補開發票 (結帳時未開立、或關閉自動開立時)"""
-    order = db.session.get(Order, order_id)
-    if order is None or order.tenant_id != g.tenant_id:
-        raise AppError('查無此訂單', 404)
+    order = get_own(Order, order_id, '訂單')
     if not settings_service.get('einvoice').get('enabled'):
         raise AppError('尚未啟用電子發票')
     data = request.get_json(silent=True) or request.form.to_dict()
@@ -152,7 +148,7 @@ def issue_for_order(order_id):
 # 作廢與退款
 # ==============================================================================
 @refunds_bp.route('/admin/refunds', endpoint='list_refunds')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def list_refunds():
     start, end = _date_range(30)
     status = request.args.get('status') or ''
@@ -173,23 +169,21 @@ def list_refunds():
 
 
 @refunds_bp.route('/admin/refunds/<int:refund_id>/action', methods=['POST'], endpoint='refund_action')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def refund_action(refund_id):
-    refund = db.session.get(Refund, refund_id)
-    if refund is None or refund.tenant_id != g.tenant_id:
-        raise AppError('查無退款紀錄', 404)
+    refund = get_own(Refund, refund_id, '退款紀錄')
     action = request.form.get('action')
     if action == 'done':
         payment_service.mark_refund_done(refund.id, current_user.username, request.form.get('note') or '')
         record_staff_audit('REFUND_DONE', target_order_id=refund.order_id,
                            details=f'退款 #{refund.id} (${refund.amount} {refund.method}) 標記為已完成')
         db.session.commit()
-        flash('✅ 已標記完成退款', 'success')
+        flash('已標記完成退款', 'success')
     elif action == 'retry':
         refund.status = 'failed'
         db.session.commit()
         status = payment_service.process_refund(refund.id)
-        flash('✅ 線上退款成功' if status == 'done' else f'❌ 退款失敗：{refund.provider_result}',
+        flash('線上退款成功' if status == 'done' else f'退款失敗：{refund.provider_result}',
               'success' if status == 'done' else 'danger')
     else:
         raise AppError('不支援的操作')
@@ -197,11 +191,11 @@ def refund_action(refund_id):
 
 
 @refunds_bp.route('/admin/refunds/order/<int:order_id>/done', methods=['POST'], endpoint='online_refund_done')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def online_refund_done(order_id):
     """線上付款 (綠界) 取消後，已在綠界後台退刷：標記為已退款"""
-    order = db.session.get(Order, order_id)
-    if order is None or order.tenant_id != g.tenant_id or order.payment_status != 'refund_required':
+    order = get_own(Order, order_id, '需退款的訂單')
+    if order.payment_status != 'refund_required':
         raise AppError('查無需退款的訂單', 404)
     refund = Refund.query.filter_by(order_id=order.id).filter(Refund.status != 'done').first()
     if refund is not None:
@@ -209,21 +203,21 @@ def online_refund_done(order_id):
     order.payment_status = 'refunded'
     record_staff_audit('REFUND_DONE', target_order_id=order.id, details=f'訂單 #{order.id} 已於金流後台完成退款')
     db.session.commit()
-    flash(f'✅ 訂單 #{order.id} 已標記為已退款', 'success')
+    flash(f'訂單 #{order.id} 已標記為已退款', 'success')
     return redirect(url_for('refunds.list_refunds'))
 
 
 @refunds_bp.route('/admin/refunds/order/<int:order_id>/ecpay', methods=['POST'], endpoint='online_refund_ecpay')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def online_refund_ecpay(order_id):
     """線上端：已取消的綠界信用卡 / Apple Pay 訂單直接向綠界退刷 (自動退刷失敗後也可在這裡重試)"""
-    order = db.session.get(Order, order_id)
-    if order is None or order.tenant_id != g.tenant_id or order.payment_status != 'refund_required':
+    order = get_own(Order, order_id, '需退款的訂單')
+    if order.payment_status != 'refund_required':
         raise AppError('查無需退款的訂單', 404)
     if not payment_service.ecpay_integrated(order):
         raise AppError('此訂單不是綠界信用卡 / Apple Pay 付款，請到對應的金流後台退款')
     ok, msg = payment_service.auto_refund_online_order(order.id)
-    flash(f'✅ {msg}' if ok else f'❌ 綠界退刷失敗：{msg}', 'success' if ok else 'danger')
+    flash(f'{msg}' if ok else f'❌ 綠界退刷失敗：{msg}', 'success' if ok else 'danger')
     return redirect(url_for('refunds.list_refunds'))
 
 
@@ -247,9 +241,7 @@ def list_shifts():
 @shifts_bp.route('/admin/shifts/<int:shift_id>', endpoint='shift_detail')
 @permission_required('cash_drawer')
 def shift_detail(shift_id):
-    shift = db.session.get(CashShift, shift_id)
-    if shift is None or shift.tenant_id != g.tenant_id:
-        raise AppError('查無此班別', 404)
+    shift = get_own(CashShift, shift_id, '班別')
     report = json.loads(shift.report) if shift.report else shift_service.shift_report(shift)
     detail = json.loads(shift.cash_detail) if shift.cash_detail else {}
     return render_template('admin_shift_detail.html', shift=shift, report=report, detail=detail,
@@ -260,10 +252,8 @@ def shift_detail(shift_id):
 @permission_required('cash_drawer')
 def shift_print(shift_id):
     from app.services import print_service
-    shift = db.session.get(CashShift, shift_id)
-    if shift is None or shift.tenant_id != g.tenant_id:
-        raise AppError('查無此班別', 404)
+    shift = get_own(CashShift, shift_id, '班別')
     report = json.loads(shift.report) if shift.report else shift_service.shift_report(shift)
     print_service.print_text_document(g.tenant_id, '交班報表', shift_service.report_lines(report))
-    flash('✅ 已送出列印', 'success')
+    flash('已送出列印', 'success')
     return redirect(url_for('shifts.shift_detail', shift_id=shift.id))

@@ -33,7 +33,7 @@ def demo(app):
 def order_by_uuid(app, client_order_id):
     from app.models.order import Order
     with app.app_context():
-        order = Order.query.filter_by(uuid=client_order_id).first()
+        order = Order.query.filter_by(client_order_id=client_order_id).first()
         assert order is not None, f'資料庫找不到 client_order_id={client_order_id} 的訂單'
         return {
             'total_price': order.total_price,

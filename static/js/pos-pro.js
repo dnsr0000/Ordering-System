@@ -84,6 +84,90 @@
     }
 
     // ======================================================================
+    // 會員身分驗證：動用儲值金 / 點數 / 寄杯時後端回 need_member_pin → 會員輸入 PIN (或改由主管核准) 後重試
+    // ======================================================================
+    let memberVerifyResolver = null;
+    let memberVerifyOpen = false;
+
+    function askMemberPin(err, retry) {
+        return new Promise((resolve) => {
+            memberVerifyResolver = resolve;
+            const data = err.data || {};
+            $('posMemberVerifySubmit').disabled = false;
+            $('posMemberVerifyPin').value = '';
+            $('posMemberVerifyPin').disabled = data.has_pin === false;
+            if (retry && memberVerifyOpen) {
+                $('posMemberVerifyMsg').textContent = `❌ ${err.message}`;
+                $('posMemberVerifyPin').focus();
+                return;
+            }
+            $('posMemberVerifyReason').textContent = err.message || '動用儲值金 / 點數 / 寄杯需驗證會員身分';
+            $('posMemberVerifyName').textContent = data.member_name || '';
+            $('posMemberVerifyMsg').textContent = data.has_pin === false ? '此會員尚未設定 PIN：請先協助設定，或由主管核准' : '';
+            memberVerifyOpen = true;
+            modalOf('posMemberVerifyModal').show();
+        });
+    }
+
+    function closeMemberVerify() {
+        if (!memberVerifyOpen) return;
+        memberVerifyOpen = false;
+        modalOf('posMemberVerifyModal').hide();
+    }
+
+    /** fn(extra) 回傳 Promise；遇到 need_member_pin 時跳出視窗，會員輸入 PIN (member_pin) 或主管核准 (member_verify_override) 後重試 */
+    async function withMemberVerify(fn) {
+        let extra = {};
+        try {
+            for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                    return await fn(extra);
+                } catch (err) {
+                    if (!(err.data && err.data.need_member_pin)) throw err;
+                    const answer = await askMemberPin(err, attempt > 0);
+                    if (!answer) {
+                        err.cancelled = true;
+                        throw err;
+                    }
+                    extra = { ...extra, ...answer };
+                }
+            }
+            throw new Error('會員驗證失敗次數過多');
+        } finally {
+            closeMemberVerify();
+        }
+    }
+
+    $('posMemberVerifyForm').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const pin = ($('posMemberVerifyPin').value || '').trim();
+        if (!/^\d{4,6}$/.test(pin)) {
+            $('posMemberVerifyMsg').textContent = '⚠️ PIN 碼為 4 至 6 位數字';
+            return;
+        }
+        const resolve = memberVerifyResolver;
+        memberVerifyResolver = null;
+        $('posMemberVerifySubmit').disabled = true;
+        $('posMemberVerifyMsg').textContent = '驗證中...';
+        if (resolve) resolve({ member_pin: pin });
+    });
+    $('posMemberVerifyOverride').addEventListener('click', () => {
+        const resolve = memberVerifyResolver;
+        memberVerifyResolver = null;
+        closeMemberVerify();
+        if (resolve) resolve({ member_verify_override: true });
+    });
+    $('posMemberVerifyModal').addEventListener('hidden.bs.modal', () => {
+        memberVerifyOpen = false;
+        if (memberVerifyResolver) {
+            const resolve = memberVerifyResolver;
+            memberVerifyResolver = null;
+            resolve(null);
+        }
+    });
+    $('posMemberVerifyModal').addEventListener('shown.bs.modal', () => $('posMemberVerifyPin').focus());
+
+    // ======================================================================
     // LINE Pay 掃碼 / 刷卡授權碼
     // ======================================================================
     let linePayResolver = null;
@@ -575,5 +659,5 @@
         moveTable: () => moveTable(),
     });
 
-    window.PosPro = { withApproval, askLinePayKey, paymentDetails, networkPrint };
+    window.PosPro = { withApproval, withMemberVerify, askLinePayKey, paymentDetails, networkPrint };
 })();

@@ -3,16 +3,16 @@ from datetime import date
 
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
 from app.services import settings_service
 from app.services.audit import record_staff_audit
 from app.services.settings_service import TIME_RE
-from app.utils import role_required, safe_int
+from app.utils import get_own, role_required, safe_int
 
 menu_pro_bp = Blueprint('menu_pro', __name__)
-MANAGERS = ('owner', 'manager')
 
 
 def _date(value):
@@ -58,14 +58,12 @@ def apply_pro_form(item, form):
 
 
 @menu_pro_bp.route('/admin/menu_pro', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGERS)
+@role_required(*MANAGER_ROLES)
 def manage():
     if request.method == 'POST':
         action = request.form.get('action')
         if action == 'item':
-            item = db.session.get(MenuItem, safe_int(request.form.get('item_id'), 0))
-            if item is None or item.tenant_id != g.tenant_id:
-                raise AppError('查無此品項', 404)
+            item = get_own(MenuItem, request.form.get('item_id'), '品項')
             if item.external_code != (request.form.get('external_code') or '').strip() and request.form.get('external_code'):
                 dup = MenuItem.query.filter(MenuItem.external_code == request.form.get('external_code').strip(),
                                             MenuItem.id != item.id).first()
@@ -73,7 +71,7 @@ def manage():
                     raise AppError(f'外送 / 條碼代碼已被「{dup.name}」使用')
             apply_pro_form(item, request.form)
             record_staff_audit('MENU_PRO_CHANGE', details=f'更新「{item.name}」的供應時段 / 通路價 / 標示 / 翻譯')
-            flash(f'✅ 已更新「{item.name}」', 'success')
+            flash(f'已更新「{item.name}」', 'success')
         elif action == 'categories':
             for cat in request.form.getlist('category'):
                 cat = cat.strip()[:50]
@@ -85,7 +83,7 @@ def manage():
                     db.session.add(row)
                 row.name_en = (request.form.get(f'en__{cat}') or '').strip()[:60]
                 row.name_ja = (request.form.get(f'ja__{cat}') or '').strip()[:60]
-            flash('✅ 已更新分類翻譯', 'success')
+            flash('已更新分類翻譯', 'success')
         else:
             raise AppError('不支援的操作')
         db.session.commit()

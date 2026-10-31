@@ -50,7 +50,7 @@ def require_approval(perm, data, action_label):
     if not username or not password:
         raise need
     keys = auth_throttle.staff_keys(username, request.remote_addr or '-')
-    if auth_throttle.lock_remaining(keys.values()):
+    if auth_throttle.staff_lock_remaining(keys):
         raise AppError('主管帳號密碼錯誤次數過多，已暫時鎖定，請稍後再試', 429, need_approval=True)
     approver = StaffAccount.query.filter_by(username=username).first()
     if approver is None:

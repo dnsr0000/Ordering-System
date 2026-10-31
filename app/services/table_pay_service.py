@@ -43,6 +43,7 @@ def start(table):
     """建立一筆線上結帳 (記下這一桌目前未結帳的訂單與金額)。由這裡 commit。"""
     if not enabled(table.tenant_id):
         raise AppError('本店未開放桌邊線上結帳，請至櫃檯結帳', 404)
+    payment_ecpay.require_keys_allowed()
     info = bill(table)
     if not info['orders'] or info['total'] <= 0:
         raise AppError('這一桌目前沒有需要結帳的訂單', 409)
@@ -53,29 +54,12 @@ def start(table):
     return tp
 
 
-def form_fields(tp, base_url):
+def form_fields(tp, base_url=None):
     """送到綠界付款頁的表單欄位 (信用卡)"""
-    merchant_id, hash_key, hash_iv, _base = payment_ecpay._cfg()
     orders = Order.query.filter(Order.id.in_(tp.order_id_list)).all()
     names = '#'.join(f'{i.item_name} x{i.quantity}' for o in orders for i in o.items if (i.quantity or 0) > 0)
-    base_url = base_url.rstrip('/')
-    params = {
-        'MerchantID': merchant_id,
-        'MerchantTradeNo': tp.trade_no,
-        'MerchantTradeDate': datetime.now().strftime('%Y/%m/%d %H:%M:%S'),
-        'PaymentType': 'aio',
-        'TotalAmount': str(int(tp.amount)),
-        'TradeDesc': 'TablePayment',
-        'ItemName': names[:180] or '餐點',
-        'ReturnURL': f'{base_url}/payment/ecpay/table_notify',
-        'OrderResultURL': f'{base_url}/payment/ecpay/table_result',
-        'ChoosePayment': 'Credit',
-        'EncryptType': '1',
-        'CustomField1': f'T:{tp.trade_no}',
-        'NeedExtraPaidInfo': 'N',
-    }
-    params['CheckMacValue'] = payment_ecpay.check_mac_value(params, hash_key, hash_iv)
-    return params
+    return payment_ecpay.aio_form(tp.trade_no, tp.amount, names or '餐點', 'TablePayment', f'T:{tp.trade_no}',
+                                  '/payment/ecpay/table_notify', '/payment/ecpay/table_result', base_url)
 
 
 def find(trade_no):
@@ -133,18 +117,14 @@ def mark_paid(trade_no, provider_trade_no, amount, payment_type=None):
 
 def handle_notification(form):
     """綠界 ReturnURL：回傳要回應綠界的字串"""
-    params = {k: v for k, v in form.items()}
-    if not payment_ecpay.verify(params):
-        logger.warning('綠界桌邊結帳通知檢查碼錯誤：%s', params.get('MerchantTradeNo'))
-        return '0|CheckMacValue Error'
-    if str(params.get('RtnCode')) != '1':
+    params, status = payment_ecpay.parse_result(form, '桌邊結帳')
+    if status == 'failed':
         tp = find(params.get('MerchantTradeNo'))
         if tp is not None and tp.status == 'pending':
             tp.status, tp.note = 'failed', str(params.get('RtnMsg') or '付款失敗')[:200]
             db.session.commit()
-        return '1|OK'
-    if str(params.get('SimulatePaid', '0')) == '1':
-        return '1|OK'
+    if status != 'paid':
+        return payment_ecpay.RESULT_REPLY[status]
     result = mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
                        params.get('PaymentType'))
     return '0|NotFound' if result == 'missing' else '1|OK'

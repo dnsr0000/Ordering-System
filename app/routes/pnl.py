@@ -4,6 +4,7 @@ from datetime import date
 from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
 from flask_login import current_user
 
+from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.expense import EXPENSE_CATEGORIES, Expense
@@ -12,7 +13,7 @@ from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
 from app.services.history_service import FIELD_LABELS
 from app.sync import runtime as sync_runtime
-from app.utils import role_required, safe_int
+from app.utils import get_own, role_required, safe_int
 
 pnl_bp = Blueprint('pnl', __name__)
 
@@ -24,7 +25,7 @@ def _month():
 
 
 @pnl_bp.route('/admin/expenses', methods=['GET', 'POST'], endpoint='expenses')
-@role_required('owner', 'manager')
+@role_required(*MANAGER_ROLES)
 def expenses():
     month, start, end = _month()
     if request.method == 'POST':
@@ -34,23 +35,23 @@ def expenses():
             e = pnl_service.save_expense(Expense(tenant_id=g.tenant_id), f, current_user.username)
             db.session.add(e)
             record_staff_audit('EXPENSE', details=f'新增費用 {e.spent_on} {e.category_label} {e.name} ${e.amount}')
-            flash(f'✅ 已新增費用「{e.name}」${e.amount:,}', 'success')
+            flash(f'已新增費用「{e.name}」${e.amount:,}', 'success')
         elif action in ('edit', 'delete'):
-            e = db.session.get(Expense, safe_int(f.get('expense_id'), 0))
-            if e is None or e.tenant_id != g.tenant_id or e.is_deleted:
+            e = get_own(Expense, f.get('expense_id'), '費用')
+            if e.is_deleted:
                 raise AppError('查無此費用', 404)
             if sync_runtime.is_hub() and e.node_uuid:
                 raise AppError('分店登錄的費用請在該分店修改', 403)
             if action == 'edit':
                 pnl_service.save_expense(e, f)
-                flash('✅ 已更新費用', 'success')
+                flash('已更新費用', 'success')
             else:
                 e.is_deleted = True
-                flash(f'✅ 已刪除「{e.name}」', 'success')
+                flash(f'已刪除「{e.name}」', 'success')
             record_staff_audit('EXPENSE', details=f"{'修改' if action == 'edit' else '刪除'}費用 {e.name} ${e.amount}")
         elif action == 'copy_fixed':
             n = pnl_service.copy_fixed(g.tenant_id, month, current_user.username)
-            flash(f'✅ 已從上個月複製 {n} 筆固定費用' if n else '上個月沒有尚未複製的固定費用', 'success' if n else 'info')
+            flash(f'已從上個月複製 {n} 筆固定費用' if n else '上個月沒有尚未複製的固定費用', 'success' if n else 'info')
         else:
             raise AppError('不支援的操作')
         db.session.commit()
