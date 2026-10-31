@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW" data-bs-theme="{% block theme %}dark{% endblock %}">
+<html lang="{{ {'zh': 'zh-TW', 'en': 'en', 'ja': 'ja'}.get(lang|default('zh'), 'zh-TW') }}" data-bs-theme="{% block theme %}dark{% endblock %}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">

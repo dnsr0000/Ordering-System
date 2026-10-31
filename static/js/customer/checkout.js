@@ -3,7 +3,7 @@
  * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
  */
 import {
-    $, REWARD_LABEL, api, html, isGuest, isOnline, modal, pageData, pro, setText, state, toggleRow,
+    $, REWARD_DISPLAY_LABEL, api, html, isGuest, isOnline, modal, pageData, pro, setText, state, toggleRow, ui,
 } from './core.js';
 import { lineDescription, saveCart, updateCartUI } from './cart.js';
 import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo } from './totals.js';
@@ -12,9 +12,9 @@ export async function openTableBill() {
     try {
         const res = await api('/api/table/bill');
         Kiosk.setHtml($('tableBillBody'), res.orders.length ? html`
-            ${res.orders.map((o) => html`<div class="border-bottom py-1"><div class="fw-bold small">取餐 #${o.pickup_number} • $${o.total_price}</div>
+            ${res.orders.map((o) => html`<div class="border-bottom py-1"><div class="fw-bold small">${ui.pickup} #${o.pickup_number} • $${o.total_price}</div>
                 ${o.items.map((i) => html`<div class="small text-secondary">${i.name} x${i.quantity}</div>`)}</div>`)}
-            <div class="fs-5 fw-bold text-end mt-2">合計 <span id="tableBillTotal">$${res.total}</span></div>` : html`<div class="text-secondary">目前沒有需要結帳的訂單</div>`);
+            <div class="fs-5 fw-bold text-end mt-2">${ui.payable} <span id="tableBillTotal">$${res.total}</span></div>` : html`<div class="text-secondary">${ui.no_unpaid_orders}</div>`);
         $('tablePayBtn').disabled = !res.orders.length || !res.online_pay;
         modal('tableBillModal').show();
     } catch (err) {
@@ -46,22 +46,22 @@ export function takeoutInfo() {
 
 export async function openPreview() {
     if (!state.cart.length) {
-        alert('購物車為空');
+        alert(ui.cart_empty_error);
         return;
     }
     if (isOnline && !pageData.pickupNode) {
-        alert('請先在頁面上方選擇取餐分店，再進行結帳！');
+        alert(ui.select_branch_first);
         return;
     }
     const soldOut = state.cart.find((l) => l.is_sold_out);
     if (soldOut) {
-        alert(`⚠️ 購物車中有已售完餐點【${soldOut.name}】，請先點擊「移除」後再結帳！`);
+        alert(`⚠️ ${ui.sold_out_cart_error} (${soldOut.name})`);
         return;
     }
     if ($('paymentMethod').value === '儲值金') {
         const t0 = computeTotals();
         if ((Number(pro.walletBalance) || 0) < t0.final) {
-            alert(`⚠️ 儲值金餘額 $${Number(pro.walletBalance) || 0} 不足 (應付 $${t0.final})，請改用其他付款方式或至櫃檯加值！`);
+            alert(`⚠️ ${ui.wallet_insufficient} ($${Number(pro.walletBalance) || 0} / $${t0.final})`);
             return;
         }
     }
@@ -77,7 +77,7 @@ export async function openPreview() {
                 return html`
                 <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
                     <div>
-                        <div>${l.is_reward ? `${REWARD_LABEL} ` : ''}${l.name} x${l.quantity}</div>
+                        <div>${l.is_reward ? `${REWARD_DISPLAY_LABEL} ` : ''}${l.name} x${l.quantity}</div>
                         ${desc ? html`<small class="text-info">${desc}</small>` : ''}
                     </div>
                     <span class="fw-bold">$${Math.round(l.price * l.quantity)}</span>
@@ -85,10 +85,10 @@ export async function openPreview() {
             })}
         </ul>
         <div class="mt-3 p-3 rounded bg-secondary bg-opacity-10 border border-secondary">
-            <div class="small text-white-50">${pageData.table ? '桌邊點餐' : '外帶設定'}</div>
-            <div class="fw-bold text-white">${pageData.table ? `${pageData.table} 桌 • 內用 • 用餐後至櫃檯結帳`
-                : (info.orderType === '外帶' ? (info.needCutlery ? '需要餐具' : '不需要餐具') : '內用')}</div>
-            ${info.note ? html`<div class="small text-warning mt-2">備註：${info.note}</div>` : ''}
+            <div class="small text-white-50">${pageData.table ? ui.table_order_notice : ui.takeout_settings}</div>
+            <div class="fw-bold text-white">${pageData.table ? `${ui.table_order_notice} ${pageData.table} • ${ui.dine_in} • ${ui.table_order_delivery}`
+                : (info.orderType === '外帶' ? (info.needCutlery ? ui.need_cutlery : ui.no_cutlery) : info.orderType === '外送到府' ? ui.home_delivery : ui.dine_in)}</div>
+            ${info.note ? html`<div class="small text-warning mt-2">${ui.note}：${info.note}</div>` : ''}
         </div>`);
     toggleRow('preview-promotion-row', 'preview-promotion', t.promotionDiscount);
     toggleRow('preview-tier-row', 'preview-tier', t.tier);
@@ -159,7 +159,11 @@ export function applyServerPrices(data) {
     state.acceptedTotal = computeTotals().final === total ? null : { key: payloadKey(again), total };
 }
 
-export const INVOICE_PLACEHOLDERS = { mobile: '手機條碼 /ABC1234', company: '統一編號 8 碼', donate: '愛心碼' };
+export const INVOICE_PLACEHOLDERS = {
+    mobile: ui.mobile_invoice_placeholder,
+    company: ui.company_invoice_placeholder,
+    donate: ui.donation_invoice_placeholder,
+};
 export function invoicePayload() {
     const sel = $('invoiceType');
     if (!sel || !sel.value) return null;
@@ -175,31 +179,31 @@ export function handleCheckoutError(err) {
         state.cart.forEach((l) => { if (data.sold_out_items.includes(l.name)) l.is_sold_out = true; });
         saveCart();
         modal('confirmModal').hide();
-        alert(`⚠️ 抱歉！以下餐點剛好售罄：\n【${data.sold_out_items.join('、')}】\n已為您更新菜單並在購物車中劃掉標記，請移除後再結帳！`);
+        alert(`⚠️ ${ui.sold_out_cart_error}\n${data.sold_out_items.join(', ')}`);
         window.location.reload();
         return;
     }
     if (data.price_changed) {
         modal('confirmModal').hide();
         applyServerPrices(data);
-        alert(`⚠️ ${err.message}`);
+        alert(`⚠️ ${ui.price_changed_notice}`);
         bootstrap.Offcanvas.getOrCreateInstance($('cart-sidebar')).show();
         return;
     }
     if (data.coupon_unavailable || data.points_changed) {
         // 優惠券或點數剛在其他裝置 / 門市 / 線上用掉：重新載入最新的點數與可用券，讓顧客確認金額後再送出
         modal('confirmModal').hide();
-        alert(`⚠️ ${err.message}`);
+        alert(`⚠️ ${ui.discount_or_points_changed}`);
         window.location.reload();
         return;
     }
     if (data.insufficient_stock) {
         modal('confirmModal').hide();
-        alert(`⚠️ 點餐數量超過目前剩餘庫存：\n\n${err.message}\n\n請至購物車調整購買數量後再重新結帳！`);
+        alert(`⚠️ ${ui.stock_unavailable}`);
         bootstrap.Offcanvas.getOrCreateInstance($('cart-sidebar')).show();
         return;
     }
-    alert(err.message || '結帳失敗，請稍後再試！');
+    alert(ui.checkout_failed);
 }
 
 export async function confirmCheckout() {
@@ -253,18 +257,20 @@ export function queueOffline(err) {
 
 export function showReceipt(data) {
     if (!isGuest) setUserPoints(data.remaining_points);
-    setText('receipt-pickup', data.pickup_pending ? '待分店確認' : `#${String(data.pickup_number).padStart(3, '0')}`);
+    setText('receipt-pickup', data.pickup_pending ? ui.pickup_pending : `#${String(data.pickup_number).padStart(3, '0')}`);
     setText('receipt-order-id', `#${data.order_id}`);
     setText('receipt-node', data.pickup_node_name || '');
     $('receipt-node-row').classList.toggle('d-none', !data.pickup_node_name);
     $('receipt-pending-hint').classList.toggle('d-none', !data.pickup_pending);
     setText('receipt-user', data.user_name);
+    const typeLabel = data.order_type === '內用' ? ui.dine_in : data.order_type === '外帶' ? ui.take_out
+        : data.order_type === '外送到府' ? ui.home_delivery : data.order_type;
     setText('receipt-type', data.order_type === '外帶'
-        ? `${data.order_type} • ${data.need_cutlery ? '要餐具' : '不用餐具'}` : data.order_type);
+        ? `${typeLabel} • ${data.need_cutlery ? ui.need_cutlery : ui.no_cutlery}` : typeLabel);
     setText('receipt-payment', data.payment_method);
     setText('receipt-note', data.note || '');
     $('receipt-note-row').classList.toggle('d-none', !data.note);
-    setText('receipt-delivery', data.delivery_address ? `${data.delivery_address} (外送費 $${data.delivery_fee || 0})` : '');
+    setText('receipt-delivery', data.delivery_address ? `${data.delivery_address} (${ui.delivery_fee} $${data.delivery_fee || 0})` : '');
     $('receipt-delivery-row').classList.toggle('d-none', !data.delivery_address);
     setText('receipt-pickup-at', data.pickup_at || '');
     $('receipt-pickup-at-row').classList.toggle('d-none', !data.pickup_at);
@@ -276,7 +282,7 @@ export function showReceipt(data) {
     const invRow = $('receipt-invoice-row');
     if (invRow) {
         invRow.classList.toggle('d-none', !data.invoice);
-        if (data.invoice) setText('receipt-invoice', data.invoice.invoice_no || `${data.invoice.carrier} (開立中)`);
+        if (data.invoice) setText('receipt-invoice', data.invoice.invoice_no || `${data.invoice.carrier} (${ui.issuing_invoice})`);
     }
     const qrBox = $('receipt-qr-box');
     if (qrBox) {
@@ -286,8 +292,8 @@ export function showReceipt(data) {
     setText('receipt-subtotal', Math.round(data.subtotal));
     setText('receipt-discount', Math.round(data.discount_amount));
     setText('receipt-total', Math.round(data.total_price));
-    setText('receipt-earned-points', `+${data.points_earned} 點`);
-    setText('receipt-current-points', `${data.remaining_points} 點`);
+    setText('receipt-earned-points', `+${data.points_earned} ${ui.points}`);
+    setText('receipt-current-points', `${data.remaining_points} ${ui.points}`);
     Kiosk.setHtml($('receipt-items-body'), (data.items || []).map((item) => html`
         <tr>
             <td>
@@ -309,13 +315,14 @@ export function finishOrder() {
 
 // ================================================================ 我的訂單
 export const STATUS_BADGES = { 製作中: 'bg-warning text-dark', 已出餐: 'bg-success', 已取餐: 'bg-secondary', 已取消: 'bg-danger' };
+const STATUS_LABELS = { 製作中: ui.preparing, 已出餐: ui.completed, 已取餐: ui.picked_up, 已取消: ui.cancelled };
 
 export const PAYMENT_BADGES = {
-    pending: ['bg-warning text-dark', '待付款'],
-    paid: ['bg-success', '已線上付款'],
-    expired: ['bg-secondary', '付款逾時'],
-    refund_required: ['bg-danger', '退款處理中'],
-    refunded: ['bg-secondary', '已退款'],
+    pending: ['bg-warning text-dark', ui.payment_pending],
+    paid: ['bg-success', ui.payment_paid],
+    expired: ['bg-secondary', ui.payment_expired],
+    refund_required: ['bg-danger', ui.refund_pending],
+    refunded: ['bg-secondary', ui.refunded],
 };
 
 export function orderCardHtml(o) {
@@ -324,21 +331,21 @@ export function orderCardHtml(o) {
         <div class="card mb-3 border-secondary shadow-sm text-dark">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
                 <div>
-                    <span class="fw-bold text-success fs-5">訂單 #${o.user_order_no}</span>
-                    <span class="badge ${STATUS_BADGES[o.status] || 'bg-danger'}">${o.status}</span>
-                    <span class="badge bg-primary ms-1">${o.order_type}</span>
-                    <span class="badge bg-warning text-dark fw-bold ms-1 order-pickup">${o.pickup_pending ? '取餐號：待分店確認' : `取餐 #${String(o.pickup_number || o.order_id).padStart(3, '0')}`}</span>
-                    ${o.pickup_at ? html`<span class="badge bg-info text-dark ms-1 order-pickup-at"><i class="bi bi-clock me-1"></i>預約 ${o.pickup_at}</span>` : ''}
+                    <span class="fw-bold text-success fs-5">${ui.order_number} #${o.user_order_no}</span>
+                    <span class="badge ${STATUS_BADGES[o.status] || 'bg-danger'}">${STATUS_LABELS[o.status] || o.status}</span>
+                    <span class="badge bg-primary ms-1">${o.order_type === '內用' ? ui.dine_in : o.order_type === '外帶' ? ui.take_out : o.order_type === '外送到府' ? ui.home_delivery : o.order_type}</span>
+                    <span class="badge bg-warning text-dark fw-bold ms-1 order-pickup">${o.pickup_pending ? ui.pickup_pending : `${ui.pickup} #${String(o.pickup_number || o.order_id).padStart(3, '0')}`}</span>
+                    ${o.pickup_at ? html`<span class="badge bg-info text-dark ms-1 order-pickup-at"><i class="bi bi-clock me-1"></i>${ui.scheduled} ${o.pickup_at}</span>` : ''}
                     ${o.delivery_label ? html`<span class="badge bg-warning text-dark ms-1 order-delivery"><i class="bi bi-scooter me-1"></i>${o.delivery_label}</span>` : ''}
                     ${o.pickup_node_name ? html`<span class="badge bg-dark ms-1 order-node"><i class="bi bi-shop me-1"></i>${o.pickup_node_name}</span>` : ''}
                     ${PAYMENT_BADGES[o.payment_status] ? html`<span class="badge ms-1 order-payment ${PAYMENT_BADGES[o.payment_status][0]}">${PAYMENT_BADGES[o.payment_status][1]}</span>` : ''}
-                    ${o.payment_url ? html`<a class="btn btn-sm btn-warning fw-bold ms-2 order-pay" href="${o.payment_url}">${o.payment_note ? '查看繳費資訊' : '前往付款'}</a>` : ''}
+                    ${o.payment_url ? html`<a class="btn btn-sm btn-warning fw-bold ms-2 order-pay" href="${o.payment_url}">${o.payment_note ? ui.view_payment_info : ui.go_to_payment}</a>` : ''}
                 </div>
                 <small class="text-muted">${o.created_at}</small>
             </div>
             <div class="card-body p-3">
                 <table class="table table-sm mb-2 align-middle">
-                    <thead><tr class="text-muted"><th>品項</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>
+                    <thead><tr class="text-muted"><th>${ui.item}</th><th>${ui.quantity}</th><th>${ui.unit_price}</th><th>${ui.subtotal}</th></tr></thead>
                     <tbody>
                         ${(o.items || []).map((item) => html`
                             <tr>
@@ -351,9 +358,9 @@ export function orderCardHtml(o) {
                 </table>
                 <div class="d-flex justify-content-between align-items-center pt-2 border-top">
                     <small class="text-muted">
-                        總折扣折抵: -$${Math.round(o.discount_amount || 0)} ${ptsUsed > 0 ? `(扣除 ${ptsUsed} 點)` : ''} | 獲得紅利: +${o.points_earned} 點
+                        ${ui.total_discount}: -$${Math.round(o.discount_amount || 0)} ${ptsUsed > 0 ? `(${ui.deducted_points} ${ptsUsed} ${ui.points})` : ''} | ${ui.earned_points}: +${o.points_earned} ${ui.points}
                     </small>
-                    <div class="fw-bold text-danger fs-6">實付：$${Math.round(o.total_price)}</div>
+                    <div class="fw-bold text-danger fs-6">${ui.actual_paid}: $${Math.round(o.total_price)}</div>
                 </div>
             </div>
         </div>`;
@@ -365,7 +372,7 @@ export async function fetchMyOrders() {
         const orders = await api('/my_orders');
         Kiosk.setHtml(body, Array.isArray(orders) && orders.length
             ? orders.map(orderCardHtml)
-            : html`<div class="text-center text-muted py-4">目前尚無任何訂單紀錄！</div>`);
+            : html`<div class="text-center text-muted py-4">${ui.no_orders}</div>`);
     } catch (err) {
         Kiosk.setHtml(body, html`<div class="text-center text-danger py-4">${err.message}</div>`);
     }

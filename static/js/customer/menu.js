@@ -31,20 +31,20 @@ export function startAdd(itemId) {
 }
 
 export function renderComboCards(item) {
-    $('comboModalTitle').textContent = `【${item.name}】享用方式`;
+    $('comboModalTitle').textContent = `${item.name} - ${ui.choose_combo_style}`;
     const single = html`
         <div class="col-md-6">
             <div class="combo-card p-4 rounded-3 h-100 d-flex flex-column justify-content-between" data-action="pick-combo" data-combo-id="" role="button" tabindex="0">
                 <div>
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="badge bg-secondary">單點主餐</span>
+                        <span class="badge bg-secondary">${ui.single_item}</span>
                         <span class="text-success fw-bold fs-5">$${item.price}</span>
                     </div>
-                    <h5 class="fw-bold text-white mb-1">${item.name} (單點)</h5>
-                    <p class="text-white-50 small mb-0">僅單點本品項，不搭配任何附餐或飲品。</p>
+                    <h5 class="fw-bold text-white mb-1">${item.name} (${ui.single_item})</h5>
+                    <p class="text-white-50 small mb-0">${ui.single_item_description}</p>
                 </div>
                 <div class="mt-3 pt-2 border-top border-secondary text-end">
-                    <span class="btn btn-outline-light btn-sm fw-bold px-3">選擇單點 <i class="bi bi-chevron-right"></i></span>
+                    <span class="btn btn-outline-light btn-sm fw-bold px-3">${ui.select_single} <i class="bi bi-chevron-right"></i></span>
                 </div>
             </div>
         </div>`;
@@ -56,19 +56,19 @@ export function renderComboCards(item) {
                  ${sold ? '' : html`data-action="pick-combo" data-combo-id="${c.id}" role="button" tabindex="0"`}>
                 <div>
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="badge ${sold ? 'bg-secondary' : 'bg-warning text-dark fw-bold'}">${sold ? '配餐售罄' : '升級超值套餐'}</span>
+                        <span class="badge ${sold ? 'bg-secondary' : 'bg-warning text-dark fw-bold'}">${sold ? ui.combo_sold_out : ui.upgrade_combo}</span>
                         <div>
                             <span class="${sold ? 'text-white-50' : 'text-danger fw-bold fs-5'}">+$${c.price}</span>
-                            <small class="text-white-50 ms-1">(總價 $${Number(item.price) + Number(c.price)})</small>
+                            <small class="text-white-50 ms-1">(${ui.combo_total} $${Number(item.price) + Number(c.price)})</small>
                         </div>
                     </div>
                     <h5 class="fw-bold ${sold ? 'text-white-50 text-decoration-line-through' : 'text-warning'} mb-1 combo-name">${c.name}</h5>
-                    <p class="text-white-50 small mb-0">${c.description || '含特選附餐與指定飲品組合'}</p>
+                    <p class="text-white-50 small mb-0">${c.description || ui.combo_description}</p>
                 </div>
                 <div class="mt-3 pt-2 border-top border-secondary text-end">
                     ${sold
-                        ? html`<button class="btn btn-secondary btn-sm fw-bold" type="button" disabled><i class="bi bi-slash-circle"></i> 配餐缺貨中</button>`
-                        : html`<span class="btn btn-warning btn-sm fw-bold text-dark px-3">升級套餐 <i class="bi bi-chevron-right"></i></span>`}
+                        ? html`<button class="btn btn-secondary btn-sm fw-bold" type="button" disabled><i class="bi bi-slash-circle"></i> ${ui.side_unavailable}</button>`
+                        : html`<span class="btn btn-warning btn-sm fw-bold text-dark px-3">${ui.upgrade_combo} <i class="bi bi-chevron-right"></i></span>`}
                 </div>
             </div>
         </div>`;
@@ -90,33 +90,33 @@ export function modifierSectionHtml(key, title, group) {
         body = html`
             <div class="row g-2">
                 <div class="col-6">
-                    <label class="form-label small text-white-50" for="mod-ice-${key}">冰塊量</label>
+                    <label class="form-label small text-white-50" for="mod-ice-${key}">${ui.ice_amount}</label>
                     <select id="mod-ice-${key}" class="form-select form-select-sm" data-mod="ice">
-                        <option value="正常冰">正常冰</option><option value="少冰">少冰</option>
-                        <option value="去冰">去冰</option><option value="熱飲">熱飲</option>
+                        <option value="正常冰">${ui.ice_regular}</option><option value="少冰">${ui.ice_less}</option>
+                        <option value="去冰">${ui.ice_none}</option><option value="熱飲">${ui.drink_hot}</option>
                     </select>
                 </div>
                 <div class="col-6">
-                    <label class="form-label small text-white-50" for="mod-sugar-${key}">甜度</label>
+                    <label class="form-label small text-white-50" for="mod-sugar-${key}">${ui.sugar_level}</label>
                     <select id="mod-sugar-${key}" class="form-select form-select-sm" data-mod="sugar">
-                        <option value="全糖">全糖</option><option value="半糖">半糖</option>
-                        <option value="微糖">微糖</option><option value="無糖">無糖</option>
+                        <option value="全糖">${ui.sugar_full}</option><option value="半糖">${ui.sugar_half}</option>
+                        <option value="微糖">${ui.sugar_light}</option><option value="無糖">${ui.sugar_none}</option>
                     </select>
                 </div>
             </div>`;
     } else if (group === 'spicy') {
         body = html`
             <div>
-                <label class="form-label small text-white-50" for="mod-spicy-${key}">辣度調整</label>
+                <label class="form-label small text-white-50" for="mod-spicy-${key}">${ui.spice_level}</label>
                 <select id="mod-spicy-${key}" class="form-select form-select-sm" data-mod="spicy">
-                    <option value="不辣">不辣</option><option value="微辣">微辣</option>
-                    <option value="中辣">中辣</option><option value="大辣">大辣</option>
+                    <option value="不辣">${ui.spice_none}</option><option value="微辣">${ui.spice_mild}</option>
+                    <option value="中辣">${ui.spice_medium}</option><option value="大辣">${ui.spice_hot}</option>
                 </select>
             </div>`;
     } else if (group === 'addons') {
         body = html`
             <div>
-                <label class="form-label small text-white-50 mb-1">加料升級</label>
+                <label class="form-label small text-white-50 mb-1">${ui.add_toppings}</label>
                 <div class="d-flex flex-wrap gap-3">
                     ${modifierOptions.filter((m) => m.category === 'addons').map((m) => html`
                         <div class="form-check">
@@ -159,16 +159,16 @@ export function proceedToModifiers(item, combo, isAddon, passId = 0) {
     }
     state.pendingSelection = { item, combo, isAddon, sides, choices, passId };
     let title;
-    if (isAddon) title = `加購客製化 - ${item.name}`;
-    else title = combo ? `客製化選擇 - ${item.name} [套餐: ${combo.name}]` : `客製化選擇 - ${item.name}`;
+    if (isAddon) title = `${ui.addon} ${ui.customize} - ${item.name}`;
+    else title = combo ? `${ui.customize} - ${item.name} [${ui.upgrade_combo}: ${combo.name}]` : `${ui.customize} - ${item.name}`;
     $('modifierModalTitle').textContent = title;
 
     const isComboMode = Boolean(combo || sides.length);
-    const mainTitle = isAddon ? `加購：${item.name}` : (isComboMode ? `主餐：${item.name}` : item.name);
+    const mainTitle = isAddon ? `${ui.addon}: ${item.name}` : (isComboMode ? `${ui.main_course}: ${item.name}` : item.name);
     Kiosk.setHtml($('modifierModalBody'), [
         hasSizes ? sizeSectionHtml(item) : '',
         hasMain ? modifierSectionHtml('main', mainTitle, item.modifiers) : '',
-        sides.map((side, i) => modifierSectionHtml(`side${i}`, `配餐：${side.name}`, side.modifiers)),
+        sides.map((side, i) => modifierSectionHtml(`side${i}`, `${ui.side}: ${side.name}`, side.modifiers)),
         choices.map((g, gi) => choiceSectionHtml(g, gi)),
     ]);
     syncChoiceMods();
@@ -180,16 +180,16 @@ export function choiceSectionHtml(g, gi) {
     const first = g.options.find((o) => o.is_available !== false);
     return html`
         <div class="mod-section p-3 mb-3 rounded border border-info bg-dark shadow-sm" data-key="choice${gi}" data-choice-group="${gi}">
-            <h6 class="fw-bold text-info mb-2 border-bottom border-secondary pb-1">${g.group} (任選一項)</h6>
+            <h6 class="fw-bold text-info mb-2 border-bottom border-secondary pb-1">${g.group} (${ui.choose_one})</h6>
             <div class="d-flex flex-wrap gap-2" role="radiogroup">
                 ${g.options.map((o) => html`
                     <input type="radio" class="btn-check" name="combo-choice-${gi}" id="choice-${gi}-${o.id}" value="${o.id}"
                            data-mod="choice" ${o.is_available === false ? 'disabled' : ''} ${first && o.id === first.id ? 'checked' : ''}>
-                    <label class="btn btn-outline-info btn-sm" for="choice-${gi}-${o.id}">${o.name}${Number(o.extra_price) ? ` (+$${o.extra_price})` : ''}${o.is_available === false ? ' (售完)' : ''}</label>`)}
+                    <label class="btn btn-outline-info btn-sm" for="choice-${gi}-${o.id}">${o.name}${Number(o.extra_price) ? ` (+$${o.extra_price})` : ''}${o.is_available === false ? ` (${ui.sold_out_option})` : ''}</label>`)}
             </div>
             ${g.options.filter((o) => o.customizable && o.modifiers && o.modifiers !== 'none').map((o) => html`
                 <div class="choice-mods mt-2 d-none" data-opt="${o.id}">
-                    ${modifierSectionHtml(`choice${gi}-${o.id}`, `${o.name} 客製化`, o.modifiers)}
+                    ${modifierSectionHtml(`choice${gi}-${o.id}`, `${o.name} ${ui.customize}`, o.modifiers)}
                 </div>`)}
         </div>`;
 }
@@ -238,7 +238,7 @@ export function confirmModifiers() {
     for (const [gi, g] of (sel.choices || []).entries()) {
         const checked = body.querySelector(`[data-choice-group="${gi}"] [data-mod="choice"]:checked`);
         if (!checked) {
-            alert(`⚠️ 請在「${g.group}」中選擇一項！`);
+            alert(`⚠️ ${ui.select_option_required}: ${g.group}`);
             return;
         }
         choiceIds.push(Number(checked.value));
@@ -259,12 +259,12 @@ export function usePass(passId) {
     const p = (pageData.passes || []).find((x) => Number(x.id) === Number(passId));
     const item = p ? menuItems.get(Number(p.menu_item_id)) : null;
     if (!p || !item) {
-        alert('⚠️ 找不到可兌換的餐點');
+        alert(`⚠️ ${ui.pass_not_found}`);
         return;
     }
     const used = state.cart.filter((l) => Number(l.pass_id) === Number(p.id)).reduce((s, l) => s + l.quantity, 0);
     if (used >= Number(p.remaining)) {
-        alert(`⚠️ 寄杯「${p.name}」剩 ${p.remaining} 次，已全部加入購物車`);
+        alert(`⚠️ ${p.name}: ${ui.pass_exhausted}`);
         return;
     }
     proceedToModifiers(item, null, false, p.id);
@@ -273,11 +273,11 @@ export function usePass(passId) {
 export function triggerAddon(itemId) {
     const addon = availableAddons.find((a) => Number(a.id) === Number(itemId));
     if (!addon) {
-        alert('⚠️ 查無此加購品設定！');
+        alert(`⚠️ ${ui.addon_not_found}`);
         return;
     }
     if (remainingAddonQuota(addon) <= 0) {
-        alert('⚠️ 加購名額已用完！每購買一份合格餐點限加購一份優惠品，加購品無法再次折抵。');
+        alert(`⚠️ ${ui.addon_limit_reached}`);
         return;
     }
     proceedToModifiers(addon, null, true);
@@ -285,9 +285,9 @@ export function triggerAddon(itemId) {
 
 // ================================================================ 菜單篩選與排序
 export const PRICE_SORT_LABELS = {
-    null: html`<i class="bi bi-arrow-down-up"></i> 價格 ⇅`,
-    asc: html`<i class="bi bi-sort-numeric-down"></i> 價格 ↑ (低到高)`,
-    desc: html`<i class="bi bi-sort-numeric-up-alt"></i> 價格 ↓ (高到低)`,
+    null: html`<i class="bi bi-arrow-down-up"></i> ${ui.price_sort} ⇅`,
+    asc: html`<i class="bi bi-sort-numeric-down"></i> ${ui.price_sort} ↑ (${ui.price_low_high})`,
+    desc: html`<i class="bi bi-sort-numeric-up-alt"></i> ${ui.price_sort} ↓ (${ui.price_high_low})`,
 };
 
 export function renderSortButtons() {

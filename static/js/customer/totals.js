@@ -131,16 +131,16 @@ export function renderCoupons(coupons) {
     if (!select) return;
     const list = coupons || [];
     if (!list.length) {
-        Kiosk.setHtml(select, html`<option value="" disabled selected>-- 尚無可用優惠券 --</option>`);
-        if (badge) Kiosk.setHtml(badge, html`<a href="/rewards" class="text-warning text-decoration-none"><i class="bi bi-gift"></i> 去商城兌換</a>`);
+        Kiosk.setHtml(select, html`<option value="" disabled selected>${ui.no_coupon}</option>`);
+        if (badge) Kiosk.setHtml(badge, html`<a href="/rewards" class="text-warning text-decoration-none"><i class="bi bi-gift"></i> ${ui.empty_coupon_store}</a>`);
         return;
     }
     const current = state.activePromoCode;
     Kiosk.setHtml(select, [
-        html`<option value="">-- 選擇我的優惠券 --</option>`,
-        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (代碼: ${c.code})${c.min_spend > 0 ? ` - 滿$${Math.round(c.min_spend)}可用` : ''}</option>`),
+        html`<option value="">${ui.select_coupon}</option>`,
+        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (${ui.coupon_code}: ${c.code})${c.min_spend > 0 ? ` - ${ui.min_spend} $${Math.round(c.min_spend)} ${ui.eligible}` : ''}</option>`),
     ]);
-    if (badge) Kiosk.setHtml(badge, html`<span class="badge bg-warning text-dark py-0">${list.length} 張可用</span>`);
+    if (badge) Kiosk.setHtml(badge, html`<span class="badge bg-warning text-dark py-0">${list.length} ${ui.available_coupons}</span>`);
 }
 
 export async function syncLatestUserCoupons() {
@@ -167,11 +167,11 @@ export async function verifyPromo(code, { silent = false } = {}) {
         const res = await api('/api/verify_promo', { json: { promo_code: code, subtotal: Math.round(subtotal) } });
         state.activePromoCode = res.valid ? code : '';
         state.appliedPromoDiscount = res.valid ? Number(res.discount) || 0 : 0;
-        if (!silent || !res.valid) showPromoMessage(res.valid, res.message);
+        if (!silent || !res.valid) showPromoMessage(res.valid, res.valid ? ui.promo_applied : ui.promo_invalid);
     } catch (err) {
         state.activePromoCode = '';
         state.appliedPromoDiscount = 0;
-        showPromoMessage(false, err.message);
+        showPromoMessage(false, ui.promo_invalid);
     }
     calculateTotal();
 }

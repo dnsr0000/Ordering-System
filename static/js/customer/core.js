@@ -11,6 +11,7 @@ export const REWARD_LABEL = '[點數兌換]';
 export const pageData = Kiosk.pageData();
 export const pro = pageData.pro || {};
 export const ui = pageData.ui || {};
+export const REWARD_DISPLAY_LABEL = ui.reward_item_label || REWARD_LABEL;
 // ---------------------------------------------------------------- localStorage (隱私模式可能無法使用)
 export function loadCart() {
     try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch (err) { return []; }
