@@ -41,6 +41,29 @@ def _dashboard(tab=None):
     return url_for('admin.admin_dashboard', tab=tab) if tab else url_for('admin.admin_dashboard')
 
 
+def _dashboard_summary():
+    """總覽分頁的待處理事項：未結帳桌、進行中的外送、低庫存原料、發票 / 列印 / 退款異常、今日訂位"""
+    from datetime import timedelta
+    from app.models.enums import OrderStatus
+    from app.models.inventory import Ingredient
+    from app.models.reservation import Reservation
+    from app.services import inventory_service, maintenance_service
+    start, end = todays_range()
+    active = Order.query.filter(Order.created_at >= start - timedelta(days=1), Order.status != OrderStatus.CANCELLED)
+    unpaid_tables = active.filter(Order.payment_status == 'unpaid', Order.dining_table_id.isnot(None)).count()
+    deliveries = active.filter(Order.delivery_status.in_(('pending', 'assigned', 'out'))).count()
+    low_stock = sum(1 for i in Ingredient.query.filter_by(is_active=True).all() if i.is_low) \
+        if inventory_service.enabled(g.tenant_id) else 0
+    try:
+        reservations = Reservation.query.filter(Reservation.reserved_at >= start, Reservation.reserved_at < end,
+                                                Reservation.status.in_(('booked', 'confirmed'))).count()
+    except Exception:  # noqa: BLE001  (訂位模組欄位變動時不影響總覽)
+        db.session.rollback()
+        reservations = 0
+    return {'unpaid_tables': unpaid_tables, 'deliveries_active': deliveries, 'low_stock': low_stock,
+            'reservations_today': reservations, 'health': maintenance_service.health(g.tenant_id)}
+
+
 def _ai_signature(orders):
     """今日訂單狀態摘要：有變動才重新產生 AI 營運建議"""
     start, _end = todays_range()
@@ -134,6 +157,7 @@ def admin_dashboard():
         audit_action_labels=ACTION_LABELS,
         admin_logs=AdminLog.query.order_by(AdminLog.id.desc()).limit(100).all(),
         is_platform_admin=is_platform_admin(),
+        dashboard=_dashboard_summary(),
         tabs=tabs,   # 可見的分頁 (櫃檯 / 廚房依授權的頁面權限)
         # 整庫備份/還原只適用於 SQLite (backup_service.require_sqlite)；其他資料庫隱藏並顯示說明
         backup_available=db.engine.dialect.name == 'sqlite',

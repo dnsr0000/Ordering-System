@@ -32,7 +32,7 @@
         showModal,
         // 菜單品項的編輯預設值 (id 字串 → 資料)，即時同步庫存時一併更新
         menuItems: new Map((data.menuItems || []).map((item) => [String(item.id), item])),
-        activeTab: () => storage.get(TAB_STORAGE_KEY) || 'orders',
+        activeTab: () => storage.get(TAB_STORAGE_KEY) || 'home',
         rememberTab: (key) => storage.set(TAB_STORAGE_KEY, key),
     };
 
@@ -40,7 +40,7 @@
     function initTabs() {
         const params = new URLSearchParams(window.location.search);
         const target = params.get('tab') || AdminPage.activeTab();
-        const btn = document.getElementById(`${target}-tab`) || document.getElementById('orders-tab');
+        const btn = document.getElementById(`${target}-tab`) || document.getElementById('home-tab') || document.getElementById('orders-tab');
         if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
         if (params.has('tab')) {
             AdminPage.rememberTab(target);

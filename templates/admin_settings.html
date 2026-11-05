@@ -3,59 +3,78 @@
 {% block title %}系統設定與進階功能{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">{% endblock %}
 {% block content %}
-<main class="container py-4" id="settings-hub">
-    {{ page_header('系統設定與進階功能', 'bi-sliders', '外部服務的金鑰與營運規則都在這裡由管理者自行填寫；未設定的服務會自動停用。',
-                   back_url=url_for('admin.admin_dashboard'), back_label='管理後台') }}
-    <div class="d-flex flex-wrap align-items-center gap-2 mb-4" id="settingsTransfer">
-        <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.export_json') }}"><i class="bi bi-download me-1"></i>匯出設定 (JSON，不含金鑰)</a>
-        <form method="POST" action="{{ url_for('settings_admin.import_json') }}" enctype="multipart/form-data" class="d-flex align-items-center gap-1"
-              data-confirm="會覆蓋目前同名區塊的設定 (金鑰與本機專屬區塊不受影響)。確定匯入？">
+<main class="container-fluid py-4" id="settings-hub">
+    {% call page_header('系統設定與進階功能', 'bi-sliders', '左側挑選區塊或直接搜尋；外部服務的金鑰與營運規則都在這裡由管理者自行填寫，未設定的服務會自動停用。',
+                        back_url=url_for('admin.admin_dashboard'), back_label='管理後台') %}
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.export_json') }}"><i class="bi bi-download me-1"></i>匯出設定</a>
+    <button class="btn btn-outline-warning btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#settingsImportBox" aria-expanded="false" aria-controls="settingsImportBox"><i class="bi bi-upload me-1"></i>匯入設定</button>
+    {% endcall %}
+    <div class="collapse mb-3" id="settingsImportBox">
+        <form method="POST" action="{{ url_for('settings_admin.import_json') }}" enctype="multipart/form-data" class="d-flex flex-wrap align-items-center gap-2 card rounded-4 p-3"
+              data-confirm="會覆蓋目前同名區塊的設定 (金鑰與本機專屬區塊不受影響)。確定匯入？" id="settingsTransfer">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <input type="file" name="file" accept="application/json,.json" class="form-control form-control-sm" required aria-label="設定檔">
+            <input type="file" name="file" accept="application/json,.json" class="form-control form-control-sm w-auto" required aria-label="設定檔">
             <button class="btn btn-outline-warning btn-sm text-nowrap" type="submit"><i class="bi bi-upload me-1"></i>匯入設定</button>
+            <span class="small text-white-50">開新店時把舊店的設定匯出 (JSON，不含金鑰) 再匯入，營運規則一次複製。</span>
         </form>
-        <span class="small text-white-50">開新店時把舊店的設定匯出再匯入，營運規則一次複製。</span>
     </div>
-    {% for group in groups %}
-    <section class="mb-4 settings-group" data-group="{{ group }}">
-        <h2 class="h5 fw-bold text-info mb-3">{{ group }}</h2>
-        <div class="row g-3">
-            {% for p in pages if p.group == group %}
-            <div class="col-md-6 col-xl-4">
-                {% if p.url %}
-                <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card" href="{{ p.url }}">
-                {% else %}
-                <div class="card rounded-4 p-3 h-100 feature-card opacity-50">
+    <div class="row g-3">
+        <aside class="col-lg-3 col-xl-3">{% include "_settings_nav.html" %}</aside>
+        <div class="col-lg-9 col-xl-9" id="settingsCards">
+            {% for group in settings_nav %}
+            <section class="mb-4 settings-group" data-group="{{ group.label }}">
+                <h2 class="h5 fw-bold text-info mb-3">{{ group.label }}</h2>
+                {% for sub in group.subgroups %}
+                {% if sub.label %}<div class="settings-subgroup-title"><i class="bi bi-folder2-open me-1"></i>{{ sub.label }}</div>{% endif %}
+                <div class="row g-3 mb-3">
+                    {% for s in sub.sections %}
+                    <div class="col-md-6 col-xl-4 settings-card-col" data-search="{{ (s.title ~ ' ' ~ s.subgroup ~ ' ' ~ s.keywords)|lower }}">
+                        <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card setting-card" href="{{ url_for('settings_admin.edit', key=s.key) }}"
+                           data-setting-key="{{ s.key }}">
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <i class="bi {{ s.icon }} text-info fs-4"></i><span class="fw-bold text-white">{{ s.title }}</span>
+                                {% if s.enabled is not none %}
+                                <span class="badge ms-auto {{ 'bg-success' if s.enabled else 'bg-secondary' }}">{{ '已啟用' if s.enabled else '未啟用' }}</span>
+                                {% else %}<span class="badge bg-dark border border-secondary ms-auto">設定</span>{% endif %}
+                            </div>
+                            <div class="small text-white-50">{{ s.description }}</div>
+                            {% if s.owner_only %}<div class="small text-warning mt-1"><i class="bi bi-key me-1"></i>含金鑰，僅負責人可修改</div>{% endif %}
+                            {% if s.source == 'hq' %}<div class="small text-info mt-1"><i class="bi bi-building me-1"></i>使用總部設定</div>
+                            {% elif s.source == 'local' and s.hq %}<div class="small text-white-50 mt-1"><i class="bi bi-shop me-1"></i>本店自訂</div>{% endif %}
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+                {% set group_pages = pages | selectattr('group', 'equalto', group.label) | list %}
+                {% if group_pages %}
+                <div class="settings-subgroup-title"><i class="bi bi-window me-1"></i>相關功能頁</div>
+                <div class="row g-3">
+                    {% for p in group_pages %}
+                    <div class="col-md-6 col-xl-4 settings-card-col" data-search="{{ (p.name ~ ' ' ~ p.desc)|lower }}">
+                        {% if p.url %}
+                        <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card" href="{{ p.url }}">
+                        {% else %}
+                        <div class="card rounded-4 p-3 h-100 feature-card opacity-50">
+                        {% endif %}
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <i class="bi {{ p.icon }} text-warning fs-4"></i><span class="fw-bold text-white">{{ p.name }}</span>
+                                <span class="badge bg-warning text-dark ms-auto">功能</span>
+                            </div>
+                            <div class="small text-white-50">{{ p.desc }}</div>
+                        {% if p.url %}</a>{% else %}</div>{% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
                 {% endif %}
-                    <div class="d-flex align-items-center gap-2 mb-1">
-                        <i class="bi {{ p.icon }} text-warning fs-4"></i><span class="fw-bold text-white">{{ p.name }}</span>
-                        <span class="badge bg-warning text-dark ms-auto">功能</span>
-                    </div>
-                    <div class="small text-white-50">{{ p.desc }}</div>
-                {% if p.url %}</a>{% else %}</div>{% endif %}
-            </div>
+            </section>
             {% endfor %}
-            {% for s in sections if s.group == group %}
-            <div class="col-md-6 col-xl-4">
-                <a class="card rounded-4 p-3 h-100 text-decoration-none feature-card setting-card" href="{{ url_for('settings_admin.edit', key=s.key) }}"
-                   data-setting-key="{{ s.key }}">
-                    <div class="d-flex align-items-center gap-2 mb-1">
-                        <i class="bi {{ s.icon }} text-info fs-4"></i><span class="fw-bold text-white">{{ s.title }}</span>
-                        {% if s.enabled is not none %}
-                        <span class="badge ms-auto {{ 'bg-success' if s.enabled else 'bg-secondary' }}">{{ '已啟用' if s.enabled else '未啟用' }}</span>
-                        {% else %}<span class="badge bg-dark border border-secondary ms-auto">設定</span>{% endif %}
-                    </div>
-                    <div class="small text-white-50">{{ s.description }}</div>
-                    {% if s.owner_only %}<div class="small text-warning mt-1"><i class="bi bi-key me-1"></i>含金鑰，僅負責人可修改</div>{% endif %}
-                    {% if s.source == 'hq' %}<div class="small text-info mt-1"><i class="bi bi-building me-1"></i>使用總部設定</div>
-                    {% elif s.source == 'local' and s.hq %}<div class="small text-white-50 mt-1"><i class="bi bi-shop me-1"></i>本店自訂</div>{% endif %}
-                </a>
-            </div>
-            {% endfor %}
+            <div class="text-white-50 d-none" id="settingsCardsNoMatch">沒有符合搜尋的設定或功能頁</div>
         </div>
-    </section>
-    {% endfor %}
+    </div>
 </main>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/settings-hub.js') }}"></script>{% endblock %}

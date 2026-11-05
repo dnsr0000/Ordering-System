@@ -172,6 +172,9 @@
         tick();
         setInterval(tick, 1000);
     }
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('[data-clock]').forEach(startClock);   // 後台頂欄時鐘
+    });
 
     /** Kiosk 無人操作一段時間後自動登出 (預設 120 秒)；beforeLogout 可用來清除本機暫存 (例如購物車) */
     function idleLogout({ timeoutMs = 120000, url = '/logout', next = '/', beforeLogout = null } = {}) {

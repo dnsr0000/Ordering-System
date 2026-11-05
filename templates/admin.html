@@ -57,81 +57,33 @@
     </div>
 
 {% else %}
-    <!-- 2. 管理員後台主畫面 -->
-    <nav class="navbar navbar-admin py-3 mb-4">
-        <div class="container-fluid px-4 d-flex justify-content-between align-items-center gap-2">
-            <div class="d-flex flex-wrap align-items-center gap-2">
-                <i class="bi bi-speedometer2 text-warning fs-3"></i>
-                <h4 class="mb-0 fw-bold text-white">自助點餐後台管理系統</h4>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-warning fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
-                        <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
-                    </button>
-                    <button type="button" class="btn btn-outline-info fw-bold" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
-                        <i class="bi bi-box-arrow-in-down me-1"></i> 匯入資料
-                    </button>
-                </div>
-                <a href="{{ url_for('pos.pos_terminal') }}" target="_blank" rel="noopener" class="btn btn-warning btn-sm fw-bold text-dark ms-2"><i class="bi bi-pc-display-horizontal me-1"></i> 櫃檯 POS</a>
-                <a href="{{ url_for('kitchen.kitchen_display') }}" target="_blank" rel="noopener" class="btn btn-outline-warning btn-sm fw-bold ms-2">
-                    <i class="bi bi-fire me-1"></i> 廚房 KDS 看板
-                </a>
+    <!-- 2. 管理員後台主畫面 (導覽在共用側欄 _admin_sidebar.html；這裡只有頁首與匯入匯出) -->
+    <div class="container-fluid px-4 pt-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3" id="adminPageHeader">
+            <div>
+                <h1 class="h3 fw-bold mb-1"><i class="bi bi-speedometer2 text-warning me-2"></i>管理後台</h1>
+                <div class="text-white-50 small">今日營運總覽、實時訂單、營運分析、菜單、回饋商城、會員與稽核；其他功能請用左側選單</div>
             </div>
-
-            <!-- 右側：即時時鐘與操作按鈕 -->
-            <div class="d-flex align-items-center gap-3">
-                <div class="text-white-50 small d-none d-md-block bg-dark px-3 py-1 rounded border border-secondary clock">
-                    <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">----/--/-- --:--:--</span>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    {% if current_user.has_permission('settings') %}<a href="{{ url_for('settings_admin.index') }}" class="btn btn-warning btn-sm fw-bold text-dark" id="nav-settings"><i class="bi bi-sliders me-1"></i>系統設定與進階功能</a>{% endif %}
-                    {% if current_user.role not in ('owner', 'manager') %}
-                    {% if current_user.has_permission('menu') %}<a href="{{ url_for('menu_pro.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-menu-pro"><i class="bi bi-clock-history me-1"></i>菜單進階設定</a>{% endif %}
-                    {% if current_user.has_permission('coupons') %}<a href="{{ url_for('promotions.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-promotions"><i class="bi bi-percent me-1"></i>促銷</a>{% endif %}
-                    {% if current_user.has_permission('members') %}<a href="{{ url_for('members_pro.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-members-pro"><i class="bi bi-people me-1"></i>會員經營</a>{% endif %}
-                    {% if current_user.has_permission('feedback') %}<a href="{{ url_for('feedback.index') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-feedback"><i class="bi bi-star-half me-1"></i>顧客評價</a>{% endif %}
-                    <a href="{{ url_for('kitchen.kitchen_display') if current_user.role == 'kitchen' else url_for('pos.pos_terminal') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-back-work"><i class="bi bi-arrow-left me-1"></i>回工作畫面</a>
-                    {% endif %}
-                    {% if current_user.role in ('owner', 'manager') %}<a href="{{ url_for('live.index') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-live"><i class="bi bi-speedometer2 me-1"></i>即時看板</a>{% endif %}
-                    <a href="{{ url_for('security.account') }}" class="btn btn-outline-light btn-sm fw-bold" id="nav-security"><i class="bi bi-shield-lock me-1"></i>帳號安全{% if not current_user.totp_enabled %} <span class="badge bg-danger">未啟用 2FA</span>{% endif %}</a>
-                    {% if current_user.role == 'owner' %}
-                    <a href="{{ url_for('admin.staff_accounts') }}" class="btn btn-outline-warning btn-sm fw-bold"><i class="bi bi-people me-1"></i>員工帳號</a>
-                    {% endif %}
-                    {% if is_platform_admin and not config.ALLOW_TENANT_REGISTER %}
-                    <a href="{{ url_for('admin.tenant_register') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-tenant-register"><i class="bi bi-shop me-1"></i>建立新店家</a>
-                    {% endif %}
-                    {% if current_user.role in ('owner', 'manager') and sync_role != 'hub' %}
-                    <a href="{{ url_for('tables.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-tables"><i class="bi bi-qr-code me-1"></i>桌位 QR</a>
-                    {% endif %}
-                    {% if current_user.role in ('owner', 'manager') %}
-                    <a href="{{ url_for('privacy.settings') }}" class="btn btn-outline-light btn-sm fw-bold" id="nav-privacy"><i class="bi bi-shield-lock me-1"></i>隱私權告知</a>
-                    {% endif %}
-                    {% if sync_role == 'hub' and current_user.role == 'owner' %}
-                    <a href="{{ url_for('sync_admin.nodes') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-sync-nodes"><i class="bi bi-diagram-3 me-1"></i>分店管理</a>
-                    {% elif sync_role == 'node' and current_user.role in ('owner', 'manager') %}
-                    <a href="{{ url_for('sync_admin.sync_status') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-sync-status"><i class="bi bi-arrow-repeat me-1"></i>同步狀態</a>
-                    {% endif %}
-                    <a href="{{ url_for('customer.tenant_storefront', tenant_slug=tenant.slug) }}" class="btn btn-outline-light btn-sm fw-bold">
-                        <i class="bi bi-shop me-1"></i> 前往點餐前台
-                    </a>
-                    <form method="post" action="{{ url_for('admin.admin_logout') }}" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-outline-danger btn-sm fw-bold">
-                            <i class="bi bi-box-arrow-right me-1"></i> 登出後台
-                        </button>
-                    </form>
-                </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
+                    <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
+                </button>
+                <button type="button" class="btn btn-outline-info btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
+                    <i class="bi bi-box-arrow-in-down me-1"></i> 匯入資料
+                </button>
+                {% if current_user.has_permission('settings') %}<a href="{{ url_for('settings_admin.index') }}" class="btn btn-outline-light btn-sm fw-bold"><i class="bi bi-sliders me-1"></i>系統設定</a>{% endif %}
             </div>
         </div>
-    </nav>
+    </div>
 
     <div class="container-fluid px-4">
         <ul class="nav nav-pills mb-4" id="adminTab" role="tablist">
-            {% set tab_perm = {'orders': 'reports', 'analytics': 'reports', 'menu': 'menu', 'rewards': 'coupons', 'users': 'members', 'audit': 'audit'} %}
+            {% set tab_perm = {'home': '*', 'orders': 'reports', 'analytics': 'reports', 'menu': 'menu', 'rewards': 'coupons', 'users': 'members', 'audit': 'audit'} %}
             {% set visible_tabs = [] %}
-            {% for key, icon, label in [('orders', 'bi-receipt-cutoff', '實時訂單看板'), ('analytics', 'bi-graph-up-arrow', '營運分析'),
+            {% for key, icon, label in [('home', 'bi-house-door-fill', '總覽'), ('orders', 'bi-receipt-cutoff', '實時訂單看板'), ('analytics', 'bi-graph-up-arrow', '營運分析'),
                                          ('menu', 'bi-grid-fill', '菜單品項管理'), ('rewards', 'bi-gift-fill', '回饋商城管理'),
                                          ('users', 'bi-people-fill', '會員名冊與紅利'), ('audit', 'bi-shield-check', '操作稽核日誌')]
-               if tab_perm[key] in tabs %}
+               if tab_perm[key] == '*' or tab_perm[key] in tabs %}
             {% set _ = visible_tabs.append(key) %}
             <li class="nav-item me-2" role="presentation">
                 <button class="nav-link{% if loop.first %} active{% endif %}" id="{{ key }}-tab" data-tab-key="{{ key }}" data-bs-toggle="tab"
@@ -143,6 +95,68 @@
         </ul>
 
         <div class="tab-content" id="adminTabContent">
+            <!-- 0. 總覽 (儀表板)：今日數字、待處理事項、常用功能 -->
+            <div class="tab-pane fade{% if visible_tabs[0] == 'home' %} show active{% endif %}" id="home-pane" role="tabpanel">
+                {% set d = dashboard %}
+                <div class="row g-3 mb-3" id="homeKpis">
+                    {% for label, value, icon, cls in [('今日訂單', analytics.today_orders, 'bi-receipt', 'text-warning'),
+                                                      ('今日營收', '$' ~ analytics.today_revenue, 'bi-cash-coin', 'text-success'),
+                                                      ('待製作', analytics.pending_count, 'bi-fire', 'text-danger' if analytics.pending_count >= 5 else ''),
+                                                      ('客單價', '$' ~ (analytics.avg_order_value|int), 'bi-graph-up-arrow', ''),
+                                                      ('預估等候', (analytics.eta_minutes ~ ' 分') if analytics.eta_minutes else '-', 'bi-hourglass-split', ''),
+                                                      ('今日已出餐', analytics.completed_today, 'bi-check2-circle', 'text-info')] %}
+                    <div class="col-6 col-md-4 col-xl-2"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi {{ icon }} me-1"></i>{{ label }}</div>
+                        <div class="fs-3 fw-bold {{ cls }}">{{ value }}</div></div></div>
+                    {% endfor %}
+                </div>
+                <div class="row g-3">
+                    <div class="col-lg-5"><div class="card card-custom p-3 h-100" id="homePending">
+                        <h2 class="h6 fw-bold mb-3"><i class="bi bi-exclamation-circle text-warning me-1"></i>待處理事項</h2>
+                        {% set rows = [] %}
+                        {% if analytics.stale_pending_count %}{% set _ = rows.append(('超過預估時間仍未出餐', analytics.stale_pending_count, url_for('admin.admin_dashboard', tab='orders'), 'text-danger')) %}{% endif %}
+                        {% if d.unpaid_tables %}{% set _ = rows.append(('桌邊點餐尚未結帳', d.unpaid_tables, url_for('pos.pos_terminal'), 'text-warning')) %}{% endif %}
+                        {% if d.deliveries_active %}{% set _ = rows.append(('外送到府進行中', d.deliveries_active, url_for('dispatch.board'), 'text-info')) %}{% endif %}
+                        {% if d.low_stock %}{% set _ = rows.append(('原物料低於安全量', d.low_stock, url_for('inventory.manage'), 'text-warning')) %}{% endif %}
+                        {% if d.health.invoice_failed %}{% set _ = rows.append(('電子發票開立失敗', d.health.invoice_failed, url_for('invoices.list_invoices', status='failed'), 'text-danger')) %}{% endif %}
+                        {% if d.health.invoice_pending %}{% set _ = rows.append(('待開立發票', d.health.invoice_pending, url_for('invoices.list_invoices', status='pending'), '')) %}{% endif %}
+                        {% if d.health.print_failed %}{% set _ = rows.append(('列印失敗', d.health.print_failed, url_for('printing.manage'), 'text-danger')) %}{% endif %}
+                        {% if d.health.refund_manual %}{% set _ = rows.append(('需人工退款', d.health.refund_manual, url_for('refunds.list_refunds', status='manual'), 'text-danger')) %}{% endif %}
+                        {% if d.reservations_today %}{% set _ = rows.append(('今日訂位', d.reservations_today, url_for('reservations.board'), '')) %}{% endif %}
+                        {% if rows %}
+                        <ul class="list-group list-group-flush">
+                            {% for label, count, url, cls in rows %}
+                            <li class="list-group-item bg-transparent text-white border-secondary d-flex justify-content-between align-items-center px-0">
+                                <a class="text-decoration-none text-white" href="{{ url }}">{{ label }}</a><span class="badge rounded-pill bg-dark border border-secondary {{ cls }} fs-6">{{ count }}</span></li>
+                            {% endfor %}
+                        </ul>
+                        {% else %}<div class="text-white-50"><i class="bi bi-check-circle text-success me-1"></i>目前沒有待處理事項</div>{% endif %}
+                        {% if analytics.ai_advice %}<div class="small text-info mt-3 border-top border-secondary pt-2"><i class="bi bi-stars me-1"></i>{{ analytics.ai_advice }}</div>{% endif %}
+                    </div></div>
+                    <div class="col-lg-7"><div class="card card-custom p-3 h-100" id="homeQuickLinks">
+                        <h2 class="h6 fw-bold mb-3"><i class="bi bi-lightning-charge text-warning me-1"></i>常用功能</h2>
+                        <div class="row g-2">
+                            {% for label, url, icon, show in [
+                                ('實時訂單', url_for('admin.admin_dashboard', tab='orders'), 'bi-receipt-cutoff', 'reports' in tabs),
+                                ('菜單品項', url_for('admin.admin_dashboard', tab='menu'), 'bi-grid-fill', 'menu' in tabs),
+                                ('會員名冊', url_for('admin.admin_dashboard', tab='users'), 'bi-people-fill', 'members' in tabs),
+                                ('優惠券與回饋', url_for('admin.admin_dashboard', tab='rewards'), 'bi-gift-fill', 'coupons' in tabs),
+                                ('營運報表', url_for('reports.index'), 'bi-bar-chart-line', current_user.has_permission('reports')),
+                                ('原物料與配方', url_for('inventory.manage'), 'bi-box-seam', current_user.has_permission('inventory')),
+                                ('打卡與排班', url_for('timeclock.admin'), 'bi-person-badge', current_user.role in ('owner', 'manager')),
+                                ('交班與日結', url_for('shifts.list_shifts'), 'bi-cash-coin', current_user.has_permission('cash_drawer')),
+                                ('外送派車', url_for('dispatch.board'), 'bi-scooter', True),
+                                ('系統設定', url_for('settings_admin.index'), 'bi-sliders', current_user.has_permission('settings')),
+                                ('系統監控與備份', url_for('system.status'), 'bi-activity', current_user.role in ('owner', 'manager')),
+                                ('員工帳號', url_for('admin.staff_accounts'), 'bi-person-vcard', current_user.role == 'owner')] if show %}
+                            <div class="col-6 col-md-4"><a class="btn btn-outline-light w-100 text-start py-2" href="{{ url }}"><i class="bi {{ icon }} text-warning me-2"></i>{{ label }}</a></div>
+                            {% endfor %}
+                        </div>
+                        <div class="small text-white-50 mt-3">提示：櫃檯 POS、廚房 KDS、叫號與數位看板在左側「今日營運」，會另開新視窗。</div>
+                    </div></div>
+                </div>
+            </div>
+
             <!-- 1. 實時訂單看板 (由 admin.js 從 /api/admin_live_orders 載入並即時更新) -->
             {% if 'reports' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'orders' %} show active{% endif %}" id="orders-pane" role="tabpanel">
                 <div class="row g-3" id="admin-orders-grid">

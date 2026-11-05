@@ -1,0 +1,20 @@
+{#- 系統設定的左欄：群組 → 區塊清單 (admin_settings.html 與 admin_setting_form.html 共用)；settings_nav 由 settings_admin 路由提供 -#}
+<nav class="settings-nav card rounded-4 p-2" id="settingsNav" aria-label="設定區塊">
+    <div class="input-group input-group-sm mb-2">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="search" class="form-control" id="settingsSearch" placeholder="搜尋設定 (例：發票、外送、排班)" aria-label="搜尋設定" autocomplete="off">
+    </div>
+    {% for group in settings_nav %}
+    <div class="settings-nav-group" data-group="{{ group.label }}">
+        <div class="settings-nav-title">{{ group.label }}</div>
+        {% for s in group.sections %}
+        <a class="settings-nav-link{{ ' active' if s.key == current_key }}" href="{{ url_for('settings_admin.edit', key=s.key) }}" data-setting-key="{{ s.key }}"
+           data-search="{{ (s.title ~ ' ' ~ s.subgroup ~ ' ' ~ s.keywords)|lower }}">
+            <i class="bi {{ s.icon }}"></i><span>{{ s.title }}</span>
+            {% if s.enabled is true %}<span class="settings-dot bg-success" title="已啟用"></span>{% elif s.enabled is false %}<span class="settings-dot bg-secondary" title="未啟用"></span>{% endif %}
+        </a>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    <div class="small text-white-50 p-2 d-none" id="settingsNoMatch">沒有符合的設定</div>
+</nav>

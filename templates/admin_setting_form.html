@@ -3,9 +3,13 @@
 {% block title %}{{ section.title }} - 系統設定{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">{% endblock %}
 {% block content %}
-<main class="container py-4 narrow-page" id="setting-form-page">
+<main class="container-fluid py-4" id="setting-form-page">
+    <div class="row g-3">
+    <aside class="col-lg-3 col-xl-3 d-none d-lg-block">{% include "_settings_nav.html" %}</aside>
+    <div class="col-lg-9 col-xl-8">
     {{ page_header(section.title, section.icon, section.description) }}
     {% if section.docs %}
     <div class="small text-white-50 mb-3">參考文件：
@@ -89,5 +93,8 @@
         <span class="small text-white-50 ms-2">請先儲存再測試；測試會實際呼叫外部服務 (測試環境)。</span>
     </form>
     {% endif %}
+    </div>
+    </div>
 </main>
 {% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/settings-hub.js') }}"></script>{% endblock %}

@@ -7,10 +7,26 @@ from tests.support import default_tenant_id
 def test_pos_quick_table_chips(app, staff_client, store_settings):
     tid = default_tenant_id(app)
     with app.app_context():
+        # 其他測試建立的桌位先停用 (快捷鍵最多 16 個，避免被擠掉)，測試結束還原
+        others = [t.id for t in DiningTable.query.filter_by(tenant_id=tid, is_active=True).all()
+                  if not t.name.startswith('快')]
+        DiningTable.query.filter(DiningTable.id.in_(others)).update({'is_active': False}, synchronize_session=False)
         for name, active, order in (('快A1', True, 1), ('快B2', True, 2), ('快停用', False, 3)):
-            if not DiningTable.query.filter_by(tenant_id=tid, name=name).first():
+            row = DiningTable.query.filter_by(tenant_id=tid, name=name).first()
+            if row is None:
                 db.session.add(DiningTable(tenant_id=tid, name=name, is_active=active, sort_order=order))
+            else:
+                row.is_active, row.sort_order = active, order
         db.session.commit()
+    try:
+        _run(app, staff_client, store_settings, sold=None)
+    finally:
+        with app.app_context():
+            DiningTable.query.filter(DiningTable.id.in_(others)).update({'is_active': True}, synchronize_session=False)
+            db.session.commit()
+
+
+def _run(app, staff_client, store_settings, sold):
     store_settings('pos', quick_tables='外帶客, 電話預訂, 快A1')
     page = staff_client.get('/pos').get_data(as_text=True)
     assert '快速填入桌號 / 稱呼' in page and 'id="posQuickTables"' in page

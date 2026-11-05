@@ -52,6 +52,57 @@ FEATURE_PAGES = (
 )
 
 
+# 同一群組內再細分的子群組 (只是版面歸類，設定鍵不變，匯入 / 匯出與既有程式都不受影響)
+SECTION_SUBGROUPS = {
+    'payments': '收款', 'card_terminal': '收款', 'linepay': '收款', 'einvoice': '發票與退款', 'refund': '發票與退款',
+    'notify': '顧客通知', 'push': '顧客通知', 'receipt': '顧客通知', 'kds': '廚房', 'order_intake': '廚房',
+    'menu': '菜單與點餐頁', 'signage': '菜單與點餐頁', 'chatbot': '菜單與點餐頁', 'inventory': '庫存',
+    'member': '會員', 'stamps': '會員', 'gift_card': '會員', 'feedback': '會員', 'line': '通訊服務', 'sms': '通訊服務',
+    'online_order': '線上與外送', 'own_delivery': '線上與外送', 'delivery': '線上與外送',
+    'reservation': '店內', 'table_pay': '店內', 'group_order': '店內',
+    'accounting': '財務', 'pnl': '財務', 'report_email': '報表', 'smtp': '報表', 'staffing': '人力', 'anomaly': '人力',
+}
+# 搜尋用的額外關鍵字 (標題沒出現但使用者會這樣找)
+SECTION_KEYWORDS = {
+    'einvoice': '綠界 發票 統編 載具', 'linepay': 'LINE Pay 行動支付', 'card_terminal': '刷卡 信用卡', 'payments': '付款 現金 支付',
+    'refund': '退款 作廢', 'pos': '收銀 服務費 折扣 開班 收據 桌號', 'kds': '廚房 看板 逾時', 'notify': '叫號 語音 取餐',
+    'order_intake': '暫停接單 上限', 'push': '推播 web push', 'receipt': '電子收據 email', 'menu': '語言 過敏原 熱量 碳足跡 語音點餐',
+    'signage': '看板 電視 大螢幕', 'chatbot': 'AI 客服 聊天 機器人', 'inventory': '原料 扣料 庫存 批號',
+    'member': '會員 等級 生日 儲值', 'stamps': '集點 寄杯', 'gift_card': '禮物卡', 'feedback': '評價 評分 google',
+    'line': 'LINE 登入 官方帳號 推播', 'sms': '簡訊 驗證碼 OTP', 'online_order': '線上點餐 預約 取餐時段',
+    'own_delivery': '外送 外送員 GPS 派車 配送', 'delivery': 'uber eats foodpanda 外送平台', 'reservation': '訂位 候位 訂金',
+    'table_pay': '桌邊 結帳 掃碼', 'group_order': '團購 團體 預購', 'accounting': '會計 科目 傳票', 'pnl': '損益 手續費',
+    'report_email': '報表 寄送 排程', 'smtp': '寄信 email 伺服器', 'staffing': '排班 人力 工時 勞基法', 'anomaly': '異常 作廢 折扣',
+    'archive': '封存 舊資料', 'backup': '備份', 'monitor': '監控 錯誤 通知 webhook', 'security': '密碼 兩步驟 2FA 登入',
+}
+
+
+def settings_nav(current_key=None):
+    """左欄：[{label, sections, subgroups: [{label, sections}]}]，含金鑰的區塊非負責人仍列出 (點進去會提示只有負責人可改)"""
+    groups = []
+    for group in settings_service.GROUPS:
+        sections = []
+        for s in settings_service.SECTIONS.values():
+            if s.group != group:
+                continue
+            sections.append(dict(key=s.key, title=s.title, icon=s.icon, description=s.description,
+                                 subgroup=SECTION_SUBGROUPS.get(s.key, ''), keywords=SECTION_KEYWORDS.get(s.key, ''),
+                                 enabled=settings_service.is_enabled(s.key) if s.enabled_field else None,
+                                 owner_only=any(f.type == 'secret' for f in s.fields),
+                                 source=settings_service.source(s.key) if sync_runtime.is_node() else '',
+                                 hq=settings_service.hq_managed(s.key)))
+        subgroups = []
+        for s in sections:
+            label = s['subgroup']
+            bucket = next((b for b in subgroups if b['label'] == label), None)
+            if bucket is None:
+                bucket = {'label': label, 'sections': []}
+                subgroups.append(bucket)
+            bucket['sections'].append(s)
+        groups.append({'label': group, 'sections': sections, 'subgroups': subgroups})
+    return groups
+
+
 def _section(key):
     section = settings_service.SECTIONS.get(key)
     if section is None:
@@ -70,13 +121,10 @@ def index():
     pages = [dict(group=g_, name=n, url=url_for(e) if e in endpoints else '', icon=i, desc=d)
              for g_, n, e, i, d, _perm in FEATURE_PAGES
              if e != 'tenants.index' or is_platform_admin()]   # 店家管理只給平台管理者
-    sections = [dict(key=s.key, title=s.title, group=s.group, icon=s.icon, description=s.description,
-                     enabled=settings_service.is_enabled(s.key) if s.enabled_field else None,
-                     owner_only=any(f.type == 'secret' for f in s.fields),
-                     source=settings_service.source(s.key) if sync_runtime.is_node() else '',
-                     hq=settings_service.hq_managed(s.key))
-                for s in settings_service.SECTIONS.values()]
-    return render_template('admin_settings.html', groups=settings_service.GROUPS, pages=pages, sections=sections)
+    nav = settings_nav()
+    sections = [s for g_ in nav for s in g_['sections']]   # 舊版樣板 / 測試仍可用的平面清單
+    return render_template('admin_settings.html', groups=settings_service.GROUPS, pages=pages, sections=sections,
+                           settings_nav=nav, current_key=None)
 
 
 @settings_bp.route('/admin/settings/<key>', methods=['GET', 'POST'], endpoint='edit')
@@ -103,6 +151,7 @@ def edit(key):
         return redirect(url_for('settings_admin.edit', key=key))
     managed = settings_service.hq_managed(key)
     return render_template('admin_setting_form.html', section=section, values=settings_service.form_view(key),
+                           settings_nav=settings_nav(key), current_key=key,
                            can_test=key in settings_service.TESTERS, hq_managed=managed,
                            setting_source=settings_service.source(key), is_node=sync_runtime.is_node(),
                            is_hub=sync_runtime.is_hub())

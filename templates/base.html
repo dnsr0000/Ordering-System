@@ -9,9 +9,14 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap-icons/bootstrap-icons.min.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css') }}">
+    {% set _body_class = self.body_class() %}
+    {% set admin_shell = 'admin-page' in _body_class and current_user.is_authenticated and admin_nav is defined and admin_nav() %}
+    {% if admin_shell %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin-nav.css') }}">{% endif %}
     {% block head %}{% endblock %}
 </head>
-<body class="{% block body_class %}{% endblock %}"{% if device_registered %} data-device="1" data-app-version="{{ app_version }}"{% endif %}>
+<body class="{% block body_class %}{% endblock %}{% if admin_shell %} has-admin-nav{% endif %}"{% if device_registered %} data-device="1" data-app-version="{{ app_version }}"{% endif %}>
+    {% if admin_shell %}{% include "_admin_sidebar.html" %}{% endif %}
     {% include "_flashes.html" %}
     {% block content %}{% endblock %}
 

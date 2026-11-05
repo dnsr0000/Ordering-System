@@ -56,3 +56,5 @@ def register_blueprints(app):
                branches_bp, marketing_bp, integrations_bp, devices_bp, api_v1,
                archive_bp, pnl_bp, group_bp, audit_bp, tenants_bp, signage_bp, driver_bp):
         app.register_blueprint(bp)
+    from app.services.admin_nav import register as register_admin_nav
+    register_admin_nav(app)   # 後台共用側欄 (樣板的 admin_nav())
