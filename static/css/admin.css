@@ -162,3 +162,7 @@
 
 /* 版本更新 (第六輪) */
 .update-notes { white-space: pre-wrap; max-height: 12rem; overflow: auto; }
+
+/* 桌位管理：每個欄位上方的小標題 (桌號 / 排序 / 座位數 / 區域 / 形狀) */
+.table-field { display: flex; flex-direction: column; gap: 0.1rem; margin-bottom: 0; }
+.table-field-label { font-size: 0.7rem; color: var(--kiosk-muted); line-height: 1; white-space: nowrap; }

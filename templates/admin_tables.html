@@ -81,7 +81,7 @@
             <table class="table table-dark table-striped align-middle mb-0" id="tablesTable">
                 <thead>
                     <tr>
-                        <th>桌號</th>
+                        <th>桌號 <span class="small fw-normal text-white-50">／ 排序 ／ 座位數 ／ 區域 ／ 形狀</span></th>
                         <th>狀態</th>
                         <th>未結帳</th>
                         <th>掃碼網址</th>
@@ -92,18 +92,23 @@
                     {% for t in tables %}
                     <tr data-table-id="{{ t.id }}">
                         <td>
-                            <form method="POST" class="d-flex gap-1 align-items-center">
+                            <form method="POST" class="d-flex gap-1 align-items-end flex-wrap">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="action" value="rename">
                                 <input type="hidden" name="table_id" value="{{ t.id }}">
-                                <input class="form-control form-control-sm table-name-input" name="name" value="{{ t.name }}" maxlength="30" aria-label="桌號" required>
-                                <input class="form-control form-control-sm table-sort-input" name="sort_order" type="number" value="{{ t.sort_order }}" aria-label="排序" title="排序">
-                                <input class="form-control form-control-sm table-seats-input" name="seats" type="number" min="1" max="30" value="{{ t.seats }}" aria-label="座位數" title="座位數">
-                                <input class="form-control form-control-sm table-area-input" name="area" value="{{ t.area }}" maxlength="20" placeholder="區域" aria-label="區域" title="區域 (例：室內 / 戶外)">
-                                <select class="form-select form-select-sm table-shape-input" name="shape" aria-label="形狀" title="形狀">
-                                    {% for k, v in shapes.items() %}<option value="{{ k }}" {{ 'selected' if t.shape == k }}>{{ v }}</option>{% endfor %}
-                                </select>
-                                <button class="btn btn-sm btn-outline-light text-nowrap" type="submit">儲存</button>
+                                <label class="table-field"><span class="table-field-label">桌號</span>
+                                    <input class="form-control form-control-sm table-name-input" name="name" value="{{ t.name }}" maxlength="30" aria-label="桌號" required></label>
+                                <label class="table-field"><span class="table-field-label">排序</span>
+                                    <input class="form-control form-control-sm table-sort-input" name="sort_order" type="number" value="{{ t.sort_order }}" aria-label="排序" title="排序 (數字小的在前；桌位圖與 POS 依此排列)"></label>
+                                <label class="table-field"><span class="table-field-label">座位數</span>
+                                    <input class="form-control form-control-sm table-seats-input" name="seats" type="number" min="1" max="30" value="{{ t.seats }}" aria-label="座位數" title="座位數 (訂位與候位安排用)"></label>
+                                <label class="table-field"><span class="table-field-label">區域</span>
+                                    <input class="form-control form-control-sm table-area-input" name="area" value="{{ t.area }}" maxlength="20" placeholder="室內 / 戶外" aria-label="區域" title="區域 (例：室內 / 戶外 / 2 樓)，桌位圖依區域分組"></label>
+                                <label class="table-field"><span class="table-field-label">形狀</span>
+                                    <select class="form-select form-select-sm table-shape-input" name="shape" aria-label="形狀" title="桌位圖上的形狀">
+                                        {% for k, v in shapes.items() %}<option value="{{ k }}" {{ 'selected' if t.shape == k }}>{{ v }}</option>{% endfor %}
+                                    </select></label>
+                                <button class="btn btn-sm btn-outline-light text-nowrap align-self-end" type="submit">儲存</button>
                             </form>
                         </td>
                         <td>
