@@ -2,24 +2,24 @@
 Flask==3.1.3
 Werkzeug==3.1.9
 Flask-SQLAlchemy==3.1.1
-SQLAlchemy==2.0.53
+SQLAlchemy==2.1.6
 Flask-Migrate==4.1.0
-alembic==1.20.0
+alembic==1.20.1
 Flask-WTF==1.3.0
 Flask-Login==0.6.3
 Flask-Limiter==4.1.1
 waitress==3.0.2
 # 線上端 (Linux 容器) 的 WSGI 伺服器 (設定見 deploy/gunicorn.conf.py)；Windows 門市端用 waitress
 gunicorn==26.2.0; sys_platform != "win32"
-python-dotenv==1.2.3
+python-dotenv==1.2.4
 Requests==2.34.2
 
 # ---- 資料處理 / 人臉辨識 ----
-numpy==2.5.3
+numpy==2.5.4
 # 只用 cv2.imread 與 YuNet / SFace 人臉模型，不需要視窗功能：headless 版在伺服器 / 容器內不需 GUI 函式庫 (libGL 等)
 opencv-python-headless==5.0.0.93
 openpyxl==3.1.5
-pandas==3.0.5
+pandas==3.1.0
 Pillow==13.0.0
 # 桌位點餐 QR code (純 Python，輸出 SVG)
 segno==1.6.6
@@ -35,11 +35,11 @@ psycopg[binary]==3.3.6
 redis==8.1.0
 
 # ---- 測試 (pip install -r requirements.txt 後執行 pytest) ----
-pytest==9.1.1
+pytest==9.2.0
 # 涵蓋率 (CI 的 3.13 工作：pytest --cov=app)
 pytest-cov==7.1.0
 # 瀏覽器端對端測試 (pytest -m e2e)；安裝後需執行一次 playwright install chromium
-playwright==1.64.0
+playwright==1.64.1
 # 顧客頁無障礙檢查 (tests/test_e2e_round6.py，axe-core；未安裝時該測試跳過)
 axe-playwright-python==0.1.8
 
