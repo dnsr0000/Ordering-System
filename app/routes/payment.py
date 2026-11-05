@@ -1,8 +1,8 @@
 """
 線上付款 (線上端)：導向綠界付款頁、接收付款結果通知、付款後回到本站。
-付款流程與測試資料說明見 app/services/payment_ecpay.py。
+付款流程與測試資料說明見 app/services/payment_ecpay.py (三種綠界付款共用的路由骨架也在那裡)。
 """
-from flask import Blueprint, Response, abort, current_app, redirect, render_template, request, url_for
+from flask import Blueprint, abort, redirect, render_template, request, url_for
 
 from app.extensions import csrf, limiter
 from app.models.order import Order
@@ -10,8 +10,6 @@ from app.services import payment_ecpay
 from app.services.customer_session import current_member
 
 payment_bp = Blueprint('payment', __name__)
-
-ECPAY_FORM_ACTION = "form-action 'self' https://payment-stage.ecpay.com.tw https://payment.ecpay.com.tw"
 
 
 def _require_enabled():
@@ -34,13 +32,7 @@ def pay(order_uuid):
     order = _member_order(order_uuid)
     if order.payment_status != 'pending':
         return redirect(url_for('payment.payment_return', order_uuid=order.uuid))
-    fields = payment_ecpay.build_payment_form(order)
-    resp = Response(render_template('pay.html', order=order, fields=fields, action=payment_ecpay.checkout_url(),
-                                    stage=current_app.config.get('ECPAY_STAGE', True)))
-    # 付款表單要送到綠界：放寬本頁的 form-action
-    from app import CSP_POLICY
-    resp.headers['Content-Security-Policy'] = CSP_POLICY.replace("form-action 'self'", ECPAY_FORM_ACTION)
-    return resp
+    return payment_ecpay.render_checkout_page('pay.html', order=order, fields=payment_ecpay.build_payment_form(order))
 
 
 @payment_bp.route('/payment/ecpay/notify', methods=['POST'], endpoint='ecpay_notify')
@@ -49,7 +41,7 @@ def pay(order_uuid):
 def ecpay_notify():
     """綠界伺服器的付款結果通知 (ReturnURL)：必須回應純文字 1|OK"""
     _require_enabled()
-    return Response(payment_ecpay.handle_notification(request.form), mimetype='text/plain')
+    return payment_ecpay.notify_reply(payment_ecpay.handle_notification)
 
 
 @payment_bp.route('/payment/ecpay/info', methods=['POST'], endpoint='ecpay_info')
@@ -58,25 +50,16 @@ def ecpay_notify():
 def ecpay_info():
     """綠界 ATM / 超商代碼取號結果 (PaymentInfoURL)：記下繳費期限與帳號 / 代碼，回應純文字 1|OK"""
     _require_enabled()
-    return Response(payment_ecpay.handle_payment_info(request.form), mimetype='text/plain')
+    return payment_ecpay.notify_reply(payment_ecpay.handle_payment_info)
 
 
 @payment_bp.route('/payment/ecpay/result', methods=['POST'], endpoint='ecpay_result')
 @csrf.exempt
 def ecpay_result():
-    """
-    顧客付款後由綠界頁面以 POST 帶回 (OrderResultURL)。跨站 POST 不會帶上本站 Cookie，
-    因此這裡不碰 session，只驗證後導向 GET 頁面 (那時瀏覽器才會帶 Cookie)；實際付款狀態以 ReturnURL 通知為準。
-    """
+    """顧客付款後由綠界頁面以 POST 帶回 (OrderResultURL)：驗證後導向結果頁 (說明見 payment_ecpay.browser_return)"""
     _require_enabled()
-    params, status = payment_ecpay.parse_result(request.form, '線上付款 (瀏覽器帶回)')
-    order_uuid = params.get('CustomField1')
-    if status == 'bad_mac' or not order_uuid:
-        abort(400)
-    if status == 'paid':
-        payment_ecpay.mark_paid(order_uuid, params.get('TradeNo'), params.get('TradeAmt'),
-                                payment_type=params.get('PaymentType'))
-    return redirect(url_for('payment.payment_return', order_uuid=order_uuid), code=303)
+    return payment_ecpay.handle_browser_return(request.form,
+                                               lambda order_uuid: url_for('payment.payment_return', order_uuid=order_uuid))
 
 
 @payment_bp.route('/payment/return/<order_uuid>', endpoint='payment_return')

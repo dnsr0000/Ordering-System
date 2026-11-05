@@ -1,40 +1,20 @@
 """後台：進階營運報表 (可匯出 Excel、立即寄送)"""
-from datetime import date, timedelta
-
 from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
 
 from app.errors import AppError
+from app.models.menu import WEEKDAY_LABELS
 from app.models.sync import SyncNode
 from app.services import report_service
 from app.services.approval_service import permission_required
 from app.sync import runtime as sync_runtime
+from app.utils import parse_date_range, send_xlsx
 
 reports_bp = Blueprint('reports', __name__)
 
 
 def _range():
-    preset = request.args.get('preset') or ''
-    today = date.today()
-    if preset == 'today':
-        return today, today
-    if preset == 'yesterday':
-        y = today - timedelta(days=1)
-        return y, y
-    if preset == 'month':
-        return today.replace(day=1), today
-    if preset == 'last_month':
-        end = today.replace(day=1) - timedelta(days=1)
-        return end.replace(day=1), end
-    try:
-        start = date.fromisoformat(request.args.get('start') or '')
-        end = date.fromisoformat(request.args.get('end') or '')
-    except ValueError:
-        return today - timedelta(days=6), today
-    if end < start:
-        start, end = end, start
-    if (end - start).days > 400:
-        raise AppError('查詢區間最長 400 天')
-    return start, end
+    """報表共用：最近 7 天，支援 ?preset=，最長 400 天"""
+    return parse_date_range(default_days=7, presets=True, max_days=400)
 
 
 @reports_bp.route('/admin/reports', endpoint='index')
@@ -46,7 +26,7 @@ def index():
     nodes = SyncNode.query.order_by(SyncNode.id).all() if sync_runtime.is_hub() else []
     names = {n.uuid: n.name for n in nodes}
     return render_template('admin_reports.html', r=report, start=start, end=end, node=node, nodes=nodes, node_names=names,
-                           weekdays=report_service.WEEKDAYS)
+                           weekdays=WEEKDAY_LABELS)
 
 
 @reports_bp.route('/admin/reports/export', endpoint='export')
@@ -54,9 +34,7 @@ def index():
 def export():
     start, end = _range()
     report = report_service.build_report(g.tenant_id, start, end, request.args.get('node') or None)
-    return send_file(report_service.report_to_excel(report, g.tenant.name), as_attachment=True,
-                     download_name=f'營運報表_{start}_{end}.xlsx',
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return send_xlsx(report_service.report_to_excel(report, g.tenant.name), f'營運報表_{start}_{end}.xlsx')
 
 
 @reports_bp.route('/admin/reports/send', methods=['POST'], endpoint='send_now')
@@ -80,9 +58,7 @@ def menu_engineering():
     category = (request.args.get('category') or '').strip()
     result = menu_engineering_service.analyze(g.tenant_id, start, end, node, category)
     if request.args.get('format') == 'xlsx':
-        return send_file(menu_engineering_service.to_excel(result, g.tenant.name), as_attachment=True,
-                         download_name=f'菜單工程_{start}_{end}.xlsx',
-                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        return send_xlsx(menu_engineering_service.to_excel(result, g.tenant.name), f'菜單工程_{start}_{end}.xlsx')
     nodes = SyncNode.query.order_by(SyncNode.id).all() if sync_runtime.is_hub() else []
     return render_template('admin_menu_engineering.html', r=result, start=start, end=end, node=node, nodes=nodes,
                            category=category, classes=menu_engineering_service.CLASSES,
@@ -115,10 +91,10 @@ def accounting():
             header, rows, title = acc.JOURNAL_HEADER, list(acc.journal_rows(acc.journal(g.tenant_id, start, end, node))), '傳票'
         else:
             header, rows, title = acc.INVOICE_HEADER, acc.invoices(g.tenant_id, start, end), '發票明細'
-        buf = acc.to_xlsx(header, rows, title) if fmt == 'xlsx' else acc.to_csv(header, rows)
-        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' if fmt == 'xlsx' \
-            else 'text/csv; charset=utf-8'
-        return send_file(buf, as_attachment=True, download_name=f'{title}_{start}_{end}.{fmt}', mimetype=mimetype)
+        name = f'{title}_{start}_{end}.{fmt}'
+        if fmt == 'xlsx':
+            return send_xlsx(acc.to_xlsx(header, rows, title), name)
+        return send_file(acc.to_csv(header, rows), as_attachment=True, download_name=name, mimetype='text/csv; charset=utf-8')
     vouchers = acc.journal(g.tenant_id, start, end, node)
     nodes = SyncNode.query.order_by(SyncNode.id).all() if sync_runtime.is_hub() else []
     return render_template('admin_accounting.html', vouchers=vouchers, invoice_count=len(acc.invoices(g.tenant_id, start, end)),

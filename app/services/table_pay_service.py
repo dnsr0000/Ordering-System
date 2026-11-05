@@ -47,7 +47,7 @@ def start(table):
     if not info['orders'] or info['total'] <= 0:
         raise AppError('這一桌目前沒有需要結帳的訂單', 409)
     tp = TablePayment(tenant_id=table.tenant_id, dining_table_id=table.id, amount=info['total'],
-                      trade_no=payment_ecpay._new_trade_no(), order_ids=','.join(str(o['id']) for o in info['orders']))
+                      trade_no=payment_ecpay.new_trade_no(), order_ids=','.join(str(o['id']) for o in info['orders']))
     db.session.add(tp)
     db.session.commit()
     return tp
@@ -83,10 +83,7 @@ def mark_paid(trade_no, provider_trade_no, amount, payment_type=None):
         return 'already'
     tenant = db.session.get(Tenant, tp.tenant_id)
     _use_tenant(tenant, remember=False)
-    try:
-        paid = int(float(amount))
-    except (TypeError, ValueError):
-        paid = -1
+    paid = payment_ecpay.parse_amount(amount)
     table = db.session.get(DiningTable, tp.dining_table_id)
     reason = ''
     if paid != tp.amount:
@@ -114,16 +111,20 @@ def mark_paid(trade_no, provider_trade_no, amount, payment_type=None):
     return 'conflict' if reason else 'paid'
 
 
+def mark_paid_from(params):
+    """綠界通知 / 瀏覽器帶回的參數 → mark_paid"""
+    return mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'), params.get('PaymentType'))
+
+
+def _mark_failed(params):
+    """付款失敗 (RtnCode != 1)：待付款的那筆標記為 failed (顧客可再按一次線上結帳)"""
+    tp = find(params.get('MerchantTradeNo'))
+    if tp is not None and tp.status == 'pending':
+        tp.status, tp.note = 'failed', str(params.get('RtnMsg') or '付款失敗')[:200]
+        db.session.commit()
+
+
 def handle_notification(form):
     """綠界 ReturnURL：回傳要回應綠界的字串"""
-    params, status = payment_ecpay.parse_result(form, '桌邊結帳')
-    if status == 'failed':
-        tp = find(params.get('MerchantTradeNo'))
-        if tp is not None and tp.status == 'pending':
-            tp.status, tp.note = 'failed', str(params.get('RtnMsg') or '付款失敗')[:200]
-            db.session.commit()
-    if status != 'paid':
-        return payment_ecpay.RESULT_REPLY[status]
-    result = mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
-                       params.get('PaymentType'))
-    return '0|NotFound' if result == 'missing' else '1|OK'
+    return payment_ecpay.notification_response(form, '桌邊結帳', mark_paid_from, replies={'missing': '0|NotFound'},
+                                               on_failed=_mark_failed)

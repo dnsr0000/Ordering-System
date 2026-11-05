@@ -1,11 +1,15 @@
 /*
  * 櫃檯 POS 收銀頁 (pos.js 的模組)：6~7. 優惠券 / 點數折抵 / 金額計算、用餐方式 / 付款方式 / 找零 / 發票、客顯螢幕。
  * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 金額的算法 (含點數上限 Math.floor(remaining + 0.5))、優惠碼驗證與發票結構在 static/js/shared/，這裡只讀畫面上的值與寫回畫面。
  */
 import {
-    $, api, cartRewardPoints, cartSubtotal, channel, html, num, posCfg, publicCoupons, rewardConfig, setHtml, state,
+    $, cartRewardPoints, cartSubtotal, channel, html, num, posCfg, publicCoupons, rewardConfig, setHtml, state,
 } from './core.js';
 import { repriceCart } from './menu.js';
+import { computeTotals, deliveryFee, maxPointsCash } from '../shared/totals.js';
+import { createPromoVerifier, renderPromoMessage } from '../shared/promo.js';
+import { INVOICE_PLACEHOLDERS, invoicePayload as sharedInvoicePayload } from '../shared/invoice.js';
 
 // ======================================================================
 // 6. 優惠券 / 點數折抵 / 金額計算
@@ -23,15 +27,15 @@ export function populateCouponSelect() {
     sel.value = state.promoCode && [...sel.options].some((o) => o.value === state.promoCode) ? state.promoCode : '';
 }
 
+const promo = createPromoVerifier('/api/pos/verify_promo');
+
 export function setPromoMsg(ok, text) {
-    const el = $('posPromoMsg');
-    el.className = `small mb-1 pos-xs ${ok ? 'text-success' : 'text-danger'}`;
-    setHtml(el, text ? html`<i class="bi ${ok ? 'bi-check-circle' : 'bi-x-circle'} me-1"></i>${text}` : '');
+    renderPromoMessage($('posPromoMsg'), ok, text, 'small mb-1 pos-xs');
 }
 
 /** 清掉優惠券狀態，並讓進行中的驗證請求失效 */
 export function resetPromo() {
-    state.promoSeq++;
+    promo.invalidate();
     state.promoCode = '';
     state.promoDiscount = 0;
     $('posPromoInput').value = '';
@@ -42,7 +46,7 @@ export function resetPromo() {
 export function applyPromo() {
     const code = ($('posPromoInput').value || '').trim();
     if (!code) {
-        state.promoSeq++;
+        promo.invalidate();
         state.promoCode = '';
         state.promoDiscount = 0;
         $('posPromoMsg').textContent = '';
@@ -57,27 +61,18 @@ export function revalidatePromo() {
     if (state.promoCode && state.cart.length) runPromoCheck(state.promoCode);
 }
 
+/** 驗證優惠碼 (shared/promo.js 帶請求序號：只採用最新一次的結果)；網路異常時保留原狀，結帳時後端仍會重新驗證 */
 export async function runPromoCheck(code) {
-    const seq = ++state.promoSeq;
-    try {
-        const res = await api('/api/pos/verify_promo', {
-            json: { promo_code: code, subtotal: cartSubtotal(), user_id: state.member ? state.member.id : 0 },
-        });
-        if (seq !== state.promoSeq) return;   // 已有更新的請求或已被重置，丟棄過期結果
-        state.promoCode = res.valid ? code : '';
-        state.promoDiscount = res.valid ? num(res.discount) : 0;
-        setPromoMsg(res.valid, res.message);
-        recalcTotals();
-    } catch (err) {
-        // 網路異常時保留原狀；結帳時後端仍會重新驗證優惠券
-        if (seq === state.promoSeq) setPromoMsg(false, err.message);
+    const res = await promo.verify({ promo_code: code, subtotal: cartSubtotal(), user_id: state.member ? state.member.id : 0 });
+    if (!res) return;   // 已有更新的請求或已被重置，丟棄過期結果
+    if (res.error) {
+        setPromoMsg(false, res.message);
+        return;
     }
-}
-
-export function maxPointsCash(remaining) {
-    let maxCash = Math.floor(remaining + 0.5);   // 與後端相同：上限 = 四捨五入後的應付金額 (百分比優惠券留下的 .5 也折得掉)
-    if (num(rewardConfig.maxDiscount) > 0) maxCash = Math.min(maxCash, num(rewardConfig.maxDiscount));
-    return maxCash;
+    state.promoCode = res.valid ? code : '';
+    state.promoDiscount = res.discount;
+    setPromoMsg(res.valid, res.message);
+    recalcTotals();
 }
 
 export function togglePoints() {
@@ -87,7 +82,7 @@ export function togglePoints() {
     if (toggle.checked && state.member) {
         input.disabled = false;
         const ppd = Math.max(1, num(rewardConfig.pointsPerDollar) || 1);
-        const maxCash = maxPointsCash(Math.max(0, cartSubtotal() - state.promoDiscount));
+        const maxCash = maxPointsCash(Math.max(0, cartSubtotal() - state.promoDiscount), rewardConfig.maxDiscount);
         const availPts = Math.max(0, state.member.points - cartRewardPoints());
         const maxPts = Math.min(availPts, maxCash * ppd);
         input.value = Math.floor(maxPts / ppd) * ppd;
@@ -104,57 +99,44 @@ export function serviceChargeApplies() {
         && (posCfg.serviceChargeScope || []).includes('pos_dine_in');
 }
 
-/** 與後端相同的計算順序：小計 → 促銷 → 優惠券 → 會員折扣 → 整單折扣 → 點數 → 服務費 */
+/** 與後端相同的計算順序：小計 → 促銷 → 優惠券 → 會員折扣 → 整單折扣 → 點數 → 服務費 (shared/totals.js) */
 export function recalcTotals() {
     const subtotal = cartSubtotal();
-    const promotion = Math.min(num(state.promotion.discount), subtotal);
-    const afterPromotion = Math.max(0, subtotal - promotion);
-    const coupon = state.promotion.blocks_coupon ? 0 : Math.min(state.promoDiscount, afterPromotion);
-    let remaining = Math.max(0, afterPromotion - coupon);
-    const tierPct = state.member ? num(state.member.tier_discount) : 0;
-    const tierDiscount = tierPct > 0 ? remaining * Math.min(100, tierPct) / 100 : 0;
-    remaining = Math.max(0, remaining - tierDiscount);
-    let manual = 0;
-    if (state.orderDiscount) {
-        const v = num(state.orderDiscount.value);
-        manual = state.orderDiscount.type === 'percent' ? remaining * Math.min(100, v) / 100 : Math.min(v, remaining);
-        remaining = Math.max(0, remaining - manual);
-    }
-    let pointsDiscount = 0;
     const toggle = $('posUsePointsToggle');
     const input = $('posPointsInput');
-    if (state.member && rewardConfig.isEnabled && toggle && toggle.checked && input) {
-        const ppd = Math.max(1, num(rewardConfig.pointsPerDollar) || 1);
-        const maxCash = maxPointsCash(remaining);
-        const availPts = Math.max(0, state.member.points - cartRewardPoints());
-        const val = Math.min(Math.max(0, num(input.value)), Math.min(availPts, maxCash * ppd));
-        input.value = val;
-        pointsDiscount = Math.min(Math.floor(val / ppd), maxCash);
-    }
+    const pointsOn = Boolean(state.member && rewardConfig.isEnabled && toggle && toggle.checked && input);
+    const t = computeTotals({
+        subtotal,
+        promotionDiscount: state.promotion.discount,
+        blocksCoupon: state.promotion.blocks_coupon,
+        couponDiscount: state.promoDiscount,
+        tierPct: state.member ? state.member.tier_discount : 0,
+        manual: state.orderDiscount,
+        points: pointsOn ? {
+            enabled: true, available: state.member.points - cartRewardPoints(), requested: input.value,
+            ppd: rewardConfig.pointsPerDollar, maxDiscount: rewardConfig.maxDiscount,
+        } : null,
+        servicePct: posCfg.serviceChargePercent,
+        serviceApplies: serviceChargeApplies(),
+        deliveryFee: homeDeliveryFee(subtotal),   // 外送到府：依配送區域加外送費 (商品小計達免運門檻免收)
+        earnsPoints: false,
+    });
+    if (pointsOn) input.value = t.pointsRequested;
     if (state.member) $('posMemberPoints').textContent = Math.max(0, state.member.points - cartRewardPoints());
-    const afterDiscounts = Math.max(0, remaining - pointsDiscount);
-    const service = serviceChargeApplies() ? Math.floor(afterDiscounts * num(posCfg.serviceChargePercent) / 100 + 0.5) : 0;
-
-    // 外送到府：依配送區域加外送費 (商品小計達免運門檻免收)
-    const delivery = homeDeliveryFee(subtotal);
-    // 與後端相同：應付金額四捨五入到整數元
-    state.finalTotal = Math.floor(afterDiscounts + 0.5) + service + delivery;
-    state.totals = { subtotal, promotion, coupon, tierDiscount, manual, pointsDiscount, service, delivery };
-    $('posSubtotal').textContent = Math.round(subtotal);
-    $('posPromoDiscount').textContent = Math.round(coupon);
-    $('posPointsDiscount').textContent = Math.round(pointsDiscount);
-    const toggleRow = (id, valueId, value) => {
-        const row = $(id);
-        if (!row) return;
-        row.classList.toggle('d-none', !(value > 0));
-        $(valueId).textContent = Math.round(value);
+    state.finalTotal = t.final;
+    state.totals = {
+        subtotal, promotion: t.promotionDiscount, coupon: t.promo, tierDiscount: t.tier, manual: t.manual, pointsDiscount: t.pointsDiscount,
+        service: t.service, delivery: t.delivery,
     };
-    toggleRow('posPromotionRow', 'posPromotionDiscount', promotion);
+    $('posSubtotal').textContent = Math.round(subtotal);
+    $('posPromoDiscount').textContent = Math.round(t.promo);
+    $('posPointsDiscount').textContent = Math.round(t.pointsDiscount);
+    Kiosk.toggleRow('posPromotionRow', 'posPromotionDiscount', t.promotionDiscount);
     if ($('posPromotionNames')) $('posPromotionNames').textContent = (state.promotion.names || []).join('、');
-    toggleRow('posTierRow', 'posTierDiscount', tierDiscount);
-    toggleRow('posManualRow', 'posManualDiscount', manual);
-    toggleRow('posServiceRow', 'posServiceCharge', service);
-    toggleRow('posDeliveryFeeRow', 'posDeliveryFee', delivery);
+    Kiosk.toggleRow('posTierRow', 'posTierDiscount', t.tier);
+    Kiosk.toggleRow('posManualRow', 'posManualDiscount', t.manual);
+    Kiosk.toggleRow('posServiceRow', 'posServiceCharge', t.service);
+    Kiosk.toggleRow('posDeliveryFeeRow', 'posDeliveryFee', t.delivery);
     if ($('posServicePercent')) $('posServicePercent').textContent = num(posCfg.serviceChargePercent);
     const gifts = state.promotion.gifts || [];
     setHtml($('posGiftList'), gifts.map((gft) => html`<div><i class="bi bi-gift me-1"></i>贈送 ${gft.name} x${gft.quantity} (${gft.promotion})</div>`));
@@ -172,8 +154,7 @@ export function isHomeDelivery() {
 export function homeDeliveryFee(subtotal) {
     if (!isHomeDelivery() || !posCfg.homeDelivery) return 0;
     const opt = $('posHomeZone').selectedOptions[0];
-    const freeOver = num(posCfg.homeDelivery.freeOver);
-    return !opt || (freeOver && subtotal >= freeOver) ? 0 : num(opt.dataset.fee);
+    return opt ? deliveryFee(subtotal, opt.dataset.fee, posCfg.homeDelivery.freeOver) : 0;
 }
 
 export function onOrderTypeChange() {
@@ -199,7 +180,6 @@ export function onPaymentChange() {
     $('posLinePayHint').classList.toggle('d-none', !(method === 'Line Pay' && posCfg.linePayIntegrated));
 }
 
-export const INVOICE_PLACEHOLDERS = { mobile: '手機條碼 (/ABC1234)', company: '統一編號 8 碼', donate: '愛心碼', citizen: '自然人憑證條碼' };
 export function onInvoiceTypeChange() {
     const type = $('posInvoiceType').value;
     const input = $('posInvoiceValue');
@@ -207,15 +187,10 @@ export function onInvoiceTypeChange() {
     input.placeholder = INVOICE_PLACEHOLDERS[type] || '';
 }
 
+/** 電子發票 (shared/invoice.js)：載具 / 統編 / 愛心碼 */
 export function invoicePayload() {
     const sel = $('posInvoiceType');
-    if (!sel || !sel.value) return null;
-    const value = ($('posInvoiceValue').value || '').trim();
-    const type = sel.value;
-    if (type === 'company') return { type, buyer_id: value };
-    if (type === 'donate') return { type, love_code: value };
-    if (type === 'mobile' || type === 'citizen') return { type, carrier: value };
-    return { type };
+    return sel ? sharedInvoicePayload(sel.value, $('posInvoiceValue').value) : null;
 }
 
 export function quickCash(mode) {

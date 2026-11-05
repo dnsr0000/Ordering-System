@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stat_tile %}
 {% block title %}自動排班{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -19,7 +19,7 @@
     <div class="row g-3 mb-3">
         {% for label, value, cls in [('已分配班別', g_plan.assigned, 'text-success'), ('排不出人的班別', g_plan.unfilled, 'text-danger' if g_plan.unfilled else ''),
                                      ('可排員工', g_plan.summary|length, ''), ('未填可排時段', g_plan.skipped|length, 'text-warning' if g_plan.skipped else '')] %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {{ stat_tile(label, value, cls) }}
         {% endfor %}
     </div>
     {% if g_plan.skipped %}<div class="alert alert-warning small">尚未填可排時段的員工不會被排到：{{ g_plan.skipped|join('、') }}。<a href="{{ url_for('timeclock.availability') }}">去填寫</a></div>{% endif %}

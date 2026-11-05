@@ -1,12 +1,15 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：結帳預覽 / 送出 / 錯誤處理 / 斷線暫存 / 收據、桌邊帳單、我的訂單。
- * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，品項結構 / 發票 / 合併規則在 static/js/shared/。
  */
 import {
     $, REWARD_LABEL, api, html, isGuest, isOnline, menuItems, modal, modifierById, pageData, pro, setText, state, toggleRow, ui,
 } from './core.js';
-import { lineDescription, lineKey, makeLine, saveCart, updateCartUI } from './cart.js';
+import { lineDescription, makeLine, saveCart, updateCartUI } from './cart.js';
 import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo, toggleCarbon } from './totals.js';
+import { payloadLine } from '../shared/orderpayload.js';
+import { applyLinePrices, mergeLine } from '../shared/cartline.js';
+import { invoicePayload as sharedInvoicePayload } from '../shared/invoice.js';
 
 export async function openTableBill() {
     try {
@@ -109,7 +112,7 @@ export async function openPreview() {
                         <div>${l.is_reward ? `${REWARD_LABEL} ` : ''}${l.name} x${l.quantity}</div>
                         ${desc ? html`<small class="text-info">${desc}</small>` : ''}
                     </div>
-                    <span class="fw-bold">$${Math.round(l.price * l.quantity)}</span>
+                    <span class="fw-bold">${Kiosk.money(l.price * l.quantity)}</span>
                 </li>`;
             })}
         </ul>
@@ -149,18 +152,7 @@ export function checkoutPayload() {
     if (!state.checkoutOrderId) state.checkoutOrderId = Kiosk.newOrderId();
     const payload = {
         client_order_id: state.checkoutOrderId,
-        items: state.cart.map((l) => ({
-            menu_item_id: l.menu_item_id,
-            quantity: l.quantity,
-            modifier_ids: l.modifier_ids,
-            combo_option_id: l.combo_option_id,
-            combo_choices: l.combo_choices || [],
-            pass_id: l.pass_id || 0,
-            is_add_on: l.is_add_on,
-            is_reward: l.is_reward,
-            customization: l.customization,
-            size: l.size || '',
-        })),
+        items: state.cart.map(payloadLine),
         payment_method: $('paymentMethod').value,
         payment_info: $('paymentMethod').value === '禮物卡' && state.giftCard ? { gift_code: state.giftCard.code } : undefined,
         order_type: info.orderType,
@@ -183,8 +175,7 @@ export function checkoutPayload() {
 
 /** 伺服器回報金額與畫面不同 (剛改價等)：以伺服器的單價更新購物車；仍有差異時記住伺服器金額 (顧客確認後再送出) */
 export function applyServerPrices(data) {
-    const prices = data.line_prices || [];
-    if (prices.length === state.cart.length) state.cart.forEach((l, i) => { l.price = Number(prices[i]) || 0; });
+    applyLinePrices(state.cart, data.line_prices);
     saveCart();
     updateCartUI();
     const again = checkoutPayload();
@@ -192,14 +183,10 @@ export function applyServerPrices(data) {
     state.acceptedTotal = computeTotals().final === total ? null : { key: payloadKey(again), total };
 }
 
-export const INVOICE_PLACEHOLDERS = { mobile: '手機條碼 /ABC1234', company: '統一編號 8 碼', donate: '愛心碼' };
+/** 電子發票 (shared/invoice.js)：載具 / 統編 / 愛心碼 */
 export function invoicePayload() {
     const sel = $('invoiceType');
-    if (!sel || !sel.value) return null;
-    const value = ($('invoiceValue').value || '').trim();
-    if (sel.value === 'company') return { type: 'company', buyer_id: value };
-    if (sel.value === 'donate') return { type: 'donate', love_code: value };
-    return { type: sel.value, carrier: value };
+    return sel ? sharedInvoicePayload(sel.value, $('invoiceValue').value) : null;
 }
 
 export function handleCheckoutError(err) {
@@ -293,7 +280,7 @@ export function showReceipt(data) {
     state.lastOrderId = data.order_id;
     if ($('receipt-send-msg')) $('receipt-send-msg').textContent = '';
     if (!isGuest) setUserPoints(data.remaining_points);
-    setText('receipt-pickup', data.pickup_pending ? (ui.pending_branch || '待分店確認') : `#${String(data.pickup_number).padStart(3, '0')}`);
+    setText('receipt-pickup', data.pickup_pending ? (ui.pending_branch || '待分店確認') : `#${Kiosk.pad3(data.pickup_number)}`);
     setText('receipt-order-id', `#${data.order_id}`);
     setText('receipt-node', data.pickup_node_name || '');
     $('receipt-node-row').classList.toggle('d-none', !data.pickup_node_name);
@@ -365,17 +352,7 @@ export function finishOrder() {
     window.location.reload();
 }
 
-// ================================================================ 我的訂單
-export const STATUS_BADGES = { Pending: 'bg-warning text-dark', Completed: 'bg-success', PickedUp: 'bg-secondary', Cancelled: 'bg-danger' };
-
-/** 付款狀態徽章：樣式 + 顯示文字 (依語言；中文為內建值) */
-export function paymentBadge(status) {
-    const styles = { pending: 'bg-warning text-dark', paid: 'bg-success', expired: 'bg-secondary', refund_required: 'bg-danger', refunded: 'bg-secondary' };
-    const labels = { pending: '待付款', paid: '已線上付款', expired: '付款逾時', refund_required: '退款處理中', refunded: '已退款' };
-    if (!styles[status]) return null;
-    return [styles[status], ui[`payment_${status}`] || labels[status]];
-}
-
+// ================================================================ 我的訂單 (狀態 / 付款徽章用 Kiosk.statusBadge / paymentBadge，文字依語言)
 /** 用餐方式 / 訂單狀態 / 外送狀態的顯示文字 (後端的中文標籤為 fallback) */
 export function orderTypeLabel(t) {
     return { '內用': ui.dinein, '外帶': ui.takeout, '外送到府': ui.home_delivery, '外送': ui.delivery_platform }[t] || t;
@@ -388,14 +365,14 @@ export function orderCardHtml(o) {
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
                 <div>
                     <span class="fw-bold text-success fs-5">${ui.order_hash || '訂單 #'}${o.user_order_no}</span>
-                    <span class="badge ${STATUS_BADGES[o.status_code] || 'bg-danger'}">${ui[`status_${o.status_code}`] || o.status}</span>
+                    ${Kiosk.statusBadge(o.status_code, ui[`status_${o.status_code}`] || o.status)}
                     <span class="badge bg-primary ms-1">${orderTypeLabel(o.order_type)}</span>
-                    <span class="badge bg-warning text-dark fw-bold ms-1 order-pickup">${o.pickup_pending ? (ui.pickup_pending || '取餐號：待分店確認') : `${ui.pickup_hash || '取餐 #'}${String(o.pickup_number || o.order_id).padStart(3, '0')}`}</span>
+                    <span class="badge bg-warning text-dark fw-bold ms-1 order-pickup">${o.pickup_pending ? (ui.pickup_pending || '取餐號：待分店確認') : `${ui.pickup_hash || '取餐 #'}${Kiosk.pad3(o.pickup_number || o.order_id)}`}</span>
                     ${o.pickup_at ? html`<span class="badge bg-info text-dark ms-1 order-pickup-at"><i class="bi bi-clock me-1"></i>${ui.scheduled || '預約 '}${o.pickup_at}</span>` : ''}
                     ${o.eta ? html`<span class="badge bg-info text-dark ms-1 order-eta"><i class="bi bi-hourglass-split me-1"></i>${ui.eta_badge || '預計 '}${o.eta}</span>` : ''}
                     ${o.delivery_label ? html`<span class="badge bg-warning text-dark ms-1 order-delivery"><i class="bi bi-scooter me-1"></i>${ui[`delivery_${o.delivery_status}`] || o.delivery_label}</span>` : ''}
                     ${o.pickup_node_name ? html`<span class="badge bg-dark ms-1 order-node"><i class="bi bi-shop me-1"></i>${o.pickup_node_name}</span>` : ''}
-                    ${paymentBadge(o.payment_status) ? html`<span class="badge ms-1 order-payment ${paymentBadge(o.payment_status)[0]}">${paymentBadge(o.payment_status)[1]}</span>` : ''}
+                    ${Kiosk.PAYMENT_STATUS[o.payment_status] ? html`<span class="ms-1">${Kiosk.paymentBadge(o.payment_status, ui[`payment_${o.payment_status}`])}</span>` : ''}
                     ${o.payment_url ? html`<a class="btn btn-sm btn-warning fw-bold ms-2 order-pay" href="${o.payment_url}">${o.payment_note ? (ui.view_payment_info || '查看繳費資訊') : (ui.pay_online || '前往付款')}</a>` : ''}
                 </div>
                 <small class="text-muted">${o.created_at}</small>
@@ -408,8 +385,8 @@ export function orderCardHtml(o) {
                             <tr>
                                 <td><div>${item.name}</div>${item.customization ? html`<small class="text-danger fw-bold">${item.customization}</small>` : ''}</td>
                                 <td>x ${item.quantity}</td>
-                                <td>$${Math.round(item.price)}</td>
-                                <td>$${Math.round(item.subtotal)}</td>
+                                <td>${Kiosk.money(item.price)}</td>
+                                <td>${Kiosk.money(item.subtotal)}</td>
                             </tr>`)}
                     </tbody>
                 </table>
@@ -471,10 +448,7 @@ export async function reorder(orderId) {
             choiceIds: (raw.combo_choices || []).map(Number),
         });
         line.quantity = Math.max(1, Number(raw.quantity) || 1);
-        const key = lineKey(line);
-        const existing = state.cart.find((l) => !l.is_reward && lineKey(l) === key);
-        if (existing) existing.quantity += line.quantity;
-        else state.cart.push(line);
+        mergeLine(state.cart, line);
         added += line.quantity;
     });
     if (added) {

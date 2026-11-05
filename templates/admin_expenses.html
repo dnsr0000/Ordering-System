@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stat_tile %}
 {% block title %}營業費用{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -34,9 +34,9 @@
         <button class="btn btn-outline-info btn-sm" type="submit">查看</button>
     </form>
     <div class="row g-3 mb-3">
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ month }} 費用合計</div><div class="stat-value text-warning" id="expenseTotal">${{ '{:,}'.format(total) }}</div></div></div>
+        {{ stat_tile(month ~ ' 費用合計', '$' ~ '{:,}'.format(total), 'text-warning', id='expenseTotal') }}
         {% for k, label in categories.items() if totals[k] %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">${{ '{:,}'.format(totals[k]) }}</div></div></div>
+        {{ stat_tile(label, '$' ~ '{:,}'.format(totals[k])) }}
         {% endfor %}
     </div>
     <section class="card rounded-4 p-3 mb-3">

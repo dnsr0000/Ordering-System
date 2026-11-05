@@ -12,27 +12,38 @@ from app.models.user import User
 from app.sync import tracking
 
 
-def change_points(tenant_id, user_id, delta, reason, order_id=None, clamp=False):
+def atomic_change(column, make_ledger, tenant_id, user_id, delta, clamp=False):
     """
-    原子加減點數並記帳。扣點時餘額需足夠，否則回傳 None (未變動)；
-    clamp=True 時改為「最多扣到 0」(取消訂單追回贈點、後台調整)。成功回傳實際變動量 (可能為 0)。
+    原子加減 User 的合計欄位 (points / wallet_balance) 並寫入一筆異動帳 (點數與儲值金共用)：
+    delta 為 0 回傳 0 (不記帳)；扣減時以條件式 UPDATE 要求餘額足夠，不足回傳 None (未變動)；
+    clamp=True 時改為「最多扣到 0」(取消訂單追回贈點、後台調整)。成功時 session.add(make_ledger(實際變動量)) 並回傳該變動量。
     """
     delta = int(delta or 0)
     if delta == 0:
         return 0
     if clamp and delta < 0:
-        current = db.session.execute(select(User.points).where(User.id == user_id)).scalar() or 0
+        current = db.session.execute(select(column).where(User.id == user_id)).scalar() or 0
         delta = max(delta, -max(0, current))
         if delta == 0:
             return 0
     stmt = update(User).where(User.id == user_id, User.tenant_id == tenant_id)
     if delta < 0:
-        stmt = stmt.where(User.points >= -delta)
-    res = db.session.execute(stmt.values(points=User.points + delta).execution_options(synchronize_session=False))
+        stmt = stmt.where(column >= -delta)
+    res = db.session.execute(stmt.values({column: column + delta}).execution_options(synchronize_session=False))
     if res.rowcount != 1:
         return None
-    db.session.add(PointLedger(tenant_id=tenant_id, user_id=user_id, delta=delta, reason=reason[:30], order_id=order_id))
+    db.session.add(make_ledger(delta))
     return delta
+
+
+def change_points(tenant_id, user_id, delta, reason, order_id=None, clamp=False):
+    """
+    原子加減點數並記帳。扣點時餘額需足夠，否則回傳 None (未變動)；
+    clamp=True 時改為「最多扣到 0」(取消訂單追回贈點、後台調整)。成功回傳實際變動量 (可能為 0)。
+    """
+    return atomic_change(User.points, lambda d: PointLedger(tenant_id=tenant_id, user_id=user_id, delta=d,
+                                                            reason=reason[:30], order_id=order_id),
+                         tenant_id, user_id, delta, clamp)
 
 
 def recompute_points(user_ids):

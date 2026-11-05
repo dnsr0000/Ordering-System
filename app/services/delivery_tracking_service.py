@@ -12,7 +12,7 @@ import uuid
 from urllib.parse import quote
 from datetime import datetime
 
-from flask import current_app, g, has_request_context, request
+from flask import current_app, has_request_context, request
 from sqlalchemy import delete, select
 
 from app.errors import AppError
@@ -42,12 +42,11 @@ def ensure_token(order):
 
 
 def public_base():
-    """外送員手機要連到的主機網址"""
-    cfg_url = current_app.config.get('PUBLIC_BASE_URL') or ''
-    tenant_url = (getattr(getattr(g, 'tenant', None), 'table_qr_base_url', '') or '') if has_request_context() else ''
+    """外送員手機要連到的主機網址：PUBLIC_BASE_URL / 店家 QR code 網址 → 分店時用總部網址 → 目前請求的網址"""
+    from app.services import table_service
     hub_url = current_app.config.get('SYNC_HUB_URL') if sync_runtime.is_node() else ''
     local = request.url_root if has_request_context() else ''
-    return str(cfg_url or tenant_url or hub_url or local).rstrip('/')
+    return str(table_service.public_base(fallback=False) or hub_url or local).rstrip('/')
 
 
 def driver_url(order):

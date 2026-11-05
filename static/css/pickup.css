@@ -1,9 +1,4 @@
-/* 櫃檯取餐核銷 */
-.header-pickup {
-    background: var(--kiosk-surface);
-    border-bottom: 2px solid var(--kiosk-border);
-}
-
+/* 櫃檯取餐核銷；頁首 .screen-header 在 theme.css */
 .quick-pickup {
     width: 250px;
 }
@@ -36,18 +31,10 @@
     transform: scale(0.95);
 }
 
+/* 「顧客已取餐」：共用 theme.css 的 .btn-screen-primary 樣式，這裡只放與廚房不同的字級與留白 */
 .btn-pickup-finish {
-    background-color: var(--kiosk-success);
     color: var(--kiosk-bg);
-    font-weight: 800;
-    border: none;
-    border-radius: 10px;
     padding: 12px;
     font-size: 1.15rem;
     transition: all 0.2s;
-}
-.btn-pickup-finish:hover,
-.btn-pickup-finish:focus-visible {
-    background-color: #16a34a;
-    color: #fff;
 }

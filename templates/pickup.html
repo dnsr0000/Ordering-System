@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import screen_header %}
 
 {% block title %}櫃檯人員取餐核銷介面{% endblock %}
 
@@ -8,17 +9,8 @@
 {% endblock %}
 
 {% block content %}
-<header class="header-pickup py-3 px-4 mb-4 sticky-top">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-3">
-            <i class="bi bi-person-check-fill text-success fs-2"></i>
-            <div>
-                <h4 class="mb-0 fw-bold text-white">櫃檯取餐核銷系統</h4>
-                <small class="text-white-50">待取餐訂單：<span id="readyCountBadge" class="badge bg-success fs-6">0</span> 筆</small>
-            </div>
-        </div>
-
-        <div class="d-flex align-items-center gap-3">
+{% set pickup_subtitle %}待取餐訂單：<span id="readyCountBadge" class="badge bg-success fs-6">0</span> 筆{% endset %}
+{% call screen_header('bi-person-check-fill text-success fs-2', '櫃檯取餐核銷系統', pickup_subtitle) %}
             <form id="quickPickupForm" class="input-group input-group-sm quick-pickup" autocomplete="off">
                 <span class="input-group-text bg-dark border-secondary text-white"><i class="bi bi-search"></i></span>
                 <input type="text" id="quickSearchInput" class="form-control bg-dark text-white border-secondary"
@@ -31,9 +23,7 @@
             <a href="{{ url_for('signage.board') }}" target="_blank" rel="noopener" class="btn btn-outline-warning btn-sm fw-bold text-nowrap">
                 <i class="bi bi-tv me-1"></i> 開啟菜單看板
             </a>
-        </div>
-    </div>
-</header>
+{% endcall %}
 
 <main class="container-fluid px-4 pb-4">
     <div id="pickupCardsGrid" class="row g-3" aria-live="polite"></div>

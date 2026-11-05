@@ -5,16 +5,9 @@
  */
 (function () {
     'use strict';
-    const { html } = Kiosk;
+    const { html, $, setText, store } = Kiosk;
     const data = Kiosk.pageData();
     const TAB_STORAGE_KEY = 'adminActiveTab';
-    const $ = (id) => document.getElementById(id);
-
-    // localStorage 在無痕模式或被封鎖時可能丟出例外，一律包起來
-    const storage = {
-        get(key) { try { return localStorage.getItem(key); } catch (err) { return null; } },
-        set(key, value) { try { localStorage.setItem(key, value); } catch (err) { /* 忽略 */ } },
-    };
 
     function autoExpand(el) {
         if (!el) return;
@@ -22,19 +15,17 @@
         el.style.height = `${el.scrollHeight}px`;
     }
 
-    function showModal(id) {
-        bootstrap.Modal.getOrCreateInstance($(id)).show();
-    }
+    const showModal = (id) => Kiosk.modal(id).show();
 
     const AdminPage = window.AdminPage = {
         data,
-        storage,
+        storage: store,
         autoExpand,
         showModal,
         // 菜單品項的編輯預設值 (id 字串 → 資料)，即時同步庫存時一併更新
         menuItems: new Map((data.menuItems || []).map((item) => [String(item.id), item])),
-        activeTab: () => storage.get(TAB_STORAGE_KEY) || 'home',
-        rememberTab: (key) => storage.set(TAB_STORAGE_KEY, key),
+        activeTab: () => store.get(TAB_STORAGE_KEY) || 'home',
+        rememberTab: (key) => store.set(TAB_STORAGE_KEY, key),
     };
 
     // ---------------------------------------------------------------- 頁籤 (記住上次停留的分頁；只有後台首頁有)
@@ -56,31 +47,18 @@
     }
 
     // ---------------------------------------------------------------- 實時訂單看板
-    const STATUS_OPTIONS = [
-        ['Pending', '⏳ 製作中'], ['Completed', '✅ 已出餐'], ['PickedUp', '📦 已取餐'], ['Cancelled', '❌ 已取消'],
-    ];
-    const STATUS_BORDER = { Pending: 'border-warning', Completed: 'border-success', PickedUp: 'border-secondary', Cancelled: 'border-danger' };
+    // 狀態下拉選單：「⏳ 製作中」等文字由共用的狀態表組成
+    const STATUS_OPTIONS = Object.entries(Kiosk.ORDER_STATUS).map(([value, st]) => [value, `${st.icon} ${st.text}`]);
     const grid = $('admin-orders-grid');
 
-    // 線上付款狀態 (退款處理中：訂單取消後才收到付款，請到綠界廠商後台退款)
-    const PAYMENT_BADGES = {
-        pending: ['bg-warning text-dark', '待付款'],
-        paid: ['bg-success', '已線上付款'],
-        expired: ['bg-secondary', '付款逾時'],
-        refund_required: ['bg-danger', '需退款'],
-        unpaid: ['bg-warning text-dark', '未結帳'],
-        settled: ['bg-success', '已結帳'],
-    };
-
     function orderCard(o) {
-        // 線上訂單在取餐分店收到前尚未編號 (分店編號後同步回來)
-        const pickup = o.pickup_pending ? '待分店確認' : `#${String(o.pickup_number || o.id).padStart(3, '0')}`;
+        // 線上訂單在取餐分店收到前尚未編號 (分店編號後同步回來)：Kiosk.pickupNo 顯示「待分店確認」
         const showCash = o.payment_method === 'Cash' && Number(o.cash_received) > Number(o.total_price);
         return html`
         <div class="col-12 col-md-6 col-lg-4">
-            <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${STATUS_BORDER[o.status] || 'border-info'}">
+            <div class="card card-custom p-3 shadow-sm h-100 border-top border-4 ${(Kiosk.ORDER_STATUS[o.status] || {}).border || 'border-info'}">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h5 class="fw-bold text-warning mb-0">取餐 ${pickup} <small class="text-white-50 fs-6">(單號 #${o.id})</small></h5>
+                    <h5 class="fw-bold text-warning mb-0">取餐 ${Kiosk.pickupNo(o)} <small class="text-white-50 fs-6">(單號 #${o.id})</small></h5>
                     <div class="d-flex flex-wrap justify-content-end gap-1">
                         ${o.order_source === 'POS'
                             ? html`<span class="badge bg-warning text-dark"><i class="bi bi-pc-display-horizontal me-1"></i>POS (${o.cashier_username || '櫃檯'})</span>`
@@ -92,14 +70,10 @@
                         ${o.pickup_node_name ? html`<span class="badge bg-light text-dark order-node-name"><i class="bi bi-shop me-1"></i>${o.pickup_node_name}</span>` : ''}
                         <span class="badge bg-primary">${o.order_type}</span>
                         <span class="badge bg-secondary">${o.payment_method}</span>
-                        ${PAYMENT_BADGES[o.payment_status] ? html`<span class="badge order-payment ${PAYMENT_BADGES[o.payment_status][0]}">${PAYMENT_BADGES[o.payment_status][1]}</span>` : ''}
+                        ${Kiosk.paymentBadge(o.payment_status)}
                     </div>
                 </div>
-                ${o.order_type === '外帶' ? html`
-                <div class="mb-2">
-                    <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'}">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>
-                    ${o.note ? html`<div class="small text-warning mt-1">備註：${o.note}</div>` : ''}
-                </div>` : ''}
+                ${Kiosk.takeoutBlock(o)}
                 <div class="text-white-50 small mb-2 d-flex justify-content-between">
                     <span><i class="bi bi-person me-1"></i>${o.user_name}</span>
                     <span><i class="bi bi-clock me-1"></i>${o.created_at}</span>
@@ -145,7 +119,7 @@
     async function changeOrderStatus(select) {
         select.blur();
         try {
-            await Kiosk.api(`/api/orders/${encodeURIComponent(select.dataset.id)}/status`, { json: { status: select.value } });
+            await Kiosk.setOrderStatus(select.dataset.id, select.value);
         } catch (err) {
             window.alert(`❌ ${err.message}`);
         }
@@ -159,7 +133,7 @@
             const badge = $(`item-stock-badge-${it.id}`);
             if (badge) {
                 badge.textContent = it.stock;
-                badge.className = `badge fw-bold px-2 py-1 ${soldOut ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-success')}`;
+                badge.className = `badge fw-bold px-2 py-1 ${Kiosk.stockClass(it.stock, soldOut)}`;
             }
             const tagCell = $(`item-tags-${it.id}`);
             if (tagCell) {
@@ -183,11 +157,6 @@
     }
 
     // ---------------------------------------------------------------- 總覽數字
-    function setText(id, value) {
-        const el = $(id);
-        if (el) el.textContent = value;
-    }
-
     function renderTopItems(topItems) {
         const el = $('stat-top-items');
         if (!el || !Array.isArray(topItems)) return;
@@ -232,7 +201,6 @@
     const rankingLimit = Math.max(1, Number(data.rankingLimit) || 3);
     let sessionExpired = false;
     let eventSource = null;
-    let fallbackTimer = null;
 
     async function syncLive() {
         if (sessionExpired) return;
@@ -256,26 +224,15 @@
     function startLiveSync() {
         if (!data.liveSync || !(grid || $('menuItemTable') || $('stat-top-items'))) return;
         syncLive();
-        if (window.EventSource) {
-            eventSource = Kiosk.onOrdersChanged(syncLive);
-            eventSource.addEventListener('error', () => {
-                if (!fallbackTimer) fallbackTimer = setInterval(syncLive, 3000);
-            });
-            eventSource.addEventListener('open', () => {
-                clearInterval(fallbackTimer);
-                fallbackTimer = null;
-            });
-        } else {
-            fallbackTimer = setInterval(syncLive, 3000);
-        }
+        // SSE 斷線期間 (或不支援 EventSource 時) 每 3 秒輪詢一次
+        eventSource = Kiosk.onOrdersChanged(syncLive, { fallbackMs: 3000 });
         // AI 營運建議在背景產生，定期刷新一次避免需要手動重新整理
         setInterval(syncLive, 10000);
-        // 按登出時先停止即時同步：避免登出途中的同步請求拿到 401 而跳出「登入已過期」
+        // 按登出時先停止即時同步 (close 一併停止備援輪詢)：避免登出途中的同步請求拿到 401 而跳出「登入已過期」
         document.querySelectorAll('form[action$="/admin/logout"]').forEach((form) => {
             form.addEventListener('submit', () => {
                 sessionExpired = true;
-                if (eventSource) eventSource.close();
-                clearInterval(fallbackTimer);
+                eventSource.close();
             });
         });
     }

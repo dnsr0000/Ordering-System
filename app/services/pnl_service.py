@@ -8,7 +8,6 @@
   = 營業淨利 (淨利率)
 並與上一期比較、列出近 6 個月趨勢。原料成本變動對餐點毛利的影響見 cost_impact()。
 """
-import io
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -25,7 +24,7 @@ from app.models.order import Order
 from app.models.payment import PaymentKind, PaymentRecord
 from app.services import report_service, settings_service
 from app.sync import runtime as sync_runtime
-from app.utils import neutralize_formulas, safe_int
+from app.utils import day_bounds, parse_date, safe_int, workbook_bytes
 
 FEE_GROUPS = {
     'card_fee_percent': (PaymentMethod.CREDIT_CARD, PaymentMethod.APPLE_PAY),
@@ -67,10 +66,7 @@ def save_expense(exp, form, staff=''):
     amount = safe_int(form.get('amount'), -1)
     if not 0 < amount <= 100_000_000:
         raise AppError('請輸入正確的金額')
-    try:
-        spent_on = date.fromisoformat(str(form.get('spent_on') or ''))
-    except ValueError:
-        raise AppError('請輸入日期')
+    spent_on = parse_date(form.get('spent_on'), '日期', required=True)
     exp.name, exp.category, exp.amount, exp.spent_on = name, category, amount, spent_on
     exp.vendor = str(form.get('vendor') or '').strip()[:60]
     exp.invoice_no = str(form.get('invoice_no') or '').strip().upper()[:20]
@@ -138,8 +134,7 @@ def _fees(tenant_id, t0, t1, node_uuid):
 def statement(tenant_id, start, end, node_uuid=None):
     r = report_service.build_report(tenant_id, start, end, node_uuid)
     rate = int(settings_service.get('accounting', tenant_id).get('tax_rate') or 0)
-    t0 = datetime.combine(start, datetime.min.time())
-    t1 = datetime.combine(end + timedelta(days=1), datetime.min.time())
+    t0, t1 = day_bounds(start, end)
     gross = int(r['net_after_refunds'])
     revenue = round(gross / (1 + rate / 100)) if rate else gross
     tax = gross - revenue
@@ -226,11 +221,7 @@ def to_excel(cur, prev, months, shop_name=''):
     s2.append(['月份', '營業收入淨額', '營業毛利', '營業費用', '營業淨利', '淨利率 %'])
     for m in months:
         s2.append([m['month'], m['revenue'], m['gross_profit'], m['opex'], m['net'], m['net_margin']])
-    neutralize_formulas(wb)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return workbook_bytes(wb)
 
 
 # ---------------------------------------------------------------------------

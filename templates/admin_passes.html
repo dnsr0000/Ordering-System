@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf, stat_tile %}
 {% block title %}寄杯 / 多次券 - 後台{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -13,8 +13,8 @@
     <div class="alert alert-secondary small">會員一次購買 N 杯 (份)，之後在點餐機 / 桌邊 / 線上 / POS 每次兌換一份 (免費，只收加料)。
         POS 綁定會員後可售出；寄杯屬預收款 (商品禮券)，依規定不設使用期限，上線前請確認履約保證 (DEPLOY.txt)。</div>
     <div class="row g-3 mb-3">
-        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">未兌換次數</div><div class="stat-value text-warning" id="passOutstanding">{{ outstanding }}</div></div></div>
-        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">未兌換預收金額 (估)</div><div class="stat-value text-warning" id="passLiability">${{ '{:,}'.format(liability) }}</div></div></div>
+        {{ stat_tile('未兌換次數', outstanding, 'text-warning', id='passOutstanding', col='col-6 col-md-4') }}
+        {{ stat_tile('未兌換預收金額 (估)', '$' ~ '{:,}'.format(liability), 'text-warning', id='passLiability', col='col-6 col-md-4') }}
     </div>
 
     <section class="card rounded-4 p-3 mb-3">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header %}
+{% from "_macros.html" import page_header, stat_tile %}
 {% block title %}損益表{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -23,7 +23,7 @@
         {% for label, value, cls in [('營業收入淨額', money(cur.revenue), ''), ('營業毛利', money(cur.gross_profit), 'text-info'),
                                      ('營業淨利', money(cur.net), 'text-success' if cur.net >= 0 else 'text-danger'),
                                      ('淨利率', cur.net_margin ~ '%', 'text-success' if cur.net >= 0 else 'text-danger')] %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {{ stat_tile(label, value, cls) }}
         {% endfor %}
     </div>
     {% if not cur.labor_available %}<div class="alert alert-info small py-2" id="pnlNoLabor">人事成本未列入：打卡紀錄與員工時薪只在各門市主機 (線上端或依分店檢視時淨利會偏高，請到各門市的損益表查看人事成本)。</div>{% endif %}

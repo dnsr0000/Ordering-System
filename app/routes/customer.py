@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 
-from flask import Blueprint, abort, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -12,15 +12,16 @@ from app.models.order import Order, OrderItem
 from app.models.sync import NodeStock, SyncNode
 from app.routes.sync_admin import node_name_map
 from app.errors import AppError
-from app.services import (branch_service, coupon_service, eta_service, feedback_service, i18n_service, intake_service, inventory_service, receipt_service,
-                          own_delivery_service, pass_service, payment_service, pickup_service, privacy_service,
-                          reorder_service, settings_service, table_pay_service, table_service)
+from app.services import (branch_service, coupon_service, eta_service, feedback_service, group_order_service, i18n_service,
+                          intake_service, inventory_service, own_delivery_service, pass_service, payment_service,
+                          pickup_service, privacy_service, receipt_service, reorder_service, settings_service,
+                          table_pay_service, table_service)
 from app.services.customer_session import current_member
 from app.services.menu_service import menu_categories, storefront_payload
 from app.services.order_service import find_by_client_order_id, find_promo, process_checkout
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
-from app.utils import get_json_dict, safe_int
+from app.utils import get_json_dict, hub_only, json_etag_response, safe_int, store_only
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -90,10 +91,9 @@ def _apply_node_stock(payload, node_stock, sold_out_ids):
 
 
 @customer_bp.route('/pickup_node', methods=['POST'], endpoint='set_pickup_node')
+@hub_only
 def set_pickup_node():
     """線上端：設定取餐分店 (存在 session)"""
-    if not sync_runtime.is_hub():
-        abort(404)
     uuid = (request.form.get('node_uuid') or '').strip()
     node = next((n for n in _online_nodes() if n.uuid == uuid), None)
     if node is None:
@@ -155,7 +155,7 @@ def customer_index():
         pickup_node=pickup_node,
         dining_table=None if is_hub else table_service.current_table(),
         table_pay_enabled=(not is_hub) and table_pay_service.enabled(),
-        group_order_enabled=(not is_hub) and bool(settings_service.get('group_order').get('enabled')),
+        group_order_enabled=(not is_hub) and group_order_service.enabled(),
         table_expired=False if is_hub else table_service.table_binding_expired(),
         tenant=g.tenant,
         unavailable=unavailable,
@@ -338,13 +338,12 @@ OFFLINE_MAX_MINUTES = 180   # 斷線暫存超過 3 小時的訂單不再自動�
 
 @customer_bp.route('/api/kiosk/offline_order', methods=['POST'], endpoint='offline_order')
 @limiter.limit('60/minute')
+@store_only
 def offline_order():
     """
     點餐機斷線時暫存在瀏覽器的訂單，連線恢復後補送 (static/js/kiosk-offline.js)。
     一律以訪客、櫃檯付款 (現金) 建立，不使用點數 / 優惠券 / 紅利 / 寄杯；以 client_order_id 去重 (重送回傳原訂單)。
     """
-    if sync_runtime.is_hub():
-        abort(404)
     data = get_json_dict()
     if str(data.get('shop') or '') != g.tenant.slug:
         raise AppError('暫存單的店家與目前店家不同，請由店員處理', 409, wrong_shop=True)
@@ -440,7 +439,6 @@ def api_menu_availability():
     點餐頁每 30 秒輪詢的「可點 / 售完 / 價格」狀態，帶 ETag：內容沒變時回 304 (不傳內容、前端不重畫)。
     售完或恢復供應時點餐機不必重新整理就會更新 (以前只有結帳被擋下或重新載入頁面才知道)。
     """
-    import hashlib
     import json as _json
     is_hub = sync_runtime.is_hub()
     pickup_node = _pickup_node(_online_nodes()) if is_hub else None
@@ -450,15 +448,7 @@ def api_menu_availability():
     payload = {str(i.id): {'available': avail[i.id][0], 'hint': i18n_service.translate_message(avail[i.id][1]), 'price': i.unit_price,
                            'original_price': i.list_price, 'prices': {ch: i.price_for(ch) for ch in ('dine_in', 'takeout', 'online', 'delivery')}}
                for i in items}
-    body = _json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
-    if request.headers.get('If-None-Match') == etag:
-        resp = current_app.response_class(status=304)
-    else:
-        resp = current_app.response_class(body, mimetype='application/json')
-    resp.headers['ETag'] = etag
-    resp.headers['Cache-Control'] = 'no-cache'
-    return resp
+    return json_etag_response(_json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
 
 
 def _receipt_order_key():
@@ -473,7 +463,7 @@ def api_receipt_email(order_id):
     """收據視窗「寄到信箱」：會員自己的或本次進場訪客的訂單；會員可記住 Email"""
     from app.services import receipt_service
     order = _own_order(order_id)
-    data = request.get_json(silent=True) or {}
+    data = get_json_dict()
     receipt_service.request_email(order, data.get('email'), remember=bool(data.get('remember')))
     db.session.commit()
     return jsonify({'success': True, 'message': '電子收據將寄到您的信箱', 'message_i18n': i18n_service.translate_message('電子收據將寄到您的信箱')})
@@ -497,7 +487,7 @@ def api_gift_card_balance():
     cfg = settings_service.get('gift_card')
     if not (cfg.get('enabled') and cfg.get('kiosk_enabled')) or sync_runtime.is_hub():
         raise AppError('此點餐管道未開放禮物卡付款', 404)
-    card = giftcard_service.find(g.tenant_id, (request.get_json(silent=True) or {}).get('code'))
+    card = giftcard_service.find(g.tenant_id, get_json_dict().get('code'))
     if card.status != 'active':
         raise AppError('此禮物卡已作廢', 409)
     return jsonify({'success': True, 'masked_code': card.masked_code, 'balance': giftcard_service.balance(card)})

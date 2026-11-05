@@ -9,11 +9,9 @@ from sqlalchemy import update
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.enums import PAYMENT_METHOD_LABELS
 from app.models.order import Order
 from app.models.printing import Printer, PrintJob
-from app.models.tenant import Tenant
-from app.services import escpos, kitchen_service, settings_service
+from app.services import escpos, kitchen_service, receipt_service, settings_service
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
@@ -25,62 +23,22 @@ def _printers(tenant_id, role):
 
 
 def build_receipt(order, printer, title='交易明細'):
-    shop = db.session.get(Tenant, order.tenant_id)
-    cfg = settings_service.get('pos', order.tenant_id)
+    """熱感機收據：內容來自 receipt_service.receipt_rows (與電子收據同一份)，頁尾讀 POS 設定的 receipt_footer"""
     t = escpos.Ticket(printer.paper_width, printer.encoding)
-    t.text(shop.name if shop else '', bold=True, size=2, align='center')
-    t.text(title, align='center')
-    t.rule('=')
-    t.text(f'取餐號碼 #{order.display_pickup_number:03d}', bold=True, size=2, align='center')
-    t.row('單號', f'#{order.id}')
-    t.row('時間', order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '')
-    t.row('顧客/桌號', order.table_number or '')
-    t.row('用餐方式', order.order_type or '')
-    if order.cashier_username:
-        t.row('收銀', order.cashier_username)
-    t.rule()
-    for it in order.items:
-        t.row(f'{it.display_name} x{it.quantity}', f'${it.price * it.quantity}')
-        if it.customization:
-            t.text(f'  {it.customization}')
-    t.rule()
-    t.row('小計', f'${order.subtotal}')
-    for label, value in (('促銷', order.promotion_discount), ('會員折扣', order.member_discount),
-                         ('整單折扣', order.manual_discount)):
-        if value:
-            t.row(label, f'-${value}')
-    other = (order.discount_amount or 0) - (order.promotion_discount or 0) - (order.member_discount or 0) \
-        - (order.manual_discount or 0)
-    if other > 0:
-        t.row('優惠券/點數', f'-${other}')
-    if order.service_charge:
-        t.row('服務費', f'+${order.service_charge}')
-    if order.delivery_fee:
-        t.row('外送費', f'+${order.delivery_fee}')
-    if order.delivery_address:
-        t.text(f'外送：{order.delivery_address}', bold=True)
-        t.text(f'電話：{order.delivery_phone}　區域：{order.delivery_zone}')
-    t.row('應付總額', f'${order.total_price}', bold=True)
-    t.row('付款方式', PAYMENT_METHOD_LABELS.get(order.payment_method, order.payment_method))
-    if order.payment_method == 'Cash':
-        t.row('實收', f'${order.cash_received or order.total_price}')
-        t.row('找零', f'${order.cash_change or 0}')
-    if order.payment_reference:
-        t.row('禮物卡' if order.payment_method == '禮物卡' else '授權碼/交易序號', order.masked_payment_reference[:20])
-    inv = order.invoice_summary()
-    if inv and inv.get('invoice_no'):
-        t.rule()
-        t.row('電子發票', inv['invoice_no'])
-        t.row('隨機碼', inv.get('random_number') or '')
-        t.row('載具', inv.get('carrier') or '')
-    if order.user and order.points_earned:
-        t.row('本次贈點', f'+{order.points_earned}')
-    t.rule()
-    base = (shop.table_qr_base_url if shop else '') or ''
-    if base:
-        t.text('掃描 QR code 查看出餐進度', align='center')
-        t.qr(f'{base.rstrip("/")}/track/{order.uuid}', size=5)
-    t.text(cfg.get('receipt_footer') or '謝謝光臨', align='center')
+    for row in receipt_service.receipt_rows(order, detailed=True, title=title):
+        kind = row[0]
+        if kind == 'text':
+            t.text(row[1], **row[2])
+        elif kind == 'row':
+            t.row(row[1], row[2], bold=row[3].get('bold', False))
+        elif kind == 'item':
+            t.row(row[1], row[2])
+        elif kind == 'rule':
+            t.rule(row[1])
+        elif kind == 'track':
+            t.text('掃描 QR code 查看出餐進度', align='center')
+            t.qr(row[1], size=5)
+    t.text(settings_service.get('pos', order.tenant_id).get('receipt_footer') or '謝謝光臨', align='center')
     t.cut()
     return t.bytes()
 

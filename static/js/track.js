@@ -12,26 +12,13 @@
     let lastDelivery = data.delivery_status || '';
     let notified = data.status === 'Completed';
 
-    function beep() {
-        try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (!Ctx) return;
-            const ctx = new Ctx();
-            const osc = ctx.createOscillator();
-            osc.frequency.value = 880;
-            osc.connect(ctx.destination);
-            osc.start();
-            osc.stop(ctx.currentTime + 0.4);
-        } catch (err) { /* 瀏覽器不允許自動播放 */ }
-    }
-
     function announceReady(d) {
         if (notified) return;
         notified = true;
         if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]);
-        beep();
+        Kiosk.beep(880, 400);
         if (window.Notification && Notification.permission === 'granted') {
-            try { new Notification(Kiosk.t('track_ready_title', '餐點已完成'), { body: `${Kiosk.t('track_pickup_no', '取餐號碼')} #${String(d.pickup_number).padStart(3, '0')}${Kiosk.t('track_ready_body', '，請至櫃檯取餐')}` }); } catch (err) { /* 部分手機不支援 */ }
+            try { new Notification(Kiosk.t('track_ready_title', '餐點已完成'), { body: `${Kiosk.t('track_pickup_no', '取餐號碼')} ${Kiosk.pickupNo(d.pickup_number)}${Kiosk.t('track_ready_body', '，請至櫃檯取餐')}` }); } catch (err) { /* 部分手機不支援 */ }
         }
     }
 
@@ -58,7 +45,8 @@
     }
 
     function apply(d) {
-        numberEl.textContent = d.pickup_pending ? Kiosk.t('pending_branch', '待分店確認') : `#${String(d.pickup_number).padStart(3, '0')}`;
+        // 待分店確認的文字沿用本頁的 pending_branch 字串 (共用的 pickup_pending 字串多了「取餐號：」前綴)
+        numberEl.textContent = d.pickup_pending ? Kiosk.t('pending_branch', '待分店確認') : Kiosk.pickupNo(d.pickup_number);
         statusEl.textContent = Kiosk.t(`status_${d.status}`, d.status_label);
         statusEl.className = `fs-4 fw-bold mt-2 ${d.status === 'Completed' ? 'text-success' : (d.status === 'Cancelled' ? 'text-danger' : '')}`;
         if (d.status === 'Completed') {

@@ -14,7 +14,7 @@ from app.services import line_service, settings_service, sms_service
 from app.services.audit import record_staff_audit
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.customer_session import current_member, login_member
-from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, validate_phone, validate_pin
+from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, member_required, validate_phone, validate_pin
 
 member_auth_bp = Blueprint('member_auth', __name__)
 LINE_STATE_KEY = 'line_login'
@@ -119,10 +119,8 @@ def line_pending_discard():
 
 
 @member_auth_bp.route('/auth/line/unbind', methods=['POST'], endpoint='line_unbind')
-def line_unbind():
-    member = current_member()
-    if member is None:
-        return redirect(url_for('customer.customer_index'))
+@member_required('customer.customer_index')
+def line_unbind(member):
     from app.services.customer_session import require_confirmed
     require_confirmed(member, request.form.get('pin'), '解除 LINE 綁定')
     member.line_user_id = ''

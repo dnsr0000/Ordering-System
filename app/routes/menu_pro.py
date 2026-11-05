@@ -1,6 +1,5 @@
 """後台：菜單與套餐頁 (/admin/menu)：品項與套餐清單 (新增 / 編輯 / 刪除的 POST 在 admin.py)，
 以及每個品項的進階設定 (供應時段 / 排程、通路價、過敏原與素食、多語系、外送代碼、成本) 與分類翻譯"""
-from datetime import date
 
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
@@ -12,19 +11,9 @@ from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.settings_service import TIME_RE
 from app.services.approval_service import permission_required
-from app.utils import get_own, safe_int
+from app.utils import get_own, parse_date, safe_int
 
 menu_pro_bp = Blueprint('menu_pro', __name__)
-
-
-def _date(value):
-    value = (value or '').strip()
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        raise AppError(f'日期格式不正確：{value}')
 
 
 def apply_pro_form(item, form):
@@ -35,7 +24,7 @@ def apply_pro_form(item, form):
     days = ''.join(sorted({d for d in form.getlist('avail_days') if d in '1234567'}))
     if not days:
         raise AppError('請至少勾選一個供應星期')
-    sale_from, sale_until = _date(form.get('sale_from')), _date(form.get('sale_until'))
+    sale_from, sale_until = parse_date(form.get('sale_from')), parse_date(form.get('sale_until'))
     if sale_from and sale_until and sale_until < sale_from:
         raise AppError('販售結束日不可早於開始日')
     item.avail_start, item.avail_end, item.avail_days = start, end, days

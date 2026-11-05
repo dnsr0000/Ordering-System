@@ -23,13 +23,14 @@ from app.models.group_order import GroupOrder, GroupOrderEntry, hash_key
 from app.models.menu import MenuItem
 from app.services import settings_service
 from app.sync import runtime as sync_runtime
-from app.utils import safe_int
+from app.utils import parse_local_dt, safe_int
 
 PHONE_DIGITS = 10
 ORDER_TYPES = (OrderType.TAKE_OUT, OrderType.DINE_IN)
 
 
 config = settings_service.reader('group_order')
+enabled = settings_service.flag('group_order')
 
 
 def ensure_enabled(tenant_id):
@@ -37,13 +38,6 @@ def ensure_enabled(tenant_id):
         raise AppError('團體預購請在門市使用', 404)
     if not config(tenant_id).get('enabled'):
         raise AppError('本店目前未開放團體預購', 404)
-
-
-def _parse_dt(raw, label):
-    try:
-        return datetime.strptime(str(raw or '').strip()[:16], '%Y-%m-%dT%H:%M')
-    except ValueError:
-        raise AppError(f'請選擇{label}')
 
 
 def create(tenant_id, form, staff='', now=None):
@@ -57,13 +51,13 @@ def create(tenant_id, form, staff='', now=None):
         raise AppError('請輸入團購名稱與主揪姓名')
     if len(phone) != PHONE_DIGITS or not phone.startswith('09'):
         raise AppError('請輸入主揪的手機號碼 (09 開頭 10 碼)')
-    pickup_at = _parse_dt(form.get('pickup_at'), '取餐時間')
+    pickup_at = parse_local_dt(form.get('pickup_at'), '取餐時間')
     if pickup_at < now + timedelta(minutes=int(cfg.get('min_lead_minutes') or 0)):
         raise AppError(f"取餐時間至少要在 {cfg.get('min_lead_minutes')} 分鐘後")
     if pickup_at > now + timedelta(days=int(cfg.get('max_days') or 14)):
         raise AppError(f"最多只能預約 {cfg.get('max_days')} 天內")
     if form.get('deadline'):
-        deadline = _parse_dt(form.get('deadline'), '截止時間')
+        deadline = parse_local_dt(form.get('deadline'), '截止時間')
     else:
         deadline = pickup_at - timedelta(minutes=int(cfg.get('deadline_minutes') or 60))
     if deadline <= now:

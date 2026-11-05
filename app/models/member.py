@@ -1,8 +1,17 @@
 """會員等級、儲值金異動帳、簡訊驗證碼"""
-from datetime import datetime
-
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped
+
+
+def mask_code(code, dashed=False):
+    """
+    禮物卡卡號遮罩 (完整卡號只留在訂單 / 卡片供退款)：收據與訂單紀錄用 1234****3456，
+    後台列表與顧客查詢 (dashed=True) 用 1234-****-****-3456；不足 8 碼時原樣回傳。
+    """
+    code = str(code or '')
+    if len(code) < 8:
+        return code
+    return f'{code[:4]}-****-****-{code[-4:]}' if dashed else f'{code[:4]}****{code[-4:]}'
 
 
 class MemberTier(TenantScoped, db.Model):
@@ -21,7 +30,7 @@ class MemberTier(TenantScoped, db.Model):
     color = db.Column(db.String(20), nullable=False, default='secondary')
 
 
-class WalletLedger(TenantScoped, db.Model):
+class WalletLedger(TenantScoped, CreatedAtMixin, db.Model):
     """
     儲值金異動帳 (只新增、不修改)；user.wallet_balance 為合計快取 (與點數異動帳相同的設計，跨分店同步後重算)。
     reason：topup 加值 / bonus 加值贈送 / pay 消費 / refund 退回 / adjust 後台調整
@@ -35,10 +44,9 @@ class WalletLedger(TenantScoped, db.Model):
     order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True)
     note = db.Column(db.String(200), nullable=False, default='')
     staff_username = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
-class OtpCode(TenantScoped, db.Model):
+class OtpCode(TenantScoped, CreatedAtMixin, db.Model):
     """簡訊驗證碼 (只存雜湊)。purpose：register 註冊 / reset_pin 忘記 PIN"""
     __tablename__ = 'otp_code'
 
@@ -50,11 +58,10 @@ class OtpCode(TenantScoped, db.Model):
     attempts = db.Column(db.Integer, nullable=False, default=0)
     consumed_at = db.Column(db.DateTime, nullable=True)
     verified_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     ip_address = db.Column(db.String(50), nullable=False, default='')
 
 
-class StampLedger(TenantScoped, db.Model):
+class StampLedger(TenantScoped, CreatedAtMixin, db.Model):
     """
     集點卡章數異動帳 (只新增)：earn 消費得章 / cancel 訂單取消扣回 / complete 集滿兌換 (負數) / adjust 後台調整。
     會員目前章數 = 合計；跨分店同步後自然合併 (與點數異動帳相同)。
@@ -66,10 +73,9 @@ class StampLedger(TenantScoped, db.Model):
     delta = db.Column(db.Integer, nullable=False)
     reason = db.Column(db.String(20), nullable=False, default='')
     order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True, index=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
-class GiftCard(TenantScoped, db.Model):
+class GiftCard(TenantScoped, CreatedAtMixin, db.Model):
     """
     禮物卡 (商品禮券)：卡號 16 碼 (自然鍵，各分店通用)，餘額 = 異動帳合計。
     依「商品 (服務) 禮券定型化契約應記載及不得記載事項」：不得記載使用期限，售出時需提供履約保證 (見 DEPLOY.txt)。
@@ -83,12 +89,11 @@ class GiftCard(TenantScoped, db.Model):
     status = db.Column(db.String(10), nullable=False, default='active')   # active / void
     note = db.Column(db.String(100), nullable=False, default='')
     sold_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     voided_at = db.Column(db.DateTime, nullable=True)
 
     @property
     def masked_code(self):
-        return f'{self.code[:4]}-****-****-{self.code[-4:]}' if len(self.code or '') >= 8 else self.code
+        return mask_code(self.code, dashed=True)
 
 
 class PassProduct(TenantScoped, db.Model):
@@ -113,7 +118,7 @@ class PassProduct(TenantScoped, db.Model):
                 'menu_item_id': self.menu_item_id, 'item_name': self.menu_item.name if self.menu_item else ''}
 
 
-class MemberPass(TenantScoped, db.Model):
+class MemberPass(TenantScoped, CreatedAtMixin, db.Model):
     """會員持有的寄杯：剩餘次數 remaining = 異動帳 (pass_ledger) 合計 (本機欄位，同步後重算，與點數相同)"""
     __tablename__ = 'member_pass'
 
@@ -127,7 +132,6 @@ class MemberPass(TenantScoped, db.Model):
     sale_order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True)
     status = db.Column(db.String(10), nullable=False, default='active')   # active / void
     remaining = db.Column(db.Integer, nullable=False, default=0)          # 本機：異動帳合計
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     menu_item = db.relationship('MenuItem')
     user = db.relationship('User')
@@ -138,7 +142,7 @@ class MemberPass(TenantScoped, db.Model):
                 'status': self.status, 'created_at': self.created_at.strftime('%Y-%m-%d') if self.created_at else ''}
 
 
-class PassLedger(TenantScoped, db.Model):
+class PassLedger(TenantScoped, CreatedAtMixin, db.Model):
     """寄杯異動帳 (只新增)：sale 購買 (+次數) / redeem 兌換 (負數) / cancel 兌換訂單取消退回 / void 作廢"""
     __tablename__ = 'pass_ledger'
 
@@ -148,10 +152,9 @@ class PassLedger(TenantScoped, db.Model):
     reason = db.Column(db.String(20), nullable=False, default='')
     order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True, index=True)
     staff_username = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
-class GiftCardLedger(TenantScoped, db.Model):
+class GiftCardLedger(TenantScoped, CreatedAtMixin, db.Model):
     """禮物卡異動帳 (只新增)：issue 售出 / redeem 消費 (負數) / refund 訂單退款退回 / void 作廢 (扣為 0)"""
     __tablename__ = 'gift_card_ledger'
 
@@ -161,6 +164,5 @@ class GiftCardLedger(TenantScoped, db.Model):
     reason = db.Column(db.String(20), nullable=False, default='')
     order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True, index=True)
     staff_username = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     gift_card = db.relationship('GiftCard', backref=db.backref('entries', lazy='dynamic', passive_deletes=True))

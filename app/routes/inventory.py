@@ -7,10 +7,10 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.inventory import Ingredient, IngredientLot, RecipeLine, StockMovement, Supplier
 from app.models.menu import MenuItem
-from app.services import carbon_service, inventory_service, settings_service
+from app.services import carbon_service, inventory_service, report_service, settings_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import find_own, get_own, safe_float, safe_int
+from app.utils import find_own, get_own, parse_date, safe_float, safe_int
 
 inventory_bp = Blueprint('inventory', __name__)
 
@@ -73,12 +73,7 @@ def manage():
             if action == 'waste':
                 qty = -abs(qty)
             cost = safe_float(f.get('unit_cost'), None) if action == 'purchase' and f.get('unit_cost') else None
-            expires_on = None
-            if action == 'purchase' and f.get('expires_on'):
-                try:
-                    expires_on = date.fromisoformat(f.get('expires_on'))
-                except ValueError:
-                    raise AppError('有效期限格式不正確')
+            expires_on = parse_date(f.get('expires_on'), '有效期限') if action == 'purchase' else None
             inventory_service.adjust(ing, qty, action, f.get('note'), unit_cost=cost, expires_on=expires_on)
             record_staff_audit('INVENTORY_' + action.upper(), details=f'{REASON_LABELS[action]}：{ing.name} {qty:+g} {ing.unit}')
             flash(f'{REASON_LABELS[action]}：{ing.name} {qty:+g} {ing.unit}', 'success')
@@ -125,7 +120,8 @@ def manage():
         recipes.setdefault(rl.menu_item_id, []).append(rl)
     selected = find_own(MenuItem, request.args.get('item')) if request.args.get('item') else None
     movements = StockMovement.query.order_by(StockMovement.id.desc()).limit(100).all()
-    costs = {i.id: inventory_service.item_unit_cost(i) for i in items if i.id in recipes}
+    all_costs = report_service.unit_costs(g.tenant_id)
+    costs = {i.id: round(all_costs.get(i.id, 0.0), 2) for i in items if i.id in recipes}
     carbon_labels = {i.id: carbon_service.label(i.carbon_grams) for i in items}
     return render_template('admin_inventory.html', ingredients=ingredients, items=items, recipes=recipes,
                            selected=selected, movements=movements, labels=REASON_LABELS, costs=costs,

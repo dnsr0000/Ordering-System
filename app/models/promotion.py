@@ -1,6 +1,6 @@
 """促銷活動 (買 X 送 Y、第 N 件折扣、滿額折、滿額贈)，計算規則見 app/services/promotion_service.py"""
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import KindLabelMixin, TenantScoped
 
 PROMOTION_KINDS = {
     'bogo': '買 X 送 Y',
@@ -10,8 +10,9 @@ PROMOTION_KINDS = {
 }
 
 
-class Promotion(TenantScoped, db.Model):
+class Promotion(KindLabelMixin, TenantScoped, db.Model):
     __tablename__ = 'promotion'
+    KINDS = PROMOTION_KINDS
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(60), nullable=False)
@@ -36,7 +37,3 @@ class Promotion(TenantScoped, db.Model):
     stack_with_coupon = db.Column(db.Boolean, nullable=False, default=True)
     priority = db.Column(db.Integer, nullable=False, default=0)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-
-    @property
-    def kind_label(self):
-        return PROMOTION_KINDS.get(self.kind, self.kind)

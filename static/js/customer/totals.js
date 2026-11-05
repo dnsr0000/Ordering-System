@@ -1,19 +1,23 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：促銷預覽、金額計算 (與後端 process_checkout 相同的進位規則)、優惠券 / 點數。
  * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 金額的算法 (含點數上限 Math.floor(remaining + 0.5)) 在 shared/totals.js，這裡只負責讀畫面上的值與寫回畫面。
  */
 import {
     $, api, html, isGuest, menuItems, pageData, pro, rewardConfig, setText, state, toggleRow, ui,
 } from './core.js';
+import { computeTotals as sharedComputeTotals, deliveryFee as sharedDeliveryFee } from '../shared/totals.js';
+import { createPreviewScheduler, payloadLine } from '../shared/orderpayload.js';
+import { createPromoVerifier, renderPromoMessage } from '../shared/promo.js';
 
 // ================================================================ 促銷活動預覽 (實際以後端結帳計算為準)
+const preview = createPreviewScheduler(runPromotionPreview, 300);
+
 export function schedulePromotionPreview() {
-    clearTimeout(state.promotionTimer);
-    state.promotionTimer = setTimeout(runPromotionPreview, 300);
+    preview.schedule();
 }
 
-export async function runPromotionPreview() {
-    const seq = ++state.promotionSeq;
+export async function runPromotionPreview(isCurrent = () => true) {
     if (!state.cart.length) {
         state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
         state.eta = 0;
@@ -21,14 +25,14 @@ export async function runPromotionPreview() {
         calculateTotal();
         return;
     }
-    refreshEta(seq);
+    refreshEta(isCurrent);
     try {
         const res = await api('/api/promotions/preview', {
-            json: { items: state.cart.map(itemPayload), channel: pageData.table ? 'table' : 'kiosk', order_type: $('orderType').value },
+            json: { items: state.cart.map(payloadLine), channel: pageData.table ? 'table' : 'kiosk', order_type: $('orderType').value },
         });
-        if (seq === state.promotionSeq) state.promotion = res;
+        if (isCurrent()) state.promotion = res;
     } catch (err) {
-        if (seq === state.promotionSeq) state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
+        if (isCurrent()) state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
     }
     calculateTotal();
 }
@@ -41,63 +45,43 @@ export function renderEta() {
     setText('cart-eta', state.eta || 0);
 }
 
-export async function refreshEta(seq) {
+export async function refreshEta(isCurrent = () => true) {
     if (!pro.etaEnabled) return;
     try {
-        const res = await api('/api/eta', { json: { items: state.cart.map(itemPayload) } });
-        if (seq === state.promotionSeq) state.eta = Number(res.minutes) || 0;
+        const res = await api('/api/eta', { json: { items: state.cart.map(payloadLine) } });
+        if (isCurrent()) state.eta = Number(res.minutes) || 0;
     } catch (err) {
-        if (seq === state.promotionSeq) state.eta = 0;
+        if (isCurrent()) state.eta = 0;
     }
     renderEta();
 }
 
-export function itemPayload(l) {
-    return {
-        menu_item_id: l.menu_item_id,
-        quantity: l.quantity,
-        modifier_ids: l.modifier_ids,
-        combo_option_id: l.combo_option_id,
-        is_add_on: l.is_add_on,
-        is_reward: l.is_reward,
-        customization: l.customization,
-        size: l.size || '',
-    };
-}
-
-// ================================================================ 金額計算 (與後端 process_checkout 相同的進位規則)
+// ================================================================ 金額計算 (shared/totals.js；這裡讀取畫面上的點數 / 用餐方式 / 外送區域)
 export function computeTotals() {
     const subtotal = state.cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
-    const promotionDiscount = Math.min(Number(state.promotion.discount) || 0, subtotal);
-    const afterPromotion = Math.max(0, subtotal - promotionDiscount);
-    const promo = state.promotion.blocks_coupon ? 0 : Math.min(state.appliedPromoDiscount, afterPromotion);
-    let remaining = Math.max(0, afterPromotion - promo);
-    const tierPct = Number(pro.tierDiscount) || 0;
-    const tier = tierPct > 0 ? remaining * Math.min(100, tierPct) / 100 : 0;
-    remaining = Math.max(0, remaining - tier);
-    let pointsUsed = 0;
-    let pointsDiscount = 0;
     const toggle = $('usePointsToggle');
-    if (!isGuest && rewardConfig.isEnabled && toggle && toggle.checked) {
-        const input = $('pointsToUse');
-        const ppd = Math.max(1, Number(rewardConfig.pointsPerDollar) || 1);
-        let maxCash = Math.floor(remaining + 0.5);   // 與後端相同：上限 = 四捨五入後的應付金額 (百分比優惠券留下的 .5 也折得掉)
-        if (rewardConfig.maxDiscount > 0) maxCash = Math.min(maxCash, rewardConfig.maxDiscount);
-        const maxPoints = Math.min(state.userPoints, maxCash * ppd);
-        let val = Math.floor(Number(input.value) || 0);
-        val = Math.min(Math.max(val, 0), maxPoints);
-        if (String(val) !== input.value) input.value = val;
-        pointsDiscount = Math.min(Math.floor(val / ppd), maxCash);
-        pointsUsed = pointsDiscount * ppd;
-    }
-    const afterDiscounts = Math.max(0, remaining - pointsDiscount);
-    const servicePct = Number(pro.serviceChargePercent) || 0;
+    const input = $('pointsToUse');
+    const pointsOn = !isGuest && rewardConfig.isEnabled && toggle && toggle.checked;
     const dineIn = pageData.table || $('orderType').value === '內用';
-    const service = servicePct > 0 && pro.serviceChargeDineIn && dineIn ? Math.floor(afterDiscounts * servicePct / 100 + 0.5) : 0;
-    const delivery = deliveryFee(subtotal);
-    const final = Math.floor(afterDiscounts + 0.5) + service + delivery;
-    const earned = isGuest ? 0 : Math.floor((final - delivery) / Math.max(1, Number(rewardConfig.spendPerPoint) || 100));
-    return { subtotal, promo, pointsUsed, pointsDiscount, final, earned, promotionDiscount, tier, service, delivery };
+    const t = sharedComputeTotals({
+        subtotal,
+        promotionDiscount: state.promotion.discount,
+        blocksCoupon: state.promotion.blocks_coupon,
+        couponDiscount: state.appliedPromoDiscount,
+        tierPct: pro.tierDiscount,
+        points: pointsOn ? {
+            enabled: true, available: state.userPoints, requested: input.value, ppd: rewardConfig.pointsPerDollar,
+            maxDiscount: rewardConfig.maxDiscount,
+        } : null,
+        servicePct: pro.serviceChargePercent,
+        serviceApplies: Boolean(pro.serviceChargeDineIn && dineIn),
+        deliveryFee: deliveryFee(subtotal),
+        spendPerPoint: rewardConfig.spendPerPoint,
+        earnsPoints: !isGuest,
+    });
+    // 輸入的點數超過上限時直接修正輸入框
+    if (pointsOn && String(t.pointsRequested) !== input.value) input.value = t.pointsRequested;
+    return t;
 }
 
 /** 外送到府的外送費 (與後端相同：依配送區域，商品小計達免運門檻免收) */
@@ -105,8 +89,7 @@ export function deliveryFee(subtotal) {
     if (!pro.homeDelivery || !$('orderType') || $('orderType').value !== '外送到府') return 0;
     const opt = $('deliveryZone') && $('deliveryZone').selectedOptions[0];
     if (!opt) return 0;
-    const freeOver = Number(pro.homeDelivery.freeOver) || 0;
-    return freeOver && subtotal >= freeOver ? 0 : Number(opt.dataset.fee) || 0;
+    return sharedDeliveryFee(subtotal, opt.dataset.fee, pro.homeDelivery.freeOver);
 }
 
 export function calculateTotal() {
@@ -197,30 +180,27 @@ export async function syncLatestUserCoupons() {
     }
 }
 
+const promo = createPromoVerifier('/api/verify_promo');
+
 export function showPromoMessage(ok, message) {
-    const el = $('promo-msg');
-    el.className = `small mt-1 ${ok ? 'text-success' : 'text-danger'}`;
-    Kiosk.setHtml(el, html`<i class="bi ${ok ? 'bi-check-circle' : 'bi-x-circle'}"></i> ${message}`);
+    renderPromoMessage($('promo-msg'), ok, message, 'small mt-1');
 }
 
+/** 驗證優惠碼 (shared/promo.js 帶請求序號：連續輸入時只採用最新一次的結果)；失敗或連線錯誤時清掉折扣 */
 export async function verifyPromo(code, { silent = false } = {}) {
     const subtotal = state.cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
-    try {
-        const res = await api('/api/verify_promo', { json: { promo_code: code, subtotal: Math.round(subtotal) } });
-        state.activePromoCode = res.valid ? code : '';
-        state.appliedPromoDiscount = res.valid ? Number(res.discount) || 0 : 0;
-        if (!silent || !res.valid) showPromoMessage(res.valid, res.message);
-    } catch (err) {
-        state.activePromoCode = '';
-        state.appliedPromoDiscount = 0;
-        showPromoMessage(false, err.message);
-    }
+    const res = await promo.verify({ promo_code: code, subtotal: Math.round(subtotal) });
+    if (!res) return;   // 已有更新的驗證取代
+    state.activePromoCode = res.valid ? code : '';
+    state.appliedPromoDiscount = res.discount;
+    if (!silent || !res.valid) showPromoMessage(res.valid, res.message);
     calculateTotal();
 }
 
 export function applyPromoCode() {
     const code = $('promoInput').value.trim();
     if (!code) {
+        promo.invalidate();
         state.activePromoCode = '';
         state.appliedPromoDiscount = 0;
         $('promo-msg').textContent = '';

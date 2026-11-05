@@ -6,13 +6,13 @@
 - 售完 / 供應時段 / 原料不足 / 分店上下架的判斷與點餐頁相同 (沿用 customer._availability_map)。
 - 設定在後台「數位看板」區塊 (settings_service 的 signage)。
 """
-import hashlib
 import json
 from datetime import date, datetime
 
-from flask import Blueprint, abort, current_app, g, render_template, request, url_for
+from flask import Blueprint, abort, g, render_template, url_for
 
 from app.extensions import limiter
+from app.utils import json_etag_response
 from app.models.enums import OrderStatus
 from app.models.menu import MenuItem
 from app.models.order import Order
@@ -134,12 +134,4 @@ def api_signage():
         'pickup': _pickup() if cfg['showPickup'] else None,
         'intake': intake_service.customer_notice(g.tenant_id, now=now),
     }
-    body = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
-    if request.headers.get('If-None-Match') == etag:
-        resp = current_app.response_class(status=304)
-    else:
-        resp = current_app.response_class(body, mimetype='application/json')
-    resp.headers['ETag'] = etag
-    resp.headers['Cache-Control'] = 'no-cache'
-    return resp
+    return json_etag_response(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')))

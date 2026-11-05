@@ -17,7 +17,6 @@ import json
 from datetime import datetime
 
 from flask import g, has_request_context
-from flask_login import current_user
 from sqlalchemy import update
 
 from app.errors import AppError
@@ -27,17 +26,11 @@ from app.models.inventory import Ingredient
 from app.models.menu import MenuItem
 from app.models.settings import HqSetting
 from app.sync import runtime as sync_runtime
-from app.utils import safe_float, safe_int
+from app.utils import current_staff_name, safe_float, safe_int
 
 SITES_KEY = 'branch_sites'
 HQ_NAME = '總部 / 中央廚房'
 MAX_LINES = 50
-
-
-def _staff():
-    if has_request_context() and getattr(current_user, 'is_authenticated', False):
-        return current_user.username
-    return 'system'
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +225,7 @@ def create_request(tenant_id, from_site, raw_lines, note='', staff=''):
     lines = _clean_lines(tenant_id, raw_lines)
     tr = StockTransfer(tenant_id=tenant_id, kind='request', from_site=from_site, to_site=me, from_name=site['name'],
                        to_name=site_name(tenant_id, me), status='requested', note=str(note or '')[:200],
-                       created_by=staff or _staff(), created_at=datetime.now())
+                       created_by=staff or current_staff_name(), created_at=datetime.now())
     tr.set_lines(lines)
     db.session.add(tr)
     db.session.flush()
@@ -248,7 +241,7 @@ def create_transfer(tenant_id, to_site, raw_lines, note='', staff=''):
     if site is None:
         raise AppError('請選擇收貨的總部或分店')
     lines = _clean_lines(tenant_id, raw_lines)
-    staff = staff or _staff()
+    staff = staff or current_staff_name()
     tr = StockTransfer(tenant_id=tenant_id, kind='transfer', from_site=me, to_site=to_site,
                        from_name=site_name(tenant_id, me), to_name=site['name'], status='shipped',
                        note=str(note or '')[:200], created_by=staff, created_at=datetime.now(),
@@ -311,7 +304,7 @@ def ship(tenant_id, transfer_id, shipped, staff=''):
         ln['shipped'] = round(max(0.0, safe_float(raw, ln['qty'])), 4) if raw not in (None, '') else ln['qty']
     if not any(ln['shipped'] for ln in lines):
         raise AppError('出貨數量都是 0；不出貨請按「拒絕」')
-    staff = staff or _staff()
+    staff = staff or current_staff_name()
     _claim(tr, 'requested', status='shipped', shipped_by=staff, shipped_at=datetime.now(),
            lines_json=json.dumps(lines, ensure_ascii=False))
     _deduct_for(tenant_id, tr, lines)
@@ -323,7 +316,7 @@ def reject(tenant_id, transfer_id, reason, staff=''):
     tr = get_transfer(tenant_id, transfer_id)
     if tr.from_site != local_site():
         raise AppError('只有出貨方可以拒絕', 403)
-    _claim(tr, 'requested', status='rejected', reason=str(reason or '無法出貨')[:200], shipped_by=staff or _staff())
+    _claim(tr, 'requested', status='rejected', reason=str(reason or '無法出貨')[:200], shipped_by=staff or current_staff_name())
     return tr
 
 
@@ -349,7 +342,7 @@ def receive(tenant_id, transfer_id, received, staff='', note=''):
         ln['received'] = round(max(0.0, safe_float(raw, sent)), 4) if raw not in (None, '') else sent
         if abs(ln['received'] - sent) > 1e-9:
             diffs.append(f"{ln['name']} 出 {sent:g} 收 {ln['received']:g}")
-    staff = staff or _staff()
+    staff = staff or current_staff_name()
     reason = '；'.join(filter(None, [str(note or '').strip()[:100], ('差異：' + '、'.join(diffs)) if diffs else '']))[:200]
     _claim(tr, 'shipped', status='received', received_by=staff, received_at=datetime.now(),
            lines_json=json.dumps(lines, ensure_ascii=False), reason=reason or tr.reason)

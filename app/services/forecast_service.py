@@ -4,29 +4,27 @@
 """
 import math
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import func
 
 from app.extensions import db
 from app.models.enums import OrderStatus
-from app.models.menu import MenuItem
+from app.models.menu import WEEKDAY_LABELS, MenuItem
 from app.models.order import Order, OrderItem
 from app.services import inventory_service
-
-WEEKDAYS = '一二三四五六日'
+from app.services.staffing_service import history_days, orders_by_hour
+from app.utils import day_bounds
 
 
 def forecast(target=None, weeks=4, today=None):
     today = today or date.today()
     target = target or today + timedelta(days=1)
-    days = [target - timedelta(days=7 * k) for k in range(1, weeks + 8) if target - timedelta(days=7 * k) < today][:weeks]
     per_day = defaultdict(lambda: defaultdict(int))
     hours = defaultdict(int)
     active_days = set()
-    for d in days:
-        t0 = datetime.combine(d, datetime.min.time())
-        t1 = t0 + timedelta(days=1)
+    for d in history_days(target, weeks, today):
+        t0, t1 = day_bounds(d)
         rows = db.session.query(OrderItem.menu_item_id, func.sum(OrderItem.quantity)) \
             .join(Order, Order.id == OrderItem.order_id) \
             .filter(Order.created_at >= t0, Order.created_at < t1, Order.status != OrderStatus.CANCELLED,
@@ -35,9 +33,8 @@ def forecast(target=None, weeks=4, today=None):
         for item_id, qty in rows:
             per_day[item_id][d] += int(qty or 0)
             active_days.add(d)
-        for (created,) in db.session.query(Order.created_at).filter(
-                Order.created_at >= t0, Order.created_at < t1, Order.status != OrderStatus.CANCELLED).all():
-            hours[created.hour] += 1
+        for h, c in orders_by_hour(d)[0].items():
+            hours[h] += c
     used = sorted(active_days)
     n = max(1, len(used))
     items = {m.id: m for m in MenuItem.query.filter(MenuItem.id.in_(list(per_day))).all()} if per_day else {}
@@ -61,6 +58,6 @@ def forecast(target=None, weeks=4, today=None):
             need = round(needs[ing.id], 2)
             ingredients.append({'id': ing.id, 'name': ing.name, 'unit': ing.unit, 'need': need,
                                 'stock': round(ing.stock or 0, 2), 'short': round(max(0, need - (ing.stock or 0)), 2)})
-    return {'target': target, 'weekday': WEEKDAYS[target.weekday()], 'days': used, 'weeks': len(used),
+    return {'target': target, 'weekday': WEEKDAY_LABELS[target.weekday()], 'days': used, 'weeks': len(used),
             'items': rows, 'hours': hour_rows, 'ingredients': ingredients,
             'total_qty': sum(r['qty'] for r in rows)}

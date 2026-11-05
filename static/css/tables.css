@@ -27,7 +27,7 @@ body.table-print-page { background: #fff; color: #111; }
 
 @media print {
     @page { size: A4; margin: 8mm; }
-    .no-print, .flash-stack { display: none !important; }
+    /* .no-print 與 .flash-stack 的隱藏在 theme.css */
     .qr-sheet { grid-template-columns: repeat(2, 1fr); padding: 0; gap: 6mm; }
     .qr-card { height: 88mm; }
 }

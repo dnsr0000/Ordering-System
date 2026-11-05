@@ -5,9 +5,7 @@
 (function () {
     'use strict';
 
-    const { html, setHtml } = Kiosk;
-    const $ = (id) => document.getElementById(id);
-    const money = (v) => `$${Math.round(Number(v) || 0).toLocaleString()}`;
+    const { html, setHtml, $, money } = Kiosk;
     const PAID_HOLD_MS = 10000;
     let paidUntil = 0;
 
@@ -45,7 +43,7 @@
         if (!msg || typeof msg !== 'object') return;
         if (msg.kind === 'paid') {
             paidUntil = Date.now() + PAID_HOLD_MS;
-            $('cdPickup').textContent = `#${String(msg.pickup || '').padStart(3, '0')}`;
+            $('cdPickup').textContent = Kiosk.pickupNo(msg.pickup || '');
             const change = Number(msg.change) || 0;
             $('cdPaidChange').classList.toggle('d-none', !(change > 0));
             $('cdPaidChange').textContent = `找您 ${money(change)}`;
@@ -60,6 +58,7 @@
         }
     }
 
+    // 客顯只顯示 HH:MM (Kiosk.startClock 是 HH:MM:SS)，並順便結束收款完成畫面的停留
     function tick() {
         $('cdClock').textContent = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
         if (paidUntil && Date.now() > paidUntil && $('customerDisplay').dataset.state === 'paid') {

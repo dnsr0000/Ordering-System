@@ -13,7 +13,6 @@ CSV 為 UTF-8 (含 BOM，Excel 直接開啟)；也可下載 Excel。科目代號
 import csv
 import io
 from collections import defaultdict
-from datetime import datetime, timedelta
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -22,7 +21,7 @@ from app.models.enums import PaymentMethod
 from app.models.order import Order
 from app.models.payment import Invoice, InvoiceStatus, PaymentKind, PaymentRecord
 from app.services import settings_service
-from app.utils import csv_safe, neutralize_formulas
+from app.utils import csv_safe, day_bounds, workbook_bytes
 
 METHOD_ACCOUNT = {
     PaymentMethod.CASH: 'acct_cash', PaymentMethod.CREDIT_CARD: 'acct_card', PaymentMethod.APPLE_PAY: 'acct_card',
@@ -49,15 +48,11 @@ def split_tax(amount, rate):
     return net, amount - net
 
 
-def _range(start, end):
-    return datetime.combine(start, datetime.min.time()), datetime.combine(end + timedelta(days=1), datetime.min.time())
-
-
 def journal(tenant_id, start, end, node_uuid=None):
     """[{date, no, lines: [{code, name, debit, credit, memo}], debit, credit}]"""
     cfg = settings_service.get('accounting', tenant_id)
     rate = int(cfg.get('tax_rate') or 0)
-    t0, t1 = _range(start, end)
+    t0, t1 = day_bounds(start, end)
     q = PaymentRecord.query.filter(PaymentRecord.tenant_id == tenant_id, PaymentRecord.created_at >= t0,
                                    PaymentRecord.created_at < t1)
     if node_uuid:
@@ -127,7 +122,7 @@ def journal_rows(vouchers):
 def invoices(tenant_id, start, end):
     cfg = settings_service.get('accounting', tenant_id)
     rate = int(cfg.get('tax_rate') or 0)
-    t0, t1 = _range(start, end)
+    t0, t1 = day_bounds(start, end)
     rows = Invoice.query.filter(Invoice.tenant_id == tenant_id, Invoice.invoice_no != '', Invoice.invoice_date >= t0,
                                 Invoice.invoice_date < t1).order_by(Invoice.invoice_date, Invoice.invoice_no).all()
     out = []
@@ -158,8 +153,4 @@ def to_xlsx(header, rows, title):
         c.font = Font(bold=True)
     for r in rows:
         ws.append(list(r))
-    neutralize_formulas(wb)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return workbook_bytes(wb)

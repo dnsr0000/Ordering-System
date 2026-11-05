@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import modal_head, screen_header %}
 
 {% block title %}廚房出單即時看板 (KDS){% endblock %}
 
@@ -8,17 +9,9 @@
 {% endblock %}
 
 {% block content %}
-<header class="header-kds py-2 px-4 mb-3 sticky-top">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-3">
-            <i class="bi bi-fire text-danger fs-2"></i>
-            <div>
-                <h4 class="mb-0 fw-bold text-white">廚房出單即時看板 (KDS){% if station %} • <span class="text-warning" id="kdsStationName">{{ station.name }}</span>{% endif %}</h4>
-                <small class="text-white-50">待製作訂單：<span id="pendingCountBadge" class="badge bg-danger fs-6">0</span> 筆</small>
-            </div>
-        </div>
-
-        <div class="d-flex align-items-center gap-3">
+{% set kds_title %}廚房出單即時看板 (KDS){% if station %} • <span class="text-warning" id="kdsStationName">{{ station.name }}</span>{% endif %}{% endset %}
+{% set kds_subtitle %}待製作訂單：<span id="pendingCountBadge" class="badge bg-danger fs-6">0</span> 筆{% endset %}
+{% call screen_header('bi-fire text-danger fs-2', kds_title, kds_subtitle, cls='py-2 px-4 mb-3 sticky-top') %}
             <button type="button" id="completeAllBtn" class="btn btn-success btn-sm fw-bold shadow-sm" data-action="complete-all" disabled>
                 <i class="bi bi-check-all fs-6 me-1"></i> 全部完成
             </button>
@@ -29,9 +22,7 @@
             <a href="{{ url_for('admin.admin_dashboard') }}" class="btn btn-outline-light btn-sm fw-bold">
                 <i class="bi bi-gear-fill"></i> 後台系統
             </a>
-        </div>
-    </div>
-</header>
+{% endcall %}
 
 {% if stations %}
 <nav class="container-fluid px-4 mb-3 d-flex flex-wrap gap-2 kds-station-tabs" id="kdsStationTabs">
@@ -54,10 +45,7 @@
 <div class="modal fade" id="prepCardModal" tabindex="-1" aria-hidden="true" aria-labelledby="prepCardTitle">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content bg-dark text-white border-secondary">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="prepCardTitle"><i class="bi bi-journal-text me-1"></i>製作卡</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('製作卡', 'bi-journal-text', title_id='prepCardTitle', icon_class='me-1') }}
             <div class="modal-body" id="prepCardBody"></div>
         </div>
     </div>

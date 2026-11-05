@@ -15,17 +15,16 @@ from app.extensions import db, limiter
 from app.models.table import DiningTable
 from app.services import table_service
 from app.services.audit import record_staff_audit
-from app.sync import runtime as sync_runtime
 from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import get_json_dict, get_own, role_required, safe_int
+from app.utils import get_json_dict, get_own, role_required, safe_int, store_only
 
 tables_bp = Blueprint('tables', __name__)
 
 
 @tables_bp.before_request
+@store_only
 def only_on_store_servers():
-    if sync_runtime.is_hub():
-        abort(404)
+    """線上端沒有門市桌位：整個 blueprint 404"""
 
 
 @tables_bp.route('/t/<token>', endpoint='scan')

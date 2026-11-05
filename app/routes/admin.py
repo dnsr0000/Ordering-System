@@ -30,7 +30,7 @@ from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
 from app.services.upload_paths import remove_upload
 from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, get_own, is_platform_admin, is_weak_pin,
-                       platform_admin_required, role_required, safe_int, validate_phone, validate_pin)
+                       platform_admin_required, role_required, safe_int, send_xlsx, validate_phone, validate_pin)
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -693,9 +693,8 @@ def export_excel():
         raise AppError('❌ 請至少勾選一個資料表 (且您有該資料的頁面權限)！')
     start, end = request.form.get('start_date'), request.form.get('end_date')
     suffix = f"_{start}_to_{end}" if start and end else ''
-    return send_file(excel_service.generate_excel_export(tables, start, end), as_attachment=True,
-                     download_name=f"Kiosk_Export_{datetime.now():%Y%m%d_%H%M%S}{suffix}.xlsx",
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return send_xlsx(excel_service.generate_excel_export(tables, start, end),
+                     f"Kiosk_Export_{datetime.now():%Y%m%d_%H%M%S}{suffix}.xlsx")
 
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])

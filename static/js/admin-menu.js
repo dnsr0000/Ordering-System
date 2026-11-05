@@ -4,9 +4,8 @@
  */
 (function () {
     'use strict';
-    const { html } = Kiosk;
+    const { html, $ } = Kiosk;
     const { data, menuItems, autoExpand, showModal } = window.AdminPage;
-    const $ = (id) => document.getElementById(id);
 
     const allItems = [...menuItems.values()];
     const menuCategories = [...new Set(allItems.map((i) => (i.category || '').trim()).filter(Boolean))].sort();
@@ -238,7 +237,7 @@
                 preview.src = canvas.toDataURL('image/jpeg');
                 preview.hidden = false;
             }
-            bootstrap.Modal.getInstance(cropModalEl).hide();
+            Kiosk.modal(cropModalEl).hide();
         }, 'image/jpeg', 0.9);
     }
 

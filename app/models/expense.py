@@ -4,7 +4,7 @@
 from datetime import date, datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped
 
 EXPENSE_CATEGORIES = {
     'rent': '租金', 'utilities': '水電瓦斯', 'payroll': '薪資 (未打卡部分 / 勞健保)', 'supplies': '耗材包材',
@@ -12,7 +12,7 @@ EXPENSE_CATEGORIES = {
 }
 
 
-class Expense(TenantScoped, db.Model):
+class Expense(CreatedAtMixin, TenantScoped, db.Model):
     """
     營業費用 (一筆一筆登錄；固定費用可勾選「每月固定」，下個月一鍵複製)。
     分店登錄的費用上傳到線上端 (損益表可依分店比較)；node_uuid 為登錄的分店 (線上端 / 單機為空)。
@@ -30,7 +30,6 @@ class Expense(TenantScoped, db.Model):
     note = db.Column(db.String(200), nullable=False, default='')
     node_uuid = db.Column(db.String(36), nullable=True, index=True)
     created_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     is_deleted = db.Column(db.Boolean, nullable=False, default=False)        # 刪除改為標記 (上傳到線上端的也一併刪除)
 
     @property

@@ -1,5 +1,4 @@
 """後台：促銷活動 (買 X 送 Y、第 N 件折扣、滿額折、滿額贈)；前台購物車預覽 API"""
-from datetime import date
 
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 
@@ -14,17 +13,10 @@ from app.services.order_service import _parse_lines
 from app.services.settings_service import TIME_RE
 from app.sync import runtime as sync_runtime
 from app.services.approval_service import permission_required
-from app.utils import find_own, get_json_dict, get_own, safe_int
+from app.utils import find_own, get_json_dict, get_own, parse_date, safe_int
 
 promotions_bp = Blueprint('promotions', __name__)
 CHANNELS = (('kiosk', '點餐機'), ('pos', 'POS'), ('table', '桌邊掃碼'), ('online', '線上點餐'))
-
-
-def _date(value):
-    try:
-        return date.fromisoformat(value) if value else None
-    except ValueError:
-        raise AppError(f'日期格式不正確：{value}')
 
 
 def _apply(p, f):
@@ -56,7 +48,7 @@ def _apply(p, f):
         raise AppError('請選擇贈品')
     if p.kind == 'threshold_discount' and p.amount <= 0 and p.percent >= 100:
         raise AppError('請設定折抵金額或折扣 (應付百分比小於 100)')
-    p.start_date, p.end_date = _date(f.get('start_date')), _date(f.get('end_date'))
+    p.start_date, p.end_date = parse_date(f.get('start_date')), parse_date(f.get('end_date'))
     days = ''.join(sorted({d for d in f.getlist('days') if d in '1234567'}))
     p.days = days or '1234567'
     for field in ('start_time', 'end_time'):

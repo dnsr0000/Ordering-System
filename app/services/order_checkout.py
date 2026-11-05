@@ -538,7 +538,7 @@ def _persist(c):
         if c.final_price > 0:
             giftcard_service.charge(c.tenant_id, c.gift_code, c.final_price, c.order.id, c.cashier_username)
         c.order.payment_reference = c.gift_code
-        c.card_auth = f'{c.gift_code[:4]}****{c.gift_code[-4:]}'   # 收款紀錄只留遮罩後的卡號
+        c.card_auth = giftcard_service.mask_code(c.gift_code)   # 收款紀錄只留遮罩後的卡號
 
     # 原物料扣料
     if not c.stock_node:

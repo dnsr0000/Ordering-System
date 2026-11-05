@@ -3,14 +3,13 @@
 (後台編輯、進貨加權平均、調撥收貨、Excel 匯入、同步收到的總部改價)。以 update() 直接改的不經過這裡
 (目前原料單位成本與售價都是以 ORM 物件修改)。
 """
-from flask import has_request_context
-from flask_login import current_user
 from sqlalchemy import inspect, select
 
 from app.models.expense import CostHistory
 from app.models.inventory import Ingredient
 from app.models.menu import MenuItem
 from app.sync import tracking
+from app.utils import current_staff_name
 
 TRACKED = {
     MenuItem: ('menu', ('price', 'discount_price', 'takeout_price', 'online_price', 'delivery_price', 'unit_cost')),
@@ -18,15 +17,6 @@ TRACKED = {
 }
 FIELD_LABELS = {'price': '售價', 'discount_price': '特價', 'takeout_price': '外帶價', 'online_price': '線上價',
                 'delivery_price': '外送價', 'unit_cost': '單位成本'}
-
-
-def _staff():
-    try:
-        if has_request_context() and getattr(current_user, 'is_authenticated', False):
-            return current_user.username
-    except Exception:  # noqa: BLE001  (沒有登入管理員的情境)
-        pass
-    return 'system'
 
 
 def _record_changes(session):
@@ -49,7 +39,7 @@ def _record_changes(session):
             if abs(new - old) < 0.0001:
                 continue
             session.add(CostHistory(tenant_id=obj.tenant_id, kind=kind, ref_id=obj.id, name=obj.name or '', field=name,
-                                    old_value=round(old, 4), new_value=round(new, 4), changed_by=_staff()))
+                                    old_value=round(old, 4), new_value=round(new, 4), changed_by=current_staff_name()))
 
 
 tracking.PRE_FLUSH_HOOKS.append(_record_changes)

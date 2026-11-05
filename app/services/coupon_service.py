@@ -18,7 +18,7 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.coupon import HISTORY_DAYS, Coupon, UserCoupon  # noqa: F401  (路由以 coupon_service.Coupon / HISTORY_DAYS 取用)
 from app.models.user import User
-from app.utils import validate_phone
+from app.utils import parse_date, validate_phone  # noqa: F401  (路由以 coupon_service.parse_date 取用)
 
 # 代碼格式：3~30 碼英文大寫、數字、- 或 _ (第一碼為英數字)，避免空白、相似字元與過短易猜的代碼
 CODE_RE = re.compile(r'^[A-Z0-9][A-Z0-9_-]{2,29}$')
@@ -148,16 +148,6 @@ def resolve_targets(tenant_id, target, tier_id=None, phones_text='', today=None)
 # ---------------------------------------------------------------------------
 # 發放 / 撤回
 # ---------------------------------------------------------------------------
-def parse_date(value):
-    value = str(value or '').strip()
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        raise AppError(f'日期格式不正確：{value}')
-
-
 def issue(tenant_id, coupon, users, quantity=1, expires_on=None, valid_days=None, staff='', source='batch', now=None):
     """
     發給 users 每人 quantity 張。expires_on (日期) 或 valid_days (天數) 可覆寫券本身的到期規則，

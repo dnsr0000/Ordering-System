@@ -1,7 +1,10 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (templates/customer.html) 的進入點 (ES module)：事件綁定與啟動。
  * 各功能拆在 static/js/customer/ (core 共用狀態與工具、cart 購物車與加購、totals 促銷 / 金額 / 優惠券 / 點數、
- * menu 套餐 / 客製化 / 寄杯 / 篩選排序、checkout 結帳 / 收據 / 桌邊帳單 / 我的訂單 / 再點一次、live 售完即時更新)。
+ * menu 套餐 / 客製化 / 寄杯 / 篩選排序、checkout 結帳 / 收據 / 桌邊帳單 / 我的訂單 / 再點一次、live 售完即時更新、voice 語音點餐)。
+ * 與 POS 共用的純邏輯在 static/js/shared/ (addons 加購配額、pricing 單價、cartline 合併 / 寄杯、modifiers 客製化視窗、
+ * totals 金額、orderpayload 品項結構 / 預覽排程、promo 優惠碼驗證、invoice 發票、combos 套餐卡片)；
+ * DOM 小工具與徽章 / 金額格式取自 common.js 的 Kiosk。
  * 菜單資料由後端以 JSON 嵌入 (page-data)，畫面上的使用者資料一律經 Kiosk.html 跳脫後才插入 DOM。
  *
  * 購物車存在 localStorage 'kiosk_cart' (紅利商城兌換的商品也會寫進來)，每一列格式：
@@ -17,11 +20,12 @@ import {
     toggleFeatureSort, triggerAddon, usePass,
 } from './customer/menu.js';
 import {
-    INVOICE_PLACEHOLDERS, checkGiftCard, confirmCheckout, fetchMyOrders, finishOrder, openPreview, openTableBill, payTableBill,
-    reorder, sendReceipt, showMyOrders, togglePaymentExtras,
+    checkGiftCard, confirmCheckout, fetchMyOrders, finishOrder, openPreview, openTableBill, payTableBill, reorder, sendReceipt,
+    showMyOrders, togglePaymentExtras,
 } from './customer/checkout.js';
 import { startAvailabilityPolling } from './customer/live.js';
 import { voiceActions } from './customer/voice.js';
+import { INVOICE_PLACEHOLDERS } from './shared/invoice.js';
 
 // 桌邊呼叫服務 (掃桌位 QR code 後，登入前後都可使用)
 Kiosk.on(document, 'click', { 'call-service': (el) => callService(el) });

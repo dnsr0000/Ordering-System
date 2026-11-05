@@ -10,7 +10,7 @@
 資料：訂單、退款會同步到線上端，可在線上端看各分店；交班為門市本機資料 (只在門市看得到)。
 """
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import func
 
@@ -21,6 +21,7 @@ from app.models.payment import Refund
 from app.models.shift import CashShift
 from app.models.user import StaffAuditLog
 from app.services import settings_service
+from app.utils import day_bounds
 
 UNPAID = ('pending', 'expired', 'authorizing', 'unpaid')   # 尚未收款的訂單不計
 FLAG_LABELS = {'void': '作廢 / 退款偏高', 'discount': '折扣 / 改價偏高', 'shift': '交班短少'}
@@ -35,8 +36,7 @@ def _blank():
 def analyze(tenant_id, start, end, node_uuid=None):
     """start / end 為 date (含兩端)。回傳 {'staff': [...], 'store': {...}, 'cfg': {...}}"""
     cfg = settings_service.get('anomaly', tenant_id)
-    t0 = datetime.combine(start, datetime.min.time())
-    t1 = datetime.combine(end + timedelta(days=1), datetime.min.time())
+    t0, t1 = day_bounds(start, end)
     rows = defaultdict(_blank)
     order_q = Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= t0, Order.created_at < t1,
                                  Order.cashier_username != '', Order.cashier_username.is_not(None))

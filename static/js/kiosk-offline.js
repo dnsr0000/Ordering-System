@@ -17,19 +17,15 @@
     let flushing = false;
 
     function load() {
-        try {
-            const data = JSON.parse(localStorage.getItem(KEY) || '{}');
-            return { pending: data.pending || [], done: data.done || [], failed: data.failed || [] };
-        } catch (err) {
-            return { pending: [], done: [], failed: [] };
-        }
+        const data = Kiosk.store.get(KEY) || {};
+        return { pending: data.pending || [], done: data.done || [], failed: data.failed || [] };
     }
 
     function save(q) {
         const cutoff = Date.now() - KEEP_DONE_MS;
         q.done = q.done.filter((e) => (e.sent_ms || 0) > cutoff).slice(-20);
         q.failed = q.failed.slice(-20);
-        try { localStorage.setItem(KEY, JSON.stringify(q)); } catch (err) { /* 儲存空間已滿：仍顯示在畫面上 */ }
+        Kiosk.store.set(KEY, q);   // 儲存空間已滿時略過：仍顯示在畫面上
         render(q);
     }
 
@@ -153,7 +149,7 @@
         const rows = [
             ...q.pending.map((e) => [e, 'text-warning', Kiosk.t('off_pending', '待補送')]),
             ...q.failed.map((e) => [e, 'text-danger', `${Kiosk.t('off_failed', '補送失敗：')}${e.error}`]),
-            ...q.done.map((e) => [e, 'text-success', `${Kiosk.t('off_done', '已送出，取餐號 #')}${String(e.pickup_number).padStart(3, '0')}`]),
+            ...q.done.map((e) => [e, 'text-success', `${Kiosk.t('off_done', '已送出，取餐號 #')}${Kiosk.pad3(e.pickup_number)}`]),
         ];
         rows.forEach(([e, cls, label]) => {
             const row = el('div', 'border-bottom border-secondary py-2 offline-entry');
@@ -173,17 +169,17 @@
             cur.done = [];
             cur.failed = [];
             save(cur);
-            bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+            Kiosk.modal(modalEl).hide();
         });
         const retry = el('button', 'btn btn-warning btn-sm text-dark', Kiosk.t('off_retry', '立即補送'));
         retry.type = 'button';
-        retry.addEventListener('click', () => { flush(); bootstrap.Modal.getOrCreateInstance(modalEl).hide(); });
+        retry.addEventListener('click', () => { flush(); Kiosk.modal(modalEl).hide(); });
         footer.append(clear, retry);
         content.append(header, body, footer);
         dialog.append(content);
         modalEl.append(dialog);
         document.body.append(modalEl);
-        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        Kiosk.modal(modalEl).show();
     }
 
     /** 給顧客的暫存收據 */
@@ -210,7 +206,7 @@
         dialog.append(content);
         modalEl.append(dialog);
         document.body.append(modalEl);
-        bootstrap.Modal.getOrCreateInstance(modalEl).show();
+        Kiosk.modal(modalEl).show();
     }
 
     global.KioskOffline = { shouldQueue, blockReason, enqueue, flush, showReceipt, load };

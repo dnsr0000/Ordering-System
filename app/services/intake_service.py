@@ -17,7 +17,7 @@ from app.errors import AppError
 from app.models.enums import OrderSource, OrderStatus
 from app.models.order import Order
 from app.services import settings_service
-from app.utils import safe_int
+from app.utils import parse_local_dt, safe_int
 
 DEFAULT_MESSAGE = '目前訂單較多，暫停接單中，請稍後再試或洽櫃檯。'
 COUNTED_SOURCES = (OrderSource.KIOSK, OrderSource.TABLE, OrderSource.ONLINE)
@@ -27,13 +27,7 @@ config = settings_service.reader('order_intake')
 
 
 def _parse_resume(raw: Any) -> datetime | None:
-    raw = str(raw or '').strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw[:16], '%Y-%m-%dT%H:%M')
-    except ValueError:
-        return None
+    return parse_local_dt(raw)
 
 
 def status(tenant_id: int | None = None, now: datetime | None = None) -> dict:
@@ -71,7 +65,7 @@ def node_pause(tenant_id: int | None = None, now: datetime | None = None) -> tup
     if not st['paused']:
         return None, ''
     now = now or datetime.now()
-    until = datetime.strptime(st['resume_at'], '%Y-%m-%dT%H:%M') if st['resume_at'] else now + timedelta(days=1)
+    until = parse_local_dt(st['resume_at']) or now + timedelta(days=1)
     return until, st['message'][:200]
 
 

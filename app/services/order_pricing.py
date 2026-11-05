@@ -11,6 +11,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 
 from app.errors import AppError
+from app.services.coupon_service import normalize_code  # noqa: F401  (其他模組以 order_pricing.normalize_code 取用)
 from app.extensions import db
 from app.models.coupon import Coupon, UserCoupon
 from app.models.enums import DELIVERY_SOURCES, OrderSource, OrderType
@@ -40,10 +41,6 @@ class PromoResult:
 
     def to_dict(self):
         return {'valid': self.valid, 'discount': self.discount, 'message': self.message}
-
-
-def normalize_code(code):
-    return str(code or '').strip().upper()
 
 
 def find_promo(code, subtotal, user_id=None, is_pos=False, guard=None):

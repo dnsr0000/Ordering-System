@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header %}
+{% from "_macros.html" import page_header, stat_tile %}
 {% block title %}即時看板{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -10,10 +10,9 @@
     <span class="text-white-50 small">更新：<span id="liveAt">{{ data.at }}</span></span>
     {% endcall %}
     <div class="row g-3 mb-4">
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">今日營業額</div><div class="stat-value text-warning" id="liveRevenue">${{ '{:,}'.format(data.revenue) }}</div>
-            <div class="small" id="liveVs"></div></div></div>
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">訂單數</div><div class="stat-value" id="liveOrders">{{ data.orders }}</div></div></div>
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">客單價</div><div class="stat-value" id="liveAvg">${{ data.avg_ticket }}</div></div></div>
+        {% call stat_tile('今日營業額', '$' ~ '{:,}'.format(data.revenue), 'text-warning', id='liveRevenue') %}<div class="small" id="liveVs"></div>{% endcall %}
+        {{ stat_tile('訂單數', data.orders, id='liveOrders') }}
+        {{ stat_tile('客單價', '$' ~ data.avg_ticket, id='liveAvg') }}
         <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">製作中 / 取消</div><div class="stat-value"><span id="livePending">{{ data.pending }}</span> / <span class="text-danger" id="liveCancelled">{{ data.cancelled }}</span></div></div></div>
     </div>
     <div class="row g-4">

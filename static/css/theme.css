@@ -47,6 +47,36 @@ body {
     opacity: 0.85;
 }
 
+/* ---------------------------------------------------------------- 深色表單 (後台 / POS / 顧客頁共用)
+ * 各頁 CSS 只在 body class 上設定 --page-input-* 變數 (底色、焦點色、提示文字色)，規則在這裡只寫一次。
+ * 停用狀態沒有另外設定變數時沿用一般底色 (與各頁原本的表現相同)。 */
+:is(.admin-page, .pos-page, .customer-page) .form-control,
+:is(.admin-page, .pos-page, .customer-page) .form-select {
+    background-color: var(--page-input-bg, var(--kiosk-bg));
+    border: 1px solid var(--page-input-border, var(--kiosk-border));
+    color: var(--page-input-color, var(--kiosk-text));
+    color-scheme: dark;
+}
+:is(.admin-page, .pos-page, .customer-page) .form-control:focus,
+:is(.admin-page, .pos-page, .customer-page) .form-select:focus {
+    background-color: var(--page-input-focus-bg, var(--kiosk-surface));
+    border-color: var(--page-accent, var(--kiosk-accent));
+    color: #fff;
+    box-shadow: var(--page-focus-shadow, 0 0 0 0.2rem rgba(245, 165, 0, 0.25));
+}
+:is(.admin-page, .pos-page, .customer-page) .form-control::placeholder {
+    color: var(--page-placeholder, var(--kiosk-muted));
+    opacity: 1;
+}
+:is(.admin-page, .pos-page, .customer-page) .form-control:disabled {
+    background-color: var(--page-input-disabled-bg, var(--page-input-bg, var(--kiosk-bg)));
+    color: var(--page-input-disabled-color, var(--page-input-color, var(--kiosk-text)));
+}
+:is(.admin-page, .pos-page, .customer-page) .form-label,
+:is(.admin-page, .pos-page, .customer-page) .form-check-label {
+    color: #f1f5f9;
+}
+
 select option {
     background-color: #0f172a;
     color: var(--kiosk-text);
@@ -77,8 +107,37 @@ select option {
 .hover-lift { transition: transform .15s ease, border-color .15s ease; }
 .hover-lift:hover { transform: translateY(-2px); border-color: var(--kiosk-accent) !important; }
 
+/* 員工畫面 (廚房 / 取餐核銷 / 叫號看板) 的頁首，見 _macros.html screen_header */
+.screen-header {
+    background: var(--kiosk-surface);
+    border-bottom: 2px solid var(--kiosk-border);
+}
+
+/* 員工畫面的主要動作鈕 (廚房「完成出餐」.btn-complete、取餐核銷「顧客已取餐」.btn-pickup-finish) */
+.btn-screen-primary,
+.btn-complete,
+.btn-pickup-finish {
+    background-color: var(--kiosk-success);
+    border: none;
+    color: #000;
+    font-weight: 800;
+    font-size: 1.1rem;
+    padding: 10px 0;
+    border-radius: 10px;
+}
+.btn-screen-primary:hover,
+.btn-screen-primary:focus-visible,
+.btn-complete:hover,
+.btn-complete:focus-visible,
+.btn-pickup-finish:hover,
+.btn-pickup-finish:focus-visible {
+    background-color: #16a34a;
+    color: #fff;
+}
+
+/* 列印時隱藏提示訊息與 .no-print (收據、桌卡以外的操作列) */
 @media print {
-    .flash-stack { display: none; }
+    .flash-stack, .no-print { display: none !important; }
 }
 
 /* 斷線提示 (common.js) */

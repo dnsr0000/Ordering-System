@@ -6,12 +6,12 @@
 - 線上端：sync_node (分店與權杖)、node_stock (分店回報的庫存)、sync_alias (重複資料的合併對照)
 - 分店端：sync_state (游標與狀態)、sync_conflict (被線上端拒絕的資料)
 """
-import hashlib
 import secrets
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped, new_uuid
+from app.models.mixins import CreatedAtMixin, LastSeenMixin, TenantScoped, new_uuid
+from app.utils import sha256_hex as hash_token  # noqa: F401  (app/sync/hub.py 以 hash_token 取用)
 
 
 class SyncClock(db.Model):
@@ -32,7 +32,7 @@ class SyncTombstone(TenantScoped, db.Model):
     deleted_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
-class PointLedger(TenantScoped, db.Model):
+class PointLedger(CreatedAtMixin, TenantScoped, db.Model):
     """
     會員點數異動帳 (只新增、不修改)。user.points 是本帳的合計快取。
     各分店離線時各自記帳，同步時合併所有異動再重算合計，不會互相覆蓋。
@@ -44,16 +44,11 @@ class PointLedger(TenantScoped, db.Model):
     delta = db.Column(db.Integer, nullable=False)
     reason = db.Column(db.String(30), nullable=False, default='')
     order_id = db.Column(db.Integer, db.ForeignKey('order.id', ondelete='SET NULL'), nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     user = db.relationship('User', backref=db.backref('point_entries', lazy='dynamic', passive_deletes=True))
 
 
-def hash_token(token):
-    return hashlib.sha256(token.encode('utf-8')).hexdigest()
-
-
-class SyncNode(TenantScoped, db.Model):
+class SyncNode(CreatedAtMixin, LastSeenMixin, TenantScoped, db.Model):
     """(線上端) 分店：每台本機伺服器一個，以權杖驗證身分"""
     __tablename__ = 'sync_node'
 
@@ -62,8 +57,6 @@ class SyncNode(TenantScoped, db.Model):
     token_hash = db.Column(db.String(64), nullable=False, unique=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     accepts_online_orders = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
-    last_seen_at = db.Column(db.DateTime, nullable=True)
     last_ip = db.Column(db.String(50), default='')
     # 分店回報的「暫停接單」狀態 (intake_service；線上點餐選到暫停中的分店時擋下)
     paused_until = db.Column(db.DateTime, nullable=True)
@@ -71,9 +64,7 @@ class SyncNode(TenantScoped, db.Model):
 
     tenant = db.relationship('Tenant')
 
-    def is_online(self, offline_after_seconds):
-        """最近是否有連線 (分店長輪詢約每 20 秒連線一次)"""
-        return bool(self.last_seen_at) and (datetime.now() - self.last_seen_at).total_seconds() <= offline_after_seconds
+    # is_online(seconds)：最近是否有連線 (分店長輪詢約每 20 秒連線一次)，見 LastSeenMixin
 
     def issue_token(self):
         """產生新權杖 (只回傳這一次，資料庫只存雜湊)"""
@@ -93,14 +84,13 @@ class NodeStock(db.Model):
     reported_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
-class SyncAlias(db.Model):
+class SyncAlias(CreatedAtMixin, db.Model):
     """(線上端) 分店送來的資料與既有資料重複 (例如同一支手機在兩家分店各註冊一次) 時，記錄合併到哪一列"""
     __tablename__ = 'sync_alias'
 
     table_name = db.Column(db.String(50), primary_key=True)
     alias_uuid = db.Column(db.String(36), primary_key=True)
     canonical_uuid = db.Column(db.String(36), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
 class SyncState(db.Model):
@@ -112,7 +102,7 @@ class SyncState(db.Model):
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
 
 
-class SyncConflict(db.Model):
+class SyncConflict(CreatedAtMixin, db.Model):
     """(分店端) 線上端拒收的資料 (例如員工帳號名稱已被其他店家使用)，顯示在同步狀態頁"""
     __tablename__ = 'sync_conflict'
 
@@ -121,4 +111,3 @@ class SyncConflict(db.Model):
     table_name = db.Column(db.String(50), nullable=False)
     row_uuid = db.Column(db.String(36), nullable=False)
     reason = db.Column(db.String(300), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)

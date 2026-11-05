@@ -601,8 +601,10 @@ Project Root/
 │   ├── cli.py                 flask CLI 指令 (setup、sync、payments、privacy、tables、models、ops、demo)
 │   ├── extensions.py、errors.py、tenant_context.py、utils.py
 │   │                          db / migrate / csrf / login / limiter；AppError 與統一錯誤處理；多店家隔離 (查詢自動加店家條件、
-│   │                          寫入防跨店)；role_required、platform_admin_required、get_own / find_own、輸入驗證
-│   ├── models/                ORM：mixins (uuid / updated_at / sync_rev / tenant_id)、enums (訂單狀態、來源、付款方式、權限)、
+│   │                          寫入防跨店)；role_required、platform_admin_required、store_only / hub_only、get_own / find_own、
+│   │                          輸入驗證、日期區間 / 分頁 / ETag 回應 / Excel 下載等各路由共用的小工具 (見 5.3)
+│   ├── models/                ORM：mixins (uuid / updated_at / sync_rev / tenant_id、CreatedAt / LastSeen / KindLabel、公開代碼)、
+│   │                          enums (訂單狀態、來源、付款方式、權限)、
 │   │                          tenant (店家、員工、可排時段)、table (桌位、平面圖、桌邊線上結帳)、user (會員、紅利設定、兌換憑證、
 │   │                          日誌、隱私權設定)、menu、order、coupon、sync (同步序號、刪除紀錄、點數異動帳、分店、庫存快照)、
 │   │                          settings (每家店一組 key / JSON)、payment (收款、退款、桌位結帳批次、電子發票)、shift、printing、
@@ -622,8 +624,9 @@ Project Root/
 │   │   │   ai_service.py、voice_order_service.py、chatbot_service.py、analytics_service.py、demo_service.py
 │   │   ├── payment_service.py、payment_ecpay.py、einvoice_ecpay.py、linepay.py、table_pay_service.py、deposit_service.py
 │   │   │   (收款 / 退款、綠界、發票、LINE Pay、桌邊結帳、訂金)；line_service.py、sms_service.py、mail_service.py、
-│   │   │   delivery_service.py、push_service.py、receipt_service.py (外部服務：HTTP 呼叫集中在 _post / _request / _http，
-│   │   │   測試以假 API 取代；Web Push 自行實作 VAPID + aes128gcm)
+│   │   │   delivery_service.py、push_service.py、receipt_service.py (外部服務：HTTP 呼叫走 http_client.request_json，各模組
+│   │   │   保留 _post / _http 薄包裝讓測試以假 API 取代；Web Push 自行實作 VAPID + aes128gcm)；receipt_service.receipt_rows
+│   │   │   為熱感機與純文字收據共用的內容來源；payment_ecpay 提供綠界付款頁 / 通知 / 瀏覽器帶回三種路由的共用骨架
 │   │   ├── points_service.py (點數異動帳)、reward_service.py、voucher_service.py、coupon_service.py、wallet_service.py、
 │   │   │   loyalty_service.py (點數到期 / 集點 / 推薦)、giftcard_service.py、pass_service.py、member_qr_service.py、
 │   │   │   member_verify_service.py、marketing_service.py (RFM)
@@ -664,6 +667,8 @@ Project Root/
 │                              admin-menu.js、admin-coupons.js、admin-members.js、admin-pro.js、settings-hub.js；pos.js 為 POS 進入點
 │                              (ES module)，功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live / pro / shift / split)；
 │                              customer.js 為點餐機進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout / live / voice)；
+│                              js/shared/ 是點餐機與 POS 共用的純邏輯 (addons 加購配額、pricing 單價、cartline 購物車行、modifiers
+│                              客製化視窗、totals 金額計算、orderpayload、promo、invoice、combos)，不碰 DOM；
 │                              floor-plan、device、api-docs、kiosk-offline、kiosk-attract、chatbot、signage、driver、dispatch、track 等
 │                              各頁腳本；img/ 預設圖片；vendor/ Bootstrap、Bootstrap Icons、Cropper.js (離線使用)
 ├── uploads/                   會員照片 (member/)、餐點照片 (menu/)；不放在 static/，由 /media/ 控管讀取 [不進版控]
@@ -691,6 +696,13 @@ Project Root/
     新增功能放進 js/pos/、js/customer/ 對應的模組並 export，其他模組以 import 使用；共用狀態只放 core.js 的 state (跨模組不可
     重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。POS 進階功能在 pos/pro.js (主管核准 / 會員驗證 / LINE Pay / 補印 /
     開錢櫃 / 接單控制)、pos/shift.js (交班 / 儲值 / 禮物卡)、pos/split.js (作廢退款 / 分桌換桌)；對話框在 templates/_pos_pro_modals.html。
+  - 點餐機與 POS 都要遵守的規則 (單價、加購配額、購物車行合併鍵、客製化視窗、金額順序、送後端的品項格式、優惠碼驗證、發票欄位、
+    套餐可售判斷) 只寫在 js/shared/ 的純函式，兩邊的模組只負責讀寫 DOM；改規則時兩邊會一起變 (有測試檢查匯入與 500 行限制)。
+    各頁共用的小工具在 common.js 的 Kiosk：$ / modal / setText / toggleRow、store (localStorage JSON)、money、pad3 / pickupNo、
+    ORDER_STATUS / PAYMENT_STATUS / statusBadge / paymentBadge、stockClass、takeoutBlock、setOrderStatus、
+    onOrdersChanged (含備援輪詢)、pollJson (ETag)、beep；不要在各頁再寫一份。
+  - 模板共用巨集在 templates/_macros.html：modal_head (title_id 可指定標題 id)、stat_tile (KPI 卡)、screen_header (廚房 / 取餐 /
+    櫃台看板頂欄)、pagination、stock_badge (庫存徽章，門檻與 Kiosk.stockClass 相同)。
   - 後台對話框與表單巨集依頁面拆在 templates/_menu_modals.html (菜單 / 套餐)、_member_modals.html (會員)、_coupon_modals.html
     (優惠券 / 兌換餐點)、_data_modals.html (匯出 / 匯入 / 備份)。新增後台頁面：在 app/services/admin_nav.py 的 NAV_GROUPS 加一行
     (條件 perm:xxx / role:xxx / platform、sync=hub|node|store)。
@@ -714,6 +726,10 @@ Project Root/
     加減會員點數一律用 points_service.change_points (寫入點數異動帳)。
   - 系統設定：新區塊加在 settings_service.py (填 subgroup / keywords)，服務模組用 settings_service.reader('key') /
     flag('key', field) 取得 config() / enabled()，不要自己寫包裝函式。
+  - 路由常用的輸入與回應都在 app/utils.py：parse_date (選填日期)、parse_date_range (?start / ?end / ?preset)、day_bounds
+    (日期 → 半開 datetime 區間)、parse_local_dt、parse_hm、paginate、json_etag_response、workbook_bytes / send_xlsx、sha256_hex、
+    current_staff_name、@store_only / @hub_only (門市 / 線上端限定)。會員頁用 @member_required。營收訂單條件用
+    report_service.revenue_orders / is_revenue；點數與儲值金的原子加減共用 points_service.atomic_change。
   - 修改資料表：改 app/models/ → flask --app run db migrate → 檢查遷移檔 → 測試。遷移代號 (revision) 不可超過 32 個字
     (有測試檢查)。新資料表要同步：繼承 TenantScoped 並加入 app/sync/registry.py 的 SPECS (依外鍵順序)；本機欄位放 local_only。
   - 背景工作 / 會被同時觸發的動作先以條件式 UPDATE「搶」再處理 (例如 status pending → sending)，多個行程才不會重複執行。
@@ -843,6 +859,10 @@ POS / 店員
   自動下載 (線上端映像不含人臉辨識)；POS 前端全部 ES module (pos-pro.js 併入 pos/pro.js、shift.js、split.js)；顧客端字串集中到
   i18n_pages.py；設定區塊帶 subgroup / keywords、服務改用 settings_service.reader / flag；AI 引擎重試與備援模型、語音點餐、
   AI 客服機器人、自動排班 (遷移 0028)、POS 桌號快捷鍵；外送員 GPS 追蹤與碳足跡 (遷移 0027)；數位看板；測試檔依主題重新命名。
+  同功能合併：點餐機與 POS 的計價 / 加購 / 客製化 / 金額 / 優惠碼邏輯合成 js/shared/ (順帶修正點餐機促銷預覽漏送套餐任選與
+  寄杯、優惠碼連按時舊回應蓋掉新回應、配餐售完的套餐仍可選、POS 加料順序不同不合併)；各頁小工具集中到 Kiosk；後台巨集
+  (KPI 卡、看板頂欄、分頁、庫存徽章、對話框標頭)；路由共用的日期 / 分頁 / ETag / Excel 工具集中到 app/utils.py；綠界三組路由、
+  兩種收據、點數 / 儲值金記帳、公開網址、sha256、建立時間欄位等各只留一份；POS 即時連線中斷時改為每 5 秒輪詢。
 - 2026-10-31：AI 一鍵翻譯菜單、飲食篩選、點餐機禮物卡付款、會員價、電子收據、廚房製作卡、評價回覆與公開好評、後台頁面權限、
   異地備份、門市一鍵更新、Sentry / Prometheus、N+1 守門與 axe-core、設定匯出匯入、淺色模式、PWA 安裝按鈕、POS 常用備註
   (遷移 0026)；接單控制、預估等候時間、再點一次、售完即時更新、Web Push、稽核紀錄完整頁、店家管理、POS 條碼、記錄檔與

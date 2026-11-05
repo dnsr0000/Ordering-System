@@ -22,32 +22,17 @@
     color: var(--kiosk-text);
 }
 
-/* 輸入框：比卡片更深的底色，聚焦時使用品牌橘色 */
-.pos-page .form-control,
-.pos-page .form-select {
-    background-color: #0f172a;
-    border: 1px solid var(--kiosk-border);
-    color: var(--kiosk-text);
-    color-scheme: dark;
-}
-.pos-page .form-control:focus,
-.pos-page .form-select:focus {
-    background-color: var(--kiosk-surface);
-    border-color: #f59e0b;
-    color: #fff;
-    box-shadow: 0 0 0 0.2rem rgba(245, 158, 11, 0.25);
-}
-.pos-page .form-control::placeholder {
-    color: var(--kiosk-muted);
-    opacity: 1;
-}
-.pos-page .form-control:disabled {
-    background-color: var(--kiosk-card);
-    color: var(--kiosk-muted);
-}
-.pos-page .form-label,
-.pos-page .form-check-label {
-    color: #f1f5f9;
+/* 輸入框 (規則在 theme.css「深色表單」)：比卡片更深的底色，聚焦時使用品牌橘色；停用時用卡片底色 */
+.pos-page {
+    --page-input-bg: #0f172a;
+    --page-input-border: var(--kiosk-border);
+    --page-input-color: var(--kiosk-text);
+    --page-input-focus-bg: var(--kiosk-surface);
+    --page-accent: #f59e0b;
+    --page-focus-shadow: 0 0 0 0.2rem rgba(245, 158, 11, 0.25);
+    --page-placeholder: var(--kiosk-muted);
+    --page-input-disabled-bg: var(--kiosk-card);
+    --page-input-disabled-color: var(--kiosk-muted);
 }
 
 /* 分類按鈕 */
@@ -236,9 +221,7 @@
         margin: 0 !important;
         padding: 0 !important;
     }
-    .no-print {
-        display: none !important;
-    }
+    /* .no-print 的隱藏在 theme.css */
     .modal-backdrop {
         display: none !important;
     }

@@ -15,6 +15,7 @@ from app.extensions import db
 from app.models.member import MemberTier, WalletLedger
 from app.models.user import User
 from app.services import settings_service
+from app.services.points_service import atomic_change, change_points
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +24,11 @@ logger = logging.getLogger(__name__)
 # 儲值金
 # ---------------------------------------------------------------------------
 def change_balance(tenant_id, user_id, delta, reason, order_id=None, note='', staff='', clamp=False):
-    """原子加減儲值金並記帳；扣款時餘額不足回傳 None。clamp=True 時最多扣到 0。"""
-    delta = int(delta or 0)
-    if delta == 0:
-        return 0
-    if clamp and delta < 0:
-        current = db.session.execute(select(User.wallet_balance).where(User.id == user_id)).scalar() or 0
-        delta = max(delta, -max(0, current))
-        if delta == 0:
-            return 0
-    stmt = update(User).where(User.id == user_id, User.tenant_id == tenant_id)
-    if delta < 0:
-        stmt = stmt.where(User.wallet_balance >= -delta)
-    if db.session.execute(stmt.values(wallet_balance=User.wallet_balance + delta)
-                          .execution_options(synchronize_session=False)).rowcount != 1:
-        return None
-    db.session.add(WalletLedger(tenant_id=tenant_id, user_id=user_id, delta=delta, reason=reason[:20], order_id=order_id,
-                                note=str(note or '')[:200], staff_username=staff or ''))
-    return delta
+    """原子加減儲值金並記帳 (與點數同一套 points_service.atomic_change)；扣款時餘額不足回傳 None。clamp=True 時最多扣到 0。"""
+    return atomic_change(User.wallet_balance,
+                         lambda d: WalletLedger(tenant_id=tenant_id, user_id=user_id, delta=d, reason=reason[:20],
+                                                order_id=order_id, note=str(note or '')[:200], staff_username=staff or ''),
+                         tenant_id, user_id, delta, clamp)
 
 
 def parse_bonus_rules(text):
@@ -113,10 +101,11 @@ def recompute_spent(user):
     """本機已收款、未取消訂單的金額合計 (扣除已退款)"""
     from app.models.enums import OrderStatus
     from app.models.order import Order
+    from app.services.report_service import REVENUE_STATUSES
     total = db.session.execute(
         select(func.coalesce(func.sum(Order.total_price - Order.refunded_amount), 0))
         .where(Order.user_id == user.id, Order.status != OrderStatus.CANCELLED,
-               Order.payment_status.in_(('', 'settled', 'paid')))).scalar() or 0
+               Order.payment_status.in_(REVENUE_STATUSES))).scalar() or 0
     user.total_spent = int(total) + int(user.archived_spent or 0)   # 加上已封存訂單的金額
     return user.total_spent
 
@@ -147,7 +136,6 @@ def grant_birthday_gifts(tenant_id, today=None):
     from app.models.coupon import Coupon, UserCoupon
     from app.models.tenant import Tenant
     from app.services import line_service
-    from app.services.points_service import change_points
     cfg = settings_service.get('member', tenant_id)
     if not cfg.get('birthday_enabled'):
         return 0

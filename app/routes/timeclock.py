@@ -1,8 +1,7 @@
 """員工打卡 (/timeclock，在門市電腦或平板以帳號密碼打卡) 與後台出勤 / 班表 / 工時統計"""
-import io
 from datetime import date, datetime, timedelta
 
-from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 from openpyxl import Workbook
 
@@ -14,7 +13,7 @@ from app.models.tenant import StaffAccount
 from app.services import auth_throttle
 from app.services.audit import record_staff_audit
 from app.services.settings_service import TIME_RE
-from app.utils import get_own, neutralize_formulas, role_required, safe_int
+from app.utils import day_bounds, get_own, parse_date_range, role_required, safe_int, send_xlsx
 
 timeclock_bp = Blueprint('timeclock', __name__)
 
@@ -56,7 +55,7 @@ def punch():
         flash(msg, 'success')
         return redirect(url_for('timeclock.punch'))
     today = date.today()
-    start = datetime.combine(today, datetime.min.time())
+    start, _ = day_bounds(today)
     records = TimeClock.query.filter(TimeClock.clock_in >= start).order_by(TimeClock.clock_in.desc()).all()
     schedules = WorkSchedule.query.filter_by(work_date=today).order_by(WorkSchedule.start_time).all()
     # 打卡頁不需登入：帳號名稱只在已登入員工或已註冊的店內裝置上完整顯示，其他人看到遮罩 (帳號名稱可被拿來猜密碼 / 鎖帳號)
@@ -68,15 +67,8 @@ def punch():
 
 
 def _range():
-    try:
-        start = date.fromisoformat(request.args.get('start') or '')
-    except ValueError:
-        start = date.today() - timedelta(days=date.today().weekday())
-    try:
-        end = date.fromisoformat(request.args.get('end') or '')
-    except ValueError:
-        end = start + timedelta(days=6)
-    return (start, end) if end >= start else (end, start)
+    """預設本週 (週一起 7 天)"""
+    return parse_date_range(week=True)
 
 
 def _summary(records):
@@ -131,7 +123,7 @@ def admin():
         flash('已更新', 'success')
         return redirect(url_for('timeclock.admin', start=request.args.get('start'), end=request.args.get('end')))
     start, end = _range()
-    t0, t1 = datetime.combine(start, datetime.min.time()), datetime.combine(end + timedelta(days=1), datetime.min.time())
+    t0, t1 = day_bounds(start, end)
     records = TimeClock.query.filter(TimeClock.clock_in >= t0, TimeClock.clock_in < t1).order_by(TimeClock.clock_in).all()
     schedules = WorkSchedule.query.filter(WorkSchedule.work_date >= start, WorkSchedule.work_date <= end) \
         .order_by(WorkSchedule.work_date, WorkSchedule.start_time).all()
@@ -148,7 +140,7 @@ def admin():
 @role_required(*MANAGER_ROLES)
 def export():
     start, end = _range()
-    t0, t1 = datetime.combine(start, datetime.min.time()), datetime.combine(end + timedelta(days=1), datetime.min.time())
+    t0, t1 = day_bounds(start, end)
     records = TimeClock.query.filter(TimeClock.clock_in >= t0, TimeClock.clock_in < t1).order_by(TimeClock.clock_in).all()
     wb = Workbook()
     ws = wb.active
@@ -161,12 +153,7 @@ def export():
     s2.append(['員工', '出勤天數', '總工時', '未下班打卡'])
     for v in _summary(records).values():
         s2.append([v['name'], v['days'], v['hours'], v['open']])
-    neutralize_formulas(wb)   # 備註為員工輸入的文字
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return send_file(buf, as_attachment=True, download_name=f'出勤_{start}_{end}.xlsx',
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return send_xlsx(wb, f'出勤_{start}_{end}.xlsx')   # 備註為員工輸入的文字 (send_xlsx 會防公式注入)
 
 
 @timeclock_bp.route('/admin/availability', methods=['GET', 'POST'], endpoint='availability')

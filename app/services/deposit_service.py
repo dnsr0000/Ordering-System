@@ -14,7 +14,7 @@ import logging
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from flask import current_app, has_app_context
+from flask import has_app_context
 from sqlalchemy import update
 
 from app.errors import AppError
@@ -64,7 +64,7 @@ def form_fields(r, base_url=None):
 def new_attempt(r):
     """開啟付款頁 (含重新整理、付款失敗後再試) 時換一個新的交易編號：綠界不接受重複的 MerchantTradeNo"""
     if r.deposit_status == 'pending':
-        r.deposit_trade_no = payment_ecpay._new_trade_no()
+        r.deposit_trade_no = payment_ecpay.new_trade_no()
     return r
 
 
@@ -100,10 +100,7 @@ def mark_paid(trade_no, provider_no, amount, custom=''):
     if r is None:
         return 'missing'
     _use_tenant(db.session.get(Tenant, r.tenant_id), remember=False)
-    try:
-        paid = int(float(amount))
-    except (TypeError, ValueError):
-        paid = -1
+    paid = payment_ecpay.parse_amount(amount)
     if paid != r.deposit_amount:
         monitor_service.alert(f'訂位 {r.name} {r.reserved_at:%m/%d %H:%M} 訂金付款金額 ${paid} 與應付 ${r.deposit_amount} 不符，'
                               f'請到綠界後台確認 (交易 {provider_no})', key=f'deposit-{r.id}', tenant_id=r.tenant_id,
@@ -128,13 +125,14 @@ def mark_paid(trade_no, provider_no, amount, custom=''):
     return 'already'
 
 
+def mark_paid_from(params):
+    """綠界通知 / 瀏覽器帶回的參數 → mark_paid (CustomField1 為 R:訂位代碼)"""
+    return mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'), params.get('CustomField1'))
+
+
 def handle_notification(form):
-    params, status = payment_ecpay.parse_result(form, '訂金')
-    if status != 'paid':
-        return payment_ecpay.RESULT_REPLY[status]
-    result = mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
-                       params.get('CustomField1'))
-    return '0|NotFound' if result == 'missing' else '1|OK'
+    """綠界 ReturnURL：回傳要回應綠界的字串"""
+    return payment_ecpay.notification_response(form, '訂金', mark_paid_from, replies={'missing': '0|NotFound'})
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +205,10 @@ def expire_pending(tenant_id, now=None):
 
 
 def _public_url(path):
-    base = current_app.config.get('PUBLIC_BASE_URL') if has_app_context() else ''
-    return f'{base.rstrip("/")}{path}' if base else ''
+    """提醒簡訊 / LINE 裡的連結：只用對外的 PUBLIC_BASE_URL (沒有設定就不附連結，不印店內區網網址)"""
+    from app.services import table_service
+    base = table_service.public_base(shop=False, fallback=False) if has_app_context() else ''
+    return f'{base}{path}' if base else ''
 
 
 def send_reminders(tenant_id, now=None):

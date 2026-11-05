@@ -1,3 +1,4 @@
+import secrets
 import uuid
 from datetime import datetime
 
@@ -6,6 +7,11 @@ from app.extensions import db
 
 def new_uuid():
     return str(uuid.uuid4())
+
+
+def new_public_token():
+    """公開網址中的代碼 (桌位 QR code、訂位 / 候位查詢連結)：隨機產生、無法猜測；重新產生後舊連結立即失效"""
+    return secrets.token_urlsafe(12)
 
 
 class SyncMixin:
@@ -25,3 +31,27 @@ class TenantScoped(SyncMixin):
     查詢與寫入由 app.tenant_context 依目前請求的店家自動過濾。
     """
     tenant_id = db.Column(db.Integer, db.ForeignKey('tenant.id'), nullable=False, index=True)
+
+
+class CreatedAtMixin:
+    """建立時間 (本機時間)"""
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+
+
+class KindLabelMixin:
+    """kind 欄位的中文名稱：子類別以 KINDS = {代碼: 名稱} 指定"""
+    KINDS = {}
+
+    @property
+    def kind_label(self):
+        return self.KINDS.get(self.kind, self.kind)
+
+
+class LastSeenMixin:
+    """裝置 / 分店主機的最後連線時間與線上判斷"""
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+
+    def is_online(self, seconds=180, now=None):
+        """最近 seconds 秒內有連線"""
+        now = now or datetime.now()
+        return bool(self.last_seen_at) and (now - self.last_seen_at).total_seconds() <= seconds

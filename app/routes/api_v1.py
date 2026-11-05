@@ -17,7 +17,7 @@ import json
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, g, jsonify, request
 
 from app.errors import AppError
 from app.extensions import csrf, db, limiter
@@ -29,7 +29,7 @@ from app.models.tenant import Tenant
 from app.models.user import User
 from app.services.webhook_service import order_payload
 from app.tenant_context import _use_tenant, tenant_bypass
-from app.utils import get_json_dict, get_own, safe_int
+from app.utils import get_json_dict, get_own, json_etag_response, safe_int
 
 api_v1 = Blueprint('api_v1', __name__, url_prefix='/api/v1')
 csrf.exempt(api_v1)
@@ -132,14 +132,7 @@ def menu():
         'branch_hidden': m.is_branch_hidden, 'prep_minutes': m.prep_minutes or 0,
         'external_code': m.external_code or ''} for m in items]}, ensure_ascii=False, separators=(',', ':'))
     # ETag：串接端定期拉菜單時，沒變化就回 304 (省流量；請帶 If-None-Match)
-    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
-    if request.headers.get('If-None-Match') == etag:
-        resp = current_app.response_class(status=304)
-    else:
-        resp = current_app.response_class(body, mimetype='application/json')
-    resp.headers['ETag'] = etag
-    resp.headers['Cache-Control'] = 'no-cache'
-    return resp
+    return json_etag_response(body)
 
 
 @api_v1.route('/menu/<int:item_id>/availability', methods=['POST'])

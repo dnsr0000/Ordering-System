@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stat_tile %}
 {% block title %}排班建議{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -20,7 +20,7 @@
         {% for label, value, cls in [('需要人力 (人時)', p.need_hours, ''), ('已排班 (人時)', p.have_hours, 'text-info'),
                                      ('不足 (人時)', p.short_hours, 'text-danger' if p.short_hours else 'text-success'),
                                      ('預估人事成本率', (p.labor_ratio ~ '%') if p.avg_wage else '未設時薪', '')] %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {{ stat_tile(label, value, cls) }}
         {% endfor %}
     </div>
     {% if not p.rows %}<div class="alert alert-secondary">過去同一個星期幾沒有訂單紀錄，無法估算。</div>{% else %}

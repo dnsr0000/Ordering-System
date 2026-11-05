@@ -26,6 +26,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import AppError
 from app.extensions import db
+from app.utils import sha256_hex
 
 TOTP_STEP = 30
 TOTP_DIGITS = 6
@@ -129,10 +130,6 @@ def required_for(staff, tenant_id=None):
 # ---------------------------------------------------------------------------
 # 工作階段
 # ---------------------------------------------------------------------------
-def _hash(token):
-    return hashlib.sha256(token.encode('utf-8')).hexdigest()
-
-
 def _device_label(ua):
     ua = ua or ''
     os_name = next((n for k, n in (('Windows', 'Windows'), ('Android', 'Android'), ('iPhone', 'iPhone'), ('iPad', 'iPad'),
@@ -148,7 +145,7 @@ def start_session(staff):
     token = secrets.token_urlsafe(32)
     ua = (request.headers.get('User-Agent') or '')[:300]
     now = datetime.now()
-    db.session.add(StaffSession(staff_account_id=staff.id, token_hash=_hash(token), created_at=now, last_seen=now,
+    db.session.add(StaffSession(staff_account_id=staff.id, token_hash=sha256_hex(token), created_at=now, last_seen=now,
                                 ip_address=(request.remote_addr or '')[:50], user_agent=ua, device=_device_label(ua)))
     session[SESSION_KEY] = token
     session['staff_sid_seen'] = time.time()
@@ -159,7 +156,7 @@ def current_session_row():
     token = session.get(SESSION_KEY)
     if not token:
         return None
-    return StaffSession.query.filter_by(token_hash=_hash(token)).first()
+    return StaffSession.query.filter_by(token_hash=sha256_hex(token)).first()
 
 
 def session_is_valid(staff):

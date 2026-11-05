@@ -1,12 +1,12 @@
 """
 對外整合 (第三輪 #14)：API 金鑰、Webhook 端點與送出紀錄；裝置管理 (#15)。門市 / 線上端本機資料，不同步。
 """
-import hashlib
 import secrets
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, KindLabelMixin, LastSeenMixin, TenantScoped
+from app.utils import sha256_hex as hash_secret  # noqa: F401  (api_v1 / device_service 以 hash_secret 取用)
 
 API_SCOPES = {
     'orders:read': '讀取訂單', 'menu:read': '讀取菜單', 'menu:write': '更新餐點售完 / 庫存',
@@ -18,11 +18,7 @@ WEBHOOK_EVENTS = {
 }
 
 
-def hash_secret(raw):
-    return hashlib.sha256(str(raw or '').encode()).hexdigest()
-
-
-class ApiKey(TenantScoped, db.Model):
+class ApiKey(CreatedAtMixin, TenantScoped, db.Model):
     """API 金鑰：只在建立時顯示一次，資料庫存雜湊；scopes 以逗號分隔"""
     __tablename__ = 'api_key'
 
@@ -33,7 +29,6 @@ class ApiKey(TenantScoped, db.Model):
     scopes = db.Column(db.String(200), nullable=False, default='')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     last_used_at = db.Column(db.DateTime, nullable=True)
     last_ip = db.Column(db.String(50), nullable=False, default='')
 
@@ -47,7 +42,7 @@ class ApiKey(TenantScoped, db.Model):
         return raw
 
 
-class WebhookEndpoint(TenantScoped, db.Model):
+class WebhookEndpoint(CreatedAtMixin, TenantScoped, db.Model):
     __tablename__ = 'webhook_endpoint'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -57,7 +52,6 @@ class WebhookEndpoint(TenantScoped, db.Model):
     events = db.Column(db.String(200), nullable=False, default='')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     fail_streak = db.Column(db.Integer, nullable=False, default=0)
     last_status = db.Column(db.String(120), nullable=False, default='')
     last_sent_at = db.Column(db.DateTime, nullable=True)
@@ -100,12 +94,13 @@ class WebhookOrderState(db.Model):
 DEVICE_KINDS = {'kiosk': '點餐機', 'pos': 'POS 收銀', 'kitchen': '廚房看板', 'display': '叫號 / 客顯', 'other': '其他'}
 
 
-class Device(TenantScoped, db.Model):
+class Device(CreatedAtMixin, LastSeenMixin, KindLabelMixin, TenantScoped, db.Model):
     """
     門市裝置 (點餐機 / POS / 廚房看板…)：後台建立後在裝置上輸入配對碼，瀏覽器記住裝置權杖 (Cookie)。
     裝置頁面每分鐘回報心跳 (版本、目前頁面)；後台可遠端鎖定 (畫面蓋上鎖定訊息、無法送出操作) 或要求重新整理。
     """
     __tablename__ = 'device'
+    KINDS = DEVICE_KINDS
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(60), nullable=False)
@@ -114,7 +109,6 @@ class Device(TenantScoped, db.Model):
     pair_code = db.Column(db.String(8), nullable=True, index=True)
     pair_expires_at = db.Column(db.DateTime, nullable=True)
     paired_at = db.Column(db.DateTime, nullable=True)
-    last_seen_at = db.Column(db.DateTime, nullable=True)
     last_ip = db.Column(db.String(50), nullable=False, default='')
     user_agent = db.Column(db.String(200), nullable=False, default='')
     app_version = db.Column(db.String(20), nullable=False, default='')
@@ -123,18 +117,9 @@ class Device(TenantScoped, db.Model):
     lock_message = db.Column(db.String(120), nullable=False, default='')
     reload_requested_at = db.Column(db.DateTime, nullable=True)
     note = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
-
-    @property
-    def kind_label(self):
-        return DEVICE_KINDS.get(self.kind, self.kind)
-
-    def is_online(self, now=None, seconds=180):
-        now = now or datetime.now()
-        return bool(self.last_seen_at) and (now - self.last_seen_at).total_seconds() <= seconds
 
 
-class PushSubscription(TenantScoped, db.Model):
+class PushSubscription(CreatedAtMixin, TenantScoped, db.Model):
     """
     Web Push 訂閱 (第五輪)：顧客在出餐進度頁按「開啟完成通知」後，瀏覽器的推播端點存在這裡；
     餐點完成 / 外送出發時由 push_service 推播 (離開頁面也收得到)。綁定單一訂單 (order_uuid) 或會員 (user_id)；本機資料，不同步。
@@ -148,5 +133,4 @@ class PushSubscription(TenantScoped, db.Model):
     order_uuid = db.Column(db.String(36), nullable=True, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE', name='fk_push_subscription_user_id'),
                         nullable=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     last_error = db.Column(db.String(200), nullable=False, default='')

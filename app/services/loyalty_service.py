@@ -187,8 +187,7 @@ def notify_expiring(tenant_id, now=None):
 # ---------------------------------------------------------------------------
 # 集點卡
 # ---------------------------------------------------------------------------
-def stamp_config(tenant_id=None):
-    return settings_service.get('stamps', tenant_id)
+stamp_config = settings_service.reader('stamps')
 
 
 def stamp_count(user_id):
@@ -254,8 +253,7 @@ def earn_stamps(tenant_id, user, order, lines, final_price):
 # ---------------------------------------------------------------------------
 # 推薦好友
 # ---------------------------------------------------------------------------
-def referral_config(tenant_id=None):
-    return settings_service.get('member', tenant_id)
+referral_config = settings_service.reader('member')
 
 
 def ensure_referral_code(user):

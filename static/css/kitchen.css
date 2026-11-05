@@ -1,9 +1,4 @@
-/* 廚房出單看板 (KDS) */
-.header-kds {
-    background: var(--kiosk-surface);
-    border-bottom: 2px solid var(--kiosk-border);
-}
-
+/* 廚房出單看板 (KDS)；頁首 .screen-header 與「完成出餐」.btn-complete 在 theme.css */
 .kds-card {
     background: var(--kiosk-card);
     color: var(--kiosk-text);
@@ -34,21 +29,6 @@
 }
 .item-row:last-child {
     border-bottom: none;
-}
-
-.btn-complete {
-    background-color: var(--kiosk-success);
-    border: none;
-    color: #000;
-    font-weight: 800;
-    font-size: 1.1rem;
-    padding: 10px 0;
-    border-radius: 10px;
-}
-.btn-complete:hover,
-.btn-complete:focus-visible {
-    background-color: #16a34a;
-    color: #fff;
 }
 
 /* 加急訂單 */

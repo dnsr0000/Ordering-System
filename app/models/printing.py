@@ -2,7 +2,7 @@
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped
 
 
 class KitchenStation(TenantScoped, db.Model):
@@ -44,7 +44,7 @@ class Printer(TenantScoped, db.Model):
     station = db.relationship('KitchenStation')
 
 
-class PrintJob(TenantScoped, db.Model):
+class PrintJob(CreatedAtMixin, TenantScoped, db.Model):
     __tablename__ = 'print_job'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -54,7 +54,6 @@ class PrintJob(TenantScoped, db.Model):
     status = db.Column(db.String(10), nullable=False, default='queued', index=True)   # queued / done / failed
     attempts = db.Column(db.Integer, nullable=False, default=0)
     last_error = db.Column(db.String(300), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     printed_at = db.Column(db.DateTime, nullable=True)
 
     printer = db.relationship('Printer')

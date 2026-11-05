@@ -1,16 +1,10 @@
-import secrets
-from datetime import datetime
-
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped, new_public_token
+
+new_table_token = new_public_token   # QR code 網址中的桌位代碼 (table_service 以此名稱取用)
 
 
-def new_table_token():
-    """QR code 網址中的桌位代碼：隨機產生、無法猜測；重新產生後舊的 QR code 立即失效"""
-    return secrets.token_urlsafe(12)
-
-
-class DiningTable(TenantScoped, db.Model):
+class DiningTable(CreatedAtMixin, TenantScoped, db.Model):
     """
     門市桌位 (手機掃碼點餐)。每桌一個 QR code：/t/<token>，掃描後以該桌身分點餐，餐後到櫃檯結帳。
     桌位屬於各門市自己 (不同步到線上端或其他分店)。
@@ -22,7 +16,6 @@ class DiningTable(TenantScoped, db.Model):
     token = db.Column(db.String(32), nullable=False, unique=True, index=True, default=new_table_token)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     sort_order = db.Column(db.Integer, nullable=False, default=0)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     # ---- 桌位平面圖：座位數、區域 (例：室內 / 戶外 / 二樓)、形狀、位置 (平面圖寬高的千分比，未擺放時為空) ----
     seats = db.Column(db.Integer, nullable=False, default=4, server_default='4')
     area = db.Column(db.String(20), nullable=False, default='', server_default='')
@@ -39,7 +32,7 @@ class DiningTable(TenantScoped, db.Model):
         return f'{self.name} 桌'
 
 
-class TablePayment(TenantScoped, db.Model):
+class TablePayment(CreatedAtMixin, TenantScoped, db.Model):
     """
     桌邊掃碼點餐的「線上結帳」(顧客用手機付清這一桌未結帳的訂單)。門市本機資料 (不同步)。
     pending → paid (綠界通知付款成功後完成桌位結帳) / conflict (付款時訂單已在櫃檯結帳或有異動，需退款) / failed。
@@ -54,7 +47,6 @@ class TablePayment(TenantScoped, db.Model):
     status = db.Column(db.String(12), nullable=False, default='pending', index=True)
     provider_trade_no = db.Column(db.String(30), nullable=False, default='')
     note = db.Column(db.String(200), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     paid_at = db.Column(db.DateTime, nullable=True)
 
     dining_table = db.relationship('DiningTable')

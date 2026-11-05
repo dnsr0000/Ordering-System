@@ -26,7 +26,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 
 import requests
-from flask import current_app
+from flask import Response, abort, current_app, redirect, render_template, request
 from sqlalchemy import select, update
 
 from app.errors import AppError
@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 STAGE_URL = 'https://payment-stage.ecpay.com.tw'
 PROD_URL = 'https://payment.ecpay.com.tw'
 TEST_MERCHANT = ('3002607', 'pwFHCqoQZGmho4w6', 'EkRm7iFT261dpevs')
+# 付款表單要送到綠界：付款頁的 CSP form-action 放寬成這個 (取代全站 CSP_POLICY 的 form-action 'self')
+ECPAY_FORM_ACTION = f"form-action 'self' {STAGE_URL} {PROD_URL}"
 
 # 綠界的 URL 編碼與 .NET HttpUtility.UrlEncode 相同：以下字元不編碼
 _DOTNET_SAFE = {'%2d': '-', '%5f': '_', '%2e': '.', '%21': '!', '%2a': '*', '%28': '(', '%29': ')'}
@@ -117,10 +119,20 @@ def verify(params):
     return bool(given) and secrets.compare_digest(given.upper(), check_mac_value(params, hash_key, hash_iv))
 
 
-def _new_trade_no():
-    """特店訂單編號：20 碼英數字，每次付款嘗試都不同 (綠界不允許重複使用)"""
+def ecpay_unique_no(ts_fmt='%y%m%d', rand_len=13):
+    """
+    綠界要求唯一的編號：K + 時間戳 + 隨機大寫英數。
+    特店訂單編號 (MerchantTradeNo，最長 20 碼) 用 %y%m%d + 13 碼；電子發票 RelateNumber (最長 30 碼) 用 %y%m%d%H%M%S + 6 碼。
+    """
     alphabet = string.ascii_uppercase + string.digits
-    return 'K' + datetime.now().strftime('%y%m%d') + ''.join(secrets.choice(alphabet) for _ in range(13))
+    return 'K' + datetime.now().strftime(ts_fmt) + ''.join(secrets.choice(alphabet) for _ in range(rand_len))
+
+
+def new_trade_no():
+    """特店訂單編號：20 碼英數字，每次付款嘗試都不同 (綠界不允許重複使用)"""
+    return ecpay_unique_no('%y%m%d', 13)
+
+
 
 
 def _item_name(order):
@@ -142,9 +154,9 @@ def payment_choice(tenant_id):
 
 
 def public_base_url():
-    """綠界回傳 / LINE 回呼用的公開網址：PUBLIC_BASE_URL 優先，否則目前請求的網址"""
-    from flask import request
-    return (current_app.config.get('PUBLIC_BASE_URL') or request.url_root).rstrip('/')
+    """綠界回傳 / LINE 回呼用的公開網址：PUBLIC_BASE_URL 優先，否則目前請求的網址 (不採用店家的區網 QR code 網址)"""
+    from app.services import table_service
+    return table_service.public_base(shop=False)
 
 
 def aio_form(trade_no, amount, item_name, desc, custom, return_path, result_path, base_url=None, choose='Credit', extra=None):
@@ -177,7 +189,7 @@ def aio_form(trade_no, amount, item_name, desc, custom, return_path, result_path
 def build_payment_form(order, base_url=None):
     """線上點餐：產生送到綠界付款頁的表單欄位 (每次呼叫都換新的特店訂單編號)"""
     from app.services import settings_service
-    trade_no = _new_trade_no()
+    trade_no = new_trade_no()
     order.payment_ref = trade_no
     db.session.commit()
     choose, ignore = payment_choice(order.tenant_id)
@@ -193,6 +205,69 @@ def build_payment_form(order, base_url=None):
 
 # 通知 / 瀏覽器帶回的結果：parse_result 的狀態 → 要回應綠界的字串 (paid 由各自的 mark_paid 決定)
 RESULT_REPLY = {'bad_mac': '0|CheckMacValue Error', 'failed': '1|OK', 'simulated': '1|OK'}
+
+
+# ---------------------------------------------------------------------------
+# 線上點餐 / 桌邊結帳 / 訂位訂金三種付款共用的路由骨架
+# ---------------------------------------------------------------------------
+def render_checkout_page(template, **ctx):
+    """
+    付款頁：自動送出表單到綠界付款頁。樣板一律拿到 action (綠界結帳網址) 與 stage (是否測試環境)，
+    並把本頁 CSP 的 form-action 放寬到綠界。
+    """
+    from app import CSP_POLICY
+    resp = Response(render_template(template, action=checkout_url(), stage=current_app.config.get('ECPAY_STAGE', True), **ctx))
+    resp.headers['Content-Security-Policy'] = CSP_POLICY.replace("form-action 'self'", ECPAY_FORM_ACTION)
+    return resp
+
+
+def notify_reply(handle):
+    """ReturnURL 路由：綠界要求以純文字回應 (1|OK)，否則會重送；handle(form) 回傳要回應的字串"""
+    return Response(handle(request.form), mimetype='text/plain')
+
+
+def notification_response(form, label, mark_paid, replies=None, on_failed=None):
+    """
+    ReturnURL 的共同流程：parse_result → 未付款時依狀態回應 (RESULT_REPLY) → 已付款時 mark_paid(params) →
+    以 mark_paid 的結果查 replies (沒有對應時 1|OK)。on_failed(params)：付款失敗 (RtnCode != 1) 時的額外處理。
+    """
+    params, status = parse_result(form, label)
+    if status == 'failed' and on_failed is not None:
+        on_failed(params)
+    if status != 'paid':
+        return RESULT_REPLY[status]
+    return (replies or {}).get(mark_paid(params), '1|OK')
+
+
+def browser_return(form, label, mark_paid, redirect_to, key_field=None):
+    """
+    OrderResultURL：顧客付款後由綠界頁面以 POST 帶回 (已簽章)。跨站 POST 不會帶上本站 Cookie，因此這裡不碰 session，
+    只驗證後 303 導向 GET 頁面 (那時瀏覽器才會帶 Cookie)；實際付款狀態以 ReturnURL 的通知為準，
+    但門市主機收不到綠界通知時，這裡帶回的已簽章結果也能完成結帳。
+    檢查碼錯誤 (或缺少 key_field 欄位) → 400；已付款 → mark_paid(params)；最後導向 redirect_to(params)。
+    """
+    params, status = parse_result(form, label)
+    if status == 'bad_mac' or (key_field and not params.get(key_field)):
+        abort(400)
+    if status == 'paid':
+        mark_paid(params)
+    return redirect(redirect_to(params), code=303)
+
+
+def parse_amount(value):
+    """綠界通知的 TradeAmt → 整數；格式錯誤回傳 -1 (與任何應付金額都不相等)"""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return -1
+
+
+def parse_paid_at(value):
+    """綠界通知的 PaymentDate (yyyy/MM/dd HH:mm:ss) → datetime；缺少或格式錯誤回傳 None"""
+    try:
+        return datetime.strptime(str(value or ''), '%Y/%m/%d %H:%M:%S')
+    except ValueError:
+        return None
 
 
 def parse_result(form, label='付款'):
@@ -292,19 +367,22 @@ def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
             deferred.defer(einvoice_ecpay.issue_invoice, inv.id)
 
 
+def _mark_paid_from(params, paid_at=None):
+    """通知 / 瀏覽器帶回的參數 → mark_paid (CustomField1 為訂單 uuid)"""
+    return mark_paid(params.get('CustomField1'), params.get('TradeNo'), params.get('TradeAmt'), paid_at,
+                     params.get('PaymentType'))
+
+
 def handle_notification(form):
     """ReturnURL：回傳要回應綠界的字串 (付款失敗：訂單維持待付款，逾時後取消)"""
-    params, status = parse_result(form, '線上付款')
-    if status != 'paid':
-        return RESULT_REPLY[status]
-    paid_at = None
-    try:
-        paid_at = datetime.strptime(params.get('PaymentDate', ''), '%Y/%m/%d %H:%M:%S')
-    except ValueError:
-        pass
-    result = mark_paid(params.get('CustomField1'), params.get('TradeNo'), params.get('TradeAmt'), paid_at,
-                       params.get('PaymentType'))
-    return '0|AmountMismatch' if result == 'amount_mismatch' else '1|OK'
+    return notification_response(form, '線上付款', lambda p: _mark_paid_from(p, parse_paid_at(p.get('PaymentDate'))),
+                                 replies={'amount_mismatch': '0|AmountMismatch'})
+
+
+def handle_browser_return(form, redirect_to):
+    """OrderResultURL：驗證後標記已付款 (如已付) 並導向 redirect_to(order_uuid)"""
+    return browser_return(form, '線上付款 (瀏覽器帶回)', _mark_paid_from, lambda p: redirect_to(p.get('CustomField1')),
+                          key_field='CustomField1')
 
 
 # ATM 取號成功 / 超商代碼取號成功的 RtnCode

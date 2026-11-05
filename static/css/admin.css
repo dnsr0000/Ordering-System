@@ -10,26 +10,17 @@
     --admin-accent: #f59e0b;
     background: var(--admin-bg);
     color: #f8fafc;
+    /* 表單輸入框的色票 (規則在 theme.css「深色表單」) */
+    --page-input-bg: var(--admin-bg);
+    --page-input-border: var(--kiosk-border);
+    --page-input-color: #f8fafc;
+    --page-input-focus-bg: var(--admin-panel);
+    --page-accent: var(--admin-accent);
+    --page-focus-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
+    --page-placeholder: var(--kiosk-muted);
 }
 
-/* ---------------------------------------------------------------- 表單 */
-.admin-page .form-control,
-.admin-page .form-select {
-    background-color: var(--admin-bg);
-    border: 1px solid var(--kiosk-border);
-    color: #f8fafc;
-    color-scheme: dark;
-}
-.admin-page .form-control:focus,
-.admin-page .form-select:focus {
-    background-color: var(--admin-panel);
-    border-color: var(--admin-accent);
-    color: #fff;
-    box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
-}
-.admin-page .form-control::placeholder { color: var(--kiosk-muted); opacity: 1; }
-.admin-page .form-label,
-.admin-page .form-check-label { color: #f1f5f9; }
+/* ---------------------------------------------------------------- 表單 (後台專屬的部分) */
 .admin-page .form-select option:disabled { color: #64748b; }
 .admin-page .form-control:-webkit-autofill,
 .admin-page .form-control:-webkit-autofill:hover,

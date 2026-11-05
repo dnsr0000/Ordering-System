@@ -1,7 +1,7 @@
 """訂位 / 候位：店員看板 (/reservations) 與顧客頁 (/reserve 線上訂位、/waitlist 取號、/waitlist/<代碼> 查看進度)"""
 from datetime import date, datetime
 
-from flask import Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template, request, url_for
 
 from app.errors import AppError
 from app.extensions import csrf, db, limiter
@@ -129,13 +129,8 @@ def deposit_pay(token):
     with tenant_bypass():   # 每次開啟付款頁都換新的交易編號 (綠界不接受重複編號；重新整理 / 付款失敗再試都可以)
         deposit_service.new_attempt(r)
         db.session.commit()
-    resp = Response(render_template('reservation_pay.html', r=r, fields=deposit_service.form_fields(r),
-                                    action=payment_ecpay.checkout_url(), stage=current_app.config.get('ECPAY_STAGE', True),
-                                    minutes=deposit_service.PENDING_MINUTES))
-    from app import CSP_POLICY
-    from app.routes.payment import ECPAY_FORM_ACTION
-    resp.headers['Content-Security-Policy'] = CSP_POLICY.replace("form-action 'self'", ECPAY_FORM_ACTION)
-    return resp
+    return payment_ecpay.render_checkout_page('reservation_pay.html', r=r, fields=deposit_service.form_fields(r),
+                                              minutes=deposit_service.PENDING_MINUTES)
 
 
 @reservations_bp.route('/payment/ecpay/reservation_notify', methods=['POST'], endpoint='deposit_notify')
@@ -143,23 +138,21 @@ def deposit_pay(token):
 @limiter.exempt
 def deposit_notify():
     """綠界伺服器的訂金付款通知 (以檢查碼驗證)：必須回應純文字 1|OK"""
-    return Response(deposit_service.handle_notification(request.form), mimetype='text/plain')
+    return payment_ecpay.notify_reply(deposit_service.handle_notification)
+
+
+def _deposit_status_url(params):
+    r = deposit_service.find(params.get('MerchantTradeNo'), params.get('CustomField1'))
+    if r is None:
+        abort(404)
+    return url_for('reservations.reservation_status', token=r.token)
 
 
 @reservations_bp.route('/payment/ecpay/reservation_result', methods=['POST'], endpoint='deposit_result')
 @csrf.exempt
 def deposit_result():
     """顧客付款後由綠界頁面帶回 (已簽章)：完成訂金付款並導向訂位資訊"""
-    params, status = payment_ecpay.parse_result(request.form, '訂金 (瀏覽器帶回)')
-    if status == 'bad_mac':
-        abort(400)
-    if status == 'paid':
-        deposit_service.mark_paid(params.get('MerchantTradeNo'), params.get('TradeNo'), params.get('TradeAmt'),
-                                  params.get('CustomField1'))
-    r = deposit_service.find(params.get('MerchantTradeNo'), params.get('CustomField1'))
-    if r is None:
-        abort(404)
-    return redirect(url_for('reservations.reservation_status', token=r.token), code=303)
+    return payment_ecpay.browser_return(request.form, '訂金 (瀏覽器帶回)', deposit_service.mark_paid_from, _deposit_status_url)
 
 
 @reservations_bp.route('/reserve/<token>', methods=['GET', 'POST'], endpoint='reservation_status')

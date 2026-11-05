@@ -145,8 +145,10 @@
     /**
      * 訂單有變動時呼叫 callback (建立、狀態變更、取消)。
      * EventSource 斷線會自動重連；切回分頁時也會重新整理一次，避免背景期間漏掉更新。
+     * fallbackMs：斷線期間 (或瀏覽器不支援 EventSource 時) 每隔這麼久輪詢一次，連線恢復後停止；
+     * onStatus(ok)：連線 / 斷線時回呼 (畫面上的狀態點)。
      */
-    function onOrdersChanged(callback, { minIntervalMs = 1000 } = {}) {
+    function onOrdersChanged(callback, { minIntervalMs = 1000, fallbackMs = 0, onStatus = null } = {}) {
         // 短時間內多個事件合併成一次重新整理；尖峰時段連續有訂單時每個畫面最多每秒重新抓一次
         // (舊做法每來一個事件就重新計時，事件不斷時會一直不更新，畫面多時也會放大伺服器負載)
         let pending = null;
@@ -159,9 +161,21 @@
                 callback();
             }, Math.max(150, last + minIntervalMs - Date.now()));
         };
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) trigger(); });
+        let fallbackTimer = null;
+        const startFallback = () => { if (fallbackMs && !fallbackTimer) fallbackTimer = setInterval(callback, fallbackMs); };
+        const stopFallback = () => { clearInterval(fallbackTimer); fallbackTimer = null; };
+        if (!global.EventSource) {
+            if (onStatus) onStatus(false);
+            startFallback();
+            return { close: stopFallback, addEventListener() {} };
+        }
         const source = new EventSource('/api/orders_stream');
         source.onmessage = trigger;
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) trigger(); });
+        source.addEventListener('open', () => { stopFallback(); if (onStatus) onStatus(true); });
+        source.addEventListener('error', () => { startFallback(); if (onStatus) onStatus(false); });
+        const close = source.close.bind(source);
+        source.close = () => { stopFallback(); close(); };
         return source;
     }
 
@@ -295,6 +309,122 @@
     window.addEventListener('offline', updateOnlineBanner);
     document.addEventListener('DOMContentLoaded', updateOnlineBanner);
 
+    // ---------------------------------------------------------------- DOM 小工具
+    const $ = (id) => document.getElementById(id);
+    const modal = (id) => global.bootstrap.Modal.getOrCreateInstance(typeof id === 'string' ? $(id) : id);
+
+    function setText(id, value) {
+        const el = typeof id === 'string' ? $(id) : id;
+        if (el) el.textContent = value;
+    }
+
+    /** 金額列：值 > 0 才顯示該列，並填入四捨五入後的數字 */
+    function toggleRow(rowId, valueId, value) {
+        const row = $(rowId);
+        if (!row) return;
+        row.classList.toggle('d-none', !(value > 0));
+        setText(valueId, Math.round(value));
+    }
+
+    // ---------------------------------------------------------------- localStorage (隱私模式或空間不足時不會拋錯)
+    const CART_KEY = 'kiosk_cart';
+    const store = {
+        get(key, fallback = null) {
+            try {
+                const raw = localStorage.getItem(key);
+                return raw === null ? fallback : JSON.parse(raw);
+            } catch (err) { return fallback; }
+        },
+        set(key, value) {
+            try { localStorage.setItem(key, JSON.stringify(value)); } catch (err) { /* 略過 */ }
+        },
+        remove(key) {
+            try { localStorage.removeItem(key); } catch (err) { /* 略過 */ }
+        },
+    };
+
+    // ---------------------------------------------------------------- 訂單顯示
+    const pad3 = (v) => String(v).padStart(3, '0');
+    /** 取餐號：數字 → #001；傳訂單物件時線上訂單尚未被分店編號 (pickup_pending) 顯示「待分店確認」 */
+    function pickupNo(order) {
+        if (order && typeof order === 'object') {
+            if (order.pickup_pending) return t('pickup_pending', '待分店確認');
+            return `#${pad3(order.display_pickup_number ?? order.pickup_number ?? order.id)}`;
+        }
+        return `#${pad3(order)}`;
+    }
+
+    /** 訂單狀態：Bootstrap 色系、圖示、中文 (顧客頁以 ui 字串覆寫文字) */
+    const ORDER_STATUS = {
+        Pending: { cls: 'bg-warning text-dark', border: 'border-warning', icon: '⏳', text: '製作中' },
+        Completed: { cls: 'bg-success', border: 'border-success', icon: '✅', text: '已出餐' },
+        PickedUp: { cls: 'bg-secondary', border: 'border-secondary', icon: '📦', text: '已取餐' },
+        Cancelled: { cls: 'bg-danger', border: 'border-danger', icon: '❌', text: '已取消' },
+    };
+    /** 付款狀態 (線上付款與桌邊結帳)：refund_required = 訂單取消後才收到付款，請到綠界廠商後台退款 */
+    const PAYMENT_STATUS = {
+        pending: { cls: 'bg-warning text-dark', text: '待付款' },
+        paid: { cls: 'bg-success', text: '已線上付款' },
+        expired: { cls: 'bg-secondary', text: '付款逾時' },
+        refund_required: { cls: 'bg-danger', text: '需退款' },
+        refunded: { cls: 'bg-secondary', text: '已退款' },
+        unpaid: { cls: 'bg-warning text-dark', text: '未結帳' },
+        settled: { cls: 'bg-success', text: '已結帳' },
+    };
+    function statusBadge(status, text) {
+        const st = ORDER_STATUS[status] || { cls: 'bg-info text-dark', icon: '', text: status };
+        return html`<span class="badge ${st.cls}">${st.icon ? `${st.icon} ` : ''}${text || st.text}</span>`;
+    }
+    function paymentBadge(status, text) {
+        const st = PAYMENT_STATUS[status];
+        return st ? html`<span class="badge order-payment ${st.cls}">${text || st.text}</span>` : '';
+    }
+
+    /** 庫存徽章的色系：售完紅、≤ LOW_STOCK 黃，其餘依 style (success 後台 / dark POS 卡片) */
+    const LOW_STOCK = 5;
+    function stockClass(stock, soldOut, style = 'success') {
+        if (soldOut || Number(stock) <= 0) return 'bg-danger';
+        if (Number(stock) <= LOW_STOCK) return 'bg-warning text-dark';
+        return style === 'dark' ? 'bg-dark border border-secondary text-white-50' : 'bg-success';
+    }
+
+    /** 外帶單的餐具與備註區塊 (後台 / 廚房訂單卡共用) */
+    function takeoutBlock(o, noteClass = '') {
+        if (o.order_type !== '外帶') return '';
+        return html`
+        <div class="mb-2">
+            <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'}">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>
+            ${o.note ? html`<div class="small text-warning mt-1 ${noteClass}">備註：${o.note}</div>` : ''}
+        </div>`;
+    }
+
+    /** 員工端變更訂單狀態 (後台 / 廚房 / 取餐 / POS 共用的 API) */
+    function setOrderStatus(orderId, status, extra = {}) {
+        return api(`/api/orders/${encodeURIComponent(orderId)}/status`, { json: { status, ...extra } });
+    }
+
+    /** 以 If-None-Match 輪詢 JSON：內容未變 (304) 回傳 null；state 物件保存 etag */
+    async function pollJson(url, state = {}) {
+        const headers = state.etag ? { 'If-None-Match': state.etag } : {};
+        const resp = await fetch(url, { headers, cache: 'no-store' });
+        if (resp.status === 304) return null;
+        if (!resp.ok) throw new ApiError(`HTTP ${resp.status}`, resp.status, {});
+        state.etag = resp.headers.get('ETag') || '';
+        return resp.json();
+    }
+
+    /** 短提示音 (桌邊呼叫、叫號)；瀏覽器不允許自動播放時略過 */
+    function beep(frequency = 880, durationMs = 250) {
+        try {
+            const ctx = new (global.AudioContext || global.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            osc.frequency.value = frequency;
+            osc.connect(ctx.destination);
+            osc.start();
+            setTimeout(() => { osc.stop(); ctx.close(); }, durationMs);
+        } catch (err) { /* 略過 */ }
+    }
+
     // ---------------------------------------------------------------- 其他
     function newOrderId() {
         if (global.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -304,9 +434,15 @@
         });
     }
 
+    /** 金額：$1,234；負數顯示為 -$1,234 */
     function money(value) {
-        return `$${Math.round(Number(value) || 0).toLocaleString('zh-TW')}`;
+        const n = Math.round(Number(value) || 0);
+        return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('zh-TW')}`;
     }
 
-    global.Kiosk = { html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, t, on, onOrdersChanged, startClock, idleLogout, newOrderId, money };
+    global.Kiosk = {
+        html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, t, on, onOrdersChanged, startClock, idleLogout,
+        newOrderId, money, $, modal, setText, toggleRow, store, CART_KEY, pad3, pickupNo, ORDER_STATUS, PAYMENT_STATUS, statusBadge,
+        paymentBadge, LOW_STOCK, stockClass, takeoutBlock, setOrderStatus, pollJson, beep,
+    };
 })(window);

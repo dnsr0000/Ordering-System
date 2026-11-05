@@ -27,7 +27,7 @@
 
     root.style.setProperty('--sg-columns', String(columns));
 
-    let etag = '';
+    const poll = {};              // Kiosk.pollJson 保存的 ETag
     let categories = [];
     let promos = [];
     let page = 0;
@@ -36,7 +36,6 @@
     let lastMenuSignature = null;
     let lastPickupSignature = null;
 
-    const pad = (n) => String(n).padStart(3, '0');
     const chunk = (list, size) => {
         const out = [];
         for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
@@ -168,7 +167,7 @@
         if (sig === lastPickupSignature) return;   // 沒變動就不重繪，避免號碼動畫重播
         lastPickupSignature = sig;
         Kiosk.setHtml(readyEl, pickup.ready.length
-            ? pickup.ready.map((o) => html`<span class="sg-number" data-order-id="${o.id}">${pad(o.number)}</span>`)
+            ? pickup.ready.map((o) => html`<span class="sg-number" data-order-id="${o.id}">${Kiosk.pad3(o.number)}</span>`)
             : html`<span class="sg-pickup-none">—</span>`);
         calledEl.classList.toggle('d-none', pickup.called.length === 0);
         Kiosk.setHtml(calledEl, pickup.called.length
@@ -185,10 +184,8 @@
     // ---------------------------------------------------------------- 載入
     async function load() {
         try {
-            const resp = await fetch('/api/signage', { headers: { Accept: 'application/json', 'If-None-Match': etag } });
-            if (resp.status === 304 || !resp.ok) return;
-            etag = resp.headers.get('ETag') || '';
-            const data = await resp.json();
+            const data = await Kiosk.pollJson('/api/signage', poll);
+            if (!data) return;   // 304：內容沒變
             const menuSignature = JSON.stringify(data.categories);
             if (menuSignature !== lastMenuSignature) {
                 lastMenuSignature = menuSignature;

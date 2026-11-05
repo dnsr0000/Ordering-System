@@ -10,20 +10,13 @@
 """
 from datetime import date, datetime, timedelta
 
-from flask import has_request_context
-from flask_login import current_user
 from sqlalchemy import update
 
 from app.errors import AppError
 from app.extensions import db
 from app.models.inventory import Ingredient, IngredientLot, RecipeLine, StockMovement
 from app.services import deferred, settings_service
-
-
-def _staff():
-    if has_request_context() and getattr(current_user, 'is_authenticated', False):
-        return current_user.username
-    return 'system'
+from app.utils import current_staff_name as _staff
 
 
 enabled = settings_service.flag('inventory')
@@ -175,11 +168,9 @@ def check_low_stock(tenant_id, ingredient_ids=None):
 
 
 def item_unit_cost(menu_item):
-    """每份餐點的原料成本 (有配方時)；沒有配方時使用餐點設定的單位成本"""
-    lines = RecipeLine.query.filter_by(menu_item_id=menu_item.id).all()
-    if lines:
-        return round(sum((rl.quantity or 0) * (rl.ingredient.unit_cost or 0) for rl in lines if rl.ingredient), 2)
-    return float(menu_item.unit_cost or 0)
+    """每份餐點的原料成本 (有配方時)；沒有配方時使用餐點設定的單位成本 (多個餐點請直接用 report_service.unit_costs)"""
+    from app.services.report_service import unit_costs
+    return round(unit_costs(menu_item.tenant_id).get(menu_item.id, float(menu_item.unit_cost or 0)), 2)
 
 
 def shortage_items(tenant_id):

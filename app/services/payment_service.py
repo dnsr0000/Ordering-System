@@ -125,7 +125,7 @@ def parse_tenders(tenant_id, raw, user):
             raise AppError('使用儲值金付款請先綁定會員！')
         elif method == PaymentMethod.GIFT_CARD:
             tender['gift_code'] = giftcard_service.find(tenant_id, t.get('gift_code')).code
-            tender['reference'] = f"{tender['gift_code'][:4]}****{tender['gift_code'][-4:]}"
+            tender['reference'] = giftcard_service.mask_code(tender['gift_code'])
         elif method == PaymentMethod.LINE_PAY and linepay.is_enabled(tenant_id):
             raise AppError('LINE Pay 整合扣款不支援混合付款，請改用單一 LINE Pay 付款或其他方式')
         out.append(tender)

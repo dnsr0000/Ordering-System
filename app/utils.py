@@ -1,7 +1,10 @@
+import hashlib
+import io
 import re
+from datetime import date, datetime, time, timedelta
 from functools import wraps
 
-from flask import g, request
+from flask import abort, current_app, g, has_request_context, redirect, request, send_file, url_for
 from flask_login import current_user
 
 from app.errors import AppError
@@ -68,6 +71,56 @@ def platform_admin_required(fn):
     return wrapped
 
 
+def store_only(fn):
+    """只在門市主機提供的頁面 / API (訂位、桌位、交班…是門市本機資料)：線上端 (hub) 回 404"""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from app.sync import runtime as sync_runtime
+        if sync_runtime.is_hub():
+            abort(404)
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+def hub_only(fn):
+    """只在線上端提供 (例如選取餐分店)：門市主機回 404"""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        from app.sync import runtime as sync_runtime
+        if not sync_runtime.is_hub():
+            abort(404)
+        return fn(*args, **kwargs)
+    return wrapped
+
+
+def member_required(redirect_to=None):
+    """
+    顧客頁面 (非 API)：需已登入會員，否則導向會員登入頁 (redirect_to 可改為其他端點名稱)。
+    會員物件以第一個位置參數傳給 view。API 請改用 rewards._require_member (回 401)。
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapped(*args, **kwargs):
+            from app.services.customer_session import current_member
+            member = current_member()
+            if member is None:
+                from app.routes.auth import member_login_url
+                return redirect(url_for(redirect_to) if redirect_to else member_login_url())
+            return fn(member, *args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def current_staff_name(default='system'):
+    """目前登入員工的帳號；沒有請求情境或未登入 (排程、CLI、顧客端) 時回傳 default"""
+    try:
+        if has_request_context() and getattr(current_user, 'is_authenticated', False):
+            return current_user.username
+    except Exception:  # noqa: BLE001  (登入系統尚未初始化的情境)
+        pass
+    return default
+
+
 # ---------------------------------------------------------------------------
 # 輸入解析
 # ---------------------------------------------------------------------------
@@ -105,6 +158,115 @@ def get_json_dict():
     if not isinstance(data, dict):
         raise AppError('請求內容必須是 JSON 物件！', 400)
     return data
+
+
+# ---------------------------------------------------------------- 日期 / 時間
+def parse_date(value, label='日期', required=False):
+    """表單 / 查詢字串的 YYYY-MM-DD：空值回 None (required=True 時 400)，格式錯誤 400"""
+    value = str(value or '').strip()
+    if not value:
+        if required:
+            raise AppError(f'請填寫{label}')
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        raise AppError(f'{label}格式不正確：{value}')
+
+
+def parse_date_range(default_days=7, week=False, presets=False, max_days=None, strict=False):
+    """
+    request.args 的 start / end (YYYY-MM-DD) → (start, end)，end 早於 start 時對調。
+    缺少或格式錯誤時的預設：最近 default_days 天 (含今天)；week=True 改為本週一起 7 天。
+    presets=True 另外支援 ?preset=today|yesterday|month|last_month；strict=True 時格式錯誤直接 400 (不套預設)。
+    max_days 為區間上限 (超過 400)。
+    """
+    today = date.today()
+    preset = request.args.get('preset') or '' if presets else ''
+    if preset == 'today':
+        return today, today
+    if preset == 'yesterday':
+        return today - timedelta(days=1), today - timedelta(days=1)
+    if preset == 'month':
+        return today.replace(day=1), today
+    if preset == 'last_month':
+        end = today.replace(day=1) - timedelta(days=1)
+        return end.replace(day=1), end
+    raw_start, raw_end = request.args.get('start') or '', request.args.get('end') or ''
+    try:
+        start = date.fromisoformat(raw_start)
+    except ValueError:
+        if strict and raw_start:
+            raise AppError('日期格式錯誤')
+        start = today - timedelta(days=today.weekday()) if week else today - timedelta(days=default_days - 1)
+    try:
+        end = date.fromisoformat(raw_end)
+    except ValueError:
+        if strict and raw_end:
+            raise AppError('日期格式錯誤')
+        end = start + timedelta(days=6) if week else today
+    if end < start:
+        start, end = end, start
+    if max_days and (end - start).days > max_days:
+        raise AppError(f'查詢區間最長 {max_days} 天')
+    return start, end
+
+
+def day_bounds(start, end=None):
+    """日期 (區間) 轉成半開的 datetime 區間 [start 00:00, end + 1 天 00:00)；end 省略時為同一天"""
+    begin = datetime.combine(start, time.min)
+    return begin, datetime.combine((end or start) + timedelta(days=1), time.min)
+
+
+def parse_local_dt(raw, label=None):
+    """<input type=datetime-local> 的 YYYY-MM-DDTHH:MM；label=None 時格式錯誤回 None，否則 400"""
+    raw = str(raw or '').strip()
+    try:
+        return datetime.strptime(raw[:16], '%Y-%m-%dT%H:%M')
+    except ValueError:
+        if label:
+            raise AppError(f'{label}格式不正確')
+        return None
+
+
+def parse_hm(text, default=None):
+    """'HH:MM' → (時, 分)；格式錯誤時改解析 default，也沒有時回 None"""
+    for candidate in (text, default):
+        try:
+            h, m = str(candidate or '').split(':')
+            h, m = int(h), int(m)
+        except ValueError:
+            continue
+        if 0 <= h <= 23 and 0 <= m <= 59:
+            return h, m
+    return None
+
+
+# ---------------------------------------------------------------- 回應
+def json_etag_response(body):
+    """已序列化的 JSON 字串加上 ETag；瀏覽器以 If-None-Match 輪詢且內容未變時回 304 (省流量)"""
+    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
+    if request.headers.get('If-None-Match') == etag:
+        resp = current_app.response_class(status=304)
+    else:
+        resp = current_app.response_class(body, mimetype='application/json')
+    resp.headers['ETag'] = etag
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
+def paginate(query, per_page=50):
+    """依 ?page= 分頁：回傳 (rows, page, pages, total)；page 會夾在 1..pages 之間"""
+    total = query.count()
+    pages = max(1, -(-total // per_page))
+    page = min(max(1, safe_int(request.args.get('page'), 1)), pages)
+    rows = query.offset((page - 1) * per_page).limit(per_page).all()
+    return rows, page, pages, total
+
+
+def sha256_hex(raw):
+    """權杖 / 金鑰只存雜湊 (None 視為空字串)"""
+    return hashlib.sha256(str(raw or '').encode('utf-8')).hexdigest()
 
 
 def validate_pin(pin):
@@ -178,6 +340,24 @@ def neutralize_formulas(wb):
                 if cell.data_type == 'f':
                     cell.data_type = 's'
     return wb
+
+
+XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+def workbook_bytes(wb):
+    """openpyxl 活頁簿 → 已防公式注入的 BytesIO (指標在開頭)"""
+    neutralize_formulas(wb)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def send_xlsx(wb_or_buf, name):
+    """以附件下載 .xlsx (可傳活頁簿或已產生的 BytesIO)"""
+    buf = wb_or_buf if isinstance(wb_or_buf, io.BytesIO) else workbook_bytes(wb_or_buf)
+    return send_file(buf, as_attachment=True, download_name=name, mimetype=XLSX_MIME)
 
 
 def csv_safe(value):

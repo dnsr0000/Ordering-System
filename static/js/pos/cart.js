@@ -1,79 +1,28 @@
 /*
  * 櫃檯 POS 收銀頁 (pos.js 的模組)：4. 購物車與條件加購、促銷活動預覽。
- * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js，加購配額與合併規則在 static/js/shared/ (與顧客點餐頁相同)。
  */
-import {
-    $, api, cartRewardPoints, channel, displayName, html, itemMap, NON_MAIN_CATEGORIES, num, posCfg, setHtml, state,
-    sumBy,
-} from './core.js';
+import { $, api, cartRewardPoints, channel, displayName, html, itemMap, num, posCfg, setHtml, state, sumBy } from './core.js';
 import { startConfigure } from './menu.js';
 import { recalcTotals, resetPromo, revalidatePromo } from './totals.js';
-import { payloadLine } from './checkout.js';
+import * as addons from '../shared/addons.js';
+import { mergeLine } from '../shared/cartline.js';
+import { createPreviewScheduler, payloadLine } from '../shared/orderpayload.js';
 
 // ======================================================================
-// 4. 購物車與條件加購 (每一份合格正價餐點最多搭配一份加購，與後端 _validate_addon_quota 相同)
+// 4. 購物車與條件加購 (每一份合格正價餐點最多搭配一份加購，與後端 _validate_addon_quota 相同；shared/addons.js)
 // ======================================================================
-export function lineQualifiesForAddon(line, addon) {
-    if (!line || line.is_add_on || line.is_reward || line.can_addon === false) return false;
-    const cat = (line.category || '未分類').trim();
-    const trigger = addon.addon_trigger_type || 'any';
-    const target = (addon.addon_trigger_target || '').trim().toLowerCase();
-    if (trigger === 'category') return cat.toLowerCase() === (target || (addon.category || '').trim().toLowerCase());
-    // 後台存餐點名稱，舊資料可能存餐點 ID；兩種都接受
-    if (trigger === 'item') return String(line.menu_item_id) === target || line.name.trim().toLowerCase() === target;
-    return !NON_MAIN_CATEGORIES.includes(cat);
-}
-
-export function mainUnits() {
-    const units = [];
-    state.cart.forEach((l) => {
-        if (l.is_add_on || l.is_reward || l.can_addon === false) return;
-        for (let k = 0; k < l.quantity; k++) units.push(l);
-    });
-    return units;
-}
-
-/** 二分圖配對：addonDefs 中每一份加購是否都能配到一份合格的正價餐點 */
-export function addonsFeasible(addonDefs) {
-    const mains = mainUnits();
-    if (addonDefs.length > mains.length) return false;
-    const owner = new Array(mains.length).fill(-1);
-    const tryAssign = (a, seen) => {
-        for (let m = 0; m < mains.length; m++) {
-            if (seen[m] || !lineQualifiesForAddon(mains[m], addonDefs[a])) continue;
-            seen[m] = true;
-            if (owner[m] === -1 || tryAssign(owner[m], seen)) {
-                owner[m] = a;
-                return true;
-            }
-        }
-        return false;
-    };
-    for (let a = 0; a < addonDefs.length; a++) {
-        if (!tryAssign(a, new Array(mains.length).fill(false))) return false;
-    }
-    return true;
-}
-
 export function availableAddons() {
-    return [...itemMap.values()].filter((it) => it.can_be_add_on && it.is_available);
+    return addons.filterAddons(itemMap.values());
 }
 
-export function cartAddonDefs() {
-    const defs = [];
-    state.cart.filter((l) => l.is_add_on).forEach((l) => {
-        const def = itemMap.get(l.menu_item_id);
-        if (def) for (let k = 0; k < l.quantity; k++) defs.push(def);
-    });
-    return defs;
-}
+// 加購品的定義一律從「可加購且有供應」的清單找 (售完或關閉加購的品項視為不存在，數量會被自動調整)
+const addonDef = (id) => availableAddons().find((a) => Number(a.id) === Number(id));
+const addonRules = { categoryOf: (line) => line.category || '未分類', addonDef };
 
 /** 此加購品目前還能再加幾份 (不破壞既有加購配對) */
 export function remainingAddonQuota(addon) {
-    const current = cartAddonDefs();
-    let n = 0;
-    while (addonsFeasible(current.concat(new Array(n + 1).fill(addon)))) n++;
-    return n;
+    return addons.remainingAddonQuota(state.cart, addon, addonRules);
 }
 
 export function triggerAddon(btn) {
@@ -85,13 +34,9 @@ export function triggerAddon(btn) {
     startConfigure({ item, combo: null, mode: 'addon' });
 }
 
-export const lineKey = (l) => JSON.stringify([l.menu_item_id, l.combo_option_id, l.customization, l.is_add_on, l.is_reward, l.modifier_ids,
-    l.combo_choices || [], l.pass_id || 0]);
-
+/** 加入購物車 (同一品項同樣客製化 / 加料時合併數量，加料順序不影響) */
 export function addLine(line) {
-    const existing = state.cart.find((l) => lineKey(l) === lineKey(line));
-    if (existing) existing.quantity += 1;
-    else state.cart.push(line);
+    mergeLine(state.cart, line);
     renderCart();
 }
 
@@ -105,7 +50,7 @@ export function changeQty(idx, delta) {
         }
     }
     if (delta > 0 && line.is_add_on) {
-        const def = itemMap.get(line.menu_item_id);
+        const def = addonDef(line.menu_item_id);
         if (!def || remainingAddonQuota(def) <= 0) {
             alert('⚠️ 加購名額已達上限！');
             return;
@@ -125,21 +70,7 @@ export function clearCart() {
 
 /** 依購物車順序逐份保留加購，配不到合格餐點的加購自動減量 */
 export function enforceAddonQuota() {
-    const kept = [];
-    state.cart.forEach((line) => {
-        if (!line.is_add_on) return;
-        const def = itemMap.get(line.menu_item_id);
-        let allowed = 0;
-        if (def) {
-            for (let k = 0; k < line.quantity; k++) {
-                if (!addonsFeasible(kept.concat([def]))) break;
-                kept.push(def);
-                allowed++;
-            }
-        }
-        line.quantity = allowed;
-    });
-    state.cart = state.cart.filter((l) => l.quantity > 0);
+    state.cart = addons.enforceAddonQuota(state.cart, addonRules).lines;
 }
 
 export function renderCart({ revalidate = true } = {}) {
@@ -198,15 +129,14 @@ export function renderCart({ revalidate = true } = {}) {
     schedulePromotionPreview();
 }
 
-// ---------------------------------------------------------------- 促銷活動預覽 (結帳時以後端計算為準)
-export let promotionTimer = null;
+// ---------------------------------------------------------------- 促銷活動預覽 (結帳時以後端計算為準；shared/orderpayload.js 的排程)
+const preview = createPreviewScheduler(runPromotionPreview, 250);
+
 export function schedulePromotionPreview() {
-    clearTimeout(promotionTimer);
-    promotionTimer = setTimeout(runPromotionPreview, 250);
+    preview.schedule();
 }
 
-export async function runPromotionPreview() {
-    const seq = ++state.promotionSeq;
+export async function runPromotionPreview(isCurrent = () => true) {
     if (!state.cart.length || state.deliveryMode) {
         state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
         recalcTotals();
@@ -217,10 +147,10 @@ export async function runPromotionPreview() {
             json: { items: state.cart.map(payloadLine), channel: 'pos', order_type: channel() === 'takeout' ? '外帶' : '內用',
                     user_id: state.member ? state.member.id : 0 },
         });
-        if (seq !== state.promotionSeq) return;
+        if (!isCurrent()) return;
         state.promotion = res;
     } catch (err) {
-        if (seq !== state.promotionSeq) return;
+        if (!isCurrent()) return;
         state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
     }
     recalcTotals();

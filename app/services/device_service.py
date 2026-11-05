@@ -120,6 +120,6 @@ def enforce_lock():
 def status_rows(tenant_id, now=None):
     now = now or datetime.now()
     version = app_version()
-    return [{'d': d, 'online': d.is_online(now), 'version_ok': bool(d.app_version) and d.app_version == version,
+    return [{'d': d, 'online': d.is_online(now=now), 'version_ok': bool(d.app_version) and d.app_version == version,
              'pairing': bool(d.pair_code and d.pair_expires_at and d.pair_expires_at >= now)}
             for d in Device.query.filter_by(tenant_id=tenant_id).order_by(Device.kind, Device.name).all()]

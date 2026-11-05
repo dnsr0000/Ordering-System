@@ -5,10 +5,10 @@ from flask_login import UserMixin
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.extensions import db
-from app.models.mixins import SyncMixin
+from app.models.mixins import CreatedAtMixin, SyncMixin
 
 
-class Tenant(SyncMixin, db.Model):
+class Tenant(CreatedAtMixin, SyncMixin, db.Model):
     """店家 (租戶)。slug 用於 /shop/<slug> 店家入口。"""
     __tablename__ = 'tenant'
 
@@ -16,12 +16,11 @@ class Tenant(SyncMixin, db.Model):
     name = db.Column(db.String(120), nullable=False)
     slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     # 桌位 QR code 使用的門市網址 (顧客手機連店內 Wi-Fi 時能開啟的網址，例如 http://192.168.1.10:5000)
     table_qr_base_url = db.Column(db.String(200), nullable=False, default='', server_default='')
 
 
-class StaffAccount(UserMixin, SyncMixin, db.Model):
+class StaffAccount(CreatedAtMixin, UserMixin, SyncMixin, db.Model):
     """
     員工 / 後台帳號 (Flask-Login 的登入主體)。
     role：owner / manager / staff / kitchen。
@@ -35,7 +34,6 @@ class StaffAccount(UserMixin, SyncMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(30), nullable=False, default='staff')
     is_active = db.Column(db.Boolean, nullable=False, default=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     deleted_at = db.Column(db.DateTime, nullable=True)
     # 角色預設權限以外另外授權的項目 (enums.PERMISSIONS 代碼，逗號分隔)
     permissions = db.Column(db.String(500), nullable=False, default='', server_default='')
@@ -76,14 +74,13 @@ class StaffAccount(UserMixin, SyncMixin, db.Model):
         return bool(self.is_active and not self.deleted_at and self.tenant and self.tenant.is_active)
 
 
-class StaffSession(db.Model):
+class StaffSession(CreatedAtMixin, db.Model):
     """員工登入工作階段 (本機資料，不同步)：裝置、IP、最後活動時間；revoked_at 非空代表已登出 / 被強制登出"""
     __tablename__ = 'staff_session'
 
     id = db.Column(db.Integer, primary_key=True)
     staff_account_id = db.Column(db.Integer, db.ForeignKey('staff_account.id', ondelete='CASCADE'), nullable=False, index=True)
     token_hash = db.Column(db.String(64), nullable=False, unique=True)
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     last_seen = db.Column(db.DateTime, nullable=True)
     ip_address = db.Column(db.String(50), nullable=False, default='')
     user_agent = db.Column(db.String(300), nullable=False, default='')

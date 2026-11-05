@@ -15,11 +15,69 @@
 
 {% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
 
-{% macro modal_head(title, icon, color='text-warning') -%}
-    <div class="modal-header border-secondary">
-        <h5 class="modal-title fw-bold {{ color }}"><i class="bi {{ icon }} me-2"></i>{{ title }}</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+{#
+  視窗頁首 (標題 + 右上角關閉鈕)。標題內有 <span id=…> 等標記時改用 call 區塊：
+    {% call modal_head(None, 'bi-percent', title_id='posPriceTitle') %}改價：<span id="posPriceItemName"></span>{% endcall %}
+  icon=None 不放圖示；color='' / title_class='' 可拿掉顏色與粗體；header_class 為 modal-header 的附加 class。
+#}
+{% macro modal_head(title, icon=None, color='text-warning', title_id=None, header_class='border-secondary', title_class='fw-bold',
+                    icon_class='me-2', close_label='關閉') -%}
+    <div class="modal-header{% if header_class %} {{ header_class }}{% endif %}">
+        <h5 class="modal-title{% if title_class %} {{ title_class }}{% endif %}{% if color %} {{ color }}{% endif %}"{% if title_id %} id="{{ title_id }}"{% endif %}>{% if icon %}<i class="bi {{ icon }}{% if icon_class %} {{ icon_class }}{% endif %}"></i>{% endif %}{{ caller()|trim if caller is defined else title }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ close_label }}"></button>
     </div>
 {%- endmacro %}
 
 {% macro status_badge(text, kind='secondary') %}<span class="badge bg-{{ kind }}{% if kind in ('warning', 'info', 'light') %} text-dark{% endif %}">{{ text }}</span>{% endmacro %}
+
+{#
+  統計方塊 (樣式在 pro.css .stat-tile)：label 上、value 下；sub 為下方的小字說明。
+  說明含連結或 <span> 等標記時改用 call 區塊，內容會放在數值下方：
+    {% call stat_tile('今日營業額', '$1,234', 'text-warning', id='liveRevenue') %}<div class="small" id="liveVs"></div>{% endcall %}
+#}
+{% macro stat_tile(label, value, cls='', id=None, col='col-6 col-md-3', sub='', tile_id=None) -%}
+<div class="{{ col }}"><div class="stat-tile"{% if tile_id %} id="{{ tile_id }}"{% endif %}><div class="stat-label">{{ label }}</div><div class="stat-value{% if cls %} {{ cls }}{% endif %}"{% if id %} id="{{ id }}"{% endif %}>{{ value }}</div>{% if sub %}<div class="small text-white-50">{{ sub }}</div>{% endif %}{% if caller is defined %}{{ caller()|trim }}{% endif %}</div></div>
+{%- endmacro %}
+
+{#
+  員工畫面 (廚房 / 取餐核銷 / 叫號看板) 的頁首：左側圖示 + 標題 + 副標，右側放 call 區塊的按鈕與時鐘。
+  標題或副標含標記 (徽章、站別) 時先以 {% set x %}…{% endset %} 組好再傳入；樣式在 theme.css .screen-header。
+#}
+{% macro screen_header(icon, title, subtitle='', cls='py-3 px-4 mb-4 sticky-top', tag='h4', inner_class='') -%}
+<header class="screen-header {{ cls }}">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2{% if inner_class %} {{ inner_class }}{% endif %}">
+        <div class="d-flex align-items-center gap-3">
+            <i class="bi {{ icon }}"></i>
+            <div>
+                <{{ tag }} class="mb-0 fw-bold text-white">{{ title }}</{{ tag }}>
+                {% if subtitle %}<small class="text-white-50">{{ subtitle }}</small>{% endif %}
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            {{ caller()|trim if caller is defined else '' }}
+        </div>
+    </div>
+</header>
+{%- endmacro %}
+
+{# 分頁列：目前頁前後各 3 頁；args 為要帶在網址上的其他查詢參數 #}
+{% macro pagination(endpoint, page, pages, args={}, id=None, cls='') -%}
+<ul class="pagination pagination-sm justify-content-center mb-0{% if cls %} {{ cls }}{% endif %}"{% if id %} id="{{ id }}"{% endif %}>
+    <li class="page-item {{ 'disabled' if page == 1 }}"><a class="page-link" href="{{ url_for(endpoint, page=page - 1, **args) }}">上一頁</a></li>
+    {% for p in range([1, page - 3]|max, [pages, page + 3]|min + 1) %}
+    <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="{{ url_for(endpoint, page=p, **args) }}">{{ p }}</a></li>
+    {% endfor %}
+    <li class="page-item {{ 'disabled' if page == pages }}"><a class="page-link" href="{{ url_for(endpoint, page=page + 1, **args) }}">下一頁</a></li>
+</ul>
+{%- endmacro %}
+
+{#
+  庫存徽章：售完紅、剩 5 份以內黃，其餘依 style (success 後台清單 / dark POS 商品卡)；
+  色系與 common.js 的 Kiosk.stockClass 一致，即時同步時只換 class 不會變樣。
+  預設顯示數量；要顯示其他文字 (例如「已售完」/「庫存 N」) 用 call 區塊；sold_out 不給時依 is_sold_out 與庫存判斷。
+#}
+{% macro stock_badge(item, style='success', id=None, extra_class='', sold_out=None, title=None) -%}
+{%- set stock = item.stock or 0 -%}
+{%- set sold_out = (item.is_sold_out or stock <= 0) if sold_out is none else sold_out -%}
+<span{% if id %} id="{{ id }}"{% endif %} class="badge{% if extra_class %} {{ extra_class }}{% endif %} {% if sold_out or stock <= 0 %}bg-danger{% elif stock <= 5 %}bg-warning text-dark{% elif style == 'dark' %}bg-dark border border-secondary text-white-50{% else %}bg-success{% endif %}"{% if title %} title="{{ title }}"{% endif %}>{{ caller()|trim if caller is defined else stock }}</span>
+{%- endmacro %}

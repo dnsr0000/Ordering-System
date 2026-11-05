@@ -1,4 +1,4 @@
-from flask import Blueprint, abort, g, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy import or_
 from sqlalchemy.orm import selectinload
@@ -22,7 +22,7 @@ from app.services.order_service import find_promo, process_checkout, todays_orde
 from app.services import table_service
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
-from app.utils import get_json_dict, get_own, is_weak_pin, role_required, safe_int, validate_pin, WEAK_PIN_MESSAGE
+from app.utils import get_json_dict, get_own, is_weak_pin, role_required, safe_int, store_only, validate_pin, WEAK_PIN_MESSAGE
 
 pos_bp = Blueprint('pos', __name__)
 
@@ -231,8 +231,7 @@ def api_pos_checkout():
 def track_qr(order):
     """收據上的出餐進度 QR code (手機掃描開啟 /track/<訂單>)；沒有安裝 segno 時省略"""
     try:
-        base = (g.tenant.table_qr_base_url or '').rstrip('/') or request.url_root.rstrip('/')
-        return table_service.qr_data_uri(f'{base}/track/{order.uuid}')
+        return table_service.qr_data_uri(table_service.track_url(order))
     except AppError:
         return ''
 
@@ -291,10 +290,9 @@ def api_pos_today_orders():
 
 @pos_bp.route('/api/pos/tables/<int:table_id>/settle', methods=['POST'])
 @role_required(*POS_ROLES)
+@store_only
 def api_settle_table(table_id):
     """桌位結帳：結清該桌所有未結帳的掃碼點餐訂單"""
-    if sync_runtime.is_hub():
-        abort(404)
     data = get_json_dict()
     result = table_service.settle_table(g.tenant_id, table_id, data.get('payment_method', 'Cash'),
                                         data.get('cash_received', 0), current_user, order_ids=data.get('order_ids'),
@@ -313,10 +311,9 @@ def api_service_call_done(call_id):
 
 @pos_bp.route('/api/pos/tables/<int:table_id>/move', methods=['POST'])
 @role_required(*POS_ROLES)
+@store_only
 def api_move_table(table_id):
     """換桌 / 併桌：把未結帳訂單移到另一桌"""
-    if sync_runtime.is_hub():
-        abort(404)
     data = get_json_dict()
     result = table_service.move_orders(g.tenant_id, table_id, data.get('to_table_id'), data.get('order_ids'))
     return jsonify(dict(result, success=True))
@@ -324,21 +321,18 @@ def api_move_table(table_id):
 
 @pos_bp.route('/api/pos/tables', methods=['GET'])
 @role_required(*POS_ROLES)
+@store_only
 def api_pos_tables():
     """所有啟用中的桌位 (換桌 / 併桌時選擇目的桌)"""
-    if sync_runtime.is_hub():
-        abort(404)
-    from app.models.table import DiningTable
     tables = DiningTable.query.filter_by(is_active=True).order_by(DiningTable.sort_order, DiningTable.id).all()
     return jsonify({'success': True, 'tables': [{'id': t.id, 'name': t.name} for t in tables]})
 
 
 @pos_bp.route('/api/pos/floor', methods=['GET'])
 @role_required(*POS_ROLES)
+@store_only
 def api_pos_floor():
     """桌位平面圖：每桌狀態 (空桌 / 用餐中 / 呼叫中 / 即將訂位)、用餐時間與未結帳金額"""
-    if sync_runtime.is_hub():
-        abort(404)
     return jsonify(dict(table_service.floor_plan(), success=True))
 
 

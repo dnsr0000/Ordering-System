@@ -134,7 +134,7 @@ async function openSplit(tableId) {
         <div class="form-check">
             <input class="form-check-input split-order" type="checkbox" value="${o.id}" id="split-o-${o.id}" checked>
             <label class="form-check-label small" for="split-o-${o.id}">
-                #${String(o.pickup_number || o.id).padStart(3, '0')} ${o.created_at} — $${num(o.total_price)}
+                #${Kiosk.pad3(o.pickup_number || o.id)} ${o.created_at} — $${num(o.total_price)}
                 <span class="text-white-50">(${o.items.map((it) => `${it.name}x${it.quantity}`).join('、')})</span>
             </label>
         </div>`));

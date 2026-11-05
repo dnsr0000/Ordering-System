@@ -6,41 +6,53 @@
 """
 import math
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from app.extensions import db
 from app.models.enums import OrderStatus
+from app.models.menu import WEEKDAY_LABELS
 from app.models.order import Order
 from app.models.staff import WorkSchedule
 from app.models.tenant import StaffAccount
 from app.services import settings_service
-
-WEEKDAYS = '一二三四五六日'
-
+from app.utils import day_bounds, parse_hm
 
 config = settings_service.reader('staffing')
 
 
-def _history_days(target, weeks, today):
-    return [target - timedelta(days=7 * k) for k in range(1, weeks + 1) if target - timedelta(days=7 * k) < today]
+def history_days(target, weeks, today=None):
+    """過去 weeks 週與 target 同一個星期幾的日期 (只取今天以前的；target 在很久以後時往前多找幾週補足)"""
+    today = today or date.today()
+    return [d for d in (target - timedelta(days=7 * k) for k in range(1, weeks + 8)) if d < today][:weeks]
+
+
+def orders_by_hour(day, tenant_id=None):
+    """某一天未取消的訂單 → ({hour: 張數}, 營業額)；tenant_id=None 時依目前請求的店家自動過濾"""
+    t0, t1 = day_bounds(day)
+    q = db.session.query(Order.created_at, Order.total_price).filter(
+        Order.created_at >= t0, Order.created_at < t1, Order.status != OrderStatus.CANCELLED)
+    if tenant_id:
+        q = q.filter(Order.tenant_id == tenant_id)
+    counts = defaultdict(int)
+    revenue = 0
+    for created, total in q.all():
+        counts[created.hour] += 1
+        revenue += int(total or 0)
+    return counts, revenue
 
 
 def hourly_demand(tenant_id, target, weeks=4, today=None):
     """{hour: 平均訂單數}、平均營業額、參考的天數 (只計有營業的那幾天)"""
-    today = today or date.today()
     counts = defaultdict(int)
     revenue, used = 0, 0
-    for d in _history_days(target, weeks, today):
-        t0 = datetime.combine(d, datetime.min.time())
-        rows = db.session.query(Order.created_at, Order.total_price).filter(
-            Order.tenant_id == tenant_id, Order.created_at >= t0, Order.created_at < t0 + timedelta(days=1),
-            Order.status != OrderStatus.CANCELLED).all()
-        if not rows:
+    for d in history_days(target, weeks, today):
+        day_counts, day_revenue = orders_by_hour(d, tenant_id)
+        if not day_counts:
             continue
         used += 1
-        for created, total in rows:
-            counts[created.hour] += 1
-            revenue += int(total or 0)
+        revenue += day_revenue
+        for h, c in day_counts.items():
+            counts[h] += c
     n = max(1, used)
     return {h: c / n for h, c in counts.items()}, round(revenue / n), used
 
@@ -58,12 +70,10 @@ def scheduled_by_hour(tenant_id, target):
 
 def _hours_of(start, end):
     """'09:00'~'13:30' → [9, 10, 11, 12, 13] (跨午夜只算到 24 點)"""
-    try:
-        sh, sm = (int(x) for x in start.split(':'))
-        eh, em = (int(x) for x in end.split(':'))
-    except (ValueError, AttributeError):
+    st, en = parse_hm(start), parse_hm(end)
+    if st is None or en is None:
         return []
-    s, e = sh * 60 + sm, eh * 60 + em
+    s, e = st[0] * 60 + st[1], en[0] * 60 + en[1]
     if e <= s:
         e = 24 * 60
     return [h for h in range(24) if h * 60 < e and (h + 1) * 60 > s]
@@ -114,7 +124,7 @@ def plan(tenant_id, target, today=None):
     need_hours = sum(need.values())
     labor = need_hours * avg_wage
     return {
-        'target': target, 'weekday': WEEKDAYS[target.weekday()], 'days_used': used, 'rows': rows,
+        'target': target, 'weekday': WEEKDAY_LABELS[target.weekday()], 'days_used': used, 'rows': rows,
         'shifts': [{'start': f'{s:02d}:00', 'end': f'{e:02d}:00' if e < 24 else '23:59', 'hours': e - s} for s, e in shifts],
         'need_hours': need_hours, 'have_hours': sum(have.values()), 'short_hours': sum(missing.values()),
         'over_hours': sum(max(0, have.get(h, 0) - need.get(h, 0)) for h in hours),

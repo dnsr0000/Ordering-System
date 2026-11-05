@@ -71,25 +71,17 @@ body.customer-page {
 .menu-card-sold-out { opacity: 0.65 !important; border-color: rgba(255, 255, 255, 0.04) !important; }
 .img-sold-out { filter: grayscale(80%) !important; }
 
-/* 篩選與排序 */
-.customer-page .form-control,
-.customer-page .form-select {
-    background-color: #222;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    color-scheme: dark;
-}
-.customer-page .form-control::placeholder { color: #a9a9a9; opacity: 1; }
-.customer-page .form-control:focus,
-.customer-page .form-select:focus {
-    background-color: #2b2b2b;
-    color: #fff;
-    box-shadow: 0 0 0 0.2rem rgba(245, 165, 0, 0.2);
-    border-color: #f5a500;
+/* 篩選與排序：輸入框的色票 (規則在 theme.css「深色表單」) */
+.customer-page {
+    --page-input-bg: #222;
+    --page-input-border: rgba(255, 255, 255, 0.16);
+    --page-input-color: #fff;
+    --page-input-focus-bg: #2b2b2b;
+    --page-accent: #f5a500;
+    --page-focus-shadow: 0 0 0 0.2rem rgba(245, 165, 0, 0.2);
+    --page-placeholder: #a9a9a9;
 }
 .customer-page .input-group-text { background: #2a2a2a; color: #fff; border-color: rgba(255, 255, 255, 0.16); }
-.customer-page .form-label,
-.customer-page .form-check-label { color: #f1f5f9; }
 .customer-page .text-muted,
 .customer-page .text-secondary { color: #94a3b8 !important; }
 

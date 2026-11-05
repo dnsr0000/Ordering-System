@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf, stat_tile %}
 {% block title %}禮物卡 - 後台{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -12,7 +12,7 @@
     </div>
     {% if not enabled %}<div class="alert alert-secondary">尚未啟用禮物卡：<a href="{{ url_for('settings_admin.edit', key='gift_card') }}">系統設定 → 禮物卡</a>。POS「禮物卡」可售出與查詢餘額。</div>{% endif %}
     <div class="row g-3 mb-3">
-        <div class="col-6 col-md-4"><div class="stat-tile"><div class="stat-label">流通在外餘額 (預收款)</div><div class="stat-value text-warning" id="giftOutstanding">${{ '{:,}'.format(outstanding) }}</div></div></div>
+        {{ stat_tile('流通在外餘額 (預收款)', '$' ~ '{:,}'.format(outstanding), 'text-warning', id='giftOutstanding', col='col-6 col-md-4') }}
     </div>
     <form class="d-flex gap-2 mb-3" method="GET">
         <input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="卡號 (可部分)" aria-label="卡號">

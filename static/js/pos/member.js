@@ -7,6 +7,7 @@ import { repriceCart, startConfigure } from './menu.js';
 import { renderCart, schedulePromotionPreview } from './cart.js';
 import { populateCouponSelect, recalcTotals, resetPromo, updateCashChange } from './totals.js';
 import { syncLiveState } from './live.js';
+import { applyLinePrices, passRemaining } from '../shared/cartline.js';
 
 // ======================================================================
 // 5. 會員查詢 / 多筆候選 / PIN 設定
@@ -97,8 +98,7 @@ export function usePass(passId) {
     const p = ((state.member && state.member.passes) || []).find((x) => Number(x.id) === Number(passId));
     const item = p ? itemMap.get(Number(p.menu_item_id)) : null;
     if (!p || !item) return;
-    const used = state.cart.filter((l) => Number(l.pass_id) === Number(p.id)).reduce((s, l) => s + num(l.quantity), 0);
-    if (used >= num(p.remaining)) {
+    if (passRemaining(state.cart, p) <= 0) {
         alert(`⚠️ 寄杯「${p.name}」剩 ${num(p.remaining)} 次，已全部加入`);
         return;
     }
@@ -147,12 +147,7 @@ export async function sellPass(ev) {
 
 /** 伺服器回報金額與畫面不同 (剛改價等)：以伺服器的單價更新購物車；仍有差異時記住伺服器金額，收銀確認後再送出 */
 export function applyServerPrices(data, cartKey) {
-    const prices = data.line_prices || [];
-    if (prices.length === state.cart.length) {
-        state.cart.forEach((l, i) => {
-            if (l.override_price === undefined) l.price = num(prices[i]);
-        });
-    }
+    applyLinePrices(state.cart, data.line_prices, { skip: (l) => l.override_price !== undefined });   // 改過價的品項不動
     renderCart({ revalidate: false });
     state.acceptedTotal = state.finalTotal === num(data.server_total) ? null : { key: cartKey, total: num(data.server_total) };
     if (state.acceptedTotal) $('posFinalTotal').textContent = state.acceptedTotal.total;

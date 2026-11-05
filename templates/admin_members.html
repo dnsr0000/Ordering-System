@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stat_tile, pagination %}
 {% block title %}會員 - 後台{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -14,7 +14,7 @@
     {% endcall %}
     <div class="row g-3 mb-4">
         {% for label, value in [('會員數', stats.members), ('已綁定 LINE', stats.line_bound), ('儲值金餘額合計', '$' ~ '{:,}'.format(stats.wallet_total)), ('本月壽星', stats.birthday_month)] %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">{{ value }}</div></div></div>
+        {{ stat_tile(label, value) }}
         {% endfor %}
     </div>
     <div class="row g-4">
@@ -177,14 +177,7 @@
                 </div>
                 {% if pages > 1 %}
                 <nav aria-label="會員分頁" id="memberPager">
-                    <ul class="pagination pagination-sm justify-content-center mb-0 mt-2">
-                        {% set first = [1, page - 3]|max %}{% set last = [pages, page + 3]|min %}
-                        <li class="page-item {{ 'disabled' if page == 1 }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=page - 1) }}">上一頁</a></li>
-                        {% for p in range(first, last + 1) %}
-                        <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=p) }}">{{ p }}</a></li>
-                        {% endfor %}
-                        <li class="page-item {{ 'disabled' if page == pages }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=page + 1) }}">下一頁</a></li>
-                    </ul>
+                    {{ pagination('members_pro.manage', page, pages, {'q': q or None, 'sort': sort or None}, cls='mt-2') }}
                     <div class="text-center small text-white-50 mt-1">第 {{ page }} / {{ pages }} 頁</div>
                 </nav>
                 {% endif %}

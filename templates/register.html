@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import modal_head %}
 
 {% block title %}{{ ui.reg_login_title if login_mode else ui.join_member }}{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
 
@@ -208,10 +209,7 @@
 <div class="modal fade" id="cameraModal" tabindex="-1" data-bs-backdrop="static" aria-hidden="true" aria-labelledby="cameraModalTitle">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content bg-dark text-white border-secondary shadow-lg camera-modal-content">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold" id="cameraModalTitle"><i class="bi bi-camera me-2 text-warning"></i>{{ ui.reg_take_photo_title }}</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
-            </div>
+            {{ modal_head(ui.reg_take_photo_title, 'bi-camera', color='', title_id='cameraModalTitle', icon_class='me-2 text-warning', close_label=ui.close) }}
             <div class="modal-body p-4 text-center">
                 <div class="camera-video-container mb-3 shadow">
                     <video id="cameraVideo" autoplay playsinline muted></video>

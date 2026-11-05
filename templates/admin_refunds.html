@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf, status_badge %}
+{% from "_macros.html" import page_header, csrf, status_badge, stat_tile %}
 {% block title %}作廢與退款紀錄{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -39,9 +39,9 @@
         <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></div>
     </form>
     <div class="row g-3 mb-3">
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">退款合計</div><div class="stat-value text-danger">${{ '{:,}'.format(total) }}</div></div></div>
+        {{ stat_tile('退款合計', '$' ~ '{:,}'.format(total), 'text-danger') }}
         {% for m, amt in by_method.items() %}
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ m }}</div><div class="stat-value">${{ '{:,}'.format(amt) }}</div></div></div>
+        {{ stat_tile(m, '$' ~ '{:,}'.format(amt)) }}
         {% endfor %}
     </div>
     <div class="table-responsive">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, status_badge %}
+{% from "_macros.html" import page_header, status_badge, stat_tile %}
 {% block title %}交班與日結{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -18,7 +18,7 @@
         </div>
         <div class="row g-3 mb-3">
             {% for label, value in [('營業額', daily.net_sales), ('商品小計', daily.gross), ('折扣', daily.discounts), ('服務費', daily.service_charge), ('退款', daily.refund_total), ('未收款', daily.unpaid)] %}
-            <div class="col-6 col-md-2"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">${{ '{:,}'.format(value) }}</div></div></div>
+            {{ stat_tile(label, '$' ~ '{:,}'.format(value), col='col-6 col-md-2') }}
             {% endfor %}
         </div>
         <div class="row g-3">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stock_badge %}
 {% block title %}菜單與套餐 - 後台{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -92,7 +92,7 @@
                         </td>
                         <td>
                             <div class="d-inline-flex align-items-center bg-dark border border-secondary rounded px-2 py-1 shadow-sm">
-                                <span id="item-stock-badge-{{ item.id }}" class="badge {% if stock <= 0 or item.is_sold_out %}bg-danger{% elif stock <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %} fw-bold px-2 py-1" title="剩餘數量">{{ stock }}</span>
+                                {{ stock_badge(item, id='item-stock-badge-' ~ item.id, extra_class='fw-bold px-2 py-1', title='剩餘數量') }}
                                 <span class="text-white-50 mx-1 small">/</span>
                                 <span class="badge bg-secondary text-white fw-bold px-2 py-1" title="總量">{{ item.total_stock or 0 }}</span>
                             </div>

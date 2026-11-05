@@ -8,14 +8,13 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.reservation import Reservation, WaitlistEntry
 from app.services import settings_service
-from app.utils import validate_phone
+from app import utils
+from app.utils import parse_hm, validate_phone
 
 
 def _parse_hm(value, default):
-    try:
-        return datetime.strptime(value or default, '%H:%M').time()
-    except ValueError:
-        return datetime.strptime(default, '%H:%M').time()
+    """'HH:MM' → time；格式錯誤用 default"""
+    return time(*parse_hm(value, default))
 
 
 def slots_for(day, tenant_id=None):
@@ -73,7 +72,7 @@ def create_reservation(tenant_id, name, phone, party_size, reserved_at, note='',
                     note=str(note or '')[:200], source=source, table_name=str(table_name or '')[:50])
     if deposit:   # 線上訂位須預付訂金：30 分鐘內付款，否則自動取消 (期間保留座位)
         from app.services import payment_ecpay
-        r.deposit_amount, r.deposit_status, r.deposit_trade_no = deposit, 'pending', payment_ecpay._new_trade_no()
+        r.deposit_amount, r.deposit_status, r.deposit_trade_no = deposit, 'pending', payment_ecpay.new_trade_no()
     db.session.add(r)
     if source == 'online':
         db.session.flush()
@@ -160,5 +159,5 @@ def notify_called(entry, tenant_id):
 
 
 def day_bounds(day):
-    start = datetime.combine(day, time.min)
-    return start, start + timedelta(days=1)
+    """某一天的半開 datetime 區間 (同 app.utils.day_bounds)"""
+    return utils.day_bounds(day)

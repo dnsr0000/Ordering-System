@@ -170,7 +170,7 @@
         const snapBtn = document.getElementById('snapBtn');
         const retakeBtn = document.getElementById('retakeBtn');
         const confirmBtn = document.getElementById('confirmBtn');
-        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const modal = Kiosk.modal(modalEl);
         let stream = null;
         let capturedBlob = null;
 

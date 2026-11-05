@@ -5,19 +5,11 @@
 from datetime import datetime, timedelta
 
 from app.errors import AppError
+from app.models.menu import WEEKDAY_LABELS
 from app.services import settings_service
+from app.utils import parse_hm, parse_local_dt
 
 MAX_SLOTS = 300
-WEEKDAY = '一二三四五六日'
-
-
-def _hm(text, fallback):
-    try:
-        h, m = str(text or fallback).split(':')
-        return int(h), int(m)
-    except ValueError:
-        h, m = fallback.split(':')
-        return int(h), int(m)
 
 
 config = settings_service.reader('online_order')
@@ -25,8 +17,8 @@ enabled = settings_service.flag('online_order', 'scheduled_pickup')
 
 
 def _windows(cfg, now):
-    oh, om = _hm(cfg.get('open_time'), '10:00')
-    ch, cm = _hm(cfg.get('close_time'), '21:00')
+    oh, om = parse_hm(cfg.get('open_time'), '10:00')
+    ch, cm = parse_hm(cfg.get('close_time'), '21:00')
     for d in range(int(cfg.get('days_ahead') or 0) + 1):
         day = (now + timedelta(days=d)).date()
         start = datetime(day.year, day.month, day.day, oh, om)
@@ -58,7 +50,7 @@ def slots(tenant_id=None, now=None):
 def label(t, now=None):
     now = now or datetime.now()
     days = (t.date() - now.date()).days
-    prefix = '今天' if days == 0 else ('明天' if days == 1 else f'{t:%m/%d}({WEEKDAY[t.weekday()]})')
+    prefix = '今天' if days == 0 else ('明天' if days == 1 else f'{t:%m/%d}({WEEKDAY_LABELS[t.weekday()]})')
     return f'{prefix} {t:%H:%M}'
 
 
@@ -73,10 +65,7 @@ def parse(raw, tenant_id=None, now=None):
     cfg = config(tenant_id)
     if not cfg.get('scheduled_pickup'):
         raise AppError('本店目前不開放預約取餐時間')
-    try:
-        t = datetime.strptime(raw[:16], '%Y-%m-%dT%H:%M')
-    except ValueError:
-        raise AppError('預約取餐時間格式不正確')
+    t = parse_local_dt(raw, '預約取餐時間')
     now = now or datetime.now()
     step = max(5, int(cfg.get('slot_minutes') or 15))
     lead = int(cfg.get('lead_minutes') or 0)

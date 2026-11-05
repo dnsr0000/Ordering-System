@@ -3,10 +3,9 @@
  */
 (function () {
     'use strict';
-    const { html } = Kiosk;
+    const { html, $ } = Kiosk;
     const data = Kiosk.pageData();
-    const $ = (id) => document.getElementById(id);
-    const showModal = (id) => bootstrap.Modal.getOrCreateInstance($(id)).show();
+    const showModal = (id) => Kiosk.modal(id).show();
 
     // ---------------------------------------------------------------- 名冊排序：換選項就重新查詢
     document.querySelectorAll('#memberSearchForm [data-autosubmit]').forEach((sel) => {

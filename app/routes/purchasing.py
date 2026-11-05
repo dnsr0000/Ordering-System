@@ -10,7 +10,7 @@ from app.models.inventory import Ingredient, PurchaseOrder, Supplier
 from app.services import forecast_service, purchasing_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import get_own, safe_float, safe_int
+from app.utils import get_own, parse_date, safe_float, safe_int
 
 purchasing_bp = Blueprint('purchasing', __name__)
 
@@ -96,10 +96,7 @@ def po(po_id):
             purchasing_service.update_lines(order, qty, cost, safe_int(f.get('add_ingredient_id'), 0),
                                             safe_float(f.get('add_qty'), 0))
             if order.status == 'draft':
-                try:
-                    order.expected_on = date.fromisoformat(f.get('expected_on')) if f.get('expected_on') else None
-                except ValueError:
-                    raise AppError('預計到貨日格式不正確')
+                order.expected_on = parse_date(f.get('expected_on'), '預計到貨日')
                 order.note = (f.get('note') or '').strip()[:200]
                 if 'supplier_id' in f:
                     order.supplier_id = _supplier(f.get('supplier_id')).id if f.get('supplier_id') else None
@@ -111,12 +108,7 @@ def po(po_id):
         elif action == 'receive':
             received = {}
             for ln in order.lines:
-                exp = None
-                if f.get(f'exp__{ln.id}'):
-                    try:
-                        exp = date.fromisoformat(f.get(f'exp__{ln.id}'))
-                    except ValueError:
-                        raise AppError('有效期限格式不正確')
+                exp = parse_date(f.get(f'exp__{ln.id}'), '有效期限')
                 received[ln.id] = (safe_float(f.get(f'recv__{ln.id}'), ln.quantity), exp)
             purchasing_service.receive(order, received, current_user.username)
             record_staff_audit('PO_RECEIVE', details=f'採購單 {order.number} 收貨入庫')

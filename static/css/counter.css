@@ -1,11 +1,6 @@
-/* 公開取餐叫號看板 */
+/* 公開取餐叫號看板；頁首 .screen-header 在 theme.css */
 .counter-page {
     overflow-x: hidden;
-}
-
-.header-counter {
-    background: var(--kiosk-surface);
-    border-bottom: 2px solid var(--kiosk-border);
 }
 
 .ready-box {

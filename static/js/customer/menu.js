@@ -1,9 +1,12 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：桌邊呼叫服務、套餐 / 客製化 / 加購視窗、寄杯、菜單篩選與排序。
- * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，客製化視窗的 HTML / 讀回與套餐卡片版面在 static/js/shared/。
  */
-import { $, api, availableAddons, html, menuItems, modal, modifierOptions, pageData, state, ui } from './core.js';
+import { $, api, availableAddons, html, isItemAvailable, menuItems, modal, modifierOptions, pageData, state, ui } from './core.js';
 import { addLine, makeLine, remainingAddonQuota } from './cart.js';
+import * as mods from '../shared/modifiers.js';
+import { comboAvailable, comboCardHtml } from '../shared/combos.js';
+import { passRemaining } from '../shared/cartline.js';
 
 // 桌邊呼叫服務 (掃桌位 QR code 後，登入前後都可使用)
 export async function callService(btn) {
@@ -18,11 +21,8 @@ export async function callService(btn) {
     }
 }
 // ================================================================ 套餐 / 客製化
-/** 下拉選項：值固定為中文 (送到廚房的客製化文字)，顯示文字依語言 (ui.*_values 以 | 分隔，數量不符時顯示中文) */
-function optionsHtml(values, labels) {
-    const shown = typeof labels === 'string' ? labels.split('|') : [];
-    return values.map((v, i) => html`<option value="${v}">${shown.length === values.length ? shown[i] : v}</option>`);
-}
+/** 配餐 / 任選選項目前可點：以菜單的即時供應狀態為準 (live.js 會更新)，不在菜單裡的品項依後端標示 */
+const sideAvailable = (id, side) => isItemAvailable(id, side.is_available !== false);
 
 export function startAdd(itemId) {
     const item = menuItems.get(Number(itemId));
@@ -36,48 +36,42 @@ export function startAdd(itemId) {
     }
 }
 
+const COMBO_CARD = 'combo-card p-4 rounded-3 h-100 d-flex flex-column justify-content-between';
+const COMBO_HEADER = 'd-flex justify-content-between align-items-center mb-2';
+const COMBO_FOOTER = 'mt-3 pt-2 border-top border-secondary text-end';
+
+/** 單點 / 升級套餐卡片 (版面在 shared/combos.js；配餐或任選全部售完的套餐不能選) */
 export function renderComboCards(item) {
     $('comboModalTitle').textContent = `【${item.name}】${ui.enjoy_how || '享用方式'}`;
-    const single = html`
-        <div class="col-md-6">
-            <div class="combo-card p-4 rounded-3 h-100 d-flex flex-column justify-content-between" data-action="pick-combo" data-combo-id="" role="button" tabindex="0">
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="badge bg-secondary">${ui.single_main || '單點主餐'}</span>
-                        <span class="text-success fw-bold fs-5">$${item.price}</span>
-                    </div>
-                    <h5 class="fw-bold text-white mb-1">${item.name}${ui.single_suffix || ' (單點)'}</h5>
-                    <p class="text-white-50 small mb-0">${ui.single_desc || '僅單點本品項，不搭配任何附餐或飲品。'}</p>
-                </div>
-                <div class="mt-3 pt-2 border-top border-secondary text-end">
-                    <span class="btn btn-outline-light btn-sm fw-bold px-3">${ui.choose_single || '選擇單點'} <i class="bi bi-chevron-right"></i></span>
-                </div>
-            </div>
-        </div>`;
+    const single = comboCardHtml({
+        cardCls: COMBO_CARD,
+        attrs: html`data-action="pick-combo" data-combo-id="" role="button" tabindex="0"`,
+        headerCls: COMBO_HEADER,
+        badge: html`<span class="badge bg-secondary">${ui.single_main || '單點主餐'}</span>`,
+        price: html`<span class="text-success fw-bold fs-5">$${item.price}</span>`,
+        title: html`<h5 class="fw-bold text-white mb-1">${item.name}${ui.single_suffix || ' (單點)'}</h5>`,
+        desc: html`<p class="text-white-50 small mb-0">${ui.single_desc || '僅單點本品項，不搭配任何附餐或飲品。'}</p>`,
+        footerCls: COMBO_FOOTER,
+        footer: html`<span class="btn btn-outline-light btn-sm fw-bold px-3">${ui.choose_single || '選擇單點'} <i class="bi bi-chevron-right"></i></span>`,
+    });
     const combos = item.combos.map((c) => {
-        const sold = !c.is_available;
-        return html`
-        <div class="col-md-6">
-            <div class="combo-card p-4 rounded-3 h-100 d-flex flex-column justify-content-between ${sold ? 'card-sold-out' : ''}"
-                 ${sold ? '' : html`data-action="pick-combo" data-combo-id="${c.id}" role="button" tabindex="0"`}>
-                <div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="badge ${sold ? 'bg-secondary' : 'bg-warning text-dark fw-bold'}">${sold ? (ui.combo_sold_out || '配餐售罄') : (ui.combo_upgrade || '升級超值套餐')}</span>
-                        <div>
+        const sold = !comboAvailable(c, sideAvailable);
+        return comboCardHtml({
+            cardCls: `${COMBO_CARD} ${sold ? 'card-sold-out' : ''}`,
+            attrs: sold ? '' : html`data-action="pick-combo" data-combo-id="${c.id}" role="button" tabindex="0"`,
+            headerCls: COMBO_HEADER,
+            badge: html`<span class="badge ${sold ? 'bg-secondary' : 'bg-warning text-dark fw-bold'}">${sold ? (ui.combo_sold_out || '配餐售罄') : (ui.combo_upgrade || '升級超值套餐')}</span>`,
+            price: html`<div>
                             <span class="${sold ? 'text-white-50' : 'text-danger fw-bold fs-5'}">+$${c.price}</span>
                             <small class="text-white-50 ms-1">(${ui.combo_total || '總價 $'}${Number(item.price) + Number(c.price)})</small>
-                        </div>
-                    </div>
-                    <h5 class="fw-bold ${sold ? 'text-white-50 text-decoration-line-through' : 'text-warning'} mb-1 combo-name">${c.name}</h5>
-                    <p class="text-white-50 small mb-0">${c.description || ui.combo_desc_default || '含特選附餐與指定飲品組合'}</p>
-                </div>
-                <div class="mt-3 pt-2 border-top border-secondary text-end">
-                    ${sold
-                        ? html`<button class="btn btn-secondary btn-sm fw-bold" type="button" disabled><i class="bi bi-slash-circle"></i> ${ui.combo_side_unavailable || '配餐缺貨中'}</button>`
-                        : html`<span class="btn btn-warning btn-sm fw-bold text-dark px-3">${ui.upgrade_combo || '升級套餐'} <i class="bi bi-chevron-right"></i></span>`}
-                </div>
-            </div>
-        </div>`;
+                        </div>`,
+            title: html`<h5 class="fw-bold ${sold ? 'text-white-50 text-decoration-line-through' : 'text-warning'} mb-1 combo-name">${c.name}</h5>`,
+            desc: html`<p class="text-white-50 small mb-0">${c.description || ui.combo_desc_default || '含特選附餐與指定飲品組合'}</p>`,
+            footerCls: COMBO_FOOTER,
+            footer: sold
+                ? html`<button class="btn btn-secondary btn-sm fw-bold" type="button" disabled><i class="bi bi-slash-circle"></i> ${ui.combo_side_unavailable || '配餐缺貨中'}</button>`
+                : html`<span class="btn btn-warning btn-sm fw-bold text-dark px-3">${ui.upgrade_combo || '升級套餐'} <i class="bi bi-chevron-right"></i></span>`,
+        });
     });
     Kiosk.setHtml($('combo-cards-container'), [single, combos]);
 }
@@ -90,71 +84,27 @@ export function pickCombo(comboId) {
     Kiosk.hideModalThen($('comboModal'), () => proceedToModifiers(item, combo, false));
 }
 
-export function modifierSectionHtml(key, title, group) {
-    let body = '';
-    if (group === 'ice_sugar') {
-        body = html`
-            <div class="row g-2">
-                <div class="col-6">
-                    <label class="form-label small text-white-50" for="mod-ice-${key}">${ui.ice || '冰塊量'}</label>
-                    <select id="mod-ice-${key}" class="form-select form-select-sm" data-mod="ice">
-                        ${optionsHtml(['正常冰', '少冰', '去冰', '熱飲'], ui.ice_values)}
-                    </select>
-                </div>
-                <div class="col-6">
-                    <label class="form-label small text-white-50" for="mod-sugar-${key}">${ui.sugar || '甜度'}</label>
-                    <select id="mod-sugar-${key}" class="form-select form-select-sm" data-mod="sugar">
-                        ${optionsHtml(['全糖', '半糖', '微糖', '無糖'], ui.sugar_values)}
-                    </select>
-                </div>
-            </div>`;
-    } else if (group === 'spicy') {
-        body = html`
-            <div>
-                <label class="form-label small text-white-50" for="mod-spicy-${key}">${ui.spicy || '辣度調整'}</label>
-                <select id="mod-spicy-${key}" class="form-select form-select-sm" data-mod="spicy">
-                    ${optionsHtml(['不辣', '微辣', '中辣', '大辣'], ui.spicy_values)}
-                </select>
-            </div>`;
-    } else if (group === 'addons') {
-        body = html`
-            <div>
-                <label class="form-label small text-white-50 mb-1">${ui.addons || '加料升級'}</label>
-                <div class="d-flex flex-wrap gap-3">
-                    ${modifierOptions.filter((m) => m.category === 'addons').map((m) => html`
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" data-mod="addon" data-id="${m.id}" id="addon-${m.id}-${key}">
-                            <label class="form-check-label small text-white" for="addon-${m.id}-${key}">${m.name} (+${m.price})</label>
-                        </div>`)}
-                </div>
-            </div>`;
-    }
-    return html`
-        <div class="mod-section p-3 mb-3 rounded border border-secondary bg-dark shadow-sm" data-key="${key}">
-            <h6 class="fw-bold text-warning mb-2 border-bottom border-secondary pb-1">${title}</h6>
-            ${body}
-        </div>`;
-}
-
-/** 規格選擇 (單選)：第一個為預設 */
-export function sizeSectionHtml(item) {
-    const sign = (d) => (d > 0 ? ` (+$${d})` : (d < 0 ? ` (-$${-d})` : ''));
-    return html`
-        <div class="mod-section p-3 mb-3 rounded border border-warning bg-dark shadow-sm" data-key="size">
-            <h6 class="fw-bold text-warning mb-2 border-bottom border-secondary pb-1">${ui.size || '規格'}</h6>
-            <div class="d-flex flex-wrap gap-2" role="radiogroup">
-                ${item.sizes.map((s, i) => html`
-                    <input type="radio" class="btn-check" name="item-size" id="size-${i}" value="${s.name}" data-mod="size" ${i === 0 ? 'checked' : ''}>
-                    <label class="btn btn-outline-warning btn-sm" for="size-${i}">${s.name}${sign(Number(s.delta) || 0)}</label>`)}
-            </div>
-        </div>`;
-}
+/** 客製化視窗的外觀與文字 (shared/modifiers.js)；下拉的值固定中文，顯示文字依語言 */
+export const MODIFIER_SCHEME = {
+    idPrefix: '',
+    sectionCls: 'p-3 mb-3 rounded border bg-dark shadow-sm',
+    title: (text, colorCls) => html`<h6 class="fw-bold ${colorCls} mb-2 border-bottom border-secondary pb-1">${text}</h6>`,
+    labels: {
+        ice: ui.ice || '冰塊量', sugar: ui.sugar || '甜度', spicy: ui.spicy || '辣度調整', addons: ui.addons || '加料升級',
+        noAddons: ui.no_addons || '目前沒有可選的加料項目', size: ui.size || '規格', pickOne: ui.pick_one || ' (任選一項)',
+        soldOut: ui.sold_out_paren || ' (售完)', customize: ui.customize_suffix || ' 客製化',
+    },
+    values: { ice: ui.ice_values, sugar: ui.sugar_values, spicy: ui.spicy_values },
+    addons: modifierOptions.filter((m) => m.category === 'addons'),
+    isOptionAvailable: (o) => sideAvailable(o.menu_item_id, o),
+};
 
 /** 有客製化選項或規格時開啟客製化視窗，否則直接加入購物車 */
 export function proceedToModifiers(item, combo, isAddon, passId = 0) {
-    const hasMain = item.modifiers && item.modifiers !== 'none';
+    const hasMain = mods.hasMods(item.modifiers);
     const hasSizes = !isAddon && !passId && (item.sizes || []).length > 0;
-    const sides = combo ? (combo.sides || []).filter((s) => s.customizable) : [];
+    // 配餐：可客製且本身有客製化群組才顯示 (與 POS 相同)
+    const sides = combo ? (combo.sides || []).filter((s) => s.customizable && mods.hasMods(s.modifiers)) : [];
     const choices = combo ? (combo.choices || []) : [];
     if (!hasMain && !sides.length && !hasSizes && !choices.length) {
         addLine(makeLine(item, { combo, isAddon, passId }));
@@ -169,91 +119,29 @@ export function proceedToModifiers(item, combo, isAddon, passId = 0) {
     const isComboMode = Boolean(combo || sides.length);
     const mainTitle = isAddon ? `${ui.addon_prefix || '加購：'}${item.name}` : (isComboMode ? `${ui.main_prefix || '主餐：'}${item.name}` : item.name);
     Kiosk.setHtml($('modifierModalBody'), [
-        hasSizes ? sizeSectionHtml(item) : '',
-        hasMain ? modifierSectionHtml('main', mainTitle, item.modifiers) : '',
-        sides.map((side, i) => modifierSectionHtml(`side${i}`, `${ui.side_prefix || '配餐：'}${side.name}`, side.modifiers)),
-        choices.map((g, gi) => choiceSectionHtml(g, gi)),
+        hasSizes ? mods.sizeSectionHtml(MODIFIER_SCHEME, item.sizes) : '',
+        hasMain ? mods.modifierSectionHtml(MODIFIER_SCHEME, 'main', mainTitle, item.modifiers) : '',
+        sides.map((side, i) => mods.modifierSectionHtml(MODIFIER_SCHEME, `side${i}`, `${ui.side_prefix || '配餐：'}${side.name}`, side.modifiers)),
+        choices.map((g, gi) => mods.choiceSectionHtml(MODIFIER_SCHEME, g, gi)),
     ]);
     syncChoiceMods();
     modal('modifierModal').show();
 }
 
-/** 套餐任選群組：單選 (售完的選項不能選)，選項可客製時顯示該選項的客製化 */
-export function choiceSectionHtml(g, gi) {
-    const first = g.options.find((o) => o.is_available !== false);
-    return html`
-        <div class="mod-section p-3 mb-3 rounded border border-info bg-dark shadow-sm" data-key="choice${gi}" data-choice-group="${gi}">
-            <h6 class="fw-bold text-info mb-2 border-bottom border-secondary pb-1">${g.group}${ui.pick_one || ' (任選一項)'}</h6>
-            <div class="d-flex flex-wrap gap-2" role="radiogroup">
-                ${g.options.map((o) => html`
-                    <input type="radio" class="btn-check" name="combo-choice-${gi}" id="choice-${gi}-${o.id}" value="${o.id}"
-                           data-mod="choice" ${o.is_available === false ? 'disabled' : ''} ${first && o.id === first.id ? 'checked' : ''}>
-                    <label class="btn btn-outline-info btn-sm" for="choice-${gi}-${o.id}">${o.name}${Number(o.extra_price) ? ` (+$${o.extra_price})` : ''}${o.is_available === false ? (ui.sold_out_paren || ' (售完)') : ''}</label>`)}
-            </div>
-            ${g.options.filter((o) => o.customizable && o.modifiers && o.modifiers !== 'none').map((o) => html`
-                <div class="choice-mods mt-2 d-none" data-opt="${o.id}">
-                    ${modifierSectionHtml(`choice${gi}-${o.id}`, `${o.name}${ui.customize_suffix || ' 客製化'}`, o.modifiers)}
-                </div>`)}
-        </div>`;
-}
-
 export function syncChoiceMods() {
-    document.querySelectorAll('#modifierModalBody [data-choice-group]').forEach((sec) => {
-        const checked = sec.querySelector('[data-mod="choice"]:checked');
-        sec.querySelectorAll('.choice-mods').forEach((box) => {
-            box.classList.toggle('d-none', !checked || box.dataset.opt !== checked.value);
-        });
-    });
-}
-
-/** 讀取一個客製化區塊：回傳 { text: 冰塊/甜度或辣度文字, modifierIds: 勾選的加料 } */
-export function readSection(section) {
-    if (!section) return { text: '', modifierIds: [] };
-    const val = (name) => {
-        const el = section.querySelector(`[data-mod="${name}"]`);
-        return el ? el.value : '';
-    };
-    const parts = [];
-    if (val('ice') && val('sugar')) parts.push(`${val('ice')}/${val('sugar')}`);
-    if (val('spicy')) parts.push(val('spicy'));
-    const modifierIds = [...section.querySelectorAll('[data-mod="addon"]:checked')].map((cb) => Number(cb.dataset.id));
-    return { text: parts.join('、'), modifierIds };
+    mods.syncChoiceMods($('modifierModalBody'));
 }
 
 export function confirmModifiers() {
     const sel = state.pendingSelection;
     if (!sel) return;
-    const body = $('modifierModalBody');
-    const texts = [];
-    const modifierIds = [];
-
-    const main = readSection(body.querySelector('.mod-section[data-key="main"]'));
-    if (main.text) texts.push(main.text);
-    modifierIds.push(...main.modifierIds);
-
-    sel.sides.forEach((side, i) => {
-        const s = readSection(body.querySelector(`.mod-section[data-key="side${i}"]`));
-        if (s.text) texts.push(`${side.name}(${s.text})`);
-        modifierIds.push(...s.modifierIds);
-    });
-
-    const choiceIds = [];
-    for (const [gi, g] of (sel.choices || []).entries()) {
-        const checked = body.querySelector(`[data-choice-group="${gi}"] [data-mod="choice"]:checked`);
-        if (!checked) {
-            alert(`⚠️ ${(ui.pick_one_in || '請在「{g}」中選擇一項！').replace('{g}', g.group)}`);
-            return;
-        }
-        choiceIds.push(Number(checked.value));
-        const opt = g.options.find((o) => String(o.id) === checked.value);
-        const box = body.querySelector(`[data-choice-group="${gi}"] .choice-mods[data-opt="${checked.value}"] .mod-section`);
-        const c = readSection(box);
-        if (c.text) texts.push(`${opt.name}(${c.text})`);
-        modifierIds.push(...c.modifierIds);
+    const r = mods.readModifierModal($('modifierModalBody'), { hasMain: mods.hasMods(sel.item.modifiers), sides: sel.sides, choices: sel.choices || [] });
+    if (r.missing) {
+        alert(`⚠️ ${(ui.pick_one_in || '請在「{g}」中選擇一項！').replace('{g}', r.missing.group)}`);
+        return;
     }
-    const sizeInput = body.querySelector('[data-mod="size"]:checked');
-    addLine(makeLine(sel.item, { combo: sel.combo, isAddon: sel.isAddon, customization: texts.join('、'), modifierIds,
-        size: sizeInput ? sizeInput.value : '', choiceIds, passId: sel.passId || 0 }));
+    addLine(makeLine(sel.item, { combo: sel.combo, isAddon: sel.isAddon, customization: r.texts.join('、'), modifierIds: r.modifierIds,
+        size: r.size, choiceIds: r.choiceIds, passId: sel.passId || 0 }));
     modal('modifierModal').hide();
 }
 
@@ -265,8 +153,7 @@ export function usePass(passId) {
         alert(`⚠️ ${ui.pass_item_missing || '找不到可兌換的餐點'}`);
         return;
     }
-    const used = state.cart.filter((l) => Number(l.pass_id) === Number(p.id)).reduce((s, l) => s + l.quantity, 0);
-    if (used >= Number(p.remaining)) {
+    if (passRemaining(state.cart, p) <= 0) {
         alert(`⚠️ ${(ui.pass_all_added || '寄杯「{n}」剩 {r} 次，已全部加入購物車').replace('{n}', p.name).replace('{r}', p.remaining)}`);
         return;
     }
@@ -274,7 +161,7 @@ export function usePass(passId) {
 }
 
 export function triggerAddon(itemId) {
-    const addon = availableAddons.find((a) => Number(a.id) === Number(itemId));
+    const addon = availableAddons().find((a) => Number(a.id) === Number(itemId));
     if (!addon) {
         alert(`⚠️ ${ui.addon_missing || '查無此加購品設定！'}`);
         return;
@@ -333,10 +220,8 @@ export function cyclePriceSort() {
 const DIET_KEY = 'kiosk_diet_filter';
 
 function loadDietFilter() {
-    try {
-        const saved = JSON.parse(localStorage.getItem(DIET_KEY) || 'null');
-        if (saved && typeof saved === 'object') return { veg: !!saved.veg, mild: !!saved.mild, allergens: (saved.allergens || []).filter((x) => typeof x === 'string') };
-    } catch (err) { /* 隱私模式 */ }
+    const saved = Kiosk.store.get(DIET_KEY, null);
+    if (saved && typeof saved === 'object') return { veg: !!saved.veg, mild: !!saved.mild, allergens: (saved.allergens || []).filter((x) => typeof x === 'string') };
     return { veg: false, mild: false, allergens: [] };
 }
 
@@ -362,7 +247,7 @@ export function toggleDietFilter(chip) {
     } else {
         f[chip.dataset.kind] = !f[chip.dataset.kind];
     }
-    try { localStorage.setItem(DIET_KEY, JSON.stringify(f)); } catch (err) { /* 隱私模式 */ }
+    Kiosk.store.set(DIET_KEY, f);
     renderDietChips();
     filterMenu();
 }
@@ -399,7 +284,7 @@ export function resetFilters() {
     state.featureSort = null;
     state.priceOrder = null;
     state.dietFilter = { veg: false, mild: false, allergens: [] };
-    try { localStorage.removeItem(DIET_KEY); } catch (err) { /* 隱私模式 */ }
+    Kiosk.store.remove(DIET_KEY);
     filterMenu();
     applySort();
 }

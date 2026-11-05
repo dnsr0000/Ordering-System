@@ -5,7 +5,7 @@
 import json
 import logging
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from sqlalchemy import and_, func, or_, select, update
 
@@ -24,6 +24,7 @@ from app.services.event_bus import order_event_bus
 from app.services.order_stock import _change_node_stock, _change_stock, order_stock_demands
 from app.services.points_service import change_points
 from app.sync import runtime as sync_runtime
+from app.utils import day_bounds
 from app.tenant_context import tenant_bypass
 from app.utils import safe_int
 
@@ -307,7 +308,7 @@ def auto_close_stale_orders():
     completed_at 保持空白 (不是真實出餐時間，不納入平均出餐時間)；每家有結案的店寫一筆系統稽核。
     回傳 {tenant_id: 張數}。
     """
-    today_start = datetime.combine(date.today(), datetime.min.time())
+    today_start, _ = day_bounds(date.today())
     closed = {}
     with tenant_bypass():
         stale = db.session.execute(
@@ -353,8 +354,8 @@ def ensure_daily_auto_close():
 
 
 def todays_range():
-    start = datetime.combine(date.today(), datetime.min.time())
-    return start, start + timedelta(days=1)
+    """今天的半開區間 [00:00, 明天 00:00)"""
+    return day_bounds(date.today())
 
 
 def todays_orders_condition(start, end, include_future=True):

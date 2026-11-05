@@ -14,7 +14,7 @@ import re
 import socket
 from datetime import datetime, timedelta
 
-from flask import g, request, session, url_for
+from flask import current_app, g, has_request_context, request, session, url_for
 from sqlalchemy import select, update
 
 from app.errors import AppError
@@ -22,9 +22,12 @@ from app.extensions import db
 from app.models.enums import OrderStatus, normalize_payment_method
 from app.models.order import Order
 from app.models.table import DiningTable, new_table_token
+from app.services import settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.utils import safe_int
+
+einvoice_enabled = settings_service.flag('einvoice')
 
 TABLE_SESSION_KEY = 'dining_table'
 TABLE_SESSION_HOURS = 4
@@ -128,11 +131,34 @@ def suggest_base_url():
 
 
 def base_url(tenant):
+    """桌卡 QR code 的網址：店家設定的門市網址，沒有設定時用建議的區網網址"""
     return (tenant.table_qr_base_url or '').rstrip('/') or suggest_base_url()
 
 
 def table_url(table, base):
     return base.rstrip('/') + url_for('tables.scan', token=table.token)
+
+
+def public_base(shop=None, fallback=True):
+    """
+    顧客 / 外送員 / 金流商要連到本系統的公開網址 (不含結尾斜線)：
+    PUBLIC_BASE_URL → 店家設定的 QR code 網址 (shop；None = 目前請求的店家，False = 不採用，例如綠界回傳網址) →
+    目前請求的網址 (fallback=False 時改回傳空字串：收據上的追蹤連結不印本機的 127.0.0.1)。
+    """
+    base = current_app.config.get('PUBLIC_BASE_URL') or ''
+    if not base and shop is not False:
+        if shop is None and has_request_context():
+            shop = getattr(g, 'tenant', None)
+        base = getattr(shop, 'table_qr_base_url', '') or ''
+    if not base and fallback and has_request_context():
+        base = request.url_root
+    return str(base).rstrip('/')
+
+
+def track_url(order, shop=None, fallback=True):
+    """出餐進度頁 /track/<訂單 uuid> 的完整網址 (收據 QR code、電子收據)；沒有公開網址時為空字串"""
+    base = public_base(shop, fallback)
+    return f'{base}/track/{order.uuid}' if base else ''
 
 
 def qr_data_uri(url):
@@ -263,7 +289,7 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
     payments 可分成多筆不同付款方式 (均分或自訂金額)。回傳 {orders, total, cash_received, change, ...}
     """
     from app.models.payment import PaymentKind, Settlement
-    from app.services import einvoice_ecpay, linepay, payment_service, settings_service, wallet_service
+    from app.services import einvoice_ecpay, linepay, payment_service, wallet_service
     table = db.session.get(DiningTable, safe_int(table_id, 0))
     if table is None or table.tenant_id != tenant_id:
         raise AppError('查無此桌位', 404)
@@ -328,7 +354,7 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
             user = o.user
             user.total_spent = (user.total_spent or 0) + (o.total_price or 0)
             wallet_service.refresh_tier(user)
-    if settings_service.get('einvoice', tenant_id).get('enabled') and total > 0:
+    if einvoice_enabled(tenant_id) and total > 0:
         inv = einvoice_ecpay.create_invoice(orders[0], invoice_info or {}, settlement=settlement, amount=total)
         db.session.flush()
         if settings_service.get('einvoice', tenant_id).get('auto_issue', True):

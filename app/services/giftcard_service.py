@@ -11,6 +11,7 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.enums import PaymentMethod, normalize_payment_method
 from app.models.member import GiftCard, GiftCardLedger
+from app.models.member import mask_code as mask_code   # 卡號遮罩定義在 models.member (模型不能反向匯入服務)，由這裡提供給服務層 / 路由
 from app.services import settings_service
 
 CODE_LENGTH = 16
@@ -65,11 +66,10 @@ def sell(tenant_id, amount, method, staff, payment_info=None, note=''):
     """POS 售出：建立卡片與售出異動、收款紀錄 (預收)。由呼叫端 commit。"""
     from app.models.payment import PaymentKind
     from app.services import payment_service
-    cfg = config(tenant_id)
-    if not cfg.get('enabled'):
+    if not enabled(tenant_id):
         raise AppError('尚未啟用禮物卡 (系統設定 → 禮物卡)')
     amount = int(amount or 0)
-    limit = int(cfg.get('max_amount') or 10000)
+    limit = int(config(tenant_id).get('max_amount') or 10000)
     if not 1 <= amount <= limit:
         raise AppError(f'禮物卡面額需介於 $1 ~ ${limit:,}')
     method = normalize_payment_method(method)

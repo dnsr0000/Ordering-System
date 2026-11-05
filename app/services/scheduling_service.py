@@ -18,9 +18,10 @@ from datetime import date, timedelta
 from app.extensions import db
 from app.models.staff import StaffAvailability, WorkSchedule
 from app.models.tenant import StaffAccount
+from app.models.menu import WEEKDAY_LABELS
 from app.services import settings_service, staffing_service
+from app.utils import parse_hm
 
-WEEKDAYS = '一二三四五六日'
 DEFAULTS = {'max_hours_day': 8, 'max_hours_week': 40, 'max_consecutive_days': 6}
 
 
@@ -31,11 +32,9 @@ def config(tenant_id=None):
 
 # ---------------------------------------------------------------- 可排時段
 def _minutes(hm):
-    try:
-        h, m = (int(x) for x in str(hm).split(':'))
-    except (ValueError, AttributeError):
-        return None
-    return h * 60 + m
+    """'HH:MM' → 自 0 點起的分鐘數；格式錯誤回 None"""
+    hm = parse_hm(hm)
+    return None if hm is None else hm[0] * 60 + hm[1]
 
 
 def availability_map(tenant_id):
@@ -146,7 +145,7 @@ def generate(tenant_id, week_start, today=None):
             else:
                 unfilled += 1
             day_rows.append(row)
-        days.append({'date': d, 'weekday': WEEKDAYS[d.weekday()], 'shifts': day_rows, 'need_hours': plan['need_hours'],
+        days.append({'date': d, 'weekday': WEEKDAY_LABELS[d.weekday()], 'shifts': day_rows, 'need_hours': plan['need_hours'],
                      'have_hours': plan['have_hours'], 'days_used': plan['days_used']})
     summary = [{'staff_id': st.id, 'username': st.username, 'hours': round(week_hours[st.id], 1),
                 'cap': min(cfg['max_hours_week'], st.max_hours_week or cfg['max_hours_week']), 'shifts': shift_count[st.id]}

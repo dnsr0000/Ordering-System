@@ -1,12 +1,14 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：購物車資料 (正規化、加入、加購配額、重算價格) 與購物車畫面。
- * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，加購配額 / 單價 / 合併規則在 static/js/shared/。
  */
 import {
-    $, NON_MAIN_CATEGORIES, REWARD_LABEL, api, availableAddons, channelPrice, html, menuItems, modifierById,
-    setText, state, storeCart, ui,
+    $, REWARD_LABEL, api, availableAddons, html, menuItems, modifierById, priceChannel, isGuest, setText, state, storeCart, ui,
 } from './core.js';
 import { calculateTotal, schedulePromotionPreview, setUserPoints } from './totals.js';
+import * as addons from '../shared/addons.js';
+import { comboChoiceInfo, modifiersTotal, unitPrice } from '../shared/pricing.js';
+import { mergeLine } from '../shared/cartline.js';
 
 // ================================================================ 購物車資料
 /** 把舊版或紅利商城寫入的品項轉成目前格式；無法辨識的品項丟棄 */
@@ -43,11 +45,6 @@ export function normalizeLine(raw) {
     };
 }
 
-export function lineKey(line) {
-    return [line.menu_item_id, line.combo_option_id || 0, line.is_add_on ? 1 : 0, line.size || '', line.customization,
-        [...line.modifier_ids].sort((a, b) => a - b).join(','), (line.combo_choices || []).join(','), line.pass_id || 0].join('|');
-}
-
 /** 購物車品項的顯示說明：[套餐: X]、客製化文字、加料(+N) (與後端產生的明細相同) */
 export function lineDescription(line) {
     const parts = [];
@@ -73,41 +70,18 @@ export function saveCart() {
     storeCart(state.cart);
 }
 
-export function modifiersTotal(ids) {
-    return ids.reduce((sum, id) => sum + (modifierById.has(id) ? Number(modifierById.get(id).price) || 0 : 0), 0);
-}
-
-/** 規格加減價 (與後端相同：沒有指定時用第一個規格) */
-export function sizeDelta(item, size) {
-    const sizes = (item && item.sizes) || [];
-    if (!sizes.length) return 0;
-    const chosen = sizes.find((s) => s.name === size) || sizes[0];
-    return Number(chosen.delta) || 0;
-}
-
-/** 套餐任選：選中的選項 → { ids, extra, labels } */
-export function comboChoiceInfo(combo, ids) {
-    const out = { ids: [], extra: 0, labels: [] };
-    (combo && combo.choices ? combo.choices : []).forEach((g) => {
-        const opt = g.options.find((o) => ids.includes(Number(o.id)));
-        if (!opt) return;
-        out.ids.push(Number(opt.id));
-        out.extra += Number(opt.extra_price) || 0;
-        out.labels.push(`${g.group}:${opt.name}${Number(opt.extra_price) ? `(+${opt.extra_price})` : ''}`);
-    });
-    return out;
-}
-
 export function makeLine(item, { combo = null, isAddon = false, customization = '', modifierIds = [], size = '', choiceIds = [],
                           passId = 0 } = {}) {
     const choice = comboChoiceInfo(combo, choiceIds);
-    let base = isAddon ? Number(item.add_on_price) || 0
-        : Math.max(0, channelPrice(item) + sizeDelta(item, size)) + (combo ? Number(combo.price) || 0 : 0) + choice.extra;
-    if (passId) base = 0;   // 寄杯兌換：免費 (只收加料)
+    const modifierTotal = modifiersTotal(modifierIds, modifierById);
+    let price;
+    if (passId) price = modifierTotal;   // 寄杯兌換：免費 (只收加料)
+    else if (isAddon) price = (Number(item.add_on_price) || 0) + modifierTotal;
+    else price = unitPrice({ item, channel: priceChannel(), isMember: !isGuest, size, combo, choiceIds, modifierTotal });
     return {
         menu_item_id: Number(item.id),
         name: item.name,
-        price: base + modifiersTotal(modifierIds),
+        price,
         quantity: 1,
         customization,
         size: isAddon ? '' : size,
@@ -125,118 +99,46 @@ export function makeLine(item, { combo = null, isAddon = false, customization = 
     };
 }
 
+/** 加入購物車 (同一品項同樣客製化時合併數量) */
 export function addLine(line) {
-    const key = lineKey(line);
-    const existing = state.cart.find((l) => !l.is_reward && lineKey(l) === key);
-    if (existing) existing.quantity += 1;
-    else state.cart.push(line);
+    mergeLine(state.cart, line);
     saveCart();
     updateCartUI();
 }
 
-// ================================================================ 加購配額
-// 每一份合格正價餐點最多搭配一份加購，且加購品必須符合該餐點的觸發條件 (二分圖配對，與後端一致)
-export function qualifiesForAddon(line, addon) {
-    if (!line || line.is_add_on || line.is_reward || line.can_addon === false) return false;
-    const cat = lineCategory(line).trim();
-    const trigger = addon.addon_trigger_type || 'any';
-    const target = (addon.addon_trigger_target || '').trim().toLowerCase();
-    if (trigger === 'category') {
-        return cat.toLowerCase() === (target || (addon.category || '').trim().toLowerCase());
-    }
-    if (trigger === 'item') {
-        return String(line.menu_item_id) === target || line.name.trim().toLowerCase() === target;
-    }
-    return !NON_MAIN_CATEGORIES.includes(cat);
-}
-
-export function mainUnits() {
-    const units = [];
-    state.cart.forEach((line) => {
-        if (line.is_add_on || line.is_reward || line.can_addon === false) return;
-        for (let k = 0; k < line.quantity; k++) units.push(line);
-    });
-    return units;
-}
-
-export function addonsFeasible(addonDefs) {
-    const mains = mainUnits();
-    if (addonDefs.length > mains.length) return false;
-    const owner = new Array(mains.length).fill(-1);
-    const assign = (a, seen) => {
-        for (let m = 0; m < mains.length; m++) {
-            if (seen[m] || !qualifiesForAddon(mains[m], addonDefs[a])) continue;
-            seen[m] = true;
-            if (owner[m] === -1 || assign(owner[m], seen)) {
-                owner[m] = a;
-                return true;
-            }
-        }
-        return false;
-    };
-    for (let a = 0; a < addonDefs.length; a++) {
-        if (!assign(a, new Array(mains.length).fill(false))) return false;
-    }
-    return true;
-}
-
-export function cartAddonDefs() {
-    const defs = [];
-    state.cart.filter((l) => l.is_add_on).forEach((l) => {
-        const def = availableAddons.find((a) => Number(a.id) === l.menu_item_id);
-        if (def) for (let k = 0; k < l.quantity; k++) defs.push(def);
-    });
-    return defs;
-}
+// ================================================================ 加購配額 (shared/addons.js；規則與後端一致)
+const addonDef = (id) => availableAddons().find((a) => Number(a.id) === Number(id));
+const addonRules = { categoryOf: lineCategory, addonDef };
 
 /** 在不破壞既有加購配對的前提下，該加購品還能再加幾份 */
 export function remainingAddonQuota(addon) {
-    const current = cartAddonDefs();
-    let n = 0;
-    while (addonsFeasible(current.concat(new Array(n + 1).fill(addon)))) n++;
-    return n;
+    return addons.remainingAddonQuota(state.cart, addon, addonRules);
 }
 
 /** 依購物車順序逐份保留加購品，無法配對到合格餐點的部分自動減量；有調整時回傳 true */
 export function enforceAddonQuota() {
-    let changed = false;
-    const kept = [];
-    state.cart.forEach((line) => {
-        if (!line.is_add_on) return;
-        const def = availableAddons.find((a) => Number(a.id) === line.menu_item_id);
-        let allowed = 0;
-        if (def) {
-            while (allowed < line.quantity && addonsFeasible(kept.concat([def]))) {
-                kept.push(def);
-                allowed++;
-            }
-        }
-        if (allowed !== line.quantity) {
-            line.quantity = allowed;
-            changed = true;
-        }
-    });
-    state.cart = state.cart.filter((l) => l.quantity > 0);
-    return changed;
+    const result = addons.enforceAddonQuota(state.cart, addonRules);
+    state.cart = result.lines;
+    return result.changed;
 }
 
-/** 內用 / 外帶切換時，一般品項改用該通路的價格 */
+/** 內用 / 外帶切換 (或菜單改價) 時，一般品項改用該通路的價格；加購品與寄杯只重算加料 */
 export function repriceCart() {
     state.cart.forEach((l) => {
         if (l.is_reward) return;
+        const modifierTotal = modifiersTotal(l.modifier_ids, modifierById);
         if (l.pass_id) {
-            l.price = modifiersTotal(l.modifier_ids);
+            l.price = modifierTotal;
             return;
         }
         const item = menuItems.get(l.menu_item_id);
         if (!item) return;
         if (l.is_add_on) {
-            l.price = (Number(item.add_on_price) || 0) + modifiersTotal(l.modifier_ids);
+            l.price = (Number(item.add_on_price) || 0) + modifierTotal;
             return;
         }
         const combo = l.combo_option_id ? (item.combos || []).find((c) => Number(c.id) === Number(l.combo_option_id)) : null;
-        l.price = Math.max(0, channelPrice(item) + sizeDelta(item, l.size)) + (combo ? Number(combo.price) || 0 : 0)
-            + comboChoiceInfo(combo, l.combo_choices || []).extra + modifiersTotal(l.modifier_ids);
+        l.price = unitPrice({ item, channel: priceChannel(), isMember: !isGuest, size: l.size, combo, choiceIds: l.combo_choices || [], modifierTotal });
     });
     saveCart();
     updateCartUI();
@@ -261,14 +163,14 @@ export function cartLineHtml(line, idx) {
                     ${soldOut ? html`<span class="badge bg-danger ms-1">${ui.sold_out || '已售完'}</span>` : ''}
                 </div>
                 ${desc ? html`<small class="d-block ${soldOut ? 'text-decoration-line-through text-white-50' : 'text-info'}">${desc}</small>` : ''}
-                <small class="text-white-50 ${soldOut ? 'text-decoration-line-through' : ''}">$${Math.round(line.price)} x ${line.quantity}</small>
+                <small class="text-white-50 ${soldOut ? 'text-decoration-line-through' : ''}">${Kiosk.money(line.price)} x ${line.quantity}</small>
             </div>
             <div class="d-flex align-items-center">${action}</div>
         </div>`;
 }
 
 export function addonRecommendHtml() {
-    const eligible = availableAddons
+    const eligible = availableAddons()
         .map((a) => ({ addon: a, quota: remainingAddonQuota(a) }))
         .filter((x) => x.quota > 0);
     if (!eligible.length) return '';
@@ -316,7 +218,7 @@ export function changeQty(index, delta) {
         return;
     }
     if (delta > 0 && line.is_add_on) {
-        const def = availableAddons.find((a) => Number(a.id) === line.menu_item_id);
+        const def = addonDef(line.menu_item_id);
         if (!def || remainingAddonQuota(def) <= 0) {
             alert(`⚠️ ${ui.addon_max || '加購品數量已達上限！'}`);
             return;

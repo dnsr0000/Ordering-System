@@ -76,8 +76,6 @@
     }
 
     // ---------------------------------------------------------------- 畫面
-    const pad = (n) => String(n).padStart(3, '0');
-
     function waitStyle(minutes) {
         if (minutes >= lateMinutes) return { border: 'border-time-danger', badge: 'bg-danger', late: true };
         if (minutes >= warnMinutes) return { border: 'border-time-warning', badge: 'bg-warning text-dark' };
@@ -87,11 +85,6 @@
     function orderCard(o, nowSeconds) {
         const waitMinutes = Math.max(0, Math.floor((nowSeconds - o.timestamp) / 60));
         const style = waitStyle(waitMinutes);
-        const takeOut = o.order_type === '外帶' ? html`
-            <div class="mb-2">
-                <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'} small">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>
-                ${o.note ? html`<div class="small text-warning mt-1 kds-note">備註：${o.note}</div>` : ''}
-            </div>` : '';
         const items = o.items.map((item) => html`
             <div class="item-row py-2 ${item.done || !Number(item.quantity) ? 'opacity-50 text-decoration-line-through' : ''}">
                 <div class="d-flex justify-content-between align-items-center gap-2">
@@ -113,7 +106,7 @@
                     ${o.pickup_at ? html`<div class="badge bg-info text-dark w-100 fs-6 mb-2 kds-pickup-at"><i class="bi bi-clock me-1"></i>預約 ${o.pickup_at} 取餐</div>` : ''}
                     <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
                         <div>
-                            <h3 class="fw-bold text-warning mb-0 kds-pickup-number">#${pad(o.pickup_number)}</h3>
+                            <h3 class="fw-bold text-warning mb-0 kds-pickup-number">${Kiosk.pickupNo(o.pickup_number)}</h3>
                             <small class="text-white-50">單號 #${o.id} • <i class="bi bi-person me-1"></i>${o.table_number}${o.eta ? html` • 預計 ${o.eta}` : ''}</small>
                         </div>
                         <div class="text-end">
@@ -121,7 +114,7 @@
                             <span class="badge ${style.badge}"><i class="bi bi-clock me-1"></i>${style.late ? '逾時 ' : '已等 '}${waitMinutes} 分鐘</span>
                         </div>
                     </div>
-                    ${takeOut}
+                    ${Kiosk.takeoutBlock(o, 'kds-note')}
                     <div class="flex-grow-1 my-2 kds-items">${items}</div>
                     <div class="pt-2 mt-auto d-flex gap-2">
                         <button type="button" class="btn btn-outline-danger btn-sm" data-action="toggle-rush" data-id="${o.id}" data-rush="${o.is_rush ? 1 : 0}"
@@ -177,7 +170,7 @@
             if (stationId) {
                 await Kiosk.api(`/api/kitchen/orders/${orderId}/station_done`, { json: { station_id: stationId } });
             } else {
-                await Kiosk.api(`/api/orders/${orderId}/status`, { json: { status: 'Completed' } });
+                await Kiosk.setOrderStatus(orderId, 'Completed');
             }
             knownOrderIds.delete(orderId);
         } catch (err) {
@@ -222,7 +215,7 @@
     const prepCards = new Map();
     async function showPrepCard(itemId) {
         const body = document.getElementById('prepCardBody');
-        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('prepCardModal'));
+        const modal = Kiosk.modal('prepCardModal');
         let card = prepCards.get(itemId);
         if (!card) {
             try {

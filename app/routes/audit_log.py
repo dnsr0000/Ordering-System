@@ -4,17 +4,15 @@
   依員工、動作類型、日期區間、關鍵字 (單號 / 會員 ID / 內容) 篩選；後台首頁的稽核分頁只顯示最近 200 筆。
 - 匯出 Excel (目前篩選條件、最多 20000 筆；文字欄位防公式注入)。
 """
-import io
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from flask import Blueprint, g, render_template, request, send_file
+from flask import Blueprint, g, render_template, request
 from sqlalchemy import or_
 
-from app.errors import AppError
 from app.models.enums import MANAGER_ROLES
 from app.models.user import AdminLog, StaffAuditLog
 from app.services.audit import ACTION_LABELS, record_staff_audit
-from app.utils import neutralize_formulas, role_required, safe_int
+from app.utils import day_bounds, paginate, parse_date, role_required, send_xlsx
 
 audit_bp = Blueprint('audit', __name__)
 
@@ -22,14 +20,14 @@ PAGE_SIZE = 50
 EXPORT_LIMIT = 20000
 
 
-def _date(raw):
-    raw = str(raw or '').strip()
-    if not raw:
-        return None
-    try:
-        return datetime.strptime(raw, '%Y-%m-%d')
-    except ValueError:
-        raise AppError('日期格式應為 YYYY-MM-DD')
+def _between(q, column, f):
+    """依篩選的 start / end (YYYY-MM-DD，含兩端) 過濾時間欄位"""
+    start, end = parse_date(f['start']), parse_date(f['end'])
+    if start:
+        q = q.filter(column >= day_bounds(start)[0])
+    if end:
+        q = q.filter(column < day_bounds(end)[1])
+    return q
 
 
 def _filters():
@@ -49,11 +47,7 @@ def _audit_query(f):
         q = q.filter(StaffAuditLog.staff_username == f['staff'])
     if f['action']:
         q = q.filter(StaffAuditLog.action_type == f['action'])
-    start, end = _date(f['start']), _date(f['end'])
-    if start:
-        q = q.filter(StaffAuditLog.created_at >= start)
-    if end:
-        q = q.filter(StaffAuditLog.created_at < end + timedelta(days=1))
+    q = _between(q, StaffAuditLog.created_at, f)
     if f['q']:
         like = f'%{f["q"]}%'
         conds = [StaffAuditLog.details.ilike(like), StaffAuditLog.ip_address.ilike(like)]
@@ -68,22 +62,10 @@ def _login_query(f):
     q = AdminLog.query
     if f['staff']:
         q = q.filter(AdminLog.username == f['staff'])
-    start, end = _date(f['start']), _date(f['end'])
-    if start:
-        q = q.filter(AdminLog.login_at >= start)
-    if end:
-        q = q.filter(AdminLog.login_at < end + timedelta(days=1))
+    q = _between(q, AdminLog.login_at, f)
     if f['q']:
         q = q.filter(AdminLog.ip_address.ilike(f'%{f["q"]}%'))
     return q.order_by(AdminLog.id.desc())
-
-
-def _page(query):
-    total = query.count()
-    pages = max(1, -(-total // PAGE_SIZE))
-    page = min(max(1, safe_int(request.args.get('page'), 1)), pages)
-    rows = query.offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
-    return rows, page, pages, total
 
 
 @audit_bp.route('/admin/audit', endpoint='index')
@@ -91,7 +73,7 @@ def _page(query):
 def index():
     f = _filters()
     query = _login_query(f) if f['tab'] == 'logins' else _audit_query(f)
-    rows, page, pages, total = _page(query)
+    rows, page, pages, total = paginate(query, PAGE_SIZE)
     staff_names = sorted({r[0] for r in StaffAuditLog.query.with_entities(StaffAuditLog.staff_username).distinct().all()}
                          | {r[0] for r in AdminLog.query.with_entities(AdminLog.username).distinct().all()})
     return render_template('admin_audit.html', f=f, rows=rows, page=page, pages=pages, total=total,
@@ -120,13 +102,7 @@ def export():
                        au.staff_role, ACTION_LABELS.get(au.action_type, (au.action_type,))[0], au.action_type,
                        au.target_order_id or '', au.target_user_id or '', au.points_delta or 0, au.details or '',
                        au.ip_address or ''])
-    neutralize_formulas(wb)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
     record_staff_audit('AUDIT_EXPORT', details=f"匯出{'登入日誌' if f['tab'] == 'logins' else '操作稽核'} (篩選：{f})"[:500])
     from app.extensions import db
     db.session.commit()
-    name = f"audit_{f['tab']}_{datetime.now():%Y%m%d_%H%M}.xlsx"
-    return send_file(buf, as_attachment=True, download_name=name,
-                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    return send_xlsx(wb, f"audit_{f['tab']}_{datetime.now():%Y%m%d_%H%M}.xlsx")

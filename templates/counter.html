@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import screen_header %}
 
 {% block title %}取餐叫號即時看板 - 自助點餐系統{% endblock %}
 
@@ -10,16 +11,7 @@
 {% block body_class %}counter-page{% endblock %}
 
 {% block content %}
-<header class="header-counter py-3 px-4 mb-4">
-    <div class="container-fluid d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-3">
-            <i class="bi bi-display text-warning display-6"></i>
-            <div>
-                <h3 class="mb-0 fw-bold text-white">櫃檯取餐叫號即時看板</h3>
-                <small class="text-white-50">請依叫號燈號與語音提示至櫃檯取餐</small>
-            </div>
-        </div>
-        <div class="d-flex align-items-center gap-3">
+{% call screen_header('bi-display text-warning display-6', '櫃檯取餐叫號即時看板', '請依叫號燈號與語音提示至櫃檯取餐', cls='py-3 px-4 mb-4', tag='h3', inner_class='container-fluid') %}
             <button type="button" id="speechToggleBtn" class="btn btn-outline-warning btn-sm fw-bold px-3 py-2" data-action="toggle-speech">
                 <i class="bi bi-volume-up-fill me-1"></i> 語音叫號：<span id="speechStatusText">已開啟</span>
             </button>
@@ -27,9 +19,7 @@
             <a href="{{ url_for('customer.customer_index') }}" target="_blank" rel="noopener" class="btn btn-outline-light btn-sm fw-bold px-3 py-2">
                 <i class="bi bi-shop me-1"></i> 點餐前台
             </a>
-        </div>
-    </div>
-</header>
+{% endcall %}
 
 <main class="container-fluid px-4">
     <div class="row g-4">

@@ -2,6 +2,7 @@ from datetime import date, datetime
 
 from app.extensions import db
 from app.models.enums import OrderSource, OrderStatus, ORDER_STATUS_LABELS
+from app.models.member import mask_code
 from app.models.mixins import TenantScoped
 
 REWARD_LABEL = '[點數兌換]'
@@ -126,9 +127,7 @@ class Order(TenantScoped, db.Model):
     def masked_payment_reference(self):
         """收據 / 列表顯示的付款參考：禮物卡卡號遮罩 (完整卡號只留在訂單供退款)"""
         ref = self.payment_reference or ''
-        if self.payment_method == '禮物卡' and len(ref) >= 8:
-            return f'{ref[:4]}****{ref[-4:]}'
-        return ref
+        return mask_code(ref) if self.payment_method == '禮物卡' else ref
 
     @property
     def eta_label(self):

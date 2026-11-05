@@ -7,8 +7,7 @@ import { $, html, menuItems, pageData, state, ui } from './core.js';
 import { repriceCart } from './cart.js';
 
 const POLL_MS = 30000;
-let etag = '';
-
+const pollState = {};   // Kiosk.pollJson 保存 ETag
 function soldOutBadge(hint) {
     const span = document.createElement('span');
     span.className = 'badge bg-secondary ms-1 live-sold-out';
@@ -82,12 +81,9 @@ export function applyAvailability(payload) {
 export async function pollAvailability() {
     if (document.hidden) return;
     try {
-        const resp = await fetch('/api/menu/availability', { headers: { Accept: 'application/json', 'If-None-Match': etag } });
-        if (resp.status === 304) return;
-        if (!resp.ok) return;
-        etag = resp.headers.get('ETag') || '';
-        applyAvailability(await resp.json());
-    } catch (err) { /* 離線時下一輪再試 */ }
+        const payload = await Kiosk.pollJson('/api/menu/availability', pollState);   // 304 (沒變化) 時回傳 null
+        if (payload) applyAvailability(payload);
+    } catch (err) { /* 離線或伺服器錯誤時下一輪再試 */ }
 }
 
 export function startAvailabilityPolling() {

@@ -6,7 +6,7 @@
 - 日結：某一天所有班別與訂單的彙總 (付款方式、通路、折扣、退款、品項)。
 """
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from sqlalchemy import func, update
 
@@ -18,6 +18,7 @@ from app.models.payment import PaymentKind, PaymentRecord, Refund
 from app.models.shift import CashShift
 from app.services import settings_service
 from app.services.audit import record_staff_audit
+from app.utils import day_bounds
 
 DENOMINATIONS = (1000, 500, 200, 100, 50, 10, 5, 1)
 
@@ -175,9 +176,7 @@ def report_lines(report):
 
 def daily_report(tenant_id, day=None):
     """日結：某一天 (訂單建立時間) 的彙總"""
-    day = day or date.today()
-    start = datetime.combine(day, datetime.min.time())
-    end = start + timedelta(days=1)
+    start, end = day_bounds(day or date.today())
     orders = Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= start, Order.created_at < end).all()
     valid = [o for o in orders if o.status != OrderStatus.CANCELLED]
     records = PaymentRecord.query.filter(PaymentRecord.tenant_id == tenant_id, PaymentRecord.created_at >= start,

@@ -9,7 +9,7 @@ from app.extensions import db, limiter
 from app.services import privacy_service
 from app.services.audit import record_staff_audit
 from app.services.customer_session import current_member, needs_pin_confirm, require_confirmed
-from app.utils import role_required
+from app.utils import member_required, role_required
 
 privacy_bp = Blueprint('privacy', __name__)
 
@@ -22,10 +22,8 @@ def notice():
 
 
 @privacy_bp.route('/privacy/consent', methods=['POST'], endpoint='consent')
-def consent():
-    member = current_member()
-    if member is None:
-        return redirect(url_for('privacy.notice'))
+@member_required('privacy.notice')
+def consent(member):
     privacy_service.record_consent(member)
     db.session.commit()
     flash('已記錄您同意本隱私權告知，謝謝！', 'success')
@@ -38,11 +36,9 @@ def consent():
 
 @privacy_bp.route('/privacy/my_data', methods=['GET', 'POST'], endpoint='my_data')
 @limiter.limit('10/minute')
-def my_data():
+@member_required('auth.member_login')
+def my_data(member):
     """會員下載自己的個人資料 (JSON)；人臉登入的工作階段需以 POST 附上 PIN"""
-    member = current_member()
-    if member is None:
-        return redirect(url_for('auth.member_login'))
     require_confirmed(member, request.form.get('pin'), '下載個人資料')
     body = json.dumps(privacy_service.export_member_data(member), ensure_ascii=False, indent=2)
     return Response(body, mimetype='application/json',
@@ -52,12 +48,10 @@ def my_data():
 
 @privacy_bp.route('/privacy/delete_account', methods=['POST'], endpoint='delete_account')
 @limiter.limit('5/minute')
-def delete_account():
+@member_required('auth.member_login')
+def delete_account(member):
     """會員刪除帳號：需再次輸入 PIN 並輸入「刪除」確認"""
     from app.services.customer_session import close_customer_session
-    member = current_member()
-    if member is None:
-        return redirect(url_for('auth.member_login'))
     if (request.form.get('confirm') or '').strip() != '刪除':
         raise AppError('請在確認欄輸入「刪除」兩個字')
     if not member.check_pin(request.form.get('pin')):
@@ -70,10 +64,8 @@ def delete_account():
 
 
 @privacy_bp.route('/privacy/face/delete', methods=['POST'], endpoint='delete_face')
-def delete_face():
-    member = current_member()
-    if member is None:
-        return redirect(url_for('privacy.notice'))
+@member_required('privacy.notice')
+def delete_face(member):
     privacy_service.withdraw_face(member)
     db.session.commit()
     flash('已刪除您的人臉辨識資料，之後請以手機號碼 + PIN 登入。', 'success')

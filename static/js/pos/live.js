@@ -1,11 +1,9 @@
 /*
  * 櫃檯 POS 收銀頁 (pos.js 的模組)：9~10. 掛單 / 取單、即時庫存與當日訂單、桌邊呼叫、桌位結帳與平面圖。
- * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js；掛單存 localStorage (Kiosk.store)，
+ * 訂單狀態徽章 / 庫存色系 / 提示音 / SSE 與輪詢同步取自 common.js 的 Kiosk。
  */
-import {
-    $, api, displayName, HOLD_STORAGE_KEY, html, itemMap, modalOf, num, pad3, posCfg, setHtml, state, storageGet,
-    storageSet,
-} from './core.js';
+import { $, api, displayName, HOLD_STORAGE_KEY, html, itemMap, modalOf, num, posCfg, setHtml, state } from './core.js';
 import { renderCart } from './cart.js';
 import { bindMember, clearMember } from './member.js';
 import { invoicePayload, onOrderTypeChange, resetPromo } from './totals.js';
@@ -16,12 +14,12 @@ import { paymentDetails } from './pro.js';
 // 9. 掛單 / 取單
 // ======================================================================
 export const getHeld = () => {
-    const list = storageGet(HOLD_STORAGE_KEY, []);
+    const list = Kiosk.store.get(HOLD_STORAGE_KEY, []);
     return Array.isArray(list) ? list : [];
 };
 
 export function saveHeld(list) {
-    storageSet(HOLD_STORAGE_KEY, list);
+    Kiosk.store.set(HOLD_STORAGE_KEY, list);   // 無痕模式或空間不足時掛單只保留在畫面上
     $('holdCountBadge').textContent = list.length;
 }
 
@@ -106,13 +104,9 @@ export function removeHold(idx) {
 // ======================================================================
 // 10. 即時庫存與當日訂單 (SSE 通知後重新抓取)
 // ======================================================================
-export const STATUS_TEXT = { Pending: '製作中', Completed: '已出餐', PickedUp: '已取餐', Cancelled: '已取消' };
-export const STATUS_BADGES = {
-    Pending: html`<span class="badge bg-warning text-dark">⏳ 製作中</span>`,
-    Completed: html`<span class="badge bg-success">✅ 待取餐</span>`,
-    PickedUp: html`<span class="badge bg-secondary">📦 已取餐</span>`,
-    Cancelled: html`<span class="badge bg-danger">❌ 已取消</span>`,
-};
+/** 訂單狀態徽章 (Kiosk.statusBadge)：POS 把「已出餐」顯示為「待取餐」(等顧客核銷) */
+const statusBadge = (status) => Kiosk.statusBadge(status, status === 'Completed' ? '待取餐' : '');
+const statusText = (status) => (Kiosk.ORDER_STATUS[status] || { text: status }).text;
 
 export function applyStock(menuItems) {
     menuItems.forEach((m) => {
@@ -130,7 +124,7 @@ export function applyStock(menuItems) {
         const badge = $(`pos-stock-badge-${m.id}`);
         if (badge) {
             badge.textContent = soldOut ? '已售完' : `庫存 ${m.stock}`;
-            badge.className = `badge pos-xxs ${soldOut ? 'bg-danger' : (num(m.stock) <= 5 ? 'bg-warning text-dark' : 'bg-dark border border-secondary text-white-50')}`;
+            badge.className = `badge pos-xxs ${Kiosk.stockClass(m.stock, soldOut, 'dark')}`;
         }
     });
 }
@@ -163,17 +157,6 @@ export async function syncLiveState() {
 // ---------------------------------------------------------------- 桌邊呼叫服務
 export let knownCallIds = new Set();
 
-export function callBeep() {
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        osc.frequency.value = 880;
-        osc.connect(ctx.destination);
-        osc.start();
-        setTimeout(() => { osc.stop(); ctx.close(); }, 250);
-    } catch (err) { /* 瀏覽器不允許自動播放聲音時略過 */ }
-}
-
 export function renderServiceCalls(calls) {
     const btn = $('posCallsBtn');
     if (!btn) return;
@@ -182,7 +165,7 @@ export function renderServiceCalls(calls) {
     btn.classList.toggle('btn-outline-secondary', calls.length === 0);
     const fresh = calls.some((c) => !knownCallIds.has(c.id));
     knownCallIds = new Set(calls.map((c) => c.id));
-    if (fresh) callBeep();
+    if (fresh) Kiosk.beep(880, 250);   // 新的呼叫：提示音 (瀏覽器不允許自動播放時略過)
     setHtml($('posCallsList'), calls.length ? calls.map((c) => html`
         <div class="d-flex align-items-center justify-content-between border-bottom border-secondary py-2 pos-call-row" data-call-id="${c.id}">
             <div>
@@ -270,11 +253,11 @@ export function renderTables() {
                     </div>
                     <div class="border-top border-bottom border-secondary py-2 mb-2 pos-live-items">
                         ${t.orders.map((o) => html`
-                            <div class="small text-white-50 mt-1">取餐 #${pad3(o.pickup_number || o.id)} • ${o.created_at} • ${STATUS_TEXT[o.status] || o.status}</div>
+                            <div class="small text-white-50 mt-1">取餐 #${Kiosk.pad3(o.pickup_number || o.id)} • ${o.created_at} • ${statusText(o.status)}</div>
                             ${o.items.map((it) => html`
                                 <div class="d-flex justify-content-between small">
                                     <span class="text-white">${it.name} x${num(it.quantity)}</span>
-                                    <span class="text-white-50">$${Math.round(num(it.price) * num(it.quantity))}</span>
+                                    <span class="text-white-50">${Kiosk.money(num(it.price) * num(it.quantity))}</span>
                                 </div>`)}`)}
                     </div>
                 </div>
@@ -359,12 +342,12 @@ export function renderLiveOrders() {
             <div class="p-3 rounded bg-dark border border-secondary h-100 d-flex flex-column justify-content-between pos-live-order" data-order-id="${o.id}">
                 <div>
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h5 class="fw-bold text-warning mb-0">${o.pickup_pending ? '待分店確認' : `#${pad3(o.pickup_number || o.id)}`} <small class="text-white-50 fs-6">(單號 #${o.id})</small></h5>
+                        <h5 class="fw-bold text-warning mb-0">${Kiosk.pickupNo(o)} <small class="text-white-50 fs-6">(單號 #${o.id})</small></h5>
                         <span>
                             ${o.pickup_at ? html`<span class="badge bg-info text-dark me-1 pos-pickup-at">預約 ${o.pickup_at}</span>` : ''}
                             ${o.delivery_status ? html`<span class="badge bg-warning text-dark me-1 pos-home-delivery">外送：${o.delivery_status_label}</span>` : ''}
                             ${o.payment_status === 'unpaid' ? html`<span class="badge bg-warning text-dark me-1">未結帳</span>` : ''}
-                            ${STATUS_BADGES[o.status] || STATUS_BADGES.Pending}
+                            ${statusBadge(o.status)}
                         </span>
                     </div>
                     <div class="small text-white-50 mb-2 d-flex justify-content-between">
@@ -375,14 +358,14 @@ export function renderLiveOrders() {
                         ${(o.items || []).map((it) => html`
                             <div class="d-flex justify-content-between small">
                                 <span class="text-white">${it.name || it.item_name} x${num(it.quantity)}${num(it.voided_qty) ? html` <span class="badge bg-danger pos-voided">作廢 ${num(it.voided_qty)}</span>` : ''}</span>
-                                <span class="text-white-50">$${Math.round(num(it.price) * num(it.quantity))}</span>
+                                <span class="text-white-50">${Kiosk.money(num(it.price) * num(it.quantity))}</span>
                             </div>
                             ${it.customization ? html`<div class="text-danger pos-cart-custom">${it.customization}</div>` : ''}`)}
                     </div>
                 </div>
                 <div class="d-flex justify-content-between align-items-center pt-1">
                     <div>
-                        <span class="fw-bold text-white fs-5">$${Math.round(num(o.total_price))}</span>
+                        <span class="fw-bold text-white fs-5">${Kiosk.money(o.total_price)}</span>
                         <small class="text-white-50 ms-1">(${o.payment_method})</small>
                         ${num(o.refunded_amount) > 0 ? html`<span class="badge bg-danger ms-1">已退 $${num(o.refunded_amount)}</span>` : ''}
                         ${o.external_ref ? html`<span class="badge bg-warning text-dark ms-1">${o.external_ref}</span>` : ''}
@@ -441,18 +424,12 @@ export function reprint(orderId) {
     }, '補印收據 • 收據預覽');
 }
 
+/** SSE 即時通知；斷線期間 (或瀏覽器不支援 EventSource) 每 5 秒輪詢一次，連線恢復後停止 (Kiosk.onOrdersChanged) */
 export function startLiveSync() {
     const dot = $('sse-status-dot');
     const setDot = (ok) => {
         dot.className = ok ? 'text-success' : 'text-warning';
         dot.textContent = ok ? '● 即時連線中' : '● 輪詢同步中';
     };
-    if (!window.EventSource) {
-        setDot(false);
-        setInterval(syncLiveState, 5000);
-        return;
-    }
-    const source = Kiosk.onOrdersChanged(syncLiveState);
-    source.addEventListener('open', () => setDot(true));
-    source.addEventListener('error', () => setDot(false));
+    Kiosk.onOrdersChanged(syncLiveState, { fallbackMs: 5000, onStatus: setDot });
 }

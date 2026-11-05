@@ -4,18 +4,19 @@
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, KindLabelMixin, TenantScoped
 
 CAMPAIGN_KINDS = {'winback': '久未消費自動發券', 'broadcast': '排程推播 (分群)'}
 
 
-class MarketingCampaign(TenantScoped, db.Model):
+class MarketingCampaign(CreatedAtMixin, KindLabelMixin, TenantScoped, db.Model):
     """
     winback：每天檢查「最後一次消費已超過 inactive_days 天」的會員，發券 / 推播 (同一位會員 cooldown_days 天內只發一次)。
     broadcast：在 send_at 對某個分群發一次 (發完改為 done)。
     status：active 啟用 / paused 暫停 / running 執行中 (防止同時執行兩次) / done 已完成 (broadcast)
     """
     __tablename__ = 'marketing_campaign'
+    KINDS = CAMPAIGN_KINDS
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(60), nullable=False)
@@ -29,15 +30,10 @@ class MarketingCampaign(TenantScoped, db.Model):
     send_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(10), nullable=False, default='active', index=True)
     created_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     last_run_at = db.Column(db.DateTime, nullable=True)
     sent_count = db.Column(db.Integer, nullable=False, default=0)
 
     coupon = db.relationship('Coupon')
-
-    @property
-    def kind_label(self):
-        return CAMPAIGN_KINDS.get(self.kind, self.kind)
 
 
 class CampaignSend(TenantScoped, db.Model):

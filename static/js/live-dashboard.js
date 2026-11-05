@@ -4,9 +4,7 @@
 (function () {
     'use strict';
 
-    const { html, setHtml, api } = Kiosk;
-    const $ = (id) => document.getElementById(id);
-    const money = (v) => `$${Math.round(Number(v) || 0).toLocaleString()}`;
+    const { html, setHtml, api, $, money } = Kiosk;
 
     function render(d) {
         $('liveAt').textContent = d.at;

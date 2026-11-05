@@ -1,29 +1,28 @@
 /*
- * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：共用：頁面資料、常數、狀態 (state)、localStorage 購物車、價格通路、小工具。
- * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js。
+ * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：共用：頁面資料、常數、狀態 (state)、localStorage 購物車、價格通路。
+ * 由 static/js/customer.js 載入 (ES module)；DOM 小工具 ($、modal、setText、toggleRow) 直接取自 common.js 的 Kiosk，
+ * 跨頁面共用的純邏輯在 static/js/shared/。
  */
-export const { html, api } = Kiosk;
-export const CART_KEY = 'kiosk_cart';
+import { filterAddons } from '../shared/addons.js';
+import { channelPrice as sharedChannelPrice } from '../shared/pricing.js';
+
+export const { html, api, $, modal, setText, toggleRow } = Kiosk;
 export const IDLE_TIMEOUT_MS = 10 * 60 * 1000;   // 顧客閒置 10 分鐘自動登出
-export const NON_MAIN_CATEGORIES = ['飲料', '點心', '副餐', '配餐'];
 export const REWARD_LABEL = '[點數兌換]';
 
 export const pageData = Kiosk.pageData();
 export const pro = pageData.pro || {};
 export const ui = pageData.ui || {};
-// ---------------------------------------------------------------- localStorage (隱私模式可能無法使用)
+// ---------------------------------------------------------------- localStorage 'kiosk_cart' (Kiosk.store：隱私模式時不會拋錯)
 export function loadCart() {
-    try { return JSON.parse(localStorage.getItem(CART_KEY) || '[]'); } catch (err) { return []; }
+    return Kiosk.store.get(Kiosk.CART_KEY, []) || [];
 }
 export function storeCart(lines) {
-    try { localStorage.setItem(CART_KEY, JSON.stringify(lines)); } catch (err) { /* 忽略 */ }
+    Kiosk.store.set(Kiosk.CART_KEY, lines);
 }
 export function clearStoredCart() {
-    try { localStorage.removeItem(CART_KEY); } catch (err) { /* 忽略 */ }
+    Kiosk.store.remove(Kiosk.CART_KEY);
 }
-
-export const $ = (id) => document.getElementById(id);
-export const modal = (id) => bootstrap.Modal.getOrCreateInstance($(id));
 
 export const menu = pageData.menu || {};
 export const rewardConfig = menu.reward || {};
@@ -33,8 +32,13 @@ export const isOnline = Boolean(pageData.online);
 export const menuItems = new Map((menu.items || []).map((i) => [Number(i.id), i]));
 export const modifierOptions = menu.modifiers || [];
 export const modifierById = new Map(modifierOptions.map((m) => [Number(m.id), m]));
-// 可加購的品項 (加購價 add_on_price；觸發條件與後端 _addon_qualifies 同一套規則)
-export const availableAddons = (menu.items || []).filter((i) => i.can_be_add_on && i.is_available);
+/** 可加購的品項 (加購價 add_on_price)：每次呼叫重新過濾，售完 (live.js 即時更新) 的加購品就不再推薦 */
+export const availableAddons = () => filterAddons(menuItems.values());
+/** 品項目前可點 (售完 / 停售的品項不可；不在菜單裡的品項以 fallback 判斷) */
+export const isItemAvailable = (id, fallback = false) => {
+    const it = menuItems.get(Number(id));
+    return it ? Boolean(it.is_available) : fallback;
+};
 /** 跨模組共用的狀態 (不可在其他模組重新指定；請改 state.xxx) */
 export const state = {
     userPoints: Number(pageData.userPoints) || 0,
@@ -47,8 +51,6 @@ export const state = {
     submitting: false,
     myOrdersTimer: null,
     promotion: { discount: 0, names: [], gifts: [], blocks_coupon: false },
-    promotionSeq: 0,
-    promotionTimer: null,
     acceptedTotal: null,          // 上次送出時伺服器回報的金額 (顧客已確認)
     featureSort: null,
     priceOrder: null,
@@ -64,22 +66,7 @@ export function priceChannel() {
     const sel = $('orderType');
     return sel && sel.value === '外帶' ? 'takeout' : 'dine_in';
 }
-/** 登入會員 (非訪客) 且品項有會員價時，取會員價與通路價較低者 (與後端 MenuItem.price_for(member=True) 相同) */
+/** 登入會員 (非訪客) 且品項有會員價 (member_prices) 時，取會員價與通路價較低者 (shared/pricing.js) */
 export function channelPrice(item) {
-    const ch = priceChannel();
-    const base = Number((item.prices && item.prices[ch]) || item.price) || 0;
-    if (!isGuest && item.member_prices && item.member_prices[ch] !== undefined) return Math.min(base, Number(item.member_prices[ch]) || base);
-    return base;
-}
-
-export function toggleRow(rowId, valueId, value) {
-    const row = $(rowId);
-    if (!row) return;
-    row.classList.toggle('d-none', !(value > 0));
-    setText(valueId, Math.round(value));
-}
-
-export function setText(id, value) {
-    const el = $(id);
-    if (el) el.textContent = value;
+    return sharedChannelPrice(item, priceChannel(), !isGuest);
 }

@@ -15,8 +15,6 @@
     let currentOrders = [];
     const processingIds = new Set(); // 核銷中的訂單，防止重複點擊與重新整理時閃回
 
-    const pad = (n) => String(n).padStart(3, '0');
-
     function updateSummary() {
         countBadge.textContent = currentOrders.length;
         noOrdersMessage.classList.toggle('d-none', currentOrders.length > 0);
@@ -36,7 +34,7 @@
                     <div>
                         <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
                             <div>
-                                <h2 class="fw-bold text-success mb-0 pickup-number">#${pad(o.pickup_number)}</h2>
+                                <h2 class="fw-bold text-success mb-0 pickup-number">${Kiosk.pickupNo(o.pickup_number)}</h2>
                                 <small class="text-white-50">單號 #${o.id} • <span class="pickup-user">${o.user_name}</span></small>
                             </div>
                             <span class="badge bg-primary fs-6">${o.order_type}</span>
@@ -82,7 +80,7 @@
         updateSummary();
 
         try {
-            await Kiosk.api(`/api/orders/${orderId}/status`, { json: { status: 'PickedUp' } });
+            await Kiosk.setOrderStatus(orderId, 'PickedUp');
             setTimeout(() => processingIds.delete(orderId), 1000);
         } catch (err) {
             alert(`❌ ${err.message}`);
@@ -100,7 +98,7 @@
             markAsPickedUp(matched.id);
             quickInput.value = '';
         } else {
-            alert(`查無取餐號碼 #${pad(target)} 之待領取訂單！`);
+            alert(`查無取餐號碼 ${Kiosk.pickupNo(target)} 之待領取訂單！`);
         }
     });
 

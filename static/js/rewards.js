@@ -5,8 +5,7 @@
 (function () {
     'use strict';
 
-    const { html } = Kiosk;
-    const CART_KEY = 'kiosk_cart';
+    const { html, store, CART_KEY } = Kiosk;
     const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     const pageData = Kiosk.pageData();
     const modifierOptions = pageData.modifierOptions || [];
@@ -15,7 +14,7 @@
 
     const pointsEl = document.getElementById('currentPoints');
     const modalEl = document.getElementById('redeemModal');
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const modal = Kiosk.modal(modalEl);
     const modalName = document.getElementById('modalItemName');
     const modalPoints = document.getElementById('modalItemPoints');
     const modalAlert = document.getElementById('modalAlertText');
@@ -23,19 +22,13 @@
     const modContent = document.getElementById('modalModifierContent');
     const confirmBtn = document.getElementById('confirmRedeemBtn');
 
-    // ---------------------------------------------------------------- 購物車 (與點餐頁共用)
+    // ---------------------------------------------------------------- 購物車 (與點餐頁共用 localStorage 'kiosk_cart')
     function readCart() {
-        try {
-            const cart = JSON.parse(localStorage.getItem(CART_KEY) || '[]');
-            return Array.isArray(cart) ? cart : [];
-        } catch (err) {
-            return [];
-        }
+        const cart = store.get(CART_KEY, []);
+        return Array.isArray(cart) ? cart : [];
     }
 
-    function writeCart(cart) {
-        try { localStorage.setItem(CART_KEY, JSON.stringify(cart)); } catch (err) { /* 無痕模式等無法寫入 */ }
-    }
+    const writeCart = (cart) => store.set(CART_KEY, cart);
 
     /** 退回兌換後，從購物車移除一份對應的兌換品 (數量 > 1 時減一) */
     function removeRewardFromCart(itemId) {
@@ -197,7 +190,7 @@
     // Kiosk 閒置 10 分鐘：清空購物車並登出，避免下一位顧客看到上一位的資料
     Kiosk.idleLogout({
         timeoutMs: IDLE_TIMEOUT_MS,
-        beforeLogout: () => localStorage.removeItem(CART_KEY),
+        beforeLogout: () => store.remove(CART_KEY),
     });
 
     modalEl.addEventListener('hidden.bs.modal', () => { selected = null; });
@@ -242,7 +235,7 @@
 
     Kiosk.on(document, 'click', {
         'show-member-qr': () => {
-            bootstrap.Modal.getOrCreateInstance(qrModalEl).show();
+            Kiosk.modal(qrModalEl).show();
             loadMemberQr();
         },
         'rotate-member-qr': () => loadMemberQr(true),

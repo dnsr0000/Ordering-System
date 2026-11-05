@@ -8,27 +8,19 @@ from datetime import datetime, timedelta
 from flask import current_app
 
 from app.models.enums import OrderStatus
-from app.models.order import Order
 from app.models.sync import SyncNode
-from app.services.order_service import todays_range
-from app.services.report_service import REVENUE_STATUSES
+from app.services.report_service import is_revenue, orders_between, revenue_orders
 from app.sync import runtime as sync_runtime
+from app.utils import day_bounds
 
 LOCAL = '本店'
 
 
-def _revenue_orders(orders):
-    return [o for o in orders if o.status != OrderStatus.CANCELLED and (o.payment_status or '') in REVENUE_STATUSES]
-
-
 def snapshot(tenant_id, now=None):
     now = now or datetime.now()
-    start, end = todays_range()
-    if now.date() != start.date():
-        start = datetime.combine(now.date(), datetime.min.time())
-        end = start + timedelta(days=1)
-    orders = Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= start, Order.created_at < end).all()
-    valid = _revenue_orders(orders)
+    start, end = day_bounds(now.date())
+    orders = orders_between(tenant_id, start, end)
+    valid = [o for o in orders if is_revenue(o)]
     is_hub = sync_runtime.is_hub()
     nodes = SyncNode.query.filter_by(tenant_id=tenant_id).order_by(SyncNode.id).all() if is_hub else []
     names = {n.uuid: n.name for n in nodes}
@@ -41,7 +33,7 @@ def snapshot(tenant_id, now=None):
         if o.status == OrderStatus.CANCELLED:
             row['cancelled'] += 1
             continue
-        if (o.payment_status or '') not in REVENUE_STATUSES:
+        if not is_revenue(o):
             continue
         row['orders'] += 1
         row['revenue'] += o.total_price or 0
@@ -72,8 +64,7 @@ def snapshot(tenant_id, now=None):
 
     y0 = start - timedelta(days=1)
     y_now = now - timedelta(days=1)
-    yesterday = _revenue_orders(Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= y0,
-                                                   Order.created_at < y_now).all())
+    yesterday = revenue_orders(tenant_id, y0, y_now)
     y_revenue = sum(o.total_price or 0 for o in yesterday)
     return {
         'at': now.strftime('%H:%M:%S'), 'is_hub': is_hub,

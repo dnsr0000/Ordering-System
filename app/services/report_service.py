@@ -2,7 +2,6 @@
 進階營運報表：營業額、毛利 (配方成本或餐點單位成本)、時段熱度、付款方式、管道、分類與品項排行、
 分店比較 (線上端)、收銀員、促銷成效；可匯出 Excel 並定期寄送。
 """
-import io
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -12,19 +11,18 @@ from openpyxl.styles import Font
 from app.extensions import db
 from app.models.enums import PAYMENT_METHOD_LABELS, OrderStatus
 from app.models.inventory import RecipeLine
-from app.models.menu import MenuItem
+from app.models.menu import WEEKDAY_LABELS, MenuItem
 from app.models.order import Order
 from app.models.payment import PaymentRecord, Refund
 from app.services import settings_service
-from app.utils import neutralize_formulas
+from app.utils import XLSX_MIME, day_bounds, workbook_bytes
 
 REVENUE_STATUSES = ('', 'settled', 'paid')
-WEEKDAYS = '一二三四五六日'
 SOURCE_LABELS = {'Kiosk': '點餐機', 'POS': 'POS', 'Online': '線上點餐', 'Table': '桌邊掃碼', 'UberEats': 'Uber Eats',
                  'foodpanda': 'foodpanda', 'Delivery': '外送 (手動)'}
 
 
-def _unit_costs(tenant_id):
+def unit_costs(tenant_id):
     """{menu_item_id: 每份成本}：有配方用原料成本，否則用餐點設定的單位成本"""
     costs = {m.id: float(m.unit_cost or 0) for m in MenuItem.query.filter_by(tenant_id=tenant_id).all()}
     recipe = defaultdict(float)
@@ -35,16 +33,36 @@ def _unit_costs(tenant_id):
     return costs
 
 
-def build_report(tenant_id, start, end, node_uuid=None):
-    """start / end 為 date (含兩端)"""
-    t0 = datetime.combine(start, datetime.min.time())
-    t1 = datetime.combine(end + timedelta(days=1), datetime.min.time())
+def is_revenue(order):
+    """計入營業額的訂單：未取消且已收款 (或免付款)"""
+    return order.status != OrderStatus.CANCELLED and (order.payment_status or '') in REVENUE_STATUSES
+
+
+def _bounds(start, end):
+    """date (含兩端) 或 datetime (半開區間) 都可"""
+    return (start, end) if isinstance(start, datetime) else day_bounds(start, end)
+
+
+def orders_between(tenant_id, start, end, node_uuid=None):
+    """期間內 (依建立時間) 的所有訂單，含已取消；start / end 為 date 或 datetime"""
+    t0, t1 = _bounds(start, end)
     q = Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= t0, Order.created_at < t1)
     if node_uuid:
         q = q.filter(Order.node_uuid == node_uuid)
-    all_orders = q.all()
-    orders = [o for o in all_orders if o.status != OrderStatus.CANCELLED and (o.payment_status or '') in REVENUE_STATUSES]
-    costs = _unit_costs(tenant_id)
+    return q.all()
+
+
+def revenue_orders(tenant_id, start, end, node_uuid=None):
+    """期間內計入營業額的訂單 (見 is_revenue)"""
+    return [o for o in orders_between(tenant_id, start, end, node_uuid) if is_revenue(o)]
+
+
+def build_report(tenant_id, start, end, node_uuid=None):
+    """start / end 為 date (含兩端)"""
+    t0, t1 = day_bounds(start, end)
+    all_orders = orders_between(tenant_id, start, end, node_uuid)
+    orders = [o for o in all_orders if is_revenue(o)]
+    costs = unit_costs(tenant_id)
     menu = {m.id: m for m in MenuItem.query.filter_by(tenant_id=tenant_id).all()}
 
     gross = sum(o.subtotal for o in orders)
@@ -187,15 +205,11 @@ def report_to_excel(report, shop_name=''):
     sheet('付款方式', ['方式', '收款', '退款', '淨額'], [(k, v['in'], v['out'], v['net']) for k, v in report['by_method'].items()])
     sheet('點餐管道', ['管道', '訂單數', '營業額'], [(k, v['count'], v['amount']) for k, v in report['by_source'].items()])
     sheet('時段熱度', ['星期'] + [f'{h}時' for h in range(24)],
-          [[f'週{WEEKDAYS[i]}'] + report['heat'][i] for i in range(7)])
+          [[f'週{WEEKDAY_LABELS[i]}'] + report['heat'][i] for i in range(7)])
     sheet('收銀員', ['帳號', '訂單數', '營業額'], [(k, v['count'], v['amount']) for k, v in report['by_cashier'].items()])
     if len(report['by_node']) > 1:
         sheet('分店', ['分店', '訂單數', '營業額'], [(k, v['count'], v['amount']) for k, v in report['by_node'].items()])
-    neutralize_formulas(wb)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return workbook_bytes(wb)
 
 
 def period_for(frequency, today=None):
@@ -225,5 +239,4 @@ def send_scheduled_report(tenant_id, today=None, force=False):
             f"毛利 (估計)：${report['gross_margin']:,} ({report['margin_rate']}%)\n\n詳細內容請見附件 Excel。")
     xlsx = report_to_excel(report, shop.name if shop else '').getvalue()
     return mail_service.send_mail(tenant_id, cfg.get('recipients') or '', f'營運報表 {start} ~ {end}', body,
-                                  attachments=[(f'report_{start}_{end}.xlsx', xlsx,
-                                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')])
+                                  attachments=[(f'report_{start}_{end}.xlsx', xlsx, XLSX_MIME)])

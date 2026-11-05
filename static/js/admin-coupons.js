@@ -3,9 +3,8 @@
  */
 (function () {
     'use strict';
-    const { html } = Kiosk;
-    const $ = (id) => document.getElementById(id);
-    const showModal = (id) => bootstrap.Modal.getOrCreateInstance($(id)).show();
+    const { html, $ } = Kiosk;
+    const showModal = (id) => Kiosk.modal(id).show();
 
     // ---------------------------------------------------------------- 優惠券折扣輸入
     /** 與後端 parse_discount_value 相同的折數換算：0.85 / 8.5 / 85 都代表 85 折 (應付百分比) */
@@ -47,7 +46,7 @@
                 content = html`<i class="bi bi-magic me-1"></i> 系統將辨識為：<strong>${percentLabel(pct)}</strong> (結帳金額 × ${pct}%)`;
             }
         } else {
-            content = html`<i class="bi bi-cash me-1"></i> 結帳整單現折：<strong>$${Math.round(val)} 元</strong>`;
+            content = html`<i class="bi bi-cash me-1"></i> 結帳整單現折：<strong>${Kiosk.money(val)} 元</strong>`;
         }
         hint.className = `small mt-1 fw-bold ${cls}`;
         Kiosk.setHtml(hint, content);

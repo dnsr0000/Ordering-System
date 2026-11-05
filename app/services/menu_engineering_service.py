@@ -9,18 +9,14 @@
 成本：有配方用原料成本，沒有配方用餐點設定的單位成本；套餐另加賣出當下的配餐成本 (訂單明細的配餐快照)。
 排除紅利兌換、促銷贈品、寄杯兌換等 0 元的明細；已取消、未付款的訂單不計。
 """
-import io
 import json
-from datetime import datetime, timedelta
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from app.models.enums import OrderStatus
 from app.models.menu import MenuItem
-from app.models.order import Order
-from app.services.report_service import REVENUE_STATUSES, _unit_costs
-from app.utils import neutralize_formulas
+from app.services.report_service import revenue_orders, unit_costs
+from app.utils import workbook_bytes
 
 CLASSES = {
     'star': {'label': '明星', 'icon': '⭐', 'advice': '高人氣、高毛利：維持品質與曝光，可小幅調價'},
@@ -40,14 +36,8 @@ def classify(qty, unit_cm, pop_threshold, cm_threshold):
 
 def analyze(tenant_id, start, end, node_uuid=None, category=''):
     """start / end 為 date (含兩端)"""
-    t0 = datetime.combine(start, datetime.min.time())
-    t1 = datetime.combine(end + timedelta(days=1), datetime.min.time())
-    q = Order.query.filter(Order.tenant_id == tenant_id, Order.created_at >= t0, Order.created_at < t1,
-                           Order.status != OrderStatus.CANCELLED)
-    if node_uuid:
-        q = q.filter(Order.node_uuid == node_uuid)
-    orders = [o for o in q.all() if (o.payment_status or '') in REVENUE_STATUSES]
-    costs = _unit_costs(tenant_id)
+    orders = revenue_orders(tenant_id, start, end, node_uuid)
+    costs = unit_costs(tenant_id)
     menu = {m.id: m for m in MenuItem.query.filter_by(tenant_id=tenant_id).all()}
     by_uuid = {m.uuid: m.id for m in menu.values()}
     rows = {}
@@ -120,8 +110,4 @@ def to_excel(result, shop_name=''):
     for r in result['items']:
         ws.append([r['category'], r['name'], r['label'], r['qty'], r['mix_pct'], r['avg_price'],
                    round(r['cost'] / r['qty'], 1) if r['qty'] else 0, r['unit_cm'], r['cm'], r['food_cost_pct'], r['advice']])
-    neutralize_formulas(wb)
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf
+    return workbook_bytes(wb)

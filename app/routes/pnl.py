@@ -1,7 +1,7 @@
 """後台：營業費用登錄、損益表、原料成本 / 售價歷史 (說明見 app/services/pnl_service.py)"""
 from datetime import date
 
-from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
+from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from app.models.enums import MANAGER_ROLES
@@ -13,7 +13,7 @@ from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
 from app.services.history_service import FIELD_LABELS
 from app.sync import runtime as sync_runtime
-from app.utils import get_own, role_required, safe_int
+from app.utils import get_own, parse_date_range, role_required, safe_int, send_xlsx
 
 pnl_bp = Blueprint('pnl', __name__)
 
@@ -70,18 +70,11 @@ def expenses():
 @pnl_bp.route('/admin/pnl', endpoint='statement')
 @permission_required('reports')
 def statement():
-    if request.args.get('start') and request.args.get('end'):
-        try:
-            start, end = date.fromisoformat(request.args['start']), date.fromisoformat(request.args['end'])
-        except ValueError:
-            raise AppError('日期格式錯誤')
-        if end < start:
-            start, end = end, start
+    if request.args.get('start') and request.args.get('end'):   # 兩個都有才用自訂區間，否則用月份
+        start, end = parse_date_range(strict=True, max_days=400)
         month = f'{start:%Y-%m}'
     else:
         month, start, end = _month()
-    if (end - start).days > 400:
-        raise AppError('查詢區間最長 400 天')
     if not (pnl_service.MIN_YEAR <= start.year and end.year <= pnl_service.MAX_YEAR):
         raise AppError(f'請選擇 {pnl_service.MIN_YEAR} ~ {pnl_service.MAX_YEAR} 年的日期')
     node = request.args.get('node') or None
@@ -90,9 +83,7 @@ def statement():
     prev = pnl_service.statement(g.tenant_id, pstart, pend, node)
     months = pnl_service.trend(g.tenant_id, 6, node)
     if request.args.get('format') == 'xlsx':
-        return send_file(pnl_service.to_excel(cur, prev, months, g.tenant.name), as_attachment=True,
-                         download_name=f'損益表_{start}_{end}.xlsx',
-                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        return send_xlsx(pnl_service.to_excel(cur, prev, months, g.tenant.name), f'損益表_{start}_{end}.xlsx')
     from app.models.sync import SyncNode
     nodes = SyncNode.query.order_by(SyncNode.id).all() if sync_runtime.is_hub() else []
     return render_template('admin_pnl.html', cur=cur, prev=prev, months=months, month=month, node=node, nodes=nodes,

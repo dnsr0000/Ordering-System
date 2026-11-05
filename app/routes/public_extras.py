@@ -7,6 +7,7 @@ import os
 
 from flask import Blueprint, Response, abort, current_app, g, jsonify, render_template, url_for
 
+from app.errors import AppError
 from app.extensions import db, limiter
 from app.services import feedback_service, push_service
 from app.utils import get_json_dict
@@ -103,9 +104,9 @@ def track_push(order_uuid):
     with tenant_bypass():
         order = _order_by_uuid(order_uuid)
         if not push_service.enabled(order.tenant_id):
-            return jsonify({'success': False, 'message': '本店未啟用推播通知'}), 404
+            raise AppError('本店未啟用推播通知', 404)
         if order.status in ('Completed', 'PickedUp', 'Cancelled') and not order.delivery_status:
-            return jsonify({'success': False, 'message': '此訂單已完成，不需要通知'}), 409
+            raise AppError('此訂單已完成，不需要通知', 409)
         push_service.subscribe(order, data.get('subscription'), user_id=order.user_id)
         db.session.commit()
     return jsonify({'success': True})
@@ -124,7 +125,7 @@ def chat():
             order = Order.query.filter_by(uuid=order_uuid).first()
         tenant_id = order.tenant_id if order is not None else g.tenant_id
         if not chatbot_service.enabled(tenant_id):
-            return jsonify({'success': False, 'message': '本店未啟用客服機器人'}), 404
+            raise AppError('本店未啟用客服機器人', 404)
         shop = db.session.get(Tenant, tenant_id)
         history = data.get('history') if isinstance(data.get('history'), list) else []
         if order is not None and g.tenant_id != tenant_id:   # 追蹤頁可能是別家店的訂單：以訂單的店家查菜單

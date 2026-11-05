@@ -36,41 +36,88 @@ def normalize_email(value: Any) -> str:
     return email
 
 
-def text_receipt(order: Any) -> str:
-    """純文字收據 (Email 內文 / LINE 訊息)"""
-    shop = db.session.get(Tenant, order.tenant_id)
-    cfg = config(order.tenant_id)
-    lines = [shop.name if shop else '', '交易明細', '=' * 24,
-             f'取餐號碼 #{order.display_pickup_number:03d}', f'單號 #{order.id}',
-             f'時間 {order.created_at:%Y-%m-%d %H:%M}' if order.created_at else '',
-             f'用餐方式 {order.order_type or ""}', '-' * 24]
+def receipt_rows(order: Any, shop: Any = None, detailed: bool = False, title: str = '交易明細') -> list:
+    """
+    收據內容 (熱感機收據與純文字電子收據共用)，回傳由上到下的列：
+    - ('text', 文字, {bold, size, align})       一行文字
+    - ('row', 標籤, 值, {bold, text_label})      左右對齊的一行 (text_label：純文字格式改用的標籤)
+    - ('item', 品名 x數量, 金額)                 餐點明細
+    - ('rule', 字元)                             分隔線
+    - ('track', 網址)                            出餐進度頁 (熱感機印 QR code，純文字印網址)
+    detailed=True (熱感機) 另有顧客/桌號、收銀、外送地址、實收找零、授權碼 / 禮物卡、載具。
+    頁尾由呼叫端自行加上 (POS 與電子收據各自讀自己的設定)。
+    """
+    from app.services import table_service
+    shop = shop or db.session.get(Tenant, order.tenant_id)
+    rows = [('text', shop.name if shop else '', {'bold': True, 'size': 2, 'align': 'center'}),
+            ('text', title, {'align': 'center'}), ('rule', '='),
+            ('text', f'取餐號碼 #{order.display_pickup_number:03d}', {'bold': True, 'size': 2, 'align': 'center'}),
+            ('row', '單號', f'#{order.id}', {}),
+            ('row', '時間', order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '', {})]
+    if detailed:
+        rows.append(('row', '顧客/桌號', order.table_number or '', {}))
+    rows.append(('row', '用餐方式', order.order_type or '', {}))
+    if detailed and order.cashier_username:
+        rows.append(('row', '收銀', order.cashier_username, {}))
+    rows.append(('rule', '-'))
     for it in order.items:
-        lines.append(f'{it.display_name} x{it.quantity}  ${it.price * it.quantity}')
+        rows.append(('item', f'{it.display_name} x{it.quantity}', f'${it.price * it.quantity}'))
         if it.customization:
-            lines.append(f'  {it.customization}')
-    lines += ['-' * 24, f'小計 ${order.subtotal}']
+            rows.append(('text', f'  {it.customization}', {}))
+    rows += [('rule', '-'), ('row', '小計', f'${order.subtotal}', {})]
     for label, value in (('促銷', order.promotion_discount), ('會員折扣', order.member_discount), ('整單折扣', order.manual_discount)):
         if value:
-            lines.append(f'{label} -${value}')
+            rows.append(('row', label, f'-${value}', {}))
     other = (order.discount_amount or 0) - (order.promotion_discount or 0) - (order.member_discount or 0) - (order.manual_discount or 0)
     if other > 0:
-        lines.append(f'優惠券 / 點數 -${other}')
+        rows.append(('row', '優惠券/點數', f'-${other}', {'text_label': '優惠券 / 點數'}))
     if order.service_charge:
-        lines.append(f'服務費 +${order.service_charge}')
+        rows.append(('row', '服務費', f'+${order.service_charge}', {}))
     if order.delivery_fee:
-        lines.append(f'外送費 +${order.delivery_fee}')
-    lines.append(f'應付總額 ${order.total_price}')
-    lines.append(f'付款方式 {PAYMENT_METHOD_LABELS.get(order.payment_method, order.payment_method)}')
+        rows.append(('row', '外送費', f'+${order.delivery_fee}', {}))
+    if detailed and order.delivery_address:
+        rows += [('text', f'外送：{order.delivery_address}', {'bold': True}),
+                 ('text', f'電話：{order.delivery_phone}　區域：{order.delivery_zone}', {})]
+    rows += [('row', '應付總額', f'${order.total_price}', {'bold': True}),
+             ('row', '付款方式', PAYMENT_METHOD_LABELS.get(order.payment_method, order.payment_method), {})]
+    if detailed and order.payment_method == 'Cash':
+        rows += [('row', '實收', f'${order.cash_received or order.total_price}', {}), ('row', '找零', f'${order.cash_change or 0}', {})]
+    if detailed and order.payment_reference:
+        rows.append(('row', '禮物卡' if order.payment_method == '禮物卡' else '授權碼/交易序號', order.masked_payment_reference[:20], {}))
     inv = order.invoice_summary()
     if inv and inv.get('invoice_no'):
-        lines += [f'電子發票 {inv["invoice_no"]}', f'隨機碼 {inv.get("random_number") or ""}']
+        if detailed:
+            rows.append(('rule', '-'))
+        rows += [('row', '電子發票', inv['invoice_no'], {}), ('row', '隨機碼', inv.get('random_number') or '', {})]
+        if detailed:
+            rows.append(('row', '載具', inv.get('carrier') or '', {}))
     if order.user and order.points_earned:
-        lines.append(f'本次贈點 +{order.points_earned}')
-    base = (shop.table_qr_base_url if shop else '') or ''
-    if base:
-        lines.append(f'出餐進度 {base.rstrip("/")}/track/{order.uuid}')
-    lines += ['', cfg.get('footer') or '感謝您的惠顧']
-    return '\n'.join(ln for ln in lines if ln is not None)
+        rows.append(('row', '本次贈點', f'+{order.points_earned}', {}))
+    if detailed:
+        rows.append(('rule', '-'))
+    url = table_service.track_url(order, shop, fallback=False)
+    if url:
+        rows.append(('track', url))
+    return rows
+
+
+def text_receipt(order: Any) -> str:
+    """純文字收據 (Email 內文 / LINE 訊息)"""
+    lines = []
+    for row in receipt_rows(order):
+        kind = row[0]
+        if kind == 'text':
+            lines.append(row[1])
+        elif kind == 'row':
+            lines.append(f'{row[3].get("text_label", row[1])} {row[2]}')
+        elif kind == 'item':
+            lines.append(f'{row[1]}  {row[2]}')
+        elif kind == 'rule':
+            lines.append(row[1] * 24)
+        elif kind == 'track':
+            lines.append(f'出餐進度 {row[1]}')
+    lines += ['', config(order.tenant_id).get('footer') or '感謝您的惠顧']
+    return '\n'.join(lines)
 
 
 def send_email(order_id: int, tenant_id: int, email: str) -> bool:

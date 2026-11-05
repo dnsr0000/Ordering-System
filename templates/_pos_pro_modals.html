@@ -1,13 +1,11 @@
 {# POS 進階功能的對話框 (由 static/js/pos/pro.js 控制) #}
+{% from "_macros.html" import modal_head %}
 
 <!-- 接單控制 (暫停接單) -->
 <div class="modal fade no-print pro-modal" id="posIntakeModal" tabindex="-1" aria-hidden="true" aria-labelledby="posIntakeTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <div class="modal-content">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posIntakeTitle"><i class="bi bi-pause-circle me-1"></i>接單控制</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('接單控制', 'bi-pause-circle', title_id='posIntakeTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <p class="small text-white-50 mb-2">暫停後點餐機、顧客手機 (桌邊 / 線上) 與團購無法送出新訂單；POS 櫃檯與外送平台不受影響。</p>
                 <div class="fw-bold mb-2" id="posIntakeState"></div>
@@ -30,10 +28,7 @@
 <div class="modal fade no-print pro-modal" id="posApprovalModal" tabindex="-1" aria-hidden="true" aria-labelledby="posApprovalTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posApprovalForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posApprovalTitle"><i class="bi bi-shield-lock me-1"></i>主管核准</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('主管核准', 'bi-shield-lock', title_id='posApprovalTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <p class="small text-white-50 mb-2" id="posApprovalReason">此操作需要主管核准</p>
                 <input type="text" class="form-control mb-2" id="posApproverUser" placeholder="主管帳號" autocomplete="off" required>
@@ -52,10 +47,7 @@
 <div class="modal fade no-print pro-modal" id="posMemberVerifyModal" tabindex="-1" aria-hidden="true" aria-labelledby="posMemberVerifyTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posMemberVerifyForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-info" id="posMemberVerifyTitle"><i class="bi bi-person-check me-1"></i>會員身分驗證</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('會員身分驗證', 'bi-person-check', 'text-info', title_id='posMemberVerifyTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <p class="small text-white-50 mb-2" id="posMemberVerifyReason">動用儲值金 / 點數 / 寄杯需驗證會員身分</p>
                 <div class="fw-bold text-warning mb-2" id="posMemberVerifyName"></div>
@@ -79,10 +71,7 @@
 <div class="modal fade no-print pro-modal" id="posDiscountModal" tabindex="-1" aria-hidden="true" aria-labelledby="posDiscountTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posDiscountForm">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-danger" id="posDiscountTitle"><i class="bi bi-percent me-1"></i>整單折扣</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('整單折扣', 'bi-percent', 'text-danger', title_id='posDiscountTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <div class="btn-group w-100 mb-2" role="group">
                     <input type="radio" class="btn-check" name="posDiscountType" id="posDiscAmount" value="amount" checked>
@@ -109,10 +98,7 @@
 <div class="modal fade no-print pro-modal" id="posPriceModal" tabindex="-1" aria-hidden="true" aria-labelledby="posPriceTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posPriceForm">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posPriceTitle">改價：<span id="posPriceItemName"></span></h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, title_id='posPriceTitle') %}改價：<span id="posPriceItemName"></span>{% endcall %}
             <div class="modal-body">
                 <div class="small text-white-50 mb-1">原單價 $<span id="posPriceOriginal">0</span></div>
                 <input type="number" class="form-control form-control-lg text-end" id="posPriceValue" min="0" required aria-label="新單價">
@@ -129,10 +115,7 @@
 <div class="modal fade no-print pro-modal" id="posLinePayModal" tabindex="-1" aria-hidden="true" aria-labelledby="posLinePayTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posLinePayForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-success" id="posLinePayTitle"><i class="bi bi-upc-scan me-1"></i>LINE Pay 付款</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('LINE Pay 付款', 'bi-upc-scan', 'text-success', title_id='posLinePayTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <div class="fs-3 fw-bold text-warning text-center mb-2">$<span id="posLinePayAmount">0</span></div>
                 <p class="small text-white-50">請顧客打開 LINE Pay「付款碼」，以條碼掃描器掃描 (或手動輸入條碼下方數字)：</p>
@@ -150,10 +133,7 @@
 <div class="modal fade no-print pro-modal" id="posShiftModal" tabindex="-1" aria-hidden="true" aria-labelledby="posShiftTitle">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posShiftTitle"><i class="bi bi-cash-coin me-1"></i>交班 / 零用金</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('交班 / 零用金', 'bi-cash-coin', title_id='posShiftTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <div id="posShiftClosed" class="d-none">
                     <p class="text-white-50">目前沒有開班。開班後的收款、退款與零用金異動都會記在此班，關班時計算應有現金與帳差。</p>
@@ -192,10 +172,7 @@
 <div class="modal fade no-print pro-modal" id="posTopupModal" tabindex="-1" aria-hidden="true" aria-labelledby="posTopupTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">
         <form class="modal-content" id="posTopupForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-success" id="posTopupTitle">💰 會員儲值：<span id="posTopupName"></span></h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, color='text-success', title_id='posTopupTitle') %}💰 會員儲值：<span id="posTopupName"></span>{% endcall %}
             <div class="modal-body">
                 <div class="small text-white-50 mb-2">目前餘額 $<span id="posTopupBalance">0</span></div>
                 <input type="number" class="form-control form-control-lg text-end mb-2" id="posTopupAmount" min="1" placeholder="加值金額" required aria-label="加值金額">
@@ -216,10 +193,7 @@
 <div class="modal fade no-print pro-modal" id="posGiftModal" tabindex="-1" aria-hidden="true" aria-labelledby="posGiftTitle">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posGiftTitle"><i class="bi bi-gift me-1"></i>禮物卡</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {{ modal_head('禮物卡', 'bi-gift', title_id='posGiftTitle', icon_class='me-1') }}
             <div class="modal-body">
                 <form id="posGiftSellForm" autocomplete="off">
                     <div class="fw-bold mb-2">售出新卡</div>
@@ -251,10 +225,7 @@
 <div class="modal fade no-print pro-modal" id="posRefundModal" tabindex="-1" aria-hidden="true" aria-labelledby="posRefundTitle">
     <div class="modal-dialog modal-dialog-centered">
         <form class="modal-content" id="posRefundForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-danger" id="posRefundTitle">訂單 #<span id="posRefundOrderId"></span>：<span id="posRefundModeLabel">退款</span></h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, color='text-danger', title_id='posRefundTitle') %}訂單 #<span id="posRefundOrderId"></span>：<span id="posRefundModeLabel">退款</span>{% endcall %}
             <div class="modal-body">
                 <div class="btn-group w-100 mb-3" role="group">
                     <input type="radio" class="btn-check" name="posRefundMode" id="posRefundVoid" value="void" checked>
@@ -287,10 +258,7 @@
 <div class="modal fade no-print pro-modal" id="posPassSellModal" tabindex="-1" aria-hidden="true" aria-labelledby="posPassSellTitle">
     <div class="modal-dialog modal-dialog-centered">
         <form class="modal-content" id="posPassSellForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posPassSellTitle"><i class="bi bi-cup-hot me-2"></i>售出寄杯給 <span id="posPassMember"></span></h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, 'bi-cup-hot', title_id='posPassSellTitle') %}售出寄杯給 <span id="posPassMember"></span>{% endcall %}
             <div class="modal-body">
                 <select class="form-select mb-2" id="posPassProduct" aria-label="寄杯商品"></select>
                 <div class="row g-2">
@@ -313,10 +281,7 @@
 <div class="modal fade no-print pro-modal" id="posTenderModal" tabindex="-1" aria-hidden="true" aria-labelledby="posTenderTitle">
     <div class="modal-dialog modal-dialog-centered">
         <form class="modal-content" id="posTenderForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-warning" id="posTenderTitle"><i class="bi bi-intersect me-2"></i>混合付款：應付 $<span id="posTenderTotal">0</span></h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, 'bi-intersect', title_id='posTenderTitle') %}混合付款：應付 $<span id="posTenderTotal">0</span>{% endcall %}
             <div class="modal-body">
                 <div id="posTenderRows"></div>
                 <button type="button" class="btn btn-sm btn-outline-light mt-1" data-action="addTender"><i class="bi bi-plus"></i> 新增一種付款方式</button>
@@ -335,10 +300,7 @@
 <div class="modal fade no-print pro-modal" id="posSplitModal" tabindex="-1" aria-hidden="true" aria-labelledby="posSplitTitle">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <form class="modal-content" id="posSplitForm" autocomplete="off">
-            <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold text-info" id="posSplitTitle"><span id="posSplitTable"></span> 桌：分開結帳 / 換桌</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-            </div>
+            {% call modal_head(None, color='text-info', title_id='posSplitTitle') %}<span id="posSplitTable"></span> 桌：分開結帳 / 換桌{% endcall %}
             <div class="modal-body">
                 <h6 class="fw-bold">1. 選擇要結帳的訂單</h6>
                 <div id="posSplitOrders" class="mb-3"></div>

@@ -17,7 +17,7 @@ from app.models.menu import MenuItem
 from app.models.order import Order, OrderItem
 from app.models.user import AdminLog, StaffAuditLog, User
 from app.services.menu_service import is_blank, parse_bool, upsert_menu_items_from_rows
-from app.utils import safe_int
+from app.utils import safe_int, workbook_bytes
 
 
 def _write_sheet(wb, sheet_name, rows, startrow=0):
@@ -48,7 +48,6 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
     filtered_orders = orders_query.all()
     filtered_order_ids = [o.id for o in filtered_orders]
 
-    output = io.BytesIO()
     wb = Workbook()
     wb.remove(wb.active)   # 只保留實際勾選的工作表
     if 'User' in selected_tables:
@@ -226,8 +225,6 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
             for cell in col:
                 # 以 "=" 開頭的字串 (例如會員把姓名註冊成 =HYPERLINK(...)) 會被 openpyxl 當成公式寫入，
                 # 店員用 Excel 開啟報表時就會執行。本系統匯出的資料一律是純文字，強制標記為字串即可。
-                if cell.data_type == 'f':
-                    cell.data_type = 's'
                 if sheet_name in date_dependent_sheets and cell.row == 1 and cell.column == 1:
                     continue
                 cell_len = calculate_display_width(cell.value)
@@ -235,9 +232,7 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
                     max_len = cell_len
             ws.column_dimensions[column_letter].width = max(max_len + 4, 12)
 
-    wb.save(output)
-    output.seek(0)
-    return output
+    return workbook_bytes(wb)   # 防公式注入 + BytesIO
 
 
 # ============================================================================

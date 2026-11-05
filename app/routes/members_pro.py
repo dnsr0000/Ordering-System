@@ -15,11 +15,10 @@ from app.services import coupon_service, line_service, settings_service, wallet_
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
 from app.services.upload_paths import upload_file_path
-from app.utils import get_own, safe_float, safe_int
+from app.utils import get_own, paginate, parse_date, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
-PAGE_SIZE = 50
 
 
 def _user(uid):
@@ -62,11 +61,7 @@ def manage():
             flash(f'已重新計算累積消費，{upgraded} 位會員升級', 'success')
         elif action == 'member':
             user = _user(f.get('user_id'))
-            raw = (f.get('birthday') or '').strip()
-            try:
-                user.birthday = date.fromisoformat(raw) if raw else None
-            except ValueError:
-                raise AppError('生日格式不正確')
+            user.birthday = parse_date(f.get('birthday'), '生日')
             tier_id = safe_int(f.get('tier_id'), 0)
             if tier_id:
                 tier = get_own(MemberTier, tier_id, '等級')
@@ -122,11 +117,8 @@ def manage():
     users_q = User.query
     if q:
         users_q = users_q.filter((User.name.contains(q)) | (User.phone.contains(q)))
-    total = users_q.count()
-    pages = max(1, -(-total // PAGE_SIZE))
-    page = min(max(1, safe_int(request.args.get('page'), 1)), pages)
     order = (User.total_spent.desc(), User.id) if sort == 'spent' else (User.id.desc(),)
-    users = users_q.order_by(*order).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+    users, page, pages, total = paginate(users_q.order_by(*order))
     member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
     tiers = wallet_service.tiers()
     stats = {

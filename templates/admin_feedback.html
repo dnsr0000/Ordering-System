@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import csrf %}
+{% from "_macros.html" import csrf, stat_tile %}
 {% block title %}顧客評價 - 後台{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -17,9 +17,9 @@
         <a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ url_for('settings_admin.edit', key='feedback') }}">評分設定</a>
     </form>
     <div class="row g-3 mb-3">
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">平均星數</div><div class="stat-value text-warning" id="fbAverage">{{ s.average }}</div></div></div>
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">評價筆數</div><div class="stat-value" id="fbCount">{{ s.count }}</div></div></div>
-        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">低分 (≤2 星)</div><div class="stat-value text-danger">{{ s.low }}</div></div></div>
+        {{ stat_tile('平均星數', s.average, 'text-warning', id='fbAverage') }}
+        {{ stat_tile('評價筆數', s.count, id='fbCount') }}
+        {{ stat_tile('低分 (≤2 星)', s.low, 'text-danger') }}
     </div>
     <section class="card rounded-4 p-3 mb-3">
         {% for n, c in s.distribution.items() %}

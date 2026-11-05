@@ -1,4 +1,4 @@
-from flask import Blueprint, g, jsonify, redirect, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 
 from app.errors import AppError
 from app.extensions import db, limiter
@@ -6,10 +6,9 @@ from app.models.coupon import Coupon
 from app.models.enums import VoucherStatus
 from app.models.menu import MenuItem, ModifierOption
 from app.models.user import RewardRedemption
-from app.routes.auth import member_login_url
 from app.services import loyalty_service, pass_service, reward_service
 from app.services.customer_session import current_member
-from app.utils import get_json_dict, safe_int
+from app.utils import get_json_dict, member_required, safe_int
 
 rewards_bp = Blueprint('rewards', __name__)
 
@@ -22,10 +21,8 @@ def _require_member():
 
 
 @rewards_bp.route('/rewards', endpoint='rewards_store')
-def rewards_store():
-    member = current_member()
-    if member is None:
-        return redirect(member_login_url())
+@member_required()
+def rewards_store(member):
     from app.services.customer_session import needs_pin_confirm
     return render_template(
         'rewards.html',

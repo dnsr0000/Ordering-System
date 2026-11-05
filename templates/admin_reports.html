@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import page_header, csrf %}
+{% from "_macros.html" import page_header, csrf, stat_tile %}
 {% block title %}營運報表{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
@@ -29,7 +29,7 @@
                                      ('日均', '$' ~ '{:,}'.format(r.per_day), ''),
                                      ('人事成本', '$' ~ '{:,}'.format(r.labor_cost), 'text-danger'),
                                      ('人事成本率', r.labor_ratio ~ '%', 'text-danger' if r.labor_ratio > 35 else '')] %}
-        <div class="col-6 col-md-4 col-xl-2"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {{ stat_tile(label, value, cls, col='col-6 col-md-4 col-xl-2') }}
         {% endfor %}
     </div>
     <div class="row g-4">

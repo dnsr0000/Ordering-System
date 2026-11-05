@@ -64,22 +64,40 @@ def test_scripts_escape_dynamic_html(path):
     assert not re.search(r'\.innerHTML\s*\+?=\s*[^`;]*\+', src), '不可用字串相加組 HTML'
 
 
-def _check_es_modules(folder, entry, template, required):
-    """拆成 ES 模組的頁面 (static/js/<entry>.js + static/js/<folder>/)：每個 import 的名稱都要在對方模組 export，不可漏 / 拼錯；每檔 500 行內"""
-    modules = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', folder, '*.js')))
+SHARED_MODULES = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', 'shared', '*.js')))   # 顧客點餐與 POS 共用的純邏輯
+
+
+def _module_exports(paths):
+    """每個模組 export 的名稱 (export function / const / let 與 export const { a, b } = …)"""
     exports = {}
-    for path in modules:
+    for path in paths:
         src = _read(path)
         names = set(re.findall(r'^export (?:async function|function|const|let)\s+([A-Za-z_$][\w$]*)', src, re.M))
         for group in re.findall(r'^export const \{([^}]*)\}', src, re.M):
             names |= {n.strip() for n in group.split(',') if n.strip()}
         exports[os.path.basename(path)] = names
+    return exports
+
+
+def _check_es_modules(folder, entry, template, required):
+    """拆成 ES 模組的頁面 (static/js/<entry>.js + static/js/<folder>/)：每個 import 的名稱都要在對方模組 (含 shared/) export，
+    不可漏 / 拼錯；每檔 500 行內"""
+    modules = sorted(glob.glob(os.path.join(ROOT, 'static', 'js', folder, '*.js')))
+    exports = _module_exports(modules)
+    shared = _module_exports(SHARED_MODULES)
     assert set(exports) >= required
     for path in modules + [os.path.join(ROOT, 'static', 'js', entry)]:
         src = _read(path)
         for names, target in re.findall(r"^import \{([^}]*)\} from '\./(?:" + folder + r"/)?([a-z]+\.js)';", src, re.M):
             for name in (n.strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
                 assert name in exports[target], f'{os.path.basename(path)} 匯入的 {name} 不在 {target}'
+        for names, target in re.findall(r"^import \{([^}]*)\} from '\.\.?/shared/([a-z]+\.js)';", src, re.M):
+            assert target in shared, f'{os.path.basename(path)} 匯入的 shared/{target} 不存在'
+            for name in (n.strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
+                name = name.split(' as ')[0].strip()   # import { x as y }
+                assert name in shared[target], f'{os.path.basename(path)} 匯入的 {name} 不在 shared/{target}'
+        for target in re.findall(r"^import \* as \w+ from '\.\.?/shared/([a-z]+\.js)';", src, re.M):
+            assert target in shared, f'{os.path.basename(path)} 匯入的 shared/{target} 不存在'
         assert len(src.split('\n')) <= 500, f'{os.path.basename(path)} 超過 500 行，請再拆分'
     assert 'type="module"' in _read(os.path.join(ROOT, 'templates', template)).split('js/' + entry)[0].rsplit('<script', 1)[1]
 
@@ -90,3 +108,20 @@ def test_pos_modules_import_only_existing_exports():
 
 def test_customer_modules_import_only_existing_exports():
     _check_es_modules('customer', 'customer.js', 'customer.html', {'core.js', 'cart.js', 'totals.js', 'menu.js', 'checkout.js'})
+
+
+def test_shared_modules_are_pure_and_small():
+    """static/js/shared/：顧客點餐與 POS 共用的模組，檔名只用小寫字母、500 行內、只匯入 shared/ 內的模組 (不依賴頁面狀態)"""
+    assert {'addons.js', 'pricing.js', 'cartline.js', 'modifiers.js', 'totals.js', 'orderpayload.js', 'promo.js', 'invoice.js', 'combos.js'} \
+        <= {os.path.basename(p) for p in SHARED_MODULES}
+    shared = _module_exports(SHARED_MODULES)
+    for path in SHARED_MODULES:
+        name = os.path.basename(path)
+        assert re.fullmatch(r'[a-z]+\.js', name), f'shared/{name} 檔名只能用小寫字母'
+        src = _read(path)
+        assert len(src.split('\n')) <= 500, f'shared/{name} 超過 500 行，請再拆分'
+        assert shared[name], f'shared/{name} 沒有任何 export'
+        for names, target in re.findall(r"^import \{([^}]*)\} from '([^']+)';", src, re.M):
+            assert re.fullmatch(r'\./[a-z]+\.js', target), f'shared/{name} 只能匯入 shared/ 內的模組：{target}'
+            for n in (n.strip().split(' as ')[0].strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
+                assert n in shared[os.path.basename(target)], f'shared/{name} 匯入的 {n} 不在 {target}'

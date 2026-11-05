@@ -9,7 +9,7 @@
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped
 
 
 class PaymentKind:
@@ -62,7 +62,7 @@ class Refund(TenantScoped, db.Model):
     order = db.relationship('Order')
 
 
-class Settlement(TenantScoped, db.Model):
+class Settlement(CreatedAtMixin, TenantScoped, db.Model):
     __tablename__ = 'settlement'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -70,7 +70,6 @@ class Settlement(TenantScoped, db.Model):
     total = db.Column(db.Integer, nullable=False, default=0)
     order_ids = db.Column(db.String(500), nullable=False, default='')
     staff_username = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
 
 class InvoiceStatus:
@@ -83,7 +82,7 @@ class InvoiceStatus:
     SKIPPED = 'skipped'      # 不開發票 (例如外送平台代開)
 
 
-class Invoice(TenantScoped, db.Model):
+class Invoice(CreatedAtMixin, TenantScoped, db.Model):
     __tablename__ = 'invoice'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -106,7 +105,6 @@ class Invoice(TenantScoped, db.Model):
     allowance_numbers = db.Column(db.String(300), nullable=False, default='')
     attempts = db.Column(db.Integer, nullable=False, default=0)
     last_error = db.Column(db.String(300), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
 
     order = db.relationship('Order', backref=db.backref('invoices', lazy=True))
 

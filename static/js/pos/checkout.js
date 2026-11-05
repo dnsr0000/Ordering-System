@@ -2,7 +2,7 @@
  * 櫃檯 POS 收銀頁 (pos.js 的模組)：8. 結帳送出、混合付款、外送單、改價 / 整單折扣、收據。
  * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js。
  */
-import { $, api, html, modalOf, num, pad3, posCfg, setHtml, state, SUBMIT_LABEL } from './core.js';
+import { $, api, html, modalOf, num, posCfg, setHtml, state, SUBMIT_LABEL } from './core.js';
 import { repriceCart } from './menu.js';
 import { renderCart } from './cart.js';
 import { applyServerPrices, clearMember, refreshBoundMember } from './member.js';
@@ -12,26 +12,11 @@ import {
     updateCashChange,
 } from './totals.js';
 import { syncLiveState } from './live.js';
+import { payloadLine } from '../shared/orderpayload.js';
 
 // ======================================================================
-// 8. 結帳送出與收據
+// 8. 結帳送出與收據 (送出的品項結構 payloadLine 在 shared/orderpayload.js)
 // ======================================================================
-export function payloadLine(l) {
-    return {
-        menu_item_id: l.menu_item_id,
-        quantity: l.quantity,
-        modifier_ids: l.modifier_ids,
-        combo_option_id: l.combo_option_id,
-        combo_choices: l.combo_choices || [],
-        pass_id: l.pass_id || 0,
-        is_add_on: l.is_add_on,
-        is_reward: l.is_reward,
-        customization: l.customization,
-        size: l.size || '',
-        override_price: l.override_price,
-    };
-}
-
 export function setSubmitting(on) {
     state.submitting = on;
     const btn = $('posSubmitBtn');
@@ -307,7 +292,7 @@ export function applyOrderDiscount(ev) {
 
 export function showReceipt(d, title) {
     $('rcpt-title').textContent = title;
-    $('rcpt-pickup-no').textContent = `#${pad3(d.pickup_number || d.order_id)}`;
+    $('rcpt-pickup-no').textContent = `#${Kiosk.pad3(d.pickup_number || d.order_id)}`;
     $('rcpt-order-id').textContent = `#${d.order_id}`;
     $('rcpt-customer').textContent = d.table_number || d.user_name || '櫃檯POS';
     $('rcpt-order-type').textContent = d.order_type + (d.order_type === '外帶' ? (d.need_cutlery ? ' (附餐具)' : ' (免餐具)') : '');

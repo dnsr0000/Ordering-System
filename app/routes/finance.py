@@ -2,7 +2,7 @@
 後台：電子發票、作廢與退款紀錄、交班與日結。
 """
 import json
-from datetime import date, datetime, timedelta
+from datetime import date
 
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
@@ -16,8 +16,9 @@ from app.models.shift import CashShift
 from app.services import einvoice_ecpay, payment_service, settings_service, shift_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
-from app.utils import get_own, role_required, safe_int
+from app.utils import day_bounds, get_own, parse_date_range, role_required, safe_int
 
+einvoice_enabled = settings_service.flag('einvoice')
 invoices_bp = Blueprint('invoices', __name__)
 refunds_bp = Blueprint('refunds', __name__)
 shifts_bp = Blueprint('shifts', __name__)
@@ -32,30 +33,16 @@ REFUND_STATUS_LABELS = {'done': ('已退款', 'success'), 'manual': ('需人工�
                         'pending': ('處理中', 'info'), 'failed': ('退款失敗', 'danger')}
 
 
-def _date_range(default_days=7):
-    try:
-        start = date.fromisoformat(request.args.get('start') or '')
-    except ValueError:
-        start = date.today() - timedelta(days=default_days - 1)
-    try:
-        end = date.fromisoformat(request.args.get('end') or '')
-    except ValueError:
-        end = date.today()
-    if end < start:
-        start, end = end, start
-    return start, end
-
-
 # ==============================================================================
 # 電子發票
 # ==============================================================================
 @invoices_bp.route('/admin/invoices', endpoint='list_invoices')
 @role_required(*MANAGER_ROLES)
 def list_invoices():
-    start, end = _date_range(30)
+    start, end = parse_date_range(default_days=30)
     status = request.args.get('status') or ''
-    q = Invoice.query.filter(Invoice.created_at >= datetime.combine(start, datetime.min.time()),
-                             Invoice.created_at < datetime.combine(end + timedelta(days=1), datetime.min.time()))
+    t0, t1 = day_bounds(start, end)
+    q = Invoice.query.filter(Invoice.created_at >= t0, Invoice.created_at < t1)
     if status:
         q = q.filter(Invoice.status == status)
     invoices = q.order_by(Invoice.id.desc()).limit(500).all()
@@ -131,7 +118,7 @@ def invoice_print(invoice_id):
 def issue_for_order(order_id):
     """補開發票 (結帳時未開立、或關閉自動開立時)"""
     order = get_own(Order, order_id, '訂單')
-    if not settings_service.get('einvoice').get('enabled'):
+    if not einvoice_enabled():
         raise AppError('尚未啟用電子發票')
     data = request.get_json(silent=True) or request.form.to_dict()
     existing = Invoice.query.filter(Invoice.order_id == order.id, Invoice.status != InvoiceStatus.VOID).first()
@@ -150,10 +137,10 @@ def issue_for_order(order_id):
 @refunds_bp.route('/admin/refunds', endpoint='list_refunds')
 @role_required(*MANAGER_ROLES)
 def list_refunds():
-    start, end = _date_range(30)
+    start, end = parse_date_range(default_days=30)
     status = request.args.get('status') or ''
-    q = Refund.query.filter(Refund.created_at >= datetime.combine(start, datetime.min.time()),
-                            Refund.created_at < datetime.combine(end + timedelta(days=1), datetime.min.time()))
+    t0, t1 = day_bounds(start, end)
+    q = Refund.query.filter(Refund.created_at >= t0, Refund.created_at < t1)
     if status:
         q = q.filter(Refund.status == status)
     refunds = q.order_by(Refund.id.desc()).limit(500).all()

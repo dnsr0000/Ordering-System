@@ -17,7 +17,7 @@ from app.models.enums import OrderStatus
 from app.models.menu import MenuItem
 from app.models.order import Order
 from app.services import settings_service
-from app.utils import safe_int
+from app.utils import day_bounds, safe_int
 
 MAX_MINUTES = 180
 HIDDEN_PAYMENT_STATUSES = ('pending', 'expired', 'authorizing')   # 尚未付款的線上訂單還不會進廚房
@@ -46,8 +46,7 @@ def workload(pairs: Iterable[tuple[Any, int]], default_prep: int) -> int:
 
 def _queue_minutes(tenant_id: int, now: datetime, default_prep: int) -> float:
     """排隊中訂單的剩餘工作量合計 (有預計完成時間的以剩餘時間計，沒有的以工作量計)"""
-    start = datetime.combine(now.date(), datetime.min.time())
-    end = start + timedelta(days=1)
+    start, end = day_bounds(now.date())
     orders = (Order.query.filter(Order.tenant_id == tenant_id, Order.status == OrderStatus.PENDING,
                                  Order.created_at >= start - timedelta(hours=6), Order.created_at < end,
                                  or_(Order.pickup_at.is_(None), Order.pickup_at <= now + timedelta(minutes=15)),

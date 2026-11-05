@@ -13,8 +13,6 @@ import hmac
 import logging
 import uuid
 
-import requests
-
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import OrderSource
@@ -23,6 +21,7 @@ from app.models.order import Order
 from app.models.settings import StoreSetting
 from app.models.tenant import Tenant
 from app.services import monitor_service, settings_service
+from app.services.http_client import request_json
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +31,7 @@ UBER_API = 'https://api.uber.com'
 
 def _http(method, url, **kwargs):
     """實際送出 (測試時以 monkeypatch 取代)；回傳 (狀態碼, JSON)"""
-    resp = requests.request(method, url, timeout=kwargs.pop('timeout', 15), **kwargs)
-    try:
-        return resp.status_code, resp.json()
-    except ValueError:
-        return resp.status_code, {}
+    return request_json(method, url, **kwargs)
 
 
 def tenant_for(platform, key_field, key_value):

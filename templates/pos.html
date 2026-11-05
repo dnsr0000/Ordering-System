@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import modal_head, stock_badge %}
 
 {% block title %}櫃檯 POS 收銀系統 - {{ tenant.name }}{% endblock %}
 
@@ -161,9 +162,9 @@
                                         </div>
                                         {% endif %}
                                         <div class="text-end">
-                                            <span id="pos-stock-badge-{{ item.id }}" class="badge pos-xxs {% if sold_out %}bg-danger{% elif (item.stock or 0) <= 5 %}bg-warning text-dark{% else %}bg-dark border border-secondary text-white-50{% endif %}">
+                                            {% call stock_badge(item, 'dark', id='pos-stock-badge-' ~ item.id, extra_class='pos-xxs', sold_out=sold_out) %}
                                                 {% if sold_out %}已售完{% else %}庫存 {{ item.stock }}{% endif %}
-                                            </span>
+                                            {% endcall %}
                                             <div class="mt-1">
                                                 {% if item.combo_options %}
                                                 <span class="badge bg-info text-dark pos-xxs">可升套餐</span>
@@ -493,10 +494,7 @@
     <div class="modal fade no-print" id="posMemberSelectModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content pos-panel text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-people-fill me-2"></i>找到多筆符合會員，請確認選擇</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('找到多筆符合會員，請確認選擇', 'bi-people-fill') }}
                 <div class="modal-body p-3 pos-modal-scroll" id="posMemberSelectModalBody"></div>
             </div>
         </div>
@@ -506,10 +504,7 @@
     <div class="modal fade no-print" id="posPinModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-sm">
             <form class="modal-content pos-panel text-white shadow-lg" id="posPinForm" autocomplete="off">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-info">🔑 設定會員 PIN 碼</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('🔑 設定會員 PIN 碼', color='text-info') }}
                 <div class="modal-body p-3">
                     <p class="small text-white-50 mb-2">請當面核對身分後，為會員【<span id="posPinMemberLabel" class="text-warning"></span>】設定新的 4~6 位數字手機登入 PIN 碼：</p>
                     <input type="password" id="posPinInput" class="form-control text-center fs-4 fw-bold" inputmode="numeric"
@@ -528,10 +523,7 @@
     <div class="modal fade no-print" id="posComboModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content pos-panel text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning" id="posComboModalTitle">選擇單點或升級套餐</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('選擇單點或升級套餐', title_id='posComboModalTitle') }}
                 <div class="modal-body p-4">
                     <div class="row g-3" id="posComboCardsContainer"></div>
                 </div>
@@ -543,10 +535,7 @@
     <div class="modal fade no-print" id="posModifierModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content pos-panel text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning" id="posModifierModalTitle">客製化規格</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('客製化規格', title_id='posModifierModalTitle') }}
                 <div class="modal-body p-3" id="posModifierModalBody"></div>
                 <div class="modal-footer border-secondary">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
@@ -560,10 +549,7 @@
     <div class="modal fade no-print" id="posHoldModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content pos-panel text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning"><i class="bi bi-pause-circle me-2"></i>暫存掛單夾</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('暫存掛單夾', 'bi-pause-circle') }}
                 <div class="modal-body p-3" id="posHoldModalBody"></div>
             </div>
         </div>
@@ -624,10 +610,7 @@
     <div class="modal fade no-print" id="posCallsModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content pos-panel text-white shadow-lg">
-                <div class="modal-header border-secondary">
-                    <h5 class="modal-title fw-bold text-warning mb-0"><i class="bi bi-bell me-2"></i>桌邊呼叫服務</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {{ modal_head('桌邊呼叫服務', 'bi-bell', title_class='fw-bold mb-0') }}
                 <div class="modal-body p-3" id="posCallsList"></div>
             </div>
         </div>
@@ -637,10 +620,7 @@
     <div class="modal fade" id="posReceiptModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content bg-dark text-white border-secondary">
-                <div class="modal-header border-secondary no-print">
-                    <h5 class="modal-title fw-bold text-success"><i class="bi bi-check-circle-fill me-2"></i><span id="rcpt-title">結帳成功 • 收據預覽</span></h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
-                </div>
+                {% call modal_head(None, 'bi-check-circle-fill', 'text-success', header_class='border-secondary no-print') %}<span id="rcpt-title">結帳成功 • 收據預覽</span>{% endcall %}
                 <div class="modal-body p-3">
                     <div class="thermal-receipt" id="posReceiptPrintArea">
                         <div class="text-center border-bottom border-dark pb-2 mb-2">

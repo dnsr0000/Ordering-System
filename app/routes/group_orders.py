@@ -10,7 +10,7 @@ from app.extensions import db, limiter
 from app.models.group_order import GROUP_STATUS_LABELS, GroupOrder
 from app.services import group_order_service as svc
 from app.services.audit import record_staff_audit
-from app.utils import get_own, role_required, safe_int
+from app.utils import get_own, role_required, safe_int, store_only
 
 group_bp = Blueprint('group_orders', __name__)
 MANAGE_SESSION, ENTRY_SESSION = 'group_manage', 'group_entries'
@@ -182,10 +182,8 @@ def print_list(shop, token):
 # ---------------------------------------------------------------------------
 @group_bp.route('/admin/group-orders', methods=['GET', 'POST'], endpoint='admin')
 @role_required(*POS_ROLES)
+@store_only
 def admin():
-    from app.sync import runtime as sync_runtime
-    if sync_runtime.is_hub():
-        abort(404)
     if request.method == 'POST':
         f = request.form
         action = f.get('action')

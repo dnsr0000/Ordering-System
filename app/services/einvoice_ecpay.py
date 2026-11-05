@@ -13,8 +13,6 @@
 import base64
 import json
 import logging
-import secrets
-import string
 import time
 import urllib.parse
 from datetime import datetime, timedelta
@@ -100,8 +98,8 @@ def call(cfg, path, data, timeout=8):
 # ---------------------------------------------------------------------------
 def new_relate_number():
     """綠界的唯一編號 (最長 30 碼英數字)：K + 年月日時分秒 + 6 碼隨機"""
-    alphabet = string.ascii_uppercase + string.digits
-    return 'K' + datetime.now().strftime('%y%m%d%H%M%S') + ''.join(secrets.choice(alphabet) for _ in range(6))
+    from app.services.payment_ecpay import ecpay_unique_no
+    return ecpay_unique_no('%y%m%d%H%M%S', 6)
 
 
 def normalize_invoice_info(info, cfg):

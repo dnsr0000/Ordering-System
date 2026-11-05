@@ -12,6 +12,7 @@ import requests
 
 from app.errors import AppError
 from app.services import settings_service
+from app.services.http_client import request_json
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +26,11 @@ BOT_INFO_URL = 'https://api.line.me/v2/bot/info'
 
 def _post(url, **kwargs):
     """實際送出 (測試時以 monkeypatch 取代)；回傳 (狀態碼, JSON dict)"""
-    resp = requests.post(url, timeout=kwargs.pop('timeout', 15), **kwargs)
-    try:
-        return resp.status_code, resp.json()
-    except ValueError:
-        return resp.status_code, {}
+    return request_json('POST', url, **kwargs)
 
 
 def _get(url, **kwargs):
-    resp = requests.get(url, timeout=kwargs.pop('timeout', 15), **kwargs)
-    try:
-        return resp.status_code, resp.json()
-    except ValueError:
-        return resp.status_code, {}
+    return request_json('GET', url, **kwargs)
 
 
 # ---------------------------------------------------------------------------

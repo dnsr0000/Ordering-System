@@ -1,7 +1,11 @@
 /*
  * 櫃檯 POS 收銀頁 (templates/pos.html) 的進入點 (ES module)：事件綁定與啟動。
  * 各功能拆在 static/js/pos/ (core 共用狀態與工具、menu 點餐與客製化、cart 購物車與加購、member 會員與寄杯、
- * totals 優惠與金額 / 付款方式、checkout 結帳與收據、live 掛單 / 當日訂單 / 桌位、pro 主管核准 / 交班 / 退款 / 分桌等進階功能)。
+ * totals 優惠與金額 / 付款方式、checkout 結帳與收據、live 掛單 / 當日訂單 / 桌位、pro 主管核准 / LINE Pay / 接單控制、
+ * shift 交班 / 儲值 / 禮物卡、split 作廢退款 / 分桌換桌)。
+ * 與顧客點餐頁共用的純邏輯在 static/js/shared/ (addons 加購配額、pricing 單價、cartline 合併 / 寄杯、modifiers 客製化視窗、
+ * totals 金額、orderpayload 品項結構 / 預覽排程、promo 優惠碼驗證、invoice 發票、combos 套餐卡片)；
+ * DOM 小工具、徽章、即時通知 (SSE + 輪詢) 等取自 common.js 的 Kiosk。
  * - 菜單、加料、紅利設定與公開優惠券由 page-data 提供 (menu_service.storefront_payload)。
  * - 結帳送出結構化品項 {menu_item_id, quantity, modifier_ids, combo_option_id, is_add_on, is_reward, customization}，
  *   金額一律以後端計算為準，前端只做預覽。
@@ -102,7 +106,7 @@ $('posPriceForm').addEventListener('submit', applyLinePrice);
 $('posDiscountForm').addEventListener('submit', applyOrderDiscount);
 if ($('posInvoiceType')) $('posInvoiceType').addEventListener('change', onInvoiceTypeChange);
 $('posModifierModalBody').addEventListener('change', (ev) => {
-    if (ev.target.matches('.pos-choice')) syncChoiceMods();
+    if (ev.target.matches('[data-mod="choice"]')) syncChoiceMods();
 });
 $('posTenderRows').addEventListener('input', syncTenderRows);
 if ($('posFloorArea')) $('posFloorArea').addEventListener('change', drawFloor);

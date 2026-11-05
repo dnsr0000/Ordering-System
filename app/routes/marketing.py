@@ -1,5 +1,4 @@
 """後台：會員分群 (RFM) 與自動行銷 (久未消費自動發券、排程推播)；說明見 app/services/marketing_service.py"""
-import io
 from datetime import datetime
 
 from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
@@ -13,7 +12,7 @@ from app.models.marketing import CAMPAIGN_KINDS, MarketingCampaign
 from app.services import marketing_service
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
-from app.utils import get_own, neutralize_formulas
+from app.utils import get_own, workbook_bytes
 
 marketing_bp = Blueprint('marketing', __name__)
 
@@ -74,9 +73,7 @@ def index():
         for r in members:
             ws.append([r['name'], r['phone'], r['last_at'].strftime('%Y-%m-%d') if r['last_at'] else '', r['days'],
                        r['orders'], r['spend'], r['r'], r['f'], r['m'], '是' if r['line'] else '', '是' if r['opt_out'] else ''])
-        neutralize_formulas(wb)
-        buf = io.BytesIO()
-        wb.save(buf)
+        buf = workbook_bytes(wb)
         buf.seek(0)
         return send_file(buf, as_attachment=True, download_name=f'會員分群_{ws.title}.xlsx',
                          mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

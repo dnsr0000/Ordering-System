@@ -4,7 +4,7 @@
 from datetime import datetime
 
 from app.extensions import db
-from app.models.mixins import TenantScoped
+from app.models.mixins import CreatedAtMixin, TenantScoped
 
 
 class Ingredient(TenantScoped, db.Model):
@@ -80,7 +80,7 @@ class Supplier(TenantScoped, db.Model):
     is_active = db.Column(db.Boolean, nullable=False, default=True)
 
 
-class PurchaseOrder(TenantScoped, db.Model):
+class PurchaseOrder(CreatedAtMixin, TenantScoped, db.Model):
     """採購單：draft 草稿 / sent 已送出 / received 已收貨 / cancelled 已取消"""
     __tablename__ = 'purchase_order'
 
@@ -90,7 +90,6 @@ class PurchaseOrder(TenantScoped, db.Model):
     expected_on = db.Column(db.Date, nullable=True)
     note = db.Column(db.String(200), nullable=False, default='')
     created_by = db.Column(db.String(120), nullable=False, default='')
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     sent_at = db.Column(db.DateTime, nullable=True)
     received_at = db.Column(db.DateTime, nullable=True)
     received_by = db.Column(db.String(120), nullable=False, default='')

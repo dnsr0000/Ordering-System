@@ -44,7 +44,7 @@ def test_expense_add_edit_delete_copy_fixed_and_permissions(app):
 
     # 驗證：金額、類別、名稱、日期
     for bad, msg in ((dict(amount='0'), '正確的金額'), (dict(amount='-5'), '正確的金額'), (dict(category='xx'), '費用類別'),
-                     (dict(name=' '), '費用名稱'), (dict(spent_on='2026/13/40'), '請輸入日期')):
+                     (dict(name=' '), '費用名稱'), (dict(spent_on='2026/13/40'), '日期格式不正確')):
         owner.post('/admin/expenses', data=dict(base, **bad))
         assert_flash(owner, msg)
     assert len(_expenses(app, tid)) == 2
