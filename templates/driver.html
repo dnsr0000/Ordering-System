@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}外送 #{{ '%03d' % data.pickup_number }} - {{ shop.name if shop else '' }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="driver-page" style="max-width: 480px">
+    <div class="text-white-50 small text-center">{{ shop.name if shop else '' }} • 外送員</div>
+    <h1 class="h5 fw-bold mb-3 text-center">外送單 #{{ '%03d' % data.pickup_number }}</h1>
+
+    <div class="card rounded-4 p-3 mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <span class="fw-bold"><i class="bi bi-person-badge me-1"></i>{{ data.driver or '未指派' }}</span>
+            <span class="badge bg-warning text-dark" id="driverStatus">{{ data.delivery_label }}</span>
+        </div>
+        <div class="fw-bold fs-5"><i class="bi bi-geo-alt me-1 text-danger"></i>{{ data.address }}</div>
+        <div class="small text-white-50">{{ data.zone }}</div>
+        <div class="d-grid gap-2 mt-3">
+            <a class="btn btn-outline-info fw-bold" href="{{ data.nav_url }}" target="_blank" rel="noopener"><i class="bi bi-signpost-2 me-1"></i>導航到地址</a>
+            {% if data.phone %}<a class="btn btn-outline-light fw-bold" href="tel:{{ data.phone }}"><i class="bi bi-telephone me-1"></i>撥打 {{ data.phone }}</a>{% endif %}
+        </div>
+    </div>
+
+    <div class="card rounded-4 p-3 mb-3">
+        <div class="fw-bold mb-2"><i class="bi bi-broadcast me-1"></i>位置回報</div>
+        <p class="small text-white-50 mb-2">按下開始並允許定位後，手機會每 {{ data.interval }} 秒把位置回報給店家，顧客在追蹤頁可看到您的位置。送達後自動停止。請保持此頁開啟。</p>
+        <button type="button" class="btn btn-warning fw-bold text-dark w-100" data-action="start" id="gpsStartBtn" {{ 'disabled' if not data.active }}>
+            <i class="bi bi-play-circle me-1"></i>{{ '開始回報位置' if data.active else '配送已結束' }}
+        </button>
+        <button type="button" class="btn btn-outline-secondary w-100 mt-2 d-none" data-action="stop" id="gpsStopBtn"><i class="bi bi-stop-circle me-1"></i>停止回報</button>
+        <div class="small mt-2" id="gpsMsg" aria-live="polite"></div>
+    </div>
+
+    <div class="card rounded-4 p-3">
+        <div class="fw-bold mb-2"><i class="bi bi-bag me-1"></i>餐點 • 應收 ${{ data.total }}{{ ' (已付款)' if data.paid else ' (' ~ data.payment_method ~ ')' }}</div>
+        <ul class="list-group list-group-flush">
+            {% for it in data['items'] %}<li class="list-group-item bg-transparent text-white border-secondary d-flex justify-content-between px-0"><span>{{ it.name }}</span><span>x{{ it.quantity }}</span></li>{% endfor %}
+        </ul>
+        {% if data.note %}<div class="text-warning small mt-2">備註：{{ data.note }}</div>{% endif %}
+    </div>
+</main>
+{% endblock %}
+{% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/driver.js') }}"></script>{% endblock %}

@@ -54,6 +54,12 @@ def apply_pro_form(item, form):
         raise AppError('規格格式應為「名稱:加減價」，例如 中杯:0, 大杯:15')
     item.size_options = ', '.join(f'{n}:{d:+d}' if d else f'{n}:0' for n, d in sizes)
     item.calories = min(5000, max(0, safe_int(form.get('calories'), 0)))
+    item.carbon_auto = form.get('carbon_auto') == '1'
+    if item.carbon_auto:
+        from app.services import carbon_service
+        item.carbon_grams = carbon_service.recipe_carbon(item) if item.id else 0
+    else:
+        item.carbon_grams = min(1_000_000, max(0, safe_int(form.get('carbon_grams'), 0)))
     item.nutrition = (form.get('nutrition') or '').strip()[:200]
     item.prep_minutes = min(120, max(0, safe_int(form.get('prep_minutes'), 0)))
     item.prep_note = (form.get('prep_note') or '').strip()[:500]

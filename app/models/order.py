@@ -66,6 +66,8 @@ class Order(TenantScoped, db.Model):
     delivery_status = db.Column(db.String(12), nullable=False, default='', server_default='')
     dispatched_at = db.Column(db.DateTime, nullable=True)
     delivered_at = db.Column(db.DateTime, nullable=True)
+    # 外送員手機回報位置的憑證 (/driver/<token>)：指派外送員時產生，同步到線上端 (外送員的手機回報到公開網址)
+    driver_token = db.Column(db.String(36), nullable=False, default='', server_default='')
     # 掃桌上 QR code 點餐的桌位 (本機資料，不同步)；這類訂單 payment_status 為 unpaid (餐後至櫃檯結帳) → settled
     dining_table_id = db.Column(db.Integer, db.ForeignKey('dining_table.id', ondelete='SET NULL', name='fk_order_dining_table_id'),
                                 nullable=True, index=True)
@@ -289,3 +291,24 @@ class OrderFeedback(TenantScoped, db.Model):
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     order = db.relationship('Order')
+
+
+class DeliveryPosition(TenantScoped, db.Model):
+    """
+    外送員回報的 GPS 位置 (自有外送)：外送員手機開 /driver/<token> 定期回報，顧客追蹤頁顯示最新位置與距離。
+    本機資料、不同步：外送員回報到哪台主機 (PUBLIC_BASE_URL / 線上端)，顧客追蹤頁就在同一台主機讀。
+    以訂單 uuid 關聯 (線上端與分店的訂單整數 id 不同)；每張訂單只保留最近 MAX_PER_ORDER 筆。
+    """
+    __tablename__ = 'delivery_position'
+    MAX_PER_ORDER = 300
+
+    id = db.Column(db.Integer, primary_key=True)
+    order_uuid = db.Column(db.String(36), nullable=False, index=True)
+    lat = db.Column(db.Float, nullable=False)
+    lng = db.Column(db.Float, nullable=False)
+    accuracy = db.Column(db.Float, nullable=False, default=0, server_default='0')   # 公尺 (0 = 未知)
+    recorded_at = db.Column(db.DateTime, nullable=False, default=datetime.now, index=True)
+
+    def to_dict(self):
+        return {'lat': round(self.lat, 6), 'lng': round(self.lng, 6), 'accuracy': round(self.accuracy or 0),
+                'at': self.recorded_at.strftime('%H:%M:%S'), 'ts': self.recorded_at.isoformat(timespec='seconds')}

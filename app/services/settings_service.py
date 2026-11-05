@@ -190,6 +190,9 @@ SECTIONS = {s.key: s for s in (
                 Field('show_allergens', '顯示過敏原與素食標示', 'bool', True),
                 Field('show_calories', '顯示熱量與營養標示', 'bool', True,
                       help='餐點的熱量 / 營養在「菜單進階設定」填寫；購物車顯示合計熱量'),
+                Field('show_carbon', '顯示碳足跡 (參考值)', 'bool', True,
+                      help='餐點碳足跡依配方 (原料用量 × 排放係數) 自動估算，或在「菜單進階設定」手動填寫；'
+                           '點餐頁以「參考值」標示，購物車顯示合計'),
                 Field('attract_seconds', '自助機待機輪播 (閒置秒數)', 'int', 60, min=0, max=3600,
                       help='點餐機首頁閒置多久後全螢幕輪播推薦餐點 (0 = 不輪播)；觸碰螢幕即回到首頁'),
                 Field('attract_message', '待機輪播標語', default='觸碰螢幕開始點餐'),
@@ -330,6 +333,10 @@ SECTIONS = {s.key: s for s in (
                 Field('free_over', '商品金額滿多少免外送費 (0 = 不免)', 'int', 0, min=0, max=100000),
                 Field('eta_minutes', '預估送達時間 (分鐘)', 'int', 45, min=10, max=240),
                 Field('drivers', '外送員 (每行一位)', 'textarea', '', help='派車時從名單中選擇'),
+                Field('gps_tracking', '外送員手機回報位置 (顧客追蹤頁顯示外送員位置)', 'bool', True,
+                      help='指派外送員後，派車頁出現外送員專用連結 / QR code；外送員用手機開啟並允許定位即可。'
+                           '手機需能連到本店的公開網址 (總部 / 線上端網址，或系統設定的 QR code 網址)'),
+                Field('gps_interval', '位置回報間隔 (秒)', 'int', 15, min=5, max=120),
             ), enabled_field='enabled'),
     Section('table_pay', '桌邊線上結帳', 'F 通路', 'bi-phone',
             '桌邊掃碼點餐的顧客可用手機線上付清這一桌未結帳的訂單 (綠界信用卡)，不用到櫃檯。',

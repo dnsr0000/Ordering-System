@@ -6,6 +6,7 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.enums import DELIVERY_STATUS_LABELS, POS_ROLES
 from app.models.order import Order
+from app.services import delivery_tracking_service as tracking
 from app.services import own_delivery_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
@@ -42,6 +43,20 @@ def board():
         flash(f'訂單 #{order.id}：{DELIVERY_STATUS_LABELS.get(order.delivery_status, "")}', 'success')
         return redirect(url_for('dispatch.board'))
     start, end = todays_range()
-    return render_template('admin_dispatch.html', orders=own_delivery_service.board_orders(start, end),
+    orders = own_delivery_service.board_orders(start, end)
+    gps = tracking.enabled()
+    links, qrs, positions = {}, {}, {}
+    if gps:
+        from app.services import table_service
+        for o in orders:
+            if o.driver_token and tracking.is_active(o):
+                links[o.id] = tracking.driver_url(o)
+                try:
+                    qrs[o.id] = table_service.qr_data_uri(links[o.id])
+                except AppError:   # 沒裝 segno：只顯示連結
+                    qrs[o.id] = ''
+                positions[o.id] = tracking.latest(o)
+    return render_template('admin_dispatch.html', orders=orders,
                            drivers=own_delivery_service.drivers(), labels=DELIVERY_STATUS_LABELS,
-                           read_only=sync_runtime.is_hub(), enabled=own_delivery_service.config().get('enabled'))
+                           read_only=sync_runtime.is_hub(), enabled=own_delivery_service.config().get('enabled'),
+                           gps=gps, driver_links=links, driver_qrs=qrs, positions=positions)

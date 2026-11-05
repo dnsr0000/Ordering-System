@@ -6,7 +6,7 @@ import {
     $, REWARD_LABEL, api, html, isGuest, isOnline, menuItems, modal, modifierById, pageData, pro, setText, state, toggleRow, ui,
 } from './core.js';
 import { lineDescription, lineKey, makeLine, saveCart, updateCartUI } from './cart.js';
-import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo } from './totals.js';
+import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo, toggleCarbon } from './totals.js';
 
 export async function openTableBill() {
     try {
@@ -129,6 +129,7 @@ export async function openPreview() {
     setText('preview-final', checkoutPayload().expected_total);   // 伺服器回報過新金額時顯示新金額
     setText('preview-earned', t.earned);
     toggleCalories('preview-calories-row', 'preview-calories');
+    toggleCarbon('preview-carbon-row', 'preview-carbon');
     const pickupSel = $('pickupTime');
     const pickupLabel = pickupSel && pickupSel.value ? pickupSel.options[pickupSel.selectedIndex].text : '';
     $('preview-pickup-row').classList.toggle('d-none', !pickupLabel);

@@ -7,7 +7,7 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.inventory import Ingredient, IngredientLot, RecipeLine, StockMovement, Supplier
 from app.models.menu import MenuItem
-from app.services import inventory_service, settings_service
+from app.services import carbon_service, inventory_service, settings_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
 from app.utils import find_own, get_own, safe_float, safe_int
@@ -38,7 +38,9 @@ def manage():
             db.session.add(Ingredient(tenant_id=g.tenant_id, name=name, unit=(f.get('unit') or 'g').strip()[:20],
                                       stock=round(safe_float(f.get('stock'), 0), 4),
                                       low_threshold=max(0.0, safe_float(f.get('low_threshold'), 0)),
-                                      unit_cost=max(0.0, safe_float(f.get('unit_cost'), 0))))
+                                      unit_cost=max(0.0, safe_float(f.get('unit_cost'), 0)),
+                                      origin=(f.get('origin') or '').strip()[:60],
+                                      carbon_factor=max(0.0, safe_float(f.get('carbon_factor'), 0))))
             flash(f'已新增原料「{name}」', 'success')
         elif action == 'edit':
             ing = _ingredient(f.get('ingredient_id'))
@@ -54,7 +56,13 @@ def manage():
                 ing.par_level = max(0.0, safe_float(f.get('par_level'), ing.par_level))
             if 'pack_size' in f:
                 ing.pack_size = max(0.0, safe_float(f.get('pack_size'), ing.pack_size)) or 1
-            flash('已更新原料', 'success')
+            if 'origin' in f:
+                ing.origin = (f.get('origin') or '').strip()[:60]
+            if 'carbon_factor' in f:
+                ing.carbon_factor = max(0.0, safe_float(f.get('carbon_factor'), ing.carbon_factor))
+            db.session.flush()
+            changed = carbon_service.refresh_for_ingredient(ing)   # 係數變更：用到的餐點重算碳足跡
+            flash('已更新原料' + (f'，{changed} 道餐點的碳足跡已重算' if changed else ''), 'success')
         elif action == 'delete':
             ing = _ingredient(f.get('ingredient_id'))
             db.session.delete(ing)
@@ -99,7 +107,13 @@ def manage():
                     db.session.add(RecipeLine(tenant_id=g.tenant_id, menu_item_id=item.id, ingredient_id=ing.id,
                                               quantity=round(q, 4)))
             record_staff_audit('RECIPE_CHANGE', details=f'更新「{item.name}」的配方')
-            flash(f'已更新「{item.name}」的配方', 'success')
+            db.session.flush()
+            carbon_service.refresh_item(item)
+            flash(f'已更新「{item.name}」的配方' + (f'，碳足跡約 {carbon_service.label(item.carbon_grams)}' if item.carbon_grams else ''),
+                  'success')
+        elif action == 'carbon_refresh':
+            changed = carbon_service.refresh_all(g.tenant_id)
+            flash(f'已依配方重算碳足跡：{changed} 道餐點有變動', 'success')
         else:
             raise AppError('不支援的操作')
         db.session.commit()
@@ -112,8 +126,10 @@ def manage():
     selected = find_own(MenuItem, request.args.get('item')) if request.args.get('item') else None
     movements = StockMovement.query.order_by(StockMovement.id.desc()).limit(100).all()
     costs = {i.id: inventory_service.item_unit_cost(i) for i in items if i.id in recipes}
+    carbon_labels = {i.id: carbon_service.label(i.carbon_grams) for i in items}
     return render_template('admin_inventory.html', ingredients=ingredients, items=items, recipes=recipes,
                            selected=selected, movements=movements, labels=REASON_LABELS, costs=costs,
                            cfg=settings_service.get('inventory'), low=[i for i in ingredients if i.is_low],
+                           carbon_labels=carbon_labels,
                            lots=inventory_service.expiring_lots(g.tenant_id), today=date.today(),
                            suppliers=Supplier.query.filter_by(is_active=True).order_by(Supplier.name).all())

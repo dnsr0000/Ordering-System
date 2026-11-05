@@ -11,6 +11,7 @@
     {% endcall %}
     {% if not enabled %}<div class="alert alert-secondary">尚未啟用外送到府 (系統設定 → 自有外送)。</div>{% endif %}
     {% if read_only %}<div class="alert alert-info">線上端只顯示配送狀態；派車請在出餐分店操作。</div>{% endif %}
+    {% if enabled and not gps %}<div class="alert alert-secondary small">外送員 GPS 回報未啟用 (系統設定 → 自有外送 → 外送員手機回報位置)。</div>{% endif %}
     <div class="row g-3" id="dispatchCards">
         {% for o in orders %}
         <div class="col-md-6 col-xl-4"><div class="card rounded-4 p-3 h-100 dispatch-card {{ 'opacity-50' if o.status == 'Cancelled' }}" data-order-id="{{ o.id }}" data-delivery-status="{{ o.delivery_status }}">
@@ -25,6 +26,20 @@
             <div class="small text-white-50 mb-2">{{ o.items | map(attribute='item_name') | join('、') }} • 應收 ${{ o.total_price }} ({{ o.payment_method }}{{ '，已付款' if o.is_paid }})
                 {% if o.note %}<div class="text-warning">備註：{{ o.note }}</div>{% endif %}</div>
             {% if o.driver_name %}<div class="small mb-2"><i class="bi bi-person-badge me-1"></i>{{ o.driver_name }}{% if o.dispatched_at %} • {{ o.dispatched_at.strftime('%H:%M') }} 出發{% endif %}{% if o.delivered_at %} • {{ o.delivered_at.strftime('%H:%M') }} 送達{% endif %}</div>{% endif %}
+            {% if driver_links.get(o.id) %}
+            <details class="small mb-2 driver-link-box" {{ 'open' if o.delivery_status == 'assigned' }}>
+                <summary class="text-info"><i class="bi bi-phone me-1"></i>外送員手機連結 (回報位置)
+                    {% if positions.get(o.id) %}<span class="badge bg-success ms-1 driver-pos">最後定位 {{ positions[o.id].at }}</span>{% else %}<span class="badge bg-secondary ms-1 driver-pos">尚無定位</span>{% endif %}</summary>
+                <div class="d-flex gap-2 align-items-center mt-2">
+                    {% if driver_qrs.get(o.id) %}<img src="{{ driver_qrs[o.id] }}" alt="外送員連結 QR code" width="96" height="96" class="bg-white rounded">{% endif %}
+                    <div class="flex-grow-1 min-w-0">
+                        <input class="form-control form-control-sm font-monospace" value="{{ driver_links[o.id] }}" readonly aria-label="外送員連結" data-action="select-all">
+                        <div class="text-white-50 mt-1">請外送員掃描或開啟此連結，按「開始回報位置」。
+                            {% if positions.get(o.id) %}<a href="{{ positions[o.id].map_url }}" target="_blank" rel="noopener">在地圖查看</a>{% endif %}</div>
+                    </div>
+                </div>
+            </details>
+            {% endif %}
             {% if not read_only and o.status != 'Cancelled' and o.delivery_status not in ('delivered', 'failed') %}
             <div class="d-flex flex-wrap gap-1 mt-auto">
                 {% if o.delivery_status in ('pending', 'assigned') %}

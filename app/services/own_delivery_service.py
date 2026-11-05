@@ -100,6 +100,8 @@ def assign(order, driver):
     if order.delivery_status == 'out':
         raise AppError('已出發配送，無法改派', 409)
     order.driver_name, order.delivery_status = driver, 'assigned'
+    from app.services import delivery_tracking_service
+    delivery_tracking_service.ensure_token(order)   # 外送員手機回報位置的連結 (派車頁顯示 QR code)
 
 
 def depart(order):
@@ -107,6 +109,8 @@ def depart(order):
     if not order.driver_name:
         raise AppError('請先指派外送員')
     order.delivery_status, order.dispatched_at = 'out', datetime.now()
+    from app.services import delivery_tracking_service
+    delivery_tracking_service.ensure_token(order)
     from app.services import push_service
     push_service.notify_order(order, 'delivery_out')
 

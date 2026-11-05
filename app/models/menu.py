@@ -110,6 +110,9 @@ class MenuItem(TenantScoped, db.Model):
     # 熱量 (大卡，0 = 未標示) 與營養標示文字 (蛋白質 / 脂肪 / 碳水 / 鈉…)
     calories = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     nutrition = db.Column(db.String(200), nullable=False, default='', server_default='')
+    # 碳足跡 (每份 g CO2e，0 = 不標示)：carbon_auto 時依配方 (原料用量 × 排放係數) 自動計算，否則手動填寫
+    carbon_grams = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    carbon_auto = db.Column(db.Boolean, nullable=False, default=True, server_default='1')
     # 製作時間 (分鐘，0 = 用系統設定的預設值)：預估等候時間用 (eta_service)
     prep_minutes = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     station_id = db.Column(db.Integer, db.ForeignKey('kitchen_station.id', ondelete='SET NULL', name='fk_menu_item_station_id'),
@@ -205,6 +208,11 @@ class MenuItem(TenantScoped, db.Model):
         return self.name, self.description or ''
 
     @property
+    def carbon_label(self):
+        from app.services.carbon_service import label
+        return label(self.carbon_grams)
+
+    @property
     def redeem_points(self):
         """兌換所需點數 (限時特惠點數優先)"""
         return self.reward_discount_points if (self.reward_discount_points or 0) > 0 else (self.reward_points or 0)
@@ -237,6 +245,7 @@ class MenuItem(TenantScoped, db.Model):
             'sizes': [{'name': n, 'delta': d} for n, d in self.sizes],
             'calories': self.calories or 0,
             'nutrition': self.nutrition or '',
+            'carbon': self.carbon_grams or 0,
             'prep_minutes': self.prep_minutes or 0,
             'external_code': self.external_code or '',
             'diet': self.diet or '',

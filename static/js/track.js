@@ -9,6 +9,7 @@
     const numberEl = document.getElementById('trackNumber');
     const hintEl = document.getElementById('trackHint');
     let lastStatus = data.status;
+    let lastDelivery = data.delivery_status || '';
     let notified = data.status === 'Completed';
 
     function beep() {
@@ -69,6 +70,7 @@
             hintEl.textContent = Kiosk.t('track_hint_cancelled', '此訂單已取消，如有疑問請洽櫃檯。');
         }
         lastStatus = d.status;
+        lastDelivery = d.delivery_status || '';
         if (d.delivery_status) {
             document.getElementById('trackDelivery').classList.remove('d-none');
             document.getElementById('trackDeliveryLabel').textContent = Kiosk.t(`delivery_${d.delivery_status}`, d.delivery_label);
@@ -79,7 +81,60 @@
             if (d.delivery_status === 'out') hintEl.textContent = Kiosk.t('track_hint_out', '外送員已出發，請留意電話！');
             if (d.delivery_status === 'delivered') hintEl.textContent = Kiosk.t('track_hint_delivered', '已送達，祝您用餐愉快！');
         }
+        applyDriver(d);
         applyFeedback(d.feedback || {});
+    }
+
+    // ---------------------------------------------------------------- 外送員位置 (自有外送 GPS 回報)
+    let myLocation = null;
+    let lastPosition = null;
+
+    function distanceKm(a, b) {
+        const r = 6371;
+        const p1 = (a.lat * Math.PI) / 180;
+        const p2 = (b.lat * Math.PI) / 180;
+        const dp = ((b.lat - a.lat) * Math.PI) / 180;
+        const dl = ((b.lng - a.lng) * Math.PI) / 180;
+        const x = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+        return 2 * r * Math.asin(Math.sqrt(x));
+    }
+
+    function showDistance() {
+        const el = document.getElementById('trackDriverDistance');
+        if (!el) return;
+        if (!myLocation || !lastPosition) { el.classList.add('d-none'); return; }
+        const km = distanceKm(myLocation, lastPosition);
+        const label = km >= 1 ? `${km.toFixed(1)} km` : `${Math.round(km * 1000)} m`;
+        const minutes = Math.max(1, Math.round((km / 25) * 60));   // 市區機車約 25 km/h
+        el.textContent = Kiosk.t('track_distance', '外送員距離您約 {d}').replace('{d}', label)
+            + Kiosk.t('track_distance_eta', '，預計 {n} 分鐘').replace('{n}', String(minutes));
+        el.classList.remove('d-none');
+    }
+
+    function applyDriver(d) {
+        const box = document.getElementById('trackDriverBox');
+        if (!box) return;
+        const show = d.delivery_status === 'out' && 'driver_position' in d;
+        box.classList.toggle('d-none', !show);
+        if (!show) return;
+        const pos = d.driver_position;
+        const updated = document.getElementById('trackDriverUpdated');
+        const map = document.getElementById('trackDriverMap');
+        if (!pos) {
+            updated.textContent = Kiosk.t('track_driver_waiting', '等待外送員回報位置…');
+            map.classList.add('d-none');
+            lastPosition = null;
+            showDistance();
+            return;
+        }
+        lastPosition = { lat: pos.lat, lng: pos.lng };
+        const age = Number(pos.age_seconds) || 0;
+        const ago = age >= 60 ? Kiosk.t('track_driver_ago_min', '{n} 分鐘前').replace('{n}', String(Math.round(age / 60)))
+            : Kiosk.t('track_driver_ago', '{n} 秒前').replace('{n}', String(age));
+        updated.textContent = `${Kiosk.t('track_driver_updated', '更新於')} ${pos.at} (${ago})`;
+        map.href = pos.map_url;
+        map.classList.remove('d-none');
+        showDistance();
     }
 
     // ---------------------------------------------------------------- 餐後評分
@@ -116,7 +171,8 @@
     }
 
     async function refresh() {
-        if (['PickedUp', 'Cancelled'].includes(lastStatus)) return;
+        if (lastStatus === 'Cancelled' || ['delivered', 'failed'].includes(lastDelivery)) return;
+        if (lastStatus === 'PickedUp' && !lastDelivery) return;
         try {
             apply(await Kiosk.api(`/api/track/${data.uuid}`));
         } catch (err) { /* 暫時斷線：下次再試 */ }
@@ -139,6 +195,18 @@
                 document.getElementById('feedbackMsg').textContent = err.message;
                 btn.disabled = false;
             }
+        },
+        'share-location': (btn) => {
+            if (!navigator.geolocation) { btn.textContent = Kiosk.t('track_loc_denied', '未允許定位，仍可用地圖連結查看'); return; }
+            btn.disabled = true;
+            navigator.geolocation.getCurrentPosition((p) => {
+                myLocation = { lat: p.coords.latitude, lng: p.coords.longitude };
+                btn.classList.add('d-none');
+                showDistance();
+            }, () => {
+                btn.disabled = false;
+                btn.textContent = Kiosk.t('track_loc_denied', '未允許定位，仍可用地圖連結查看');
+            }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
         },
         'enable-notify': async (btn) => {
             if (!window.Notification) { btn.textContent = Kiosk.t('notify_unsupported', '此瀏覽器不支援通知'); return; }

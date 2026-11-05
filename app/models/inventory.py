@@ -23,6 +23,9 @@ class Ingredient(TenantScoped, db.Model):
     supplier_id = db.Column(db.Integer, db.ForeignKey('supplier.id', ondelete='SET NULL', name='fk_ingredient_supplier_id'),
                             nullable=True)
     par_level = db.Column(db.Float, nullable=False, default=0, server_default='0')
+    # 碳足跡：產地 (標示用) 與排放係數 (每 1 單位的 g CO2e，例如牛肉每 g 約 60)；餐點碳足跡 = Σ 配方用量 × 係數
+    origin = db.Column(db.String(60), nullable=False, default='', server_default='')
+    carbon_factor = db.Column(db.Float, nullable=False, default=0, server_default='0')
     pack_size = db.Column(db.Float, nullable=False, default=1, server_default='1')
 
     supplier = db.relationship('Supplier')

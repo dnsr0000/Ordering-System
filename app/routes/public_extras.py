@@ -29,6 +29,14 @@ def _order_by_uuid(order_uuid):
     return order
 
 
+def _driver_position(order):
+    """外送員最新位置 (配送中、店家啟用 GPS 回報時)；顧客頁顯示更新時間、地圖連結與和自己的距離"""
+    from app.services import delivery_tracking_service as tracking
+    if order.delivery_status != 'out' or not tracking.enabled(order.tenant_id):
+        return None
+    return tracking.latest(order)
+
+
 def _track_payload(order):
     return {
         'pickup_number': order.display_pickup_number,
@@ -41,6 +49,7 @@ def _track_payload(order):
         'eta': order.eta_label,
         'delivery_status': order.delivery_status or '', 'delivery_label': order.delivery_status_label,
         'driver': order.driver_name if order.delivery_status in ('assigned', 'out') else '',
+        'driver_position': _driver_position(order),
         'feedback': feedback_service.state(order),
         'push_enabled': push_service.enabled(order.tenant_id),
     }

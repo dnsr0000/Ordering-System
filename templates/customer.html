@@ -19,6 +19,7 @@
 {% for a in item.allergen_codes %}<span class="badge bg-dark border border-danger text-danger allergen-badge" title="{{ ui.allergens }}">{{ allergen_labels.get(a, a) }}</span>{% endfor %}
 {% endif %}
 {% if pro and pro.showCalories and item.calories %}<span class="badge bg-dark border border-secondary text-white-50 allergen-badge calorie-badge" title="{{ item.nutrition or ui.calories }}">{{ item.calories }} kcal</span>{% endif %}
+{% if pro and pro.showCarbon and item.carbon_grams %}<span class="badge bg-dark border border-success text-success allergen-badge carbon-badge" title="{{ ui.carbon_title }}"><i class="bi bi-leaf"></i> {{ item.carbon_label }}</span>{% endif %}
 {% endmacro %}
 
 {#- 熱門推薦 / 常點餐點共用的快速加入卡片 (點擊整張卡片加入購物車) -#}
@@ -462,6 +463,9 @@
                     <div class="d-flex justify-content-between small text-white-50 cart-small d-none" id="cart-calories-row">
                         <span><i class="bi bi-fire me-1"></i>{{ ui.calories_total }}</span><span><span id="cart-calories">0</span>{{ ui.kcal }}</span>
                     </div>
+                    <div class="d-flex justify-content-between small text-white-50 cart-small d-none" id="cart-carbon-row" title="{{ ui.carbon_title }}">
+                        <span><i class="bi bi-leaf me-1"></i>{{ ui.carbon_total }}</span><span id="cart-carbon">0</span>
+                    </div>
                     {% if not is_guest %}
                     <div class="d-flex justify-content-between text-warning small cart-small">
                         <span>{{ ui.points_to_earn }}</span>
@@ -608,6 +612,7 @@
             <div class="text-info d-none" id="preview-pickup-row"><i class="bi bi-clock me-1"></i>{{ ui.pickup_time }}：<span id="preview-pickup"></span></div>
             <div class="text-info d-none" id="preview-eta-row"><i class="bi bi-hourglass-split me-1"></i>{{ ui.eta_about }}<span id="preview-eta">0</span>{{ ui.minutes }}</div>
             <div class="small text-white-50 d-none" id="preview-calories-row">{{ ui.about }}<span id="preview-calories">0</span>{{ ui.kcal }}</div>
+            <div class="small text-white-50 d-none" id="preview-carbon-row"><i class="bi bi-leaf me-1"></i>{{ ui.carbon_total }} <span id="preview-carbon">0</span></div>
             {% if not is_guest %}
             <div class="text-warning small">{{ ui.points_preview }}: +<span id="preview-earned">0</span> {{ ui.points_unit }}</div>
             {% endif %}

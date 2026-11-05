@@ -124,12 +124,32 @@ export function calculateTotal() {
     setText('cart-final', t.final);
     setText('cart-earned-points', t.earned);
     toggleCalories('cart-calories-row', 'cart-calories');
+    toggleCarbon('cart-carbon-row', 'cart-carbon');
     return t;
 }
 
 /** 購物車熱量合計 (有標示熱量的餐點才計入；後台關閉熱量顯示時隱藏) */
 export function cartCalories() {
     return state.cart.reduce((sum, l) => sum + (Number((menuItems.get(Number(l.menu_item_id)) || {}).calories) || 0) * l.quantity, 0);
+}
+
+/** 購物車碳足跡合計 (g CO₂e，參考值；有標示的餐點才計入) */
+export function cartCarbon() {
+    return state.cart.reduce((sum, l) => sum + (Number((menuItems.get(Number(l.menu_item_id)) || {}).carbon) || 0) * l.quantity, 0);
+}
+
+export function carbonLabel(grams) {
+    if (!(grams > 0)) return '';
+    if (grams >= 1000) return `${String(Number((grams / 1000).toFixed(2)))} kg CO₂e`;
+    return `${Math.round(grams)} g CO₂e`;
+}
+
+export function toggleCarbon(rowId, valueId) {
+    const row = $(rowId);
+    if (!row) return;
+    const grams = pro.showCarbon ? cartCarbon() : 0;
+    row.classList.toggle('d-none', !(grams > 0));
+    setText(valueId, carbonLabel(grams));
 }
 
 export function toggleCalories(rowId, valueId) {

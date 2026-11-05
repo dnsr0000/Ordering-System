@@ -209,6 +209,7 @@ def _storefront_extras(member, dining_table, is_hub):
         'lineBound': bool(member and member.line_user_id),
         'showAllergens': bool(settings_service.get('menu').get('show_allergens', True)),
         'showCalories': bool(settings_service.get('menu').get('show_calories', True)),
+        'showCarbon': bool(settings_service.get('menu').get('show_carbon', True)),
         'pickupSlots': [{'value': t.strftime('%Y-%m-%dT%H:%M'), 'label': lab}
                         for t, lab in pickup_service.slots()] if is_hub else [],
         'serviceCall': dining_table is not None,

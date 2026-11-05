@@ -519,6 +519,9 @@ class Applier:
             order.dispatched_at = values.get('dispatched_at') or order.dispatched_at
             order.delivered_at = values.get('delivered_at') or order.delivered_at
             changed = True
+        # 外送員定位憑證：指派時產生，之後不變 (外送員手機以此回報位置到線上端)
+        if values.get('driver_token') and values['driver_token'] != (order.driver_token or ''):
+            order.driver_token, changed = values['driver_token'], True
         if changed:
             order.updated_at = max(filter(None, (order.updated_at, values.get('updated_at'))), default=None)
             self.result.orders_changed = True

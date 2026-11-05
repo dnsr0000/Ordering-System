@@ -11,6 +11,7 @@
         window.location.reload();
     }
 
+    Kiosk.on(document, 'click', { 'select-all': (el) => { el.select(); } });
     try { Kiosk.onOrdersChanged(reloadIfIdle); } catch (err) { /* 不支援 SSE */ }
     setInterval(reloadIfIdle, 60000);
 })();
