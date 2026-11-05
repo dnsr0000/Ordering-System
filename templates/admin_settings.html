@@ -8,6 +8,16 @@
 <main class="container py-4" id="settings-hub">
     {{ page_header('系統設定與進階功能', 'bi-sliders', '外部服務的金鑰與營運規則都在這裡由管理者自行填寫；未設定的服務會自動停用。',
                    back_url=url_for('admin.admin_dashboard'), back_label='管理後台') }}
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-4" id="settingsTransfer">
+        <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.export_json') }}"><i class="bi bi-download me-1"></i>匯出設定 (JSON，不含金鑰)</a>
+        <form method="POST" action="{{ url_for('settings_admin.import_json') }}" enctype="multipart/form-data" class="d-flex align-items-center gap-1"
+              data-confirm="會覆蓋目前同名區塊的設定 (金鑰與本機專屬區塊不受影響)。確定匯入？">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="file" name="file" accept="application/json,.json" class="form-control form-control-sm" required aria-label="設定檔">
+            <button class="btn btn-outline-warning btn-sm text-nowrap" type="submit"><i class="bi bi-upload me-1"></i>匯入設定</button>
+        </form>
+        <span class="small text-white-50">開新店時把舊店的設定匯出再匯入，營運規則一次複製。</span>
+    </div>
     {% for group in groups %}
     <section class="mb-4 settings-group" data-group="{{ group }}">
         <h2 class="h5 fw-bold text-info mb-3">{{ group }}</h2>

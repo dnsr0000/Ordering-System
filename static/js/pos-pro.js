@@ -634,7 +634,47 @@
         }
     }
 
+    // ======================================================================
+    // 接單控制 (暫停接單)：按鈕徽章 + 對話框；每分鐘向伺服器確認 (自動恢復時間到了會變回接單中)
+    // ======================================================================
+    function renderIntake(st) {
+        const badge = $('posIntakeBadge');
+        if (badge) {
+            badge.className = `badge ${st.paused ? 'bg-danger' : 'bg-success'}`;
+            badge.textContent = st.paused ? '已暫停' : '接單中';
+        }
+        const stateEl = $('posIntakeState');
+        if (!stateEl) return;
+        const until = st.resume_at ? st.resume_at.replace('T', ' ').slice(5) : '';
+        stateEl.textContent = st.paused ? `目前已暫停接單${until ? `，${until} 自動恢復` : ' (手動恢復)'}` : '目前接單中';
+        stateEl.className = `fw-bold mb-2 ${st.paused ? 'text-danger' : 'text-success'}`;
+        $('posIntakeResumeBox').classList.toggle('d-none', !st.paused);
+        $('posIntakePauseBox').classList.toggle('d-none', st.paused);
+    }
+
+    async function setIntake(paused, minutes) {
+        $('posIntakeMsg').textContent = '';
+        try {
+            const st = await api('/api/pos/intake', { json: { paused, minutes } });
+            renderIntake(st);
+            $('posIntakeMsg').textContent = paused ? '已暫停接單' : '已恢復接單';
+        } catch (err) {
+            $('posIntakeMsg').textContent = `❌ ${err.message}`;
+        }
+    }
+
+    async function refreshIntake() {
+        try { renderIntake(await api('/api/pos/intake')); } catch (err) { /* 離線時保留目前顯示 */ }
+    }
+    if ($('posIntakeBtn')) {
+        renderIntake(cfg.intake || { paused: false });
+        setInterval(refreshIntake, 60000);
+    }
+
     Kiosk.on(document, 'click', {
+        openIntake: () => { refreshIntake(); modalOf('posIntakeModal').show(); },
+        intakePause: (el) => setIntake(true, Number(el.dataset.minutes) || 0),
+        intakeResume: () => setIntake(false, 0),
         openGiftCards: () => openGiftCards(),
         giftPreset: (el) => { $('posGiftAmount').value = el.dataset.value; },
         openDrawer: () => openDrawer(),

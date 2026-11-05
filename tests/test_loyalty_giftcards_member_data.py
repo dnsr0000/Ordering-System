@@ -5,7 +5,6 @@
 import json
 from datetime import datetime, timedelta
 
-import pytest
 
 from app.extensions import db
 from app.models.member import GiftCard, GiftCardLedger, StampLedger
@@ -139,7 +138,6 @@ def _register(app, phone, referral=''):
 
 
 def test_referral_rewards_both_on_first_order(app, staff_client, admin_client, store_settings):
-    from tests.support import flashes
     store_settings('member', referral_enabled=True, referrer_points=100, referee_points=50, referral_min_spend=100)
     a = make_member(app, '推薦人', '0966500004', pin='7391')
     page = member_client(app, '0966500004', '7391').get('/rewards').get_data(as_text=True)
@@ -162,7 +160,7 @@ def test_referral_rewards_both_on_first_order(app, staff_client, admin_client, s
         bid = b.id
     item = make_item(app, '推薦套餐', price=120)
     cheap = make_item(app, '推薦小點', price=30)
-    a_before, b_before = _points(app, a), _points(app, bid)
+    a_before, _b_before = _points(app, a), _points(app, bid)
     _pos(staff_client, [line(cheap)], user_id=bid)
     assert _points(app, a) == a_before, '未達門檻不發'
     first = _pos(staff_client, [line(item)], user_id=bid).get_json()['order_id']

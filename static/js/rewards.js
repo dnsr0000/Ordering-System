@@ -65,33 +65,35 @@
             btn.disabled = !enough;
             // 已持有同一種券時顯示「再兌換一張」(數量由伺服器帶在 data-held)
             const again = Number(btn.dataset.held) > 0;
-            btn.textContent = enough ? (again ? '再兌換一張' : '立即兌換') : '點數不足';
+            btn.textContent = enough ? (again ? Kiosk.t('rw_redeem_another', '再兌換一張') : Kiosk.t('rw_redeem_now', '立即兌換')) : Kiosk.t('rw_not_enough', '點數不足');
         });
     }
 
-    function selectField(id, label, options) {
+    /** 下拉選項：值固定為中文 (送到廚房的客製化文字)，顯示文字依語言 (ui.*_values 以 | 分隔) */
+    function selectField(id, label, options, labelsKey) {
+        const shown = String(Kiosk.t(labelsKey, '') || '').split('|');
         return html`
             <div class="mb-2">
-                <label class="form-label small fw-bold text-secondary mb-1" for="${id}">${label}</label>
+                <label class="form-label small fw-bold text-white-50 mb-1" for="${id}">${label}</label>
                 <select id="${id}" class="form-select form-select-sm">
-                    ${options.map((o) => html`<option value="${o}">${o}</option>`)}
+                    ${options.map((o, i) => html`<option value="${o}">${shown.length === options.length ? shown[i] : o}</option>`)}
                 </select>
             </div>`;
     }
 
     function modifierForm(type) {
         if (type === 'ice_sugar') {
-            return html`${selectField('reward-mod-ice', '冰塊量', ['正常冰', '少冰', '去冰', '熱飲'])}
-                ${selectField('reward-mod-sugar', '甜度', ['全糖', '半糖', '微糖', '無糖'])}`;
+            return html`${selectField('reward-mod-ice', Kiosk.t('ice', '冰塊量'), ['正常冰', '少冰', '去冰', '熱飲'], 'ice_values')}
+                ${selectField('reward-mod-sugar', Kiosk.t('sugar', '甜度'), ['全糖', '半糖', '微糖', '無糖'], 'sugar_values')}`;
         }
         if (type === 'spicy') {
-            return selectField('reward-mod-spicy', '辣度調整', ['不辣', '微辣', '中辣', '大辣']);
+            return selectField('reward-mod-spicy', Kiosk.t('spicy', '辣度調整'), ['不辣', '微辣', '中辣', '大辣'], 'spicy_values');
         }
         if (type === 'addons') {
             const addons = modifierOptions.filter((m) => m.category === 'addons');
             if (!addons.length) return '';
             return html`
-                <label class="form-label small fw-bold text-secondary mb-1">加料選項</label>
+                <label class="form-label small fw-bold text-white-50 mb-1">${Kiosk.t('addons', '加料選項')}</label>
                 <div class="d-flex flex-wrap gap-3">
                     ${addons.map((m) => html`
                         <div class="form-check">
@@ -115,7 +117,7 @@
         const form = modifierForm(modifiers || 'none');
         Kiosk.setHtml(modContent, form);
         modBox.classList.toggle('d-none', !form);
-        modalAlert.textContent = '兌換成功後，此品項（$0 元）將直接加入您的購物車中！';
+        modalAlert.textContent = Kiosk.t('rw_item_added_hint', '兌換成功後，此品項（$0 元）將直接加入您的購物車中！');
         openModal(name, points);
     }
 
@@ -127,8 +129,8 @@
         modBox.classList.add('d-none');
         Kiosk.setHtml(modalAlert, html`
             ${discount ? html`<div class="fw-bold text-success fs-5 mb-1">${discount}</div>` : ''}
-            ${held ? html`<div class="text-warning fw-bold mb-1">您目前還有 ${held} 張未使用，兌換後共 ${held + 1} 張。</div>` : ''}
-            兌換成功後，系統將提供專屬促銷代碼【${code}】供結帳折抵使用！`);
+            ${held ? html`<div class="text-warning fw-bold mb-1">${Kiosk.t('rw_held_hint', '您目前還有 {n} 張未使用，兌換後共 {m} 張。').replace('{n}', held).replace('{m}', held + 1)}</div>` : ''}
+            ${Kiosk.t('rw_coupon_hint', '兌換成功後，系統將提供專屬促銷代碼【{code}】供結帳折抵使用！').replace('{code}', code)}`);
         openModal(title, points);
     }
 
@@ -154,7 +156,7 @@
 
         const idle = confirmBtn.innerHTML;
         confirmBtn.disabled = true;
-        Kiosk.setHtml(confirmBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>兌換中...`);
+        Kiosk.setHtml(confirmBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>${Kiosk.t('rw_redeeming', '兌換中...')}`);
         try {
             const data = await Kiosk.api('/api/redeem_reward', { json: payload });
             setPoints(data.remaining_points);
@@ -165,7 +167,7 @@
                 const cart = readCart();
                 cart.push(data.redeemed_item);
                 writeCart(cart);
-                alert(`${data.message}\n已直接加入您的點餐清單！`);
+                alert(`${data.message_i18n || data.message}\n${Kiosk.t('rw_added_to_cart', '已直接加入您的點餐清單！')}`);
             }
             window.location.reload();
         } catch (err) {
@@ -178,16 +180,16 @@
 
     async function refundItem(btn) {
         const itemId = Number(btn.dataset.id);
-        if (!window.confirm(`確定要退回 1 份【${btn.dataset.name}】並取回點數嗎？`)) return;
+        if (!window.confirm(Kiosk.t('rw_return_confirm', '確定要退回 1 份【{n}】並取回點數嗎？').replace('{n}', btn.dataset.name))) return;
         btn.disabled = true;
         try {
             const data = await Kiosk.api('/api/refund_reward_item', { json: { item_id: itemId, quantity: 1 } });
             removeRewardFromCart(itemId);
             setPoints(data.current_points);
-            alert(`🎉 ${data.message}`);
+            alert(`🎉 ${data.message_i18n || data.message}`);
             window.location.reload();
         } catch (err) {
-            alert(`❌ 退點失敗：${err.message}`);
+            alert(`❌ ${Kiosk.t('rw_return_failed', '退點失敗：')}${err.message}`);
             btn.disabled = false;
         }
     }
@@ -218,9 +220,9 @@
             } catch (err) {
                 // 人臉登入的工作階段：後端要求 PIN (確認一次後整個工作階段有效)
                 if (!(err.data && err.data.need_pin)) throw err;
-                const pin = window.prompt(`${err.message}\n請輸入 PIN 碼：`, '');
+                const pin = window.prompt(`${err.message}\n${Kiosk.t('enter_pin', '請輸入 PIN 碼：')}`, '');
                 if (!pin) {
-                    msg.textContent = '需輸入 PIN 碼才能出示會員條碼';
+                    msg.textContent = Kiosk.t('rw_barcode_needs_pin', '需輸入 PIN 碼才能出示會員條碼');
                     return;
                 }
                 data = await fetchQr(rotate, pin.trim());

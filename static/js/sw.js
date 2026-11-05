@@ -17,6 +17,26 @@ self.addEventListener('activate', (event) => {
         .then(() => self.clients.claim()));
 });
 
+// Web Push：餐點完成 / 外送出發 (app/services/push_service.py)；點通知開啟出餐進度頁
+self.addEventListener('push', (event) => {
+    let payload = {};
+    try { payload = event.data ? event.data.json() : {}; } catch (err) { payload = { body: event.data ? event.data.text() : '' }; }
+    const title = payload.title || '餐點通知';
+    const options = { body: payload.body || '', tag: payload.tag || 'kiosk-order', icon: '/static/img/icon-192.png',
+        badge: '/static/img/icon-192.png', vibrate: [300, 150, 300], data: { url: payload.url || '/' } };
+    event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const url = (event.notification.data && event.notification.data.url) || '/';
+    event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+        const hit = wins.find((w) => w.url.includes(url));
+        if (hit) return hit.focus();
+        return self.clients.openWindow(url);
+    }));
+});
+
 self.addEventListener('fetch', (event) => {
     const req = event.request;
     if (req.method !== 'GET') return;

@@ -113,7 +113,15 @@ PERMISSIONS = {
     'wallet': '會員儲值',
     'delivery': '外送平台訂單登錄',
     'member_verify': '免驗證會員身分動用儲值金 / 點數 / 寄杯 (免主管核准)',
+    # 後台頁面 (第六輪)：店長 / 負責人預設全有；櫃檯 / 廚房可個別授權，授權後可進後台對應分頁或頁面
+    'menu': '後台：菜單品項 / 套餐 / 菜單進階設定 / 匯入匯出',
+    'coupons': '後台：優惠券 / 紅利商城 / 促銷 / 自動行銷 / 禮物卡 / 寄杯商品',
+    'members': '後台：會員名冊 / 票券 / 會員經營',
+    'feedback': '後台：顧客評價 (回覆 / 公開)',
+    'settings': '後台：系統設定',
 }
+# 可進後台 (/admin) 的頁面權限：櫃檯 / 廚房有任一項時後台只顯示對應分頁
+PAGE_PERMISSIONS = ('menu', 'coupons', 'members', 'reports')
 ROLE_DEFAULT_PERMISSIONS = {
     'owner': set(PERMISSIONS),
     'manager': set(PERMISSIONS),

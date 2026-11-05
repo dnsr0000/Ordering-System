@@ -1,5 +1,31 @@
 {# POS 進階功能的對話框 (由 static/js/pos-pro.js 控制) #}
 
+<!-- 接單控制 (暫停接單) -->
+<div class="modal fade no-print pro-modal" id="posIntakeModal" tabindex="-1" aria-hidden="true" aria-labelledby="posIntakeTitle">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="posIntakeTitle"><i class="bi bi-pause-circle me-1"></i>接單控制</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-white-50 mb-2">暫停後點餐機、顧客手機 (桌邊 / 線上) 與團購無法送出新訂單；POS 櫃檯與外送平台不受影響。</p>
+                <div class="fw-bold mb-2" id="posIntakeState"></div>
+                <div id="posIntakeResumeBox" class="d-none">
+                    <button type="button" class="btn btn-success w-100 fw-bold" data-action="intakeResume"><i class="bi bi-play-circle me-1"></i>恢復接單</button>
+                </div>
+                <div id="posIntakePauseBox" class="d-grid gap-2">
+                    <button type="button" class="btn btn-outline-warning fw-bold" data-action="intakePause" data-minutes="15">暫停 15 分鐘</button>
+                    <button type="button" class="btn btn-outline-warning fw-bold" data-action="intakePause" data-minutes="30">暫停 30 分鐘</button>
+                    <button type="button" class="btn btn-outline-warning fw-bold" data-action="intakePause" data-minutes="60">暫停 1 小時</button>
+                    <button type="button" class="btn btn-danger fw-bold" data-action="intakePause" data-minutes="0">暫停到手動恢復</button>
+                </div>
+                <div class="small mt-2" id="posIntakeMsg"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- 主管核准 -->
 <div class="modal fade no-print pro-modal" id="posApprovalModal" tabindex="-1" aria-hidden="true" aria-labelledby="posApprovalTitle">
     <div class="modal-dialog modal-dialog-centered modal-sm">

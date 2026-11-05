@@ -63,7 +63,12 @@ export function channel() {
     const takeout = $('posTypeTakeout');
     return takeout && takeout.checked ? 'takeout' : 'dine_in';
 }
-export const channelPrice = (item) => num((item.prices && item.prices[channel()]) || item.price);
+/** 綁定會員且品項有會員價時取較低者 (與後端 MenuItem.price_for(member=True) 相同) */
+export const channelPrice = (item) => {
+    const base = num((item.prices && item.prices[channel()]) || item.price);
+    if (state.member && item.member_prices && item.member_prices[channel()] !== undefined) return Math.min(base, num(item.member_prices[channel()]) || base);
+    return base;
+};
 
 /** 一個 Modal 關閉動畫結束後再執行 (避免兩個 Modal 交疊造成背景遮罩殘留) */
 export function afterHidden(id, fn) {

@@ -132,3 +132,21 @@ class Device(TenantScoped, db.Model):
     def is_online(self, now=None, seconds=180):
         now = now or datetime.now()
         return bool(self.last_seen_at) and (now - self.last_seen_at).total_seconds() <= seconds
+
+
+class PushSubscription(TenantScoped, db.Model):
+    """
+    Web Push 訂閱 (第五輪)：顧客在出餐進度頁按「開啟完成通知」後，瀏覽器的推播端點存在這裡；
+    餐點完成 / 外送出發時由 push_service 推播 (離開頁面也收得到)。綁定單一訂單 (order_uuid) 或會員 (user_id)；本機資料，不同步。
+    """
+    __tablename__ = 'push_subscription'
+
+    id = db.Column(db.Integer, primary_key=True)
+    endpoint = db.Column(db.String(500), nullable=False, index=True)
+    p256dh = db.Column(db.String(200), nullable=False)
+    auth = db.Column(db.String(100), nullable=False)
+    order_uuid = db.Column(db.String(36), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id', ondelete='CASCADE', name='fk_push_subscription_user_id'),
+                        nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+    last_error = db.Column(db.String(200), nullable=False, default='')

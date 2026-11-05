@@ -46,11 +46,46 @@
                 <td>{% if is_platform_admin %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('system.download_backup', name=b.name) }}">下載</a>{% endif %}</td></tr>
             {% else %}<tr><td class="text-white-50 small">{% if is_platform_admin %}尚無自動備份{% else %}整庫備份含所有店家的資料，僅平台管理者 (預設店家負責人) 可建立與下載；本店資料請用 Excel 匯出{% endif %}</td></tr>{% endfor %}
             </tbody></table>
-            <div class="small text-white-50 mt-2">備份位置：database/backups (保留 {{ backup_cfg.keep_days }} 天)。建議另外複製到雲端硬碟或隨身碟。還原：後台「匯入資料 → 整庫還原」選擇備份檔。</div>
+            <div class="small text-white-50 mt-2">備份位置：database/backups (保留 {{ backup_cfg.keep_days }} 天)。
+                {% if backup_cfg.offsite and backup_cfg.offsite != 'none' %}異地備份：每日備份後上傳到 {{ {'webdav': 'WebDAV', 's3': 'S3', 'command': '自訂指令'}[backup_cfg.offsite] }} (保留 {{ backup_cfg.offsite_keep }} 份)。{% else %}尚未設定異地備份 (備份設定 → 異地備份)，建議另外複製到雲端硬碟或隨身碟。{% endif %}
+                還原：後台「匯入資料 → 整庫還原」選擇備份檔。</div>
             {% else %}
             <div class="small text-white-50">線上端 PostgreSQL 由 docker compose 的 backup 服務每天備份到 pg_backups volume，還原演練請執行 deploy/pg_restore_check.sh (說明見 DEPLOY.txt)。</div>
             {% endif %}
         </div></section>
+        {% if update %}
+        <section class="col-12"><div class="card rounded-4 p-3" id="updatePanel">
+            <h2 class="h6 fw-bold">版本更新
+                <span class="badge bg-secondary">目前 {{ update.version }}{% if update.commit %} ({{ update.commit }}){% endif %}</span>
+                {% if update.latest %}<span class="badge {{ 'bg-warning text-dark' if update.update_available else 'bg-success' }}" id="updateLatest">最新 {{ update.latest.tag }}{% if not update.update_available %} (已是最新){% endif %}</span>{% endif %}
+                <a class="btn btn-sm btn-outline-light ms-2" href="{{ url_for('system.status', update=1) }}">重新檢查</a>
+            </h2>
+            {% if update.error %}<div class="small text-danger">查詢新版本失敗：{{ update.error }}</div>
+            {% elif not update.latest %}<div class="small text-white-50">查不到新版本 (主機需能連到 github.com；來源 {{ update.repo }})。</div>
+            {% else %}
+            <div class="small text-white-50">來源 {{ update.repo }}{% if update.latest.published_at %} · 發布 {{ update.latest.published_at }}{% endif %} · <a class="link-info" href="{{ update.latest.url }}" target="_blank" rel="noopener">更新說明</a></div>
+            {% if update.latest.notes %}<pre class="small text-white-50 mt-2 mb-2 update-notes">{{ update.latest.notes[:1500] }}</pre>{% endif %}
+            {% if update.update_available %}
+            <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                {% if not update.downloaded %}
+                <form method="POST" action="{{ url_for('system.update_download') }}">{{ csrf() }}<input type="hidden" name="tag" value="{{ update.latest.tag }}">
+                    <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit"><i class="bi bi-download me-1"></i>下載更新檔 {{ update.latest.tag }}</button></form>
+                {% else %}
+                <span class="badge bg-info text-dark">已下載 {{ update.downloaded.rsplit('/', 1)[-1].rsplit('\\', 1)[-1] }}</span>
+                {% if update.can_apply %}
+                <form method="POST" action="{{ url_for('system.update_apply') }}" data-confirm="伺服器會立即停止並重啟 (約 1~3 分鐘，期間點餐機 / POS 無法使用)，更新前會自動備份、失敗自動還原。請在營業空檔執行。確定？">{{ csrf() }}
+                    <input type="hidden" name="path" value="{{ update.downloaded }}">
+                    <button class="btn btn-danger btn-sm fw-bold" type="submit"><i class="bi bi-arrow-repeat me-1"></i>套用並重啟</button></form>
+                {% else %}
+                <span class="small text-white-50">一鍵套用只支援 Windows 門市主機；請在主機執行 deploy\windows\update_store.cmd</span>
+                {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+            {% endif %}
+            <div class="small text-white-50 mt-2">更新流程：備份程式檔與資料庫 → 停伺服器 → 覆蓋 (不動 database / uploads / .env) → 安裝套件 → 資料庫升級 → 重啟；失敗自動還原。記錄：database/updates/update.log。</div>
+        </div></section>
+        {% endif %}
     </div>
 </main>
 {% endblock %}

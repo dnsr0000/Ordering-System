@@ -65,6 +65,9 @@ class SyncNode(TenantScoped, db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     last_seen_at = db.Column(db.DateTime, nullable=True)
     last_ip = db.Column(db.String(50), default='')
+    # 分店回報的「暫停接單」狀態 (intake_service；線上點餐選到暫停中的分店時擋下)
+    paused_until = db.Column(db.DateTime, nullable=True)
+    paused_message = db.Column(db.String(200), nullable=False, default='', server_default='')
 
     tenant = db.relationship('Tenant')
 

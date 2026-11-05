@@ -12,6 +12,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: 靜態檢查 (ruff) 與依賴漏洞稽核 (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+      # mypy 需要專案的相依套件才能看到正確的型別 (與本機結果一致)
+      - run: pip install -r requirements.txt ruff pip-audit mypy
+      # 未定義名稱 / 未使用匯入 / 語法錯誤 (規則在 ruff.toml)：有問題就失敗
+      - run: ruff check .
+      # 型別檢查 (mypy.ini：目前只檢查 app/services 有型別註記的函式)
+      - run: mypy
+      # 已知漏洞的套件版本：只提出警告 (不擋合併)，請依報告升級 requirements.txt 的版本
+      - run: pip-audit -r requirements.txt --desc on
+        continue-on-error: true
+
   unit:
     name: pytest (SQLite, Python ${{ matrix.python }})
     runs-on: ubuntu-latest
@@ -27,7 +47,14 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
       - run: pip install -r requirements.txt
+      # 3.13 另外計算涵蓋率 (app/ 的行數涵蓋率低於門檻就失敗；報告在工作摘要)
       - run: pytest -q
+        if: matrix.python != '3.13'
+      - run: pytest -q --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=85 | tee coverage.txt
+        if: matrix.python == '3.13'
+      - run: |
+          { echo '### 測試涵蓋率 (app/)'; echo '```'; tail -n 25 coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        if: matrix.python == '3.13' && always()
 
   postgres:
     name: pytest (PostgreSQL，線上端)

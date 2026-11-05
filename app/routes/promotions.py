@@ -3,7 +3,6 @@ from datetime import date
 
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.menu import MenuItem
@@ -14,7 +13,8 @@ from app.services.customer_session import current_member
 from app.services.order_service import _parse_lines
 from app.services.settings_service import TIME_RE
 from app.sync import runtime as sync_runtime
-from app.utils import find_own, get_json_dict, get_own, role_required, safe_int
+from app.services.approval_service import permission_required
+from app.utils import find_own, get_json_dict, get_own, safe_int
 
 promotions_bp = Blueprint('promotions', __name__)
 CHANNELS = (('kiosk', '點餐機'), ('pos', 'POS'), ('table', '桌邊掃碼'), ('online', '線上點餐'))
@@ -73,7 +73,7 @@ def _apply(p, f):
 
 
 @promotions_bp.route('/admin/promotions', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def manage():
     if request.method == 'POST':
         action = request.form.get('action')
@@ -117,10 +117,10 @@ def preview():
     price_channel = {'online': 'online'}.get(channel, 'takeout' if data.get('order_type') == '外帶' else 'dine_in')
     from app.services import branch_service
     branch_service.activate_for_request(g.tenant_id)   # 分店價格 / 下架與結帳一致
+    has_member = current_member() is not None or bool(safe_int(data.get('user_id'), 0))
     try:
-        lines = _parse_lines(data.get('items'), g.tenant_id, price_channel, allow_override=False)
+        lines = _parse_lines(data.get('items'), g.tenant_id, price_channel, allow_override=False, member=has_member)
     except AppError:
         return jsonify({'success': True, 'discount': 0, 'names': [], 'details': [], 'gifts': [], 'blocks_coupon': False})
-    has_member = current_member() is not None or bool(safe_int(data.get('user_id'), 0))
     result = promotion_service.evaluate(lines, channel, has_member=has_member)
     return jsonify(dict(result.to_dict(), success=True))

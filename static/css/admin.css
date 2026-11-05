@@ -159,3 +159,6 @@
 .staff-main { max-width: 960px; }
 .staff-main .card { background: var(--admin-panel); border: 1px solid var(--kiosk-border); }
 .staff-reset-input { width: 145px; }
+
+/* 版本更新 (第六輪) */
+.update-notes { white-space: pre-wrap; max-height: 12rem; overflow: auto; }

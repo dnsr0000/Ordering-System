@@ -92,14 +92,25 @@
         try {
             response = await fetch(url, init);
         } catch (err) {
-            throw new ApiError('連線失敗，請檢查網路後再試一次！', 0, {});
+            throw new ApiError(t('net_failed', '連線失敗，請檢查網路後再試一次！'), 0, {});
         }
         let data = {};
         try { data = await response.json(); } catch (err) { /* 非 JSON 回應 */ }
         if (!response.ok || data.success === false) {
-            throw new ApiError(data.message || `操作失敗 (HTTP ${response.status})`, response.status, data);
+            // 後端訊息維持中文；顧客頁為英 / 日文時伺服器另附 message_i18n (app/services/i18n_pages.py)
+            throw new ApiError(data.message_i18n || data.message || t('api_failed', '操作失敗') + ` (HTTP ${response.status})`,
+                               response.status, data);
         }
         return data;
+    }
+
+    // ---------------------------------------------------------------- 顧客頁多語系
+    let uiStrings = null;
+    /** 介面文字：非中文的顧客頁由 base.html 嵌入 #ui-data；沒有時 (中文 / 員工頁) 回傳內建的中文 fallback */
+    function t(key, fallback) {
+        if (uiStrings === null) uiStrings = pageData('ui-data');
+        const v = uiStrings[key];
+        return v === undefined || v === null ? fallback : v;
     }
 
     // ---------------------------------------------------------------- 頁面資料
@@ -197,6 +208,55 @@
         if (btn) setA11y(!document.documentElement.classList.contains('a11y-large'));
     });
 
+    // ---------------------------------------------------------------- 淺色 / 深色 (顧客頁，第六輪)
+    // 按鈕 data-action="toggle-theme"；記在 localStorage (顧客自己的手機會記住)；<html data-bs-theme="light|dark">
+    const THEME_KEY = 'kiosk-theme';
+
+    function setTheme(mode) {
+        document.documentElement.setAttribute('data-bs-theme', mode);
+        document.querySelectorAll('[data-action="toggle-theme"]').forEach((b) => {
+            b.setAttribute('aria-pressed', mode === 'light' ? 'true' : 'false');
+            const icon = b.querySelector('i');
+            if (icon) icon.className = mode === 'light' ? 'bi bi-moon-stars' : 'bi bi-sun';
+        });
+        try { localStorage.setItem(THEME_KEY, mode); } catch (err) { /* 隱私模式 */ }
+    }
+
+    try {
+        const saved = localStorage.getItem(THEME_KEY);
+        if ((saved === 'light' || saved === 'dark') && document.querySelector('[data-action="toggle-theme"], [data-theme-switch]')) {
+            document.documentElement.setAttribute('data-bs-theme', saved);
+        }
+    } catch (err) { /* 略過 */ }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (document.querySelector('[data-action="toggle-theme"]')) setTheme(document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'light' : 'dark');
+    });
+    document.addEventListener('click', (ev) => {
+        const btn = ev.target.closest && ev.target.closest('[data-action="toggle-theme"]');
+        if (btn) setTheme(document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light');
+    });
+
+    // ---------------------------------------------------------------- PWA 安裝提示 (第六輪)
+    // 瀏覽器允許安裝時顯示 #pwaInstallBtn (顧客頁)；按下後呼叫瀏覽器的安裝對話框
+    let installEvent = null;
+    window.addEventListener('beforeinstallprompt', (ev) => {
+        ev.preventDefault();
+        installEvent = ev;
+        document.querySelectorAll('[data-action="pwa-install"]').forEach((b) => b.classList.remove('d-none'));
+    });
+    window.addEventListener('appinstalled', () => {
+        installEvent = null;
+        document.querySelectorAll('[data-action="pwa-install"]').forEach((b) => b.classList.add('d-none'));
+    });
+    document.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest && ev.target.closest('[data-action="pwa-install"]');
+        if (!btn || !installEvent) return;
+        installEvent.prompt();
+        try { await installEvent.userChoice; } catch (err) { /* 使用者取消 */ }
+        installEvent = null;
+        btn.classList.add('d-none');
+    });
+
     // ---------------------------------------------------------------- 圖片備援
     // <img data-fallback="/static/img/placeholder.svg">：檔案遺失時改用預設圖 (取代 onerror 屬性)
     function useFallback(img) {
@@ -245,5 +305,5 @@
         return `$${Math.round(Number(value) || 0).toLocaleString('zh-TW')}`;
     }
 
-    global.Kiosk = { html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, on, onOrdersChanged, startClock, idleLogout, newOrderId, money };
+    global.Kiosk = { html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, t, on, onOrdersChanged, startClock, idleLogout, newOrderId, money };
 })(window);

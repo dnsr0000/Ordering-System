@@ -3,7 +3,7 @@ from flask import Blueprint, flash, g, jsonify, redirect, render_template, reque
 from flask_login import current_user
 from sqlalchemy import func
 
-from app.models.enums import MANAGER_ROLES, POS_ROLES
+from app.models.enums import POS_ROLES
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.member import MemberPass, PassLedger, PassProduct
@@ -11,13 +11,14 @@ from app.models.menu import MenuItem
 from app.models.user import User
 from app.services import pass_service
 from app.services.audit import record_staff_audit
+from app.services.approval_service import permission_required
 from app.utils import find_own, get_json_dict, get_own, role_required, safe_int
 
 passes_bp = Blueprint('passes', __name__)
 
 
 @passes_bp.route('/admin/passes', methods=['GET', 'POST'], endpoint='index')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def index():
     if request.method == 'POST':
         action = request.form.get('action')

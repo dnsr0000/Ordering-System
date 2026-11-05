@@ -90,7 +90,7 @@ def test_dispatch_flow_and_tracking(app, staff_client, home_on):
 
 def test_online_home_delivery_status_syncs_back_to_hub():
     from app.services import settings_service
-    from tests.test_sync_hub_node import Env, _add_item, _checkout, _item, _member, _order, _register_member, tenant_ctx
+    from tests.test_sync_hub_node import Env, _add_item, _checkout, _item, _member, _register_member, tenant_ctx
     env = Env()
     try:
         burger = _add_item(env.b, '線上外送堡', price=220, stock=20)

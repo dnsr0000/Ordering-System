@@ -165,6 +165,7 @@ def push():
     for order in result.cancelled_orders:  # 分店取消了已線上付款的訂單：線上端標記需退款
         flag_refund_if_paid(order.id)
     _save_stock_snapshot(node, stock)
+    _save_intake(node, payload.get('intake'))
     db.session.commit()
     if result.orders_changed:
         order_event_bus.notify(node.tenant_id)
@@ -318,6 +319,21 @@ def _in_flight_demands(node):
         for item_id, qty in order_stock_demands(order).items():
             held[item_id] = held.get(item_id, 0) + qty
     return held
+
+
+def _save_intake(node, intake):
+    """分店回報的暫停接單狀態 (intake_service.node_pause)：線上點餐選到該分店時擋下"""
+    if not isinstance(intake, dict):
+        return
+    raw = str(intake.get('paused_until') or '').strip()
+    until = None
+    if raw:
+        try:
+            until = datetime.strptime(raw[:16], '%Y-%m-%dT%H:%M')
+        except ValueError:
+            until = None
+    node.paused_until = until
+    node.paused_message = str(intake.get('message') or '')[:200] if until else ''
 
 
 def _save_stock_snapshot(node, stock):

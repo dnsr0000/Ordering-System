@@ -3,7 +3,7 @@
  * 由 static/js/pos.js 載入 (ES module)；共用狀態與工具在 core.js。
  */
 import { $, api, html, itemMap, modalOf, num, pageData, posCfg, setHtml, state } from './core.js';
-import { startConfigure } from './menu.js';
+import { repriceCart, startConfigure } from './menu.js';
 import { renderCart, schedulePromotionPreview } from './cart.js';
 import { populateCouponSelect, recalcTotals, resetPromo, updateCashChange } from './totals.js';
 import { syncLiveState } from './live.js';
@@ -50,6 +50,7 @@ export async function selectMember(id) {
 export function bindMember(member) {
     if (!member) return;
     state.member = { ...member, points: num(member.points) };
+    repriceCart();   // 會員價
     const badge = $('posMemberStatusBadge');
     badge.className = 'badge bg-success pos-xxs';
     badge.textContent = '已綁定會員';
@@ -173,6 +174,7 @@ export async function refreshBoundMember(dropPromo) {
 export function clearMember() {
     state.member = null;
     state.cart = state.cart.filter((l) => !l.is_reward && !l.pass_id);   // 紅利兌換品、寄杯兌換必須綁定會員
+    repriceCart();   // 取消會員價
     $('posMemberPasses').classList.add('d-none');
     $('posMemberQuery').value = '';
     const badge = $('posMemberStatusBadge');

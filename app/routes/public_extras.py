@@ -3,10 +3,12 @@
 - /track/<訂單 uuid>：手機查看出餐進度 (收據上的 QR code)，出餐時震動 / 提示音 / 瀏覽器通知；出餐後可評分
 - PWA：/manifest.webmanifest、/sw.js (Service Worker，斷線時顯示離線頁)、/offline
 """
-from flask import Blueprint, abort, current_app, g, jsonify, render_template, send_from_directory, url_for
+import os
+
+from flask import Blueprint, Response, abort, current_app, g, jsonify, render_template, url_for
 
 from app.extensions import db, limiter
-from app.services import feedback_service
+from app.services import feedback_service, push_service
 from app.utils import get_json_dict
 from app.models.order import Order
 from app.models.tenant import Tenant
@@ -36,9 +38,11 @@ def _track_payload(order):
         'created_at': order.created_at.strftime('%H:%M') if order.created_at else '',
         'items': [{'name': i.display_name, 'quantity': i.quantity} for i in order.items],
         'pickup_at': order.pickup_at_label,
+        'eta': order.eta_label,
         'delivery_status': order.delivery_status or '', 'delivery_label': order.delivery_status_label,
         'driver': order.driver_name if order.delivery_status in ('assigned', 'out') else '',
         'feedback': feedback_service.state(order),
+        'push_enabled': push_service.enabled(order.tenant_id),
     }
 
 
@@ -70,6 +74,33 @@ def track_feedback(order_uuid):
                         'message': '謝謝您的評分！' + (' 歡迎也到 Google 分享您的用餐體驗' if review_url else '')})
 
 
+@public_bp.route('/api/push/vapid', endpoint='push_vapid')
+@limiter.limit('60/minute')
+def push_vapid():
+    """Web Push 的 VAPID 公鑰 (店家啟用推播時；第一次呼叫自動產生金鑰)"""
+    if not push_service.enabled():
+        return jsonify({'success': True, 'enabled': False, 'public_key': ''})
+    key = push_service.public_key()
+    db.session.commit()
+    return jsonify({'success': True, 'enabled': True, 'public_key': key})
+
+
+@public_bp.route('/api/track/<order_uuid>/push', methods=['POST'], endpoint='track_push')
+@limiter.limit('20/minute')
+def track_push(order_uuid):
+    """出餐進度頁訂閱推播：餐點完成 / 外送出發時通知 (訂閱綁定這張訂單)"""
+    data = get_json_dict()
+    with tenant_bypass():
+        order = _order_by_uuid(order_uuid)
+        if not push_service.enabled(order.tenant_id):
+            return jsonify({'success': False, 'message': '本店未啟用推播通知'}), 404
+        if order.status in ('Completed', 'PickedUp', 'Cancelled') and not order.delivery_status:
+            return jsonify({'success': False, 'message': '此訂單已完成，不需要通知'}), 409
+        push_service.subscribe(order, data.get('subscription'), user_id=order.user_id)
+        db.session.commit()
+    return jsonify({'success': True})
+
+
 @public_bp.route('/manifest.webmanifest', endpoint='manifest')
 def manifest():
     name = g.tenant.name if getattr(g, 'tenant', None) else '自助點餐'
@@ -86,7 +117,11 @@ def manifest():
 
 @public_bp.route('/sw.js', endpoint='service_worker')
 def service_worker():
-    resp = send_from_directory(current_app.static_folder, 'js/sw.js', mimetype='application/javascript', max_age=0)
+    """Service Worker：快取名稱帶 static/ 的版本摘要，部署新版後舊快取整批清掉 (static_version)"""
+    from app.services import static_version
+    with open(os.path.join(current_app.static_folder, 'js', 'sw.js'), encoding='utf-8') as fh:
+        source = fh.read().replace("'kiosk-static-v2'", f"'kiosk-static-{static_version.bundle_digest()}'", 1)
+    resp = Response(source, mimetype='application/javascript')
     resp.headers['Service-Worker-Allowed'] = '/'
     resp.headers['Cache-Control'] = 'no-cache'
     return resp

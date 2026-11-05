@@ -38,7 +38,7 @@ MENU_ITEM_SCHEMA = {
 }
 
 # (方法, 路徑, 權限, 摘要, 說明, 參數 [(名稱, 位置, 必填, 說明, 範例)], 請求本文範例, 回應 schema 名稱)
-ENDPOINTS = (
+ENDPOINTS: tuple = (
     ('GET', '/api/v1/orders', 'orders:read', '訂單列表 (依時間)',
      '依建立時間排序。回應的 next 有值時，帶入 since 與 after_id 取下一頁 (同一時間的訂單不會漏)。',
      [('since', 'query', False, '起始時間 (不含)，ISO 8601', '2026-10-01T00:00:00'),
@@ -54,7 +54,8 @@ ENDPOINTS = (
     ('GET', '/api/v1/orders/{uuid}', 'orders:read', '單筆訂單', '以訂單 uuid 查詢。',
      [('uuid', 'path', True, '訂單 uuid', '')], None, 'OrderOne'),
     ('GET', '/api/v1/menu', 'menu:read', '菜單與庫存',
-     '全部餐點 (含已下架 / 售完)。分店主機回傳本分店的價格與下架狀態。', [], None, 'Menu'),
+     '全部餐點 (含已下架 / 售完)。分店主機回傳本分店的價格與下架狀態。回應帶 ETag，定期拉取時請帶 If-None-Match，'
+     '沒變化回 304 (無內容)。', [], None, 'Menu'),
     ('POST', '/api/v1/menu/{item_id}/availability', 'menu:write', '更新售完 / 庫存',
      '可只傳其中一個欄位；sold_out=true 立即在點餐機顯示售完。',
      [('item_id', 'path', True, '餐點 id (GET /api/v1/menu 的 id)', '')],

@@ -4,7 +4,7 @@
 """
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import current_app
 from sqlalchemy import update
@@ -78,7 +78,8 @@ def process_checkout(*, tenant_id, items, payment_method='Cash', order_type='內
                      order_source=OrderSource.KIOSK, cashier_username='', customer_log_id=None,
                      client_ip='', client_order_id=None, node_uuid=None, dining_table=None,
                      order_discount=None, approve=None, payment_info=None, invoice_info=None, is_rush=False,
-                     external_ref='', now=None, pickup_at=None, delivery=None, expected_total=None):
+                     external_ref='', now=None, pickup_at=None, delivery=None, expected_total=None,
+                     skip_intake=False):
     """
     原子結帳。成功回傳 (Order, replayed)；任何驗證失敗拋出 AppError，整筆交易不留痕跡。
     replayed=True 代表同一個 client_order_id 已經結帳過，回傳的是原本那張訂單。
@@ -90,6 +91,7 @@ def process_checkout(*, tenant_id, items, payment_method='Cash', order_type='內
     expected_total：顧客 / 收銀畫面上看到的應付金額；與實際計算不同 (剛改價、優惠或點數被用掉…) 時結帳失敗 (409 price_changed)，
     回傳目前的單價讓畫面更新後再確認，不會用畫面以外的金額成立訂單。沒有提供時不檢查 (外送平台等)。
     approve(perm, 說明)：需要主管核准時呼叫 (POS 提供；回傳核准人帳號，未核准時拋 403)。
+    skip_intake：不做「暫停接單 / 每時段上限」檢查 (斷線暫存單補送：點餐機當時已收單)。
     payment_info：刷卡授權碼 / 卡號末四碼 / LINE Pay 付款碼；invoice_info：電子發票載具 / 統編 / 捐贈。
     """
     c = Checkout(**{k: v for k, v in locals().items() if k != 'c'})
@@ -157,7 +159,8 @@ def _validate(c):
     elif c.dining_table is None and not c.is_hub:
         allowed = payment_service.allowed_methods('pos' if c.is_pos else 'kiosk')
         wallet_ok = c.payment == PaymentMethod.STORED_VALUE and settings_service.get('member', c.tenant_id).get('wallet_enabled')
-        gift_ok = c.payment == PaymentMethod.GIFT_CARD and c.is_pos and settings_service.get('gift_card', c.tenant_id).get('enabled')
+        gift_cfg = settings_service.get('gift_card', c.tenant_id)
+        gift_ok = c.payment == PaymentMethod.GIFT_CARD and gift_cfg.get('enabled') and (c.is_pos or gift_cfg.get('kiosk_enabled'))
         split_ok = c.payment == PaymentMethod.SPLIT and c.is_pos   # 各筆付款方式在 parse_tenders 檢查
         if c.payment not in allowed and not wallet_ok and not gift_ok and not split_ok:
             raise AppError(f'此點餐管道未開放「{c.payment}」付款，請改用其他付款方式')
@@ -181,7 +184,7 @@ def _validate(c):
     # 分店價格 / 上下架：分店 (與桌邊、點餐機) 用本分店的設定；線上端用顧客選擇的取餐分店
     from app.services import branch_service
     branch_service.activate(c.tenant_id, c.node_uuid if c.is_hub else sync_runtime.local_node_uuid())
-    c.lines = _parse_lines(c.items, c.tenant_id, c.price_channel, c.now, allow_override=c.is_pos)
+    c.lines = _parse_lines(c.items, c.tenant_id, c.price_channel, c.now, allow_override=c.is_pos, member=c.user is not None)
     c.approved_by = ''
     if any(ln.original_price is not None for ln in c.lines):
         if not c.pos_cfg.get('allow_price_override', True):
@@ -266,6 +269,10 @@ def _validate(c):
     elif c.is_hub and c.pickup_at:
         from app.services import pickup_service
         c.scheduled_at = pickup_service.parse(c.pickup_at, c.tenant_id)
+    # 接單控制：暫停接單 / 每時段訂單上限 (POS、外送平台、系統內部建立的預約單不檢查)
+    if not c.skip_intake:
+        from app.services import intake_service
+        intake_service.check(c)
 
 
 def _reserve(c):
@@ -362,7 +369,8 @@ def _price(c):
     if c.user and c.setting.is_enabled and safe_int(c.use_points, 0) > 0:
         ppd = max(1, c.setting.points_per_dollar or 1)
         db.session.refresh(c.user, ['points'])
-        max_cash = int(math.floor(c.remaining))
+        # 上限 = 四捨五入後的應付金額 (百分比優惠券會留下小數，例如 76.5 → 可折 76 元而非 75；否則永遠剩 $1 折不掉)
+        max_cash = int(math.floor(c.remaining + 0.5))
         if c.setting.max_discount_per_order:
             max_cash = min(max_cash, c.setting.max_discount_per_order)
         c.points_discount = min(safe_int(c.use_points, 0) // ppd, max_cash)
@@ -449,6 +457,13 @@ def _persist(c):
     else:
         c.log.ordered_items, c.log.logout_at = c.summary, c.now
 
+    # 預估完成時間 (線上端建立的訂單由取餐分店收到時估算；預約單不估)
+    c.estimated_ready_at = None
+    if not c.is_hub and c.scheduled_at is None and c.stock_node is None:
+        from app.services import eta_service
+        minutes = eta_service.estimate(c.tenant_id, [(ln.menu_item, ln.quantity) for ln in c.lines], c.now)
+        if minutes:
+            c.estimated_ready_at = c.now + timedelta(minutes=minutes)
     c.order = Order(
         tenant_id=c.tenant_id, user_id=c.user.id if c.user else None, table_number=c.table_display[:50],
         total_price=c.final_price, payment_method=c.payment, order_type=c.order_type, order_source=c.order_source,
@@ -462,6 +477,7 @@ def _persist(c):
         member_discount=int(math.floor(c.member_discount + 0.5)), promotion_names='、'.join(c.promo_result.names)[:200],
         approved_by=c.approved_by, payment_reference=c.card_auth, card_last4=c.card_last4, is_rush=bool(c.is_rush),
         external_ref=str(c.external_ref or '')[:60], shift_id=c.shift_open, pickup_at=c.scheduled_at,
+        estimated_ready_at=c.estimated_ready_at,
         delivery_fee=c.delivery_fee, delivery_address=c.home['address'] if c.home else '',
         delivery_phone=c.home['phone'] if c.home else '', delivery_zone=c.home['zone'] if c.home else '',
         delivery_status='pending' if c.home else '',
@@ -555,6 +571,10 @@ def _persist(c):
     if c.user is not None and c.payment_status != 'authorizing':
         from app.services import loyalty_service
         loyalty_service.on_checkout(c.tenant_id, c.user, c.order, c.lines, c.final_price)
+    # 電子收據：結帳時自動傳給 LINE 綁定會員 (系統設定 → 電子收據寄送)
+    if c.user is not None and c.payment_status in ('', 'paid', 'settled'):
+        from app.services import receipt_service
+        receipt_service.auto_on_checkout(c.order)
 
     if c.is_pos:
         record_staff_audit(

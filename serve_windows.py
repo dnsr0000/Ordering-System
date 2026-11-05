@@ -6,9 +6,7 @@ from waitress import serve
 
 from app import create_app
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s [%(name)s] %(message)s')
-
-app = create_app()
+app = create_app()   # 記錄檔與主控台輸出由 app/services/log_service.py 設定 (LOG_FILE)
 
 if __name__ == '__main__':
     threads = app.config['WAITRESS_THREADS']

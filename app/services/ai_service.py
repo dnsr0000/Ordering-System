@@ -22,12 +22,16 @@ _gemini_cooldown_until = 0.0
 _local_llm = None
 _local_llm_loaded = False
 _llm_lock = threading.Lock()
-_advice_cache = {}  # tenant_id -> {'signature', 'advice', 'fetching'}
+_advice_cache: dict = {}  # tenant_id -> {'signature', 'advice', 'fetching'}
 
 
 def _api_key():
     key = (current_app.config.get('GEMINI_API_KEY') or '').strip()
     return None if key in _PLACEHOLDER_KEYS or '你的' in key else key
+
+
+def has_api_key() -> bool:
+    return _api_key() is not None
 
 
 def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None):
@@ -186,3 +190,83 @@ def invalidate_ai_advice(tenant_id):
     entry = _advice_cache.get(tenant_id)
     if entry:
         entry['signature'] = None
+
+
+# ---------------------------------------------------------------------------
+# 菜單翻譯 (第六輪)：Gemini 一次翻一批 → 規則字典 (常見分類 / 品項字眼) → 留白
+# ---------------------------------------------------------------------------
+TRANSLATE_BATCH = 25
+TRANSLATE_LANGS = ('en', 'ja')
+# 常見分類與餐飲字眼 (沒有 API 金鑰時至少把分類翻好；品名只在整個字串命中時翻)
+_RULE_WORDS: dict[str, tuple[str, str]] = {
+    '主餐': ('Mains', 'メイン'), '副餐': ('Sides', 'サイド'), '飲料': ('Drinks', 'ドリンク'), '點心': ('Snacks', 'スナック'),
+    '甜點': ('Desserts', 'デザート'), '湯品': ('Soups', 'スープ'), '套餐': ('Combos', 'セット'), '前菜': ('Starters', '前菜'),
+    '小菜': ('Side dishes', '小皿'), '飯類': ('Rice', 'ご飯もの'), '麵類': ('Noodles', '麺類'), '素食': ('Vegetarian', 'ベジタリアン'),
+    '兒童餐': ('Kids', 'キッズ'), '早餐': ('Breakfast', '朝食'), '午餐': ('Lunch', 'ランチ'), '晚餐': ('Dinner', 'ディナー'),
+    '限定': ('Limited', '限定'), '熱飲': ('Hot drinks', 'ホットドリンク'), '冷飲': ('Cold drinks', 'コールドドリンク'),
+    '咖啡': ('Coffee', 'コーヒー'), '茶': ('Tea', 'お茶'), '紅茶': ('Black tea', '紅茶'), '綠茶': ('Green tea', '緑茶'),
+    '奶茶': ('Milk tea', 'ミルクティー'), '薯條': ('Fries', 'フライドポテト'), '雞塊': ('Chicken nuggets', 'チキンナゲット'),
+    '漢堡': ('Burger', 'ハンバーガー'), '沙拉': ('Salad', 'サラダ'), '披薩': ('Pizza', 'ピザ'), '義大利麵': ('Pasta', 'パスタ'),
+    '牛肉麵': ('Beef noodle soup', '牛肉麺'), '滷肉飯': ('Braised pork rice', '魯肉飯'), '雞腿飯': ('Chicken leg rice', '鶏もも肉ご飯'),
+    '排骨飯': ('Pork chop rice', '排骨ご飯'), '便當': ('Lunch box', '弁当'), '珍珠奶茶': ('Bubble milk tea', 'タピオカミルクティー'),
+    '可樂': ('Cola', 'コーラ'), '汽水': ('Soda', 'ソーダ'), '豆漿': ('Soy milk', '豆乳'), '拿鐵': ('Latte', 'ラテ'),
+    '未分類': ('Other', 'その他'),
+}
+
+
+def rule_translate(text: str) -> dict[str, str]:
+    """規則字典：整個字串命中才翻 (避免把「招牌和牛堡」亂翻)；回 {'en': ..., 'ja': ...} (沒命中為空字串)"""
+    hit = _RULE_WORDS.get((text or '').strip())
+    return {'en': hit[0], 'ja': hit[1]} if hit else {'en': '', 'ja': ''}
+
+
+def _translate_prompt(entries: list[dict]) -> str:
+    rows = '\n'.join(f'{i + 1}. {e.get("name", "")}' + (f'｜{e["description"]}' if e.get('description') else '')
+                     for i, e in enumerate(entries))
+    return ('你是餐廳菜單翻譯。把下列繁體中文餐點名稱 (與「｜」之後的說明，若有) 翻成自然的英文與日文，'
+            '保留品牌 / 專有名詞、數字與規格，不要加解釋。只輸出 JSON 陣列，每個元素形如 '
+            '{"i": 編號, "name_en": "", "name_ja": "", "description_en": "", "description_ja": ""}，沒有說明時留空字串。\n'
+            f'{rows}')
+
+
+def _parse_translations(text: str | None, count: int) -> dict[int, dict[str, str]]:
+    """Gemini 回應 → {編號(0 起): {name_en, ...}}；格式不對就當作失敗 (空 dict)"""
+    import json
+    if not text:
+        return {}
+    m = re.search(r'\[.*\]', text, re.S)
+    if not m:
+        return {}
+    try:
+        rows = json.loads(m.group(0))
+    except ValueError:
+        return {}
+    out: dict[int, dict[str, str]] = {}
+    for row in rows if isinstance(rows, list) else []:
+        try:
+            idx = int(row.get('i')) - 1
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if 0 <= idx < count:
+            out[idx] = {k: str(row.get(k) or '').strip()[:300] for k in ('name_en', 'name_ja', 'description_en', 'description_ja')}
+    return out
+
+
+def translate_entries(entries: list[dict]) -> tuple[list[dict[str, str]], str]:
+    """翻譯一批 {name, description}：回 ([{name_en, name_ja, description_en, description_ja}, ...], 來源 'gemini' / 'rules')。
+    Gemini 失敗 (沒金鑰 / 冷卻 / 格式錯) 時用規則字典，只有整字命中的才有值。"""
+    results: list[dict[str, str]] = [{'name_en': '', 'name_ja': '', 'description_en': '', 'description_ja': ''} for _ in entries]
+    source = 'rules'
+    for start in range(0, len(entries), TRANSLATE_BATCH):
+        batch = entries[start:start + TRANSLATE_BATCH]
+        parsed = _parse_translations(gemini_generate(_translate_prompt(batch), max_tokens=4000, temperature=0.1), len(batch))
+        if parsed:
+            source = 'gemini'
+        for i, entry in enumerate(batch):
+            got = parsed.get(i)
+            if got and got.get('name_en'):
+                results[start + i] = got
+            else:
+                rule = rule_translate(entry.get('name', ''))
+                results[start + i].update(name_en=rule['en'], name_ja=rule['ja'])
+    return results, source

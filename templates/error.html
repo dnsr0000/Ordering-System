@@ -1,12 +1,13 @@
 {% extends "base.html" %}
-{% block title %}{{ status }} - 自助點餐系統{% endblock %}
+{% block title %}{{ status }}{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
 {% block content %}
 <main class="container py-5 text-center">
     <div class="display-1 fw-bold text-warning">{{ status }}</div>
     <p class="lead mt-3">{{ message }}</p>
+    {% if request_id %}<p class="small text-white-50">{{ ui.err_code }}<code id="errorRequestId">{{ request_id }}</code> {{ ui.err_code_hint }}</p>{% endif %}
     <div class="d-flex justify-content-center gap-2 mt-4">
-        <a class="btn btn-outline-light" href="{{ request.referrer or url_for('customer.customer_index') }}">返回上一頁</a>
-        <a class="btn btn-warning" href="{{ url_for('customer.customer_index') }}">回首頁</a>
+        <a class="btn btn-outline-light" href="{{ request.referrer or url_for('customer.customer_index') }}">{{ ui.back }}</a>
+        <a class="btn btn-warning" href="{{ url_for('customer.customer_index') }}">{{ ui.home }}</a>
     </div>
 </main>
 {% endblock %}

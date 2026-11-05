@@ -17,7 +17,16 @@ system_bp = Blueprint('system', __name__)
 @role_required(*MANAGER_ROLES)
 def status():
     # 整庫備份含所有店家的資料與金鑰：只有平台管理者 (預設店家負責人) 能看到清單、建立與下載 (與 admin.backup_system 相同)
-    return render_template('admin_system.html', health=maintenance_service.health(g.tenant_id),
+    from app.services import update_service
+    from app.sync import runtime as sync_runtime
+    update = None
+    if is_platform_admin() and not sync_runtime.is_hub():   # 線上端 (Docker) 依 DEPLOY.txt 更新，不顯示
+        try:
+            update = update_service.check(force=request.args.get('update') == '1')
+        except Exception as exc:  # noqa: BLE001  查版本失敗不影響監控頁
+            update = {**update_service.current_version(), 'latest': None, 'error': str(exc), 'update_available': False,
+                      'downloaded': '', 'can_apply': False, 'repo': update_service.repo()}
+    return render_template('admin_system.html', health=maintenance_service.health(g.tenant_id), update=update,
                            events=monitor_service.recent_events(150),
                            backups=maintenance_service.list_backups() if is_platform_admin() else [],
                            is_platform_admin=is_platform_admin(),
@@ -53,4 +62,29 @@ def test_alert():
     sent = monitor_service.send_alert_now(g.tenant_id, 'info', '這是一則測試通知 (系統監控頁)。')
     flash(f"已送出：{', '.join(sent)}" if sent else '尚未設定任何通知管道 (系統設定 → 監控與錯誤通知)',
           'success' if sent else 'warning')
+    return redirect(url_for('system.status'))
+
+
+@system_bp.route('/admin/system/update/download', methods=['POST'], endpoint='update_download')
+@role_required('owner')
+@platform_admin_required
+def update_download():
+    from app.services import update_service
+    path = update_service.download(request.form.get('tag'))
+    record_staff_audit('SYSTEM_UPDATE', details=f'下載更新檔 {os.path.basename(path)}')
+    db.session.commit()
+    flash(f'已下載 {os.path.basename(path)}；確認營業空檔後按「套用並重啟」(或在主機執行 deploy\\windows\\update_store.cmd)', 'success')
+    return redirect(url_for('system.status'))
+
+
+@system_bp.route('/admin/system/update/apply', methods=['POST'], endpoint='update_apply')
+@role_required('owner')
+@platform_admin_required
+def update_apply():
+    from app.services import update_service
+    path = (request.form.get('path') or '').strip()
+    record_staff_audit('SYSTEM_UPDATE', details=f'套用更新 {os.path.basename(path)} (伺服器將重啟)')
+    db.session.commit()
+    update_service.apply(path)
+    flash('更新腳本已啟動：伺服器會在幾秒後停止並重啟 (約 1~3 分鐘)，請稍後重新整理；過程記錄在 database/updates/update.log', 'warning')
     return redirect(url_for('system.status'))

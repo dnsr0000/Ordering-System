@@ -1,12 +1,11 @@
 """
 第二批專業功能：線上付款方式 (ATM / 超商代碼 / Apple Pay)、綠界自動退刷、錢櫃、客顯螢幕、會員動態條碼、餐點規格 (大小杯)。
 """
-import re
 from datetime import datetime, timedelta
 
 import pytest
 
-from tests.support import assert_flash, default_tenant_id, line, login_staff, make_item, make_member, member_client
+from tests.support import assert_flash, line, login_staff, make_item, make_member, member_client
 from tests.test_payment_ecpay import _notify_params, _signed
 from tests.test_sync_hub_node import Env, _add_item, _checkout, _item, _member, _register_member, tenant_ctx
 

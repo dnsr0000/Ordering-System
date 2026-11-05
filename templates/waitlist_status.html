@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}候位進度 {{ e.label }}{% endblock %}
+{% block title %}{{ ui.ws_page_title }} {{ e.label }}{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
 <main class="container py-5 text-center" id="waitlist-status-page" style="max-width: 480px">
-    <div class="text-white-50">您的候位號碼</div>
+    <div class="text-white-50">{{ ui.ws_title }}</div>
     <div class="wait-number text-warning" id="waitLabel">{{ e.label }}</div>
     <div class="fs-4 fw-bold" id="waitState">
-        {% if e.status == 'waiting' %}前面還有 {{ ahead }} 組{% elif e.status == 'called' %}輪到您了，請至櫃檯入座！{% elif e.status == 'seated' %}已入座，祝用餐愉快{% else %}已過號 / 取消{% endif %}
+        {% if e.status == 'waiting' %}{{ ui.ws_ahead_a }} {{ ahead }} {{ ui.ws_ahead_b }}{% elif e.status == 'called' %}{{ ui.ws_called }}{% elif e.status == 'seated' %}{{ ui.ws_seated }}{% else %}{{ ui.ws_skipped }}{% endif %}
     </div>
-    <p class="small text-white-50 mt-3">此頁會自動更新；請保持頁面開啟或留意叫號看板。</p>
+    <p class="small text-white-50 mt-3">{{ ui.ws_hint }}</p>
 </main>
 {% endblock %}
 {% block page_data %}<script type="application/json" id="page-data">{{ {'token': e.token, 'status': e.status}|tojson }}</script>{% endblock %}

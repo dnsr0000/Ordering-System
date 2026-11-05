@@ -31,7 +31,8 @@ def state(order):
     fb = existing(order)
     return {'enabled': bool(cfg.get('enabled', True)) and order.status in RATEABLE and _within_window(order),
             'done': fb is not None, 'rating': fb.rating if fb else 0,
-            'review_url': _review_url(cfg, fb.rating) if fb else ''}
+            'review_url': _review_url(cfg, fb.rating) if fb else '',
+            'reply': (fb.reply if fb else '') or ''}
 
 
 def _within_window(order):
@@ -91,3 +92,44 @@ def summary(days=30):
 def order_label(fb):
     o = fb.order if fb.order_id else None
     return f'#{o.id} (取餐 #{o.display_pickup_number})' if isinstance(o, Order) else '-'
+
+
+# ---------------------------------------------------------------------------
+# 店家回覆與公開精選 (第六輪)
+# ---------------------------------------------------------------------------
+def _mask_name(name):
+    name = (name or '').strip()
+    return (name[0] + '＊' * max(1, len(name) - 1)) if name else '匿名顧客'
+
+
+def reply(fb, text, is_public=None, staff=''):
+    """店長回覆一句 (通知顧客：LINE 綁定會員推文字、追蹤頁推播)；is_public 不為 None 時一併設定公開"""
+    from app.services import deferred, line_service, push_service
+    text = str(text or '').strip()[:300]
+    fb.reply = text
+    fb.replied_at = datetime.now() if text else None
+    if is_public is not None:
+        fb.is_public = bool(is_public)
+    order = fb.order
+    if text and order is not None:
+        push_service.notify_order(order, 'feedback_reply')
+        if order.user is not None and order.user.line_user_id:
+            from app.models.tenant import Tenant
+            shop = db.session.get(Tenant, order.tenant_id)
+            deferred.defer(line_service.push_text, order.tenant_id, order.user.line_user_id,
+                           f'{shop.name if shop else ""} 回覆了您對訂單 #{order.id} 的評價：\n{text}')
+    return fb
+
+
+def public_reviews(tenant_id, limit=5, min_rating=4):
+    """點餐頁 / 追蹤頁的「顧客好評」：公開、有留言、星數達標的最新幾筆 (姓名遮罩，不帶訂單細節)"""
+    rows = (OrderFeedback.query.filter(OrderFeedback.tenant_id == tenant_id, OrderFeedback.is_public.is_(True),
+                                       OrderFeedback.rating >= min_rating, OrderFeedback.comment != '')
+            .execution_options(skip_tenant_filter=True).order_by(OrderFeedback.id.desc()).limit(limit).all())
+    out = []
+    for r in rows:
+        user = r.order.user if r.order is not None else None
+        out.append({'rating': r.rating, 'comment': r.comment, 'reply': r.reply or '',
+                    'name': _mask_name(user.name if user is not None else ''),
+                    'date': r.created_at.strftime('%Y-%m-%d') if r.created_at else ''})
+    return out

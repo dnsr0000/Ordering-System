@@ -214,7 +214,6 @@ def test_pos_gift_card_sell_and_pay(app, page, store_settings):
 
 
 def test_rewards_stamp_card_and_self_delete(app, page, store_settings):
-    from app.extensions import db
     from app.models.user import User
     seed_demo(app)
     store_settings('stamps', enabled=True, card_size=5, card_title='E2E 集點卡')
@@ -241,7 +240,6 @@ def test_rewards_stamp_card_and_self_delete(app, page, store_settings):
 # 第五批：建議採購 → 送出 → 收貨；即時看板自動更新
 # ---------------------------------------------------------------------------
 def test_purchase_order_flow_and_live_dashboard(app, page, admin_client, store_settings):
-    from app.extensions import db
     from app.models.inventory import Ingredient
     from tests.conftest import ADMIN_PASSWORD, ADMIN_USERNAME
     seed_demo(app)

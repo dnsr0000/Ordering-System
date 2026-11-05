@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import json
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -52,7 +52,7 @@ def _orders_by_ref(app, ref):
 def test_uber_eats_webhook_creates_and_accepts(app, delivery_on, store_settings):
     calls, carts = delivery_on
     store_settings('einvoice', enabled=True)
-    iid = make_item(app, 'Uber 雞腿便當', price=120, stock=20, external_code='UE-CHK', delivery_price=150)
+    make_item(app, 'Uber 雞腿便當', price=120, stock=20, external_code='UE-CHK', delivery_price=150)
     carts['ord-1'] = {'display_id': 'A1B2C', 'cart': {'special_instructions': '不要辣', 'items': [
         {'external_data': 'UE-CHK', 'title': '雞腿便當', 'quantity': 2,
          'selected_modifier_groups': [{'selected_items': [{'title': '加蛋'}]}]}]}}

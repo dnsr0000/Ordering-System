@@ -480,3 +480,49 @@ def test_table_order_syncs_and_counter_settlement_reaches_hub(env):
     with env.hub.app_context():
         o = Order.query.filter_by(uuid=order_uuid).first()
         assert (o.payment_status, o.payment_method) == ('settled', 'Line Pay')
+
+
+def test_branch_pause_reaches_hub_and_blocks_online_orders_for_that_branch(env):
+    """分店暫停接單：狀態隨同步上傳 (SyncNode.paused_until)，線上點餐選到該分店時擋下；恢復後再同步即可接單"""
+    from datetime import datetime, timedelta
+    from app.errors import AppError
+    from app.extensions import db
+    from app.models.menu import MenuItem
+    from app.models.order import Order
+    from app.models.sync import SyncNode
+    from app.services import intake_service
+    from tests.support import line
+    burger_uuid = _q(env.a, lambda: MenuItem.query.filter_by(name='同步牛肉堡').first().uuid)
+    with tenant_ctx(env.b) as tenant:
+        intake_service.set_paused(True, 30, tenant_id=tenant.id)
+        db.session.commit()
+    env.sync(env.b)
+    with env.hub.app_context():
+        node = SyncNode.query.filter_by(uuid=env.node_b_uuid).first()
+        assert node.paused_until is not None and node.paused_until > datetime.now() + timedelta(minutes=20)
+        assert node.paused_message
+    hub_item_id = _item(env.hub, burger_uuid)['id']
+    with pytest.raises(AppError) as exc:
+        _checkout(env.hub, [line(hub_item_id, 1)], node_uuid=env.node_b_uuid)
+    assert exc.value.extra.get('intake_paused') is True
+    # 其他分店不受影響
+    env.sync(env.a)
+    _checkout(env.hub, [line(hub_item_id, 1)], node_uuid=env.node_a_uuid)
+    # 恢復 → 回報 → 可接單；線上訂單到分店時估算預計完成時間，再同步回線上端
+    with tenant_ctx(env.b) as tenant:
+        intake_service.set_paused(False, tenant_id=tenant.id)
+        db.session.commit()
+    env.sync(env.b)
+    with env.hub.app_context():
+        assert SyncNode.query.filter_by(uuid=env.node_b_uuid).first().paused_until is None
+    order = _checkout(env.hub, [line(hub_item_id, 1)], node_uuid=env.node_b_uuid)
+    with env.hub.app_context():
+        assert Order.query.filter_by(uuid=order['uuid']).first().estimated_ready_at is None, '線上端不知道分店排隊狀況'
+    env.sync(env.b)
+    with env.b.app_context():
+        at_branch = Order.query.filter_by(uuid=order['uuid']).first()
+        assert at_branch.pickup_number > 0 and at_branch.estimated_ready_at is not None
+        expected = at_branch.estimated_ready_at
+    env.sync(env.b)
+    with env.hub.app_context():
+        assert Order.query.filter_by(uuid=order['uuid']).first().estimated_ready_at == expected

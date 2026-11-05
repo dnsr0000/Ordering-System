@@ -4,14 +4,14 @@ from datetime import date
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.member import MemberTier, WalletLedger
 from app.models.user import User
 from app.services import line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
-from app.utils import get_own, role_required, safe_float, safe_int
+from app.services.approval_service import permission_required
+from app.utils import get_own, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
@@ -23,7 +23,7 @@ def _user(uid):
 
 
 @members_pro_bp.route('/admin/members_pro', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGER_ROLES)
+@permission_required('members')
 def manage():
     if request.method == 'POST':
         f = request.form

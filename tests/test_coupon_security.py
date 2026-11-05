@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from app.extensions import db
 from app.models.coupon import Coupon, UserCoupon
 from app.models.user import User
-from tests.support import (assert_flash, checkout, guest_client, line, make_item, make_member, member_client,
+from tests.support import (assert_flash, checkout, line, make_item, make_member, member_client,
                            other_shop_owner_client)
 from tests.test_coupon_issue_expiry import _add_coupon
 

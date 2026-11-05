@@ -61,15 +61,26 @@ def _safe_back_url(default):
     return default
 
 
+def _i18n(message):
+    """顧客頁為英 / 日文時：回傳 (翻譯後訊息, {'message_i18n': ...})；中文或員工頁：(原文, {})。翻譯失敗不影響錯誤回應。"""
+    try:
+        from app.services.i18n_service import translate_message
+        translated = translate_message(message)
+    except Exception:  # noqa: BLE001  錯誤處理中不能再出錯 (例如沒有 session / 店家)
+        return message, {}
+    return translated, ({'message_i18n': translated} if translated != message else {})
+
+
 def register_error_handlers(app):
     @app.errorhandler(AppError)
     def handle_app_error(err):
         from app.extensions import db
         db.session.rollback()  # 業務錯誤一律放棄這次請求尚未提交的異動
+        translated, extra = _i18n(err.message)   # 顧客頁的英 / 日文：後端訊息維持中文，另附翻譯
         if wants_json():
-            return json_error(err.message, err.status, **err.extra)
+            return json_error(err.message, err.status, **dict(err.extra, **extra))
         if err.status not in (400, 409):  # 權限不足、查無資料等：顯示錯誤頁並保留狀態碼
-            return render_template('error.html', status=err.status, message=err.message), err.status
+            return render_template('error.html', status=err.status, message=translated), err.status
         # 表單驗證失敗：以提示訊息導回原頁面 (Post/Redirect/Get)
         flash(err.message, 'danger')
         default = url_for('admin.admin_dashboard') if request.blueprint == 'admin' else url_for('customer.customer_index')
@@ -78,18 +89,20 @@ def register_error_handlers(app):
     @app.errorhandler(CSRFError)
     def handle_csrf_error(err):
         msg = '安全驗證失敗 (CSRF Token 無效或已過期)，請重新整理頁面後再試！'
+        translated, extra = _i18n(msg)
         if wants_json():
-            return json_error(msg, 403)
-        return render_template('error.html', status=403, message=msg), 403
+            return json_error(msg, 403, **extra)
+        return render_template('error.html', status=403, message=translated), 403
 
     @app.errorhandler(HTTPException)
     def handle_http_error(err):
         status = err.code or 500
         message = HTTP_MESSAGES.get(status, err.description)
+        translated, extra = _i18n(message)
         if wants_json():
-            resp = json_error(message, status)
+            resp = json_error(message, status, **extra)
         else:
-            resp = render_template('error.html', status=status, message=message), status
+            resp = render_template('error.html', status=status, message=translated), status
         # 保留 429 的 Retry-After 等標頭
         if status == 429 and hasattr(err, 'get_headers'):
             from flask import make_response
@@ -101,9 +114,12 @@ def register_error_handlers(app):
 
     @app.errorhandler(Exception)
     def handle_unexpected(err):
+        from app.services.log_service import current_request_id
+        rid = current_request_id()
         logger.exception('未預期的錯誤: %s %s', request.method, request.path)
         from app.extensions import db
         db.session.rollback()
+        translated, extra = _i18n(HTTP_MESSAGES[500])
         if wants_json():
-            return json_error(HTTP_MESSAGES[500], 500)
-        return render_template('error.html', status=500, message=HTTP_MESSAGES[500]), 500
+            return json_error(HTTP_MESSAGES[500], 500, request_id=rid, **extra)
+        return render_template('error.html', status=500, message=translated, request_id=rid), 500

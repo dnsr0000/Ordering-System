@@ -1,4 +1,5 @@
 """測試輔助函式：登入、建立測試資料、讀取 flash 訊息"""
+from contextlib import contextmanager
 import io
 import re
 import threading
@@ -242,3 +243,22 @@ def head_revision():
     cfg = AlembicConfig()
     cfg.set_main_option('script_location', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations'))
     return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+@contextmanager
+def count_queries(app):
+    """統計 with 區塊內送到資料庫的 SQL 數 (N+1 守門測試用)：box['n'] 筆數、box['sql'] 每句前 120 字"""
+    from sqlalchemy import event
+    from app.extensions import db
+    box = {'n': 0, 'sql': []}
+
+    def _before(conn, cursor, statement, parameters, context, executemany):
+        box['n'] += 1
+        box['sql'].append(statement[:120])
+    with app.app_context():
+        engine = db.engine
+    event.listen(engine, 'before_cursor_execute', _before)
+    try:
+        yield box
+    finally:
+        event.remove(engine, 'before_cursor_execute', _before)

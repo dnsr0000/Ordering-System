@@ -115,15 +115,18 @@ class NodeSync:
         upto = tracking.current_rev(db.session)
         stock, stock_hash = self._stock_snapshot(tenant_id)
         send_stock = stock_hash != runtime.get_state('stock_hash')
+        intake, intake_hash = self._intake_snapshot(tenant_id)
+        send_intake = intake_hash != runtime.get_state('intake_hash')
         position, sent = (0, 0), 0
         while True:
             changes, nxt = collect_changes(tenant_id, PUSH_SPECS, cursor, upto, position, PAGE)
             db.session.rollback()
             # 庫存隨最後一頁送出：線上端先套用本分店已收到的線上訂單 (取餐號)，再以回報值扣掉尚未送達的線上訂單
             last = nxt is None
-            if changes or (send_stock and last):
+            if changes or ((send_stock or send_intake) and last):
                 body = self.transport.call('POST', '/push', json_body={
-                    'changes': changes, 'stock': stock if send_stock and last else None})
+                    'changes': changes, 'stock': stock if send_stock and last else None,
+                    'intake': intake if send_intake and last else None})
                 sent += sum(len(v) for v in changes.values())
                 self._handle_push_response(tenant_id, body)
             if nxt is None:
@@ -131,6 +134,7 @@ class NodeSync:
             position = nxt
         runtime.set_state('push_cursor', upto)
         runtime.set_state('stock_hash', stock_hash)
+        runtime.set_state('intake_hash', intake_hash)
         runtime.set_state('last_push_at', datetime.now().isoformat(timespec='seconds'))
         db.session.commit()
         return sent
@@ -141,6 +145,13 @@ class NodeSync:
         stock = [{'uuid': u, 'stock': int(s or 0), 'is_sold_out': bool(so)} for u, s, so in rows]
         digest = hashlib.sha256(json.dumps(stock, sort_keys=True).encode()).hexdigest()
         return stock, digest
+
+    def _intake_snapshot(self, tenant_id):
+        """本分店的暫停接單狀態 (intake_service)：有變動時隨同步上傳，線上點餐選到本分店時擋下"""
+        from app.services import intake_service
+        until, message = intake_service.node_pause(tenant_id)
+        intake = {'paused_until': until.strftime('%Y-%m-%dT%H:%M') if until else '', 'message': message}
+        return intake, hashlib.sha256(json.dumps(intake, sort_keys=True).encode()).hexdigest()
 
     def _handle_push_response(self, tenant_id, body):
         for c in body.get('conflicts') or ():
@@ -187,6 +198,9 @@ class NodeSync:
                 short = consume_stock_unchecked(tenant_id, order_stock_demands(order))
                 if not order.pickup_number:
                     order.pickup_number = next_pickup_number(tenant_id)
+                if order.estimated_ready_at is None:   # 線上訂單到分店才知道排隊狀況：此時估算預計完成時間
+                    from app.services import eta_service
+                    order.estimated_ready_at = eta_service.ready_at_for_order(order)
                 if short:
                     shortages.append((order, short))
         new_ids = {o.id for o in result.new_orders}

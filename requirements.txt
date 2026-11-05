@@ -1,6 +1,6 @@
 # ---- 核心 ----
 Flask==3.1.3
-Werkzeug==3.1.8
+Werkzeug==3.1.9
 Flask-SQLAlchemy==3.1.1
 SQLAlchemy==2.0.53
 Flask-Migrate==4.1.0
@@ -20,11 +20,14 @@ numpy==2.5.3
 opencv-python-headless==5.0.0.93
 openpyxl==3.1.5
 pandas==3.0.5
-Pillow==12.3.0
+Pillow==13.0.0
 # 桌位點餐 QR code (純 Python，輸出 SVG)
 segno==1.6.6
 # 綠界電子發票 API 的 AES 加解密
 cryptography==50.0.2
+# Web Push 推播 (app/services/push_service.py)：VAPID 簽章與 aes128gcm 加密 (RFC 8291 / 8292)
+py-vapid==1.9.6
+http-ece==1.2.1
 
 # ---- 線上端 (PostgreSQL；本機只用 SQLite 可不裝) ----
 psycopg[binary]==3.3.6
@@ -33,8 +36,14 @@ redis==8.1.0
 
 # ---- 測試 (pip install -r requirements.txt 後執行 pytest) ----
 pytest==9.1.1
+# 涵蓋率 (CI 的 3.13 工作：pytest --cov=app)
+pytest-cov==7.1.0
 # 瀏覽器端對端測試 (pytest -m e2e)；安裝後需執行一次 playwright install chromium
 playwright==1.64.0
+# 顧客頁無障礙檢查 (tests/test_e2e_round6.py，axe-core；未安裝時該測試跳過)
+axe-playwright-python==0.1.8
 
+# ---- 選用：錯誤回報 (.env SENTRY_DSN)：pip install "sentry-sdk[flask]" ----
+# sentry-sdk[flask]
 # ---- 選用：本地 Qwen2.5 SLM 推論 (需 C++ 編譯環境，安裝較耗時)。沒有安裝時自動改用 Gemini / 規則引擎 ----
 # llama-cpp-python

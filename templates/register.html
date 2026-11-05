@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}{{ '會員快速登入' if login_mode else '加入會員' }} - 自助點餐系統{% endblock %}
+{% block title %}{{ ui.reg_login_title if login_mode else ui.join_member }}{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
 
 {% block head %}
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
@@ -20,8 +20,8 @@
                     <i class="bi bi-egg-fried"></i>
                     <i class="bi bi-cup-straw"></i>
                 </div>
-                <h2 class="fw-bold mt-4 mb-2">會員專屬禮遇</h2>
-                <p class="mb-0">刷臉或手機即可登入，<br>累積紅利點數兌換美味餐點</p>
+                <h2 class="fw-bold mt-4 mb-2">{{ ui.reg_cover_title }}</h2>
+                <p class="mb-0">{{ ui.reg_cover_a }}<br>{{ ui.reg_cover_b }}</p>
             </div>
         </div>
 
@@ -32,8 +32,8 @@
             <div class="d-flex align-items-center gap-3 mb-3">
                 <i class="bi bi-person-check text-warning display-5"></i>
                 <div>
-                    <h3 class="fw-bold mb-0 text-white">會員快速登入</h3>
-                    <p class="text-white-50 small mb-0">請選擇辨識登入方式</p>
+                    <h3 class="fw-bold mb-0 text-white">{{ ui.reg_login_title }}</h3>
+                    <p class="text-white-50 small mb-0">{{ ui.reg_login_hint }}</p>
                 </div>
             </div>
 
@@ -41,18 +41,18 @@
             <ul class="nav login-nav-tabs mb-3 justify-content-center" id="loginTab" role="tablist">
                 <li class="nav-item" role="presentation">
                     <button class="nav-link active" id="face-tab" data-bs-toggle="tab" data-bs-target="#face-login-pane" type="button" role="tab">
-                        <i class="bi bi-camera-fill me-1"></i> 人臉辨識登入
+                        <i class="bi bi-camera-fill me-1"></i> {{ ui.reg_face_tab }}
                     </button>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="phone-tab" data-bs-toggle="tab" data-bs-target="#phone-login-pane" type="button" role="tab">
-                        <i class="bi bi-phone me-1"></i> 手機號碼登入
+                        <i class="bi bi-phone me-1"></i> {{ ui.reg_phone_tab }}
                     </button>
                 </li>
             </ul>
             {% else %}
             <div class="alert alert-info small py-2" id="online-login-hint">
-                <i class="bi bi-info-circle-fill me-1"></i>線上點餐請以手機號碼 + PIN 登入 (人臉辨識僅限門市使用)。
+                <i class="bi bi-info-circle-fill me-1"></i>{{ ui.reg_online_hint }}
             </div>
             {% endif %}
 
@@ -67,7 +67,7 @@
                         <div id="loginCameraStatus" class="camera-status d-none"></div>
                     </div>
                     <button type="button" id="btn-login-snap" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow mb-2" data-action="face-login">
-                        <i class="bi bi-camera-fill me-1"></i> 登入
+                        <i class="bi bi-camera-fill me-1"></i> {{ ui.login }}
                     </button>
                 </div>
 
@@ -77,24 +77,24 @@
                 <div class="tab-pane fade{{ '' if face_enabled else ' show active' }}" id="phone-login-pane" role="tabpanel">
                     <form id="phoneLoginForm" class="py-3" novalidate>
                         <div class="mb-3 text-start">
-                            <label class="form-label small fw-bold text-white" for="loginPhoneInput">會員手機號碼</label>
+                            <label class="form-label small fw-bold text-white" for="loginPhoneInput">{{ ui.reg_phone }}</label>
                             <div class="input-group">
                                 <span class="input-group-text bg-dark border-secondary text-white"><i class="bi bi-telephone-fill"></i></span>
-                                <input type="tel" id="loginPhoneInput" class="form-control form-input" placeholder="例如：0912345678"
+                                <input type="tel" id="loginPhoneInput" class="form-control form-input" placeholder="{{ ui.reg_phone_ph }}"
                                        pattern="09[0-9]{8}" autocomplete="tel">
                             </div>
                         </div>
                         <div class="mb-3 text-start">
-                            <label class="form-label small fw-bold text-white" for="loginPinInput">安全 PIN 碼 (4~6 位數字)</label>
+                            <label class="form-label small fw-bold text-white" for="loginPinInput">{{ ui.reg_pin }}</label>
                             <div class="input-group">
                                 <span class="input-group-text bg-dark border-secondary text-white"><i class="bi bi-shield-lock-fill"></i></span>
-                                <input type="password" id="loginPinInput" class="form-control form-input" placeholder="請輸入 4~6 位數字密碼"
+                                <input type="password" id="loginPinInput" class="form-control form-input" placeholder="{{ ui.reg_pin_ph }}"
                                        inputmode="numeric" maxlength="6" autocomplete="current-password">
                             </div>
                         </div>
-                        <div class="text-white-50 small mb-4">輸入註冊時填寫的手機號碼即可快速帶入會員點數與結帳。</div>
+                        <div class="text-white-50 small mb-4">{{ ui.reg_phone_help }}</div>
                         <button type="submit" id="btn-phone-login" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow">
-                            <i class="bi bi-box-arrow-in-right me-1"></i> 手機號碼登入
+                            <i class="bi bi-box-arrow-in-right me-1"></i> {{ ui.reg_phone_tab }}
                         </button>
                     </form>
                 </div>
@@ -102,18 +102,18 @@
 
             {% set mf = member_features() %}
             {% if mf.line_login %}
-            <a href="{{ url_for('member_auth.line_start') }}" class="btn btn-success w-100 fw-bold mt-2" id="lineLoginBtn"><i class="bi bi-line me-1"></i> 使用 LINE 登入</a>
+            <a href="{{ url_for('member_auth.line_start') }}" class="btn btn-success w-100 fw-bold mt-2" id="lineLoginBtn"><i class="bi bi-line me-1"></i> {{ ui.reg_line_login }}</a>
             {% endif %}
             {% if mf.line_pending %}
             <div class="alert alert-success small py-2 mt-2 d-flex justify-content-between align-items-center" id="linePendingHint">
-                <span>登入後會綁定剛才授權的 LINE 帳號「{{ mf.line_pending_name }}」(10 分鐘內有效)。不是您的 LINE？</span>
-                <form method="post" action="{{ url_for('member_auth.line_pending_discard') }}" class="ms-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger btn-sm" type="submit" id="linePendingDiscard">取消綁定</button></form>
+                <span>{{ ui.reg_line_bind_a }}{{ mf.line_pending_name }}{{ ui.reg_line_bind_b }}</span>
+                <form method="post" action="{{ url_for('member_auth.line_pending_discard') }}" class="ms-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-outline-danger btn-sm" type="submit" id="linePendingDiscard">{{ ui.reg_unbind }}</button></form>
             </div>
             {% endif %}
             <div class="d-flex justify-content-between mt-3">
-                <a href="{{ url_for('customer.customer_index') }}" class="text-secondary text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回首頁</a>
-                {% if mf.pin_reset %}<a href="{{ url_for('member_auth.forgot_pin') }}" class="text-info text-decoration-none small" id="forgotPinLink">忘記 PIN？</a>{% endif %}
-                <a href="{{ url_for('auth.register') }}" class="text-warning text-decoration-none small">尚未加入會員？前往註冊 <i class="bi bi-arrow-right"></i></a>
+                <a href="{{ url_for('customer.customer_index') }}" class="text-white-50 text-decoration-none small"><i class="bi bi-arrow-left"></i> {{ ui.back_home }}</a>
+                {% if mf.pin_reset %}<a href="{{ url_for('member_auth.forgot_pin') }}" class="text-info text-decoration-none small" id="forgotPinLink">{{ ui.reg_forgot }}</a>{% endif %}
+                <a href="{{ url_for('auth.register') }}" class="text-warning text-decoration-none small">{{ ui.reg_goto_register }} <i class="bi bi-arrow-right"></i></a>
             </div>
 
             {% else %}
@@ -121,43 +121,43 @@
             <div class="d-flex align-items-center gap-3 mb-4">
                 <i class="bi bi-person-circle text-warning display-4"></i>
                 <div>
-                    <h3 class="fw-bold mb-1 text-white">加入會員</h3>
-                    <p class="text-white-50 small mb-0">累積紅利點數{% if face_enabled %}，<br>可選擇使用人臉快速登入{% endif %}</p>
+                    <h3 class="fw-bold mb-1 text-white">{{ ui.join_member }}</h3>
+                    <p class="text-white-50 small mb-0">{{ ui.reg_earn }}{% if face_enabled %}{{ ui.comma }}<br>{{ ui.reg_face_optional }}{% endif %}</p>
                 </div>
             </div>
 
             <form id="registerForm" action="{{ url_for('auth.register') }}" method="POST" enctype="multipart/form-data" data-otp-purpose="register">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regName">姓名</label>
-                    <input type="text" class="form-control form-input" id="regName" name="name" placeholder="請輸入姓名" maxlength="100" required>
+                    <label class="form-label fw-bold small text-white" for="regName">{{ ui.name }}</label>
+                    <input type="text" class="form-control form-input" id="regName" name="name" placeholder="{{ ui.name_ph }}" maxlength="100" required>
                 </div>
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regPhone">電話 (09開頭10碼)</label>
+                    <label class="form-label fw-bold small text-white" for="regPhone">{{ ui.reg_phone_label }}</label>
                     {% set mf = member_features() %}
                     {% if mf.otp_register %}
                     <div class="input-group">
-                        <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="例如：0912345678" pattern="09[0-9]{8}" autocomplete="tel" required data-otp-phone>
-                        <button class="btn btn-outline-warning" type="button" data-action="send-otp" id="regSendOtpBtn">傳送驗證碼</button>
+                        <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="{{ ui.reg_phone_ph }}" pattern="09[0-9]{8}" autocomplete="tel" required data-otp-phone>
+                        <button class="btn btn-outline-warning" type="button" data-action="send-otp" id="regSendOtpBtn">{{ ui.send_code }}</button>
                     </div>
-                    <input type="text" class="form-control form-input mt-2" id="regOtp" name="otp_code" placeholder="簡訊驗證碼 (6 碼)" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required>
+                    <input type="text" class="form-control form-input mt-2" id="regOtp" name="otp_code" placeholder="{{ ui.reg_sms_code }}" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required>
                     <div class="small mt-1" data-otp-msg></div>
                     {% else %}
-                    <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="例如：0912345678" pattern="09[0-9]{8}" autocomplete="tel" required>
+                    <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="{{ ui.reg_phone_ph }}" pattern="09[0-9]{8}" autocomplete="tel" required>
                     {% endif %}
                 </div>
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regPin">手機登入安全 PIN 碼 (4~6位數字)</label>
-                    <input type="password" class="form-control form-input" id="regPin" name="pin" placeholder="請設定 4~6 位數字密碼"
+                    <label class="form-label fw-bold small text-white" for="regPin">{{ ui.reg_pin_set }}</label>
+                    <input type="password" class="form-control form-input" id="regPin" name="pin" placeholder="{{ ui.reg_pin_set_ph }}"
                            pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" required>
                 </div>
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regBirthday">生日 (選填，生日當月送生日禮)</label>
+                    <label class="form-label fw-bold small text-white" for="regBirthday">{{ ui.reg_birthday }}</label>
                     <input type="date" class="form-control form-input" id="regBirthday" name="birthday">
                 </div>
                 {% if referral_enabled %}
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regReferral">推薦碼 (選填，朋友推薦時填寫)</label>
+                    <label class="form-label fw-bold small text-white" for="regReferral">{{ ui.reg_referral }}</label>
                     <input type="text" class="form-control form-input" id="regReferral" name="referral_code" maxlength="12"
                            value="{{ referral_code or '' }}" autocomplete="off" style="text-transform: uppercase">
                 </div>
@@ -167,14 +167,13 @@
                 <div class="form-check text-start mb-2">
                     <input class="form-check-input" type="checkbox" value="1" id="faceConsent" name="face_consent" data-action="toggle-face">
                     <label class="form-check-label small text-white" for="faceConsent">
-                        <span class="fw-bold">(選填) 我同意使用人臉辨識登入</span>：拍攝照片並保存人臉特徵值，僅用於本店各分店的刷臉登入，
-                        可隨時於「隱私權告知」頁撤回並刪除。不勾選不影響會員權益，改以手機號碼 + PIN 登入。
+                        <span class="fw-bold">{{ ui.reg_face_consent }}</span>{{ ui.reg_face_consent_text }}
                     </label>
                 </div>
                 <div class="mb-3 text-start d-none" id="facePhotoSection">
-                    <label class="form-label fw-bold small text-white d-block" for="photoInput">拍攝或上傳照片</label>
+                    <label class="form-label fw-bold small text-white d-block" for="photoInput">{{ ui.reg_take_or_upload }}</label>
                     <button type="button" class="btn btn-camera w-100 py-2 fw-bold mb-2 shadow-sm" data-action="open-camera">
-                        <i class="bi bi-camera-fill me-1"></i> 開啟相機即時拍照
+                        <i class="bi bi-camera-fill me-1"></i> {{ ui.reg_open_camera }}
                     </button>
                     <input type="file" class="form-control form-input" name="photo" id="photoInput" accept="image/*">
                     <div id="photoStatus" class="small mt-2 text-warning d-none"></div>
@@ -182,24 +181,22 @@
                 {% endif %}
 
                 <div class="privacy-summary small text-white-50 text-start border border-secondary rounded p-2 mb-2" id="privacySummary">
-                    {{ privacy.operator_name }} 蒐集您的姓名、手機號碼{% if face_enabled %} (及您同意時的人臉資料){% endif %}，
-                    用於會員管理、紅利點數與點餐服務，會員資料於各分店與線上點餐共用；停止使用滿 {{ privacy.retention_months }} 個月後刪除。
-                    您可請求查詢、更正、停止利用或刪除。詳見
-                    <a href="{{ url_for('privacy.notice') }}" target="_blank" rel="noopener" class="text-warning">隱私權告知</a>。
+                    {{ privacy.operator_name }} {{ ui.reg_collect_a }}{% if face_enabled %} {{ ui.reg_collect_face }}{% endif %}{{ ui.reg_collect_b }} {{ privacy.retention_months }} {{ ui.reg_collect_c }}
+                    <a href="{{ url_for('privacy.notice') }}" target="_blank" rel="noopener" class="text-warning">{{ ui.privacy_notice }}</a>{{ ui.period }}
                 </div>
                 <div class="form-check text-start mb-4">
                     <input class="form-check-input" type="checkbox" value="1" id="agreePrivacy" name="agree_privacy" required>
-                    <label class="form-check-label small text-white fw-bold" for="agreePrivacy">我已閱讀並同意「隱私權告知」</label>
+                    <label class="form-check-label small text-white fw-bold" for="agreePrivacy">{{ ui.reg_agree_privacy }}</label>
                 </div>
 
                 <button type="submit" id="registerSubmitBtn" class="btn btn-submit w-100 py-3 fw-bold fs-5 shadow">
-                    註冊會員
+                    {{ ui.reg_submit }}
                 </button>
             </form>
 
             <div class="d-flex justify-content-between mt-3">
-                <a href="{{ url_for('customer.customer_index') }}" class="text-warning text-decoration-none small"><i class="bi bi-arrow-left"></i> 返回首頁</a>
-                <a href="{{ url_for('auth.face_login') }}" class="text-info text-decoration-none small">已是會員？前往登入 <i class="bi bi-arrow-right"></i></a>
+                <a href="{{ url_for('customer.customer_index') }}" class="text-warning text-decoration-none small"><i class="bi bi-arrow-left"></i> {{ ui.back_home }}</a>
+                <a href="{{ url_for('auth.face_login') }}" class="text-info text-decoration-none small">{{ ui.reg_goto_login }} <i class="bi bi-arrow-right"></i></a>
             </div>
             {% endif %}
         </div>
@@ -212,8 +209,8 @@
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content bg-dark text-white border-secondary shadow-lg camera-modal-content">
             <div class="modal-header border-secondary">
-                <h5 class="modal-title fw-bold" id="cameraModalTitle"><i class="bi bi-camera me-2 text-warning"></i>拍攝人臉照片</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                <h5 class="modal-title fw-bold" id="cameraModalTitle"><i class="bi bi-camera me-2 text-warning"></i>{{ ui.reg_take_photo_title }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="{{ ui.close }}"></button>
             </div>
             <div class="modal-body p-4 text-center">
                 <div class="camera-video-container mb-3 shadow">
@@ -221,19 +218,19 @@
                     <canvas id="cameraCanvas" class="d-none"></canvas>
                     <div id="faceGuide" class="face-guide-circle"></div>
                 </div>
-                <p class="small text-white-50 mb-0"><i class="bi bi-info-circle me-1"></i>請正對鏡頭並保持光線充足</p>
+                <p class="small text-white-50 mb-0"><i class="bi bi-info-circle me-1"></i>{{ ui.reg_camera_hint }}</p>
             </div>
             <div class="modal-footer border-secondary justify-content-between">
-                <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">取消</button>
+                <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">{{ ui.cancel }}</button>
                 <div class="d-flex gap-2">
                     <button type="button" id="retakeBtn" class="btn btn-outline-warning d-none" data-action="retake">
-                        <i class="bi bi-arrow-clockwise"></i> 重拍
+                        <i class="bi bi-arrow-clockwise"></i> {{ ui.retake }}
                     </button>
                     <button type="button" id="snapBtn" class="btn btn-warning fw-bold px-4" data-action="snap">
-                        <i class="bi bi-camera-fill me-1"></i> 拍照
+                        <i class="bi bi-camera-fill me-1"></i> {{ ui.take_photo }}
                     </button>
                     <button type="button" id="confirmBtn" class="btn btn-success fw-bold px-4 d-none" data-action="use-photo">
-                        <i class="bi bi-check-lg me-1"></i> 使用此照片
+                        <i class="bi bi-check-lg me-1"></i> {{ ui.use_photo }}
                     </button>
                 </div>
             </div>

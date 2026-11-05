@@ -38,7 +38,7 @@ class StaffAccount(UserMixin, SyncMixin, db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
     deleted_at = db.Column(db.DateTime, nullable=True)
     # 角色預設權限以外另外授權的項目 (enums.PERMISSIONS 代碼，逗號分隔)
-    permissions = db.Column(db.String(300), nullable=False, default='', server_default='')
+    permissions = db.Column(db.String(500), nullable=False, default='', server_default='')
     # 兩步驟驗證 (TOTP)：金鑰 (base32)、是否啟用、最後使用的時間窗 (防重放)、一次性備用碼 (雜湊 JSON)
     totp_secret = db.Column(db.String(64), nullable=False, default='', server_default='')
     totp_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())

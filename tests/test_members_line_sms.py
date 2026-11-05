@@ -225,7 +225,7 @@ def test_forgot_pin_with_sms(app, store_settings):
     c.post('/forgot_pin', data={'phone': '0966100008', 'pin': '8526', 'otp_code': code})
     member_client(app, '0966100008', '8526', ip='10.99.7.1')
     # 驗證碼只能用一次
-    r = c.post('/forgot_pin', data={'phone': '0966100008', 'pin': '9637', 'otp_code': code})
+    c.post('/forgot_pin', data={'phone': '0966100008', 'pin': '9637', 'otp_code': code})
     member_client(app, '0966100008', '8526', ip='10.99.7.2')
 
 

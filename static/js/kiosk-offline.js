@@ -45,10 +45,10 @@
 
     /** 不能暫存的原因 (空字串 = 可以) */
     function blockReason(payload) {
-        if (payload.payment_method !== 'Cash') return '只有「櫃檯付款 (現金)」的訂單可以暫存';
-        if ((payload.use_points || 0) > 0 || payload.promo_code) return '使用點數或優惠券的訂單需要連線確認';
-        if ((payload.items || []).some((i) => i.is_reward || i.pass_id)) return '紅利兌換與寄杯需要連線確認';
-        if (payload.delivery || payload.pickup_at) return '外送與預約取餐需要連線確認';
+        if (payload.payment_method !== 'Cash') return Kiosk.t('off_only_cash', '只有「櫃檯付款 (現金)」的訂單可以暫存');
+        if ((payload.use_points || 0) > 0 || payload.promo_code) return Kiosk.t('off_points', '使用點數或優惠券的訂單需要連線確認');
+        if ((payload.items || []).some((i) => i.is_reward || i.pass_id)) return Kiosk.t('off_reward', '紅利兌換與寄杯需要連線確認');
+        if (payload.delivery || payload.pickup_at) return Kiosk.t('off_delivery', '外送與預約取餐需要連線確認');
         return '';
     }
 
@@ -129,8 +129,8 @@
         badge.classList.toggle('d-none', !total);
         badge.className = badge.className.replace(/btn-(warning|danger|success)/g, '').trim();
         badge.classList.add(q.failed.length ? 'btn-danger' : (q.pending.length ? 'btn-warning' : 'btn-success'));
-        badge.textContent = q.pending.length ? `暫存單 ${q.pending.length} 筆待補送`
-            : (q.failed.length ? `暫存單 ${q.failed.length} 筆補送失敗` : `暫存單已補送 ${q.done.length} 筆`);
+        badge.textContent = q.pending.length ? Kiosk.t('off_badge_pending', '暫存單 {n} 筆待補送').replace('{n}', q.pending.length)
+            : (q.failed.length ? Kiosk.t('off_badge_failed', '暫存單 {n} 筆補送失敗').replace('{n}', q.failed.length) : Kiosk.t('off_badge_done', '暫存單已補送 {n} 筆').replace('{n}', q.done.length));
     }
 
     function openList() {
@@ -143,29 +143,29 @@
         const dialog = el('div', 'modal-dialog modal-dialog-scrollable');
         const content = el('div', 'modal-content bg-dark text-white');
         const header = el('div', 'modal-header');
-        header.append(el('h5', 'modal-title', '斷線暫存單'));
+        header.append(el('h5', 'modal-title', Kiosk.t('off_modal_title', '斷線暫存單')));
         const close = el('button', 'btn-close btn-close-white');
         close.type = 'button';
         close.dataset.bsDismiss = 'modal';
-        close.setAttribute('aria-label', '關閉');
+        close.setAttribute('aria-label', Kiosk.t('close', '關閉'));
         header.append(close);
         const body = el('div', 'modal-body small');
         const rows = [
-            ...q.pending.map((e) => [e, 'text-warning', '待補送']),
-            ...q.failed.map((e) => [e, 'text-danger', `補送失敗：${e.error}`]),
-            ...q.done.map((e) => [e, 'text-success', `已送出，取餐號 #${String(e.pickup_number).padStart(3, '0')}`]),
+            ...q.pending.map((e) => [e, 'text-warning', Kiosk.t('off_pending', '待補送')]),
+            ...q.failed.map((e) => [e, 'text-danger', `${Kiosk.t('off_failed', '補送失敗：')}${e.error}`]),
+            ...q.done.map((e) => [e, 'text-success', `${Kiosk.t('off_done', '已送出，取餐號 #')}${String(e.pickup_number).padStart(3, '0')}`]),
         ];
         rows.forEach(([e, cls, label]) => {
             const row = el('div', 'border-bottom border-secondary py-2 offline-entry');
             row.dataset.code = e.code;
-            row.append(el('div', 'fw-bold', `暫存單號 ${e.code}・${e.queued_at.replace('T', ' ').slice(5, 16)}・$${e.total}`));
+            row.append(el('div', 'fw-bold', `${Kiosk.t('off_code', '暫存單號')} ${e.code}・${e.queued_at.replace('T', ' ').slice(5, 16)}・$${e.total}`));
             if (e.summary) row.append(el('div', 'text-white-50', e.summary));
             row.append(el('div', cls, label));
             body.append(row);
         });
-        if (!rows.length) body.append(el('div', 'text-white-50', '沒有暫存單'));
+        if (!rows.length) body.append(el('div', 'text-white-50', Kiosk.t('off_none', '沒有暫存單')));
         const footer = el('div', 'modal-footer');
-        const clear = el('button', 'btn btn-outline-light btn-sm', '清除已完成 / 失敗的紀錄');
+        const clear = el('button', 'btn btn-outline-light btn-sm', Kiosk.t('off_clear', '清除已完成 / 失敗的紀錄'));
         clear.type = 'button';
         clear.id = 'offlineQueueClear';
         clear.addEventListener('click', () => {
@@ -175,7 +175,7 @@
             save(cur);
             bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         });
-        const retry = el('button', 'btn btn-warning btn-sm text-dark', '立即補送');
+        const retry = el('button', 'btn btn-warning btn-sm text-dark', Kiosk.t('off_retry', '立即補送'));
         retry.type = 'button';
         retry.addEventListener('click', () => { flush(); bootstrap.Modal.getOrCreateInstance(modalEl).hide(); });
         footer.append(clear, retry);
@@ -196,14 +196,14 @@
         const dialog = el('div', 'modal-dialog modal-dialog-centered');
         const content = el('div', 'modal-content bg-dark text-white text-center p-4');
         content.append(el('i', 'bi bi-wifi-off display-4 text-warning'));
-        content.append(el('h5', 'fw-bold mt-2', '網路暫時中斷，訂單已暫存'));
-        content.append(el('div', 'text-white-50 small', '暫存單號'));
+        content.append(el('h5', 'fw-bold mt-2', Kiosk.t('off_saved_title', '網路暫時中斷，訂單已暫存')));
+        content.append(el('div', 'text-white-50 small', Kiosk.t('off_code', '暫存單號')));
         const code = el('div', 'display-5 fw-bold text-warning', entry.code);
         code.id = 'offlineReceiptCode';
         content.append(code);
-        content.append(el('div', 'mt-2', `金額約 $${entry.total}，請至櫃檯出示暫存單號付款`));
-        content.append(el('div', 'small text-white-50 mt-1', '連線恢復後會自動送到廚房並編取餐號 (店員可查看)'));
-        const ok = el('button', 'btn btn-warning fw-bold text-dark mt-3', '我知道了');
+        content.append(el('div', 'mt-2', Kiosk.t('off_pay_hint', '金額約 ${n}，請至櫃檯出示暫存單號付款').replace('{n}', entry.total)));
+        content.append(el('div', 'small text-white-50 mt-1', Kiosk.t('off_auto_hint', '連線恢復後會自動送到廚房並編取餐號 (店員可查看)')));
+        const ok = el('button', 'btn btn-warning fw-bold text-dark mt-3', Kiosk.t('got_it', '我知道了'));
         ok.type = 'button';
         ok.dataset.bsDismiss = 'modal';
         content.append(ok);

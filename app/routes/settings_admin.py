@@ -2,13 +2,12 @@
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.services import settings_service
 from app.services.audit import record_staff_audit
 from app.sync import runtime as sync_runtime
-from app.utils import role_required
+from app.services.approval_service import permission_required
 
 settings_bp = Blueprint('settings_admin', __name__)
 
@@ -48,6 +47,8 @@ FEATURE_PAGES = (
     ('H 維運', 'API 與 Webhook', 'integrations.index', 'bi-plug', 'API 金鑰、訂單事件 Webhook (串接 ERP / 會計 / 自建 App)', None),
     ('H 維運', '舊資料封存', 'archive.index', 'bi-archive', '超過 N 個月的訂單與日誌搬到封存檔、下載與查詢', None),
     ('H 維運', '系統監控', 'system.status', 'bi-activity', '健康狀態、錯誤紀錄、備份、時鐘誤差', None),
+    ('H 維運', '稽核紀錄', 'audit.index', 'bi-shield-check', '員工操作稽核與登入日誌：分頁、篩選、匯出 Excel', None),
+    ('H 維運', '店家管理 (平台管理者)', 'tenants.index', 'bi-buildings', '這台主機上所有店家的狀態、分店連線、訂單量；停用 / 啟用店家', None),
 )
 
 
@@ -62,11 +63,13 @@ def _section(key):
 
 
 @settings_bp.route('/admin/settings', endpoint='index')
-@role_required(*MANAGER_ROLES)
+@permission_required('settings')
 def index():
     endpoints = current_app.view_functions
+    from app.utils import is_platform_admin
     pages = [dict(group=g_, name=n, url=url_for(e) if e in endpoints else '', icon=i, desc=d)
-             for g_, n, e, i, d, _perm in FEATURE_PAGES]
+             for g_, n, e, i, d, _perm in FEATURE_PAGES
+             if e != 'tenants.index' or is_platform_admin()]   # 店家管理只給平台管理者
     sections = [dict(key=s.key, title=s.title, group=s.group, icon=s.icon, description=s.description,
                      enabled=settings_service.is_enabled(s.key) if s.enabled_field else None,
                      owner_only=any(f.type == 'secret' for f in s.fields),
@@ -77,7 +80,7 @@ def index():
 
 
 @settings_bp.route('/admin/settings/<key>', methods=['GET', 'POST'], endpoint='edit')
-@role_required(*MANAGER_ROLES)
+@permission_required('settings')
 def edit(key):
     section = _section(key)
     if request.method == 'POST':
@@ -106,7 +109,7 @@ def edit(key):
 
 
 @settings_bp.route('/admin/settings/<key>/test', methods=['POST'], endpoint='test')
-@role_required(*MANAGER_ROLES)
+@permission_required('settings')
 def test(key):
     _section(key)
     tester = settings_service.TESTERS.get(key)
@@ -119,3 +122,39 @@ def test(key):
         db.session.rollback()
         flash(f'測試失敗：{err.message}', 'danger')
     return redirect(url_for('settings_admin.edit', key=key))
+
+
+@settings_bp.route('/admin/settings/export.json', endpoint='export_json')
+@permission_required('settings')
+def export_json():
+    """匯出所有營運設定 (JSON；不含金鑰與本機專屬區塊)，開新店時匯入即可複製規則"""
+    import json
+    from flask import Response
+    from app.utils import is_platform_admin
+    include_secrets = is_platform_admin() and request.args.get('secrets') == '1'
+    payload = settings_service.export_all(include_secrets=include_secrets)
+    record_staff_audit('SETTINGS_EXPORT', details='匯出系統設定' + ('（含金鑰）' if include_secrets else ''))
+    db.session.commit()
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    return Response(body, mimetype='application/json',
+                    headers={'Content-Disposition': f'attachment; filename="settings-{payload["exported_at"][:10]}.json"'})
+
+
+@settings_bp.route('/admin/settings/import', methods=['POST'], endpoint='import_json')
+@permission_required('settings')
+def import_json():
+    import json
+    from flask_login import current_user
+    file = request.files.get('file')
+    if file is None or not file.filename:
+        raise AppError('請選擇匯出的設定檔 (.json)')
+    try:
+        payload = json.loads(file.read(2 * 1024 * 1024).decode('utf-8-sig'))
+    except (ValueError, UnicodeDecodeError):
+        raise AppError('設定檔不是有效的 JSON')
+    applied, skipped = settings_service.import_all(payload, changed_by=current_user.username,
+                                                   allow_secrets=current_user.role == 'owner')
+    record_staff_audit('SETTINGS_IMPORT', details=f'匯入系統設定：{applied} 個區塊' + (f'，略過 {len(skipped)} 項' if skipped else ''))
+    db.session.commit()
+    flash(f'已匯入 {applied} 個設定區塊' + (f'；略過：{", ".join(skipped[:8])}' if skipped else ''), 'success' if applied else 'warning')
+    return redirect(url_for('settings_admin.index'))

@@ -80,8 +80,8 @@ def create_app(config_class=Config):
                 static_folder=os.path.join(config_class.BASE_DIR, 'static'))
     app.config.from_object(config_class)
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options_for(app.config['SQLALCHEMY_DATABASE_URI'])
-    if not logging.getLogger().handlers:
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s [%(name)s] %(message)s')
+    from app.services import log_service
+    log_service.configure_logging(app)   # 主控台 + 輪替記錄檔 (LOG_FILE)、每個請求的 X-Request-ID
 
     # 僅在明確設定代理層數時才信任 X-Forwarded-*，否則來源 IP 可被偽造而繞過頻率限制
     if app.config['TRUSTED_PROXY_COUNT'] > 0:
@@ -111,8 +111,11 @@ def create_app(config_class=Config):
     from app.services.event_bus import order_event_bus
     order_event_bus.init_app(app)
     from app.services import deferred, monitor_service
+    from app.services import offsite_backup_service  # noqa: F401  註冊「自動備份」設定頁的測試 (異地上傳)
     deferred.init_app(app)
     monitor_service.install_log_handler(app)
+    from app.services import observability
+    observability.install(app)   # 請求計時 + /metrics (METRICS_TOKEN)；SENTRY_DSN 有設時初始化 Sentry
 
     register_error_handlers(app)
     _register_security_hooks(app)
@@ -124,6 +127,11 @@ def create_app(config_class=Config):
 
     from app.tenant_context import install_tenant_context
     install_tenant_context(app)
+    from app.services import static_version
+    static_version.install(app)   # url_for('static') 自動加 ?v=檔案雜湊
+    from app.services import i18n_service
+    i18n_service.install(app)     # 顧客頁多語系：ui / lang 注入所有樣板、flash 訊息翻譯
+
 
     from app.routes import register_blueprints
     register_blueprints(app)

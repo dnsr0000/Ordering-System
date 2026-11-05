@@ -95,7 +95,7 @@
         const items = o.items.map((item) => html`
             <div class="item-row py-2 ${item.done || !Number(item.quantity) ? 'opacity-50 text-decoration-line-through' : ''}">
                 <div class="d-flex justify-content-between align-items-center gap-2">
-                    <span class="fs-5 fw-bold text-white kds-item-name">${item.name}
+                    <span class="fs-5 fw-bold text-white kds-item-name">${item.has_card ? html`<button type="button" class="btn btn-link p-0 fs-5 fw-bold text-white text-decoration-underline kds-prep-card" data-action="prep-card" data-item-id="${item.menu_item_id}" title="製作卡"><i class="bi bi-journal-text text-info me-1"></i>${item.name}</button>` : item.name}
                         ${item.station && !stationId ? html`<span class="badge bg-dark border border-secondary small ms-1">${item.station}</span>` : ''}</span>
                     <span class="badge bg-light text-dark fs-6 px-2">x ${Number(item.quantity) || 0}</span>
                 </div>
@@ -114,7 +114,7 @@
                     <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom border-secondary">
                         <div>
                             <h3 class="fw-bold text-warning mb-0 kds-pickup-number">#${pad(o.pickup_number)}</h3>
-                            <small class="text-white-50">單號 #${o.id} • <i class="bi bi-person me-1"></i>${o.table_number}</small>
+                            <small class="text-white-50">單號 #${o.id} • <i class="bi bi-person me-1"></i>${o.table_number}${o.eta ? html` • 預計 ${o.eta}` : ''}</small>
                         </div>
                         <div class="text-end">
                             <span class="badge bg-primary mb-1">${o.order_type}</span><br>
@@ -218,7 +218,38 @@
         loadOrders();
     }
 
+    /** 製作卡：做法 / 製作時間 / 配方用量 (每份)；第一次點才向伺服器取 */
+    const prepCards = new Map();
+    async function showPrepCard(itemId) {
+        const body = document.getElementById('prepCardBody');
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('prepCardModal'));
+        let card = prepCards.get(itemId);
+        if (!card) {
+            try {
+                card = await Kiosk.api(`/api/kitchen/prep_card/${itemId}`);
+                prepCards.set(itemId, card);
+            } catch (err) {
+                Kiosk.setHtml(body, html`<div class="text-danger">${err.message}</div>`);
+                modal.show();
+                return;
+            }
+        }
+        document.getElementById('prepCardTitle').textContent = `製作卡：${card.name}`;
+        Kiosk.setHtml(body, html`
+            <div class="row g-3">
+                ${card.image ? html`<div class="col-md-4"><img src="${card.image}" alt="${card.name}" class="img-fluid rounded"></div>` : ''}
+                <div class="${card.image ? 'col-md-8' : 'col-12'}">
+                    <div class="mb-2 text-white-50 small">${card.category} ${card.prep_minutes ? `· 製作約 ${card.prep_minutes} 分鐘` : ''}</div>
+                    ${card.prep_note ? html`<div class="fs-5 kds-prep-note">${card.prep_note}</div>` : html`<div class="text-white-50">尚未填寫做法 (菜單進階設定 → 廚房製作卡)</div>`}
+                    ${card.recipe.length ? html`<div class="mt-3"><div class="fw-bold text-info mb-1"><i class="bi bi-list-check me-1"></i>配方用量 (每份)</div>
+                        <ul class="mb-0">${card.recipe.map((r) => html`<li>${r.ingredient}：${r.quantity} ${r.unit}</li>`)}</ul></div>` : ''}
+                </div>
+            </div>`);
+        modal.show();
+    }
+
     Kiosk.on(document, 'click', {
+        'prep-card': (el) => showPrepCard(el.dataset.itemId),
         'complete-order': (el) => completeOrder(el),
         'toggle-rush': (el) => toggleRush(el),
         'complete-all': () => completeAll(),

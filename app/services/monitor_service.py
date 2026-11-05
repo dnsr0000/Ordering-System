@@ -26,8 +26,8 @@ MAX_FILE_BYTES = 2 * 1024 * 1024
 KEEP_LINES = 1500
 THROTTLE_SECONDS = 600
 _lock = threading.Lock()
-_last_sent = {}
-_alert_queue = queue.Queue(maxsize=500)
+_last_sent: dict = {}
+_alert_queue: queue.Queue = queue.Queue(maxsize=500)
 _guard = threading.local()
 _clock_cache = {'at': 0.0, 'offset': None, 'server': '', 'error': ''}
 

@@ -11,9 +11,9 @@ from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.user import User
 from app.routes.sync_admin import node_name_map
-from app.services import (approval_service, coupon_service, giftcard_service, loyalty_service, member_verify_service,
-                          order_service, own_delivery_service, pass_service, payment_service, print_service,
-                          settings_service, shift_service, wallet_service)
+from app.services import (approval_service, coupon_service, giftcard_service, intake_service, loyalty_service,
+                          member_verify_service, order_service, own_delivery_service, pass_service, payment_service,
+                          print_service, settings_service, shift_service, wallet_service)
 from app.services.audit import record_staff_audit
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.menu_service import menu_categories, storefront_payload
@@ -62,6 +62,7 @@ def pos_settings_payload():
         'discountApprovalPercent': pos_cfg.get('discount_approval_percent') or 0,
         'allowPriceOverride': bool(pos_cfg.get('allow_price_override', True)),
         'requireShift': bool(pos_cfg.get('require_shift')),
+        'quickNotes': settings_service.split_lines(pos_cfg.get('quick_notes'))[:12],
         'cardRequireAuth': bool(card.get('require_auth_code')),
         'cardRequireLast4': bool(card.get('require_last4')),
         'linePayIntegrated': linepay.is_enabled(),
@@ -81,6 +82,7 @@ def pos_settings_payload():
         'giftPresets': giftcard_service.preset_amounts(),
         'shift': {'id': shift.id, 'opened_by': shift.opened_by,
                   'opened_at': shift.opened_at.strftime('%H:%M')} if shift else None,
+        'intake': intake_service.status(),
     }
 
 
@@ -419,6 +421,27 @@ def api_open_drawer():
     db.session.commit()
     count = print_service.open_drawer(g.tenant_id, reason)
     return jsonify({'success': True, 'count': count, 'message': '已送出開錢櫃指令'})
+
+
+# ------------------------------------------------------------------------------
+# 接單控制 (暫停接單)
+# ------------------------------------------------------------------------------
+@pos_bp.route('/api/pos/intake', methods=['GET', 'POST'])
+@role_required(*POS_ROLES)
+@limiter.limit('30/minute', methods=['POST'])
+def api_intake():
+    """暫停 / 恢復接單 (點餐機、顧客手機、團購；POS 不受影響)。POST {paused: bool, minutes: 0 = 手動恢復}"""
+    if request.method == 'GET':
+        return jsonify(dict(intake_service.status(), success=True))
+    data = get_json_dict()
+    paused = bool(data.get('paused'))
+    minutes = safe_int(data.get('minutes'), 0)
+    st = intake_service.set_paused(paused, minutes, changed_by=current_user.username)
+    record_staff_audit('INTAKE_PAUSE' if paused else 'INTAKE_RESUME',
+                       details=(f'暫停接單 ({minutes} 分鐘後自動恢復)' if paused and minutes else
+                                '暫停接單 (手動恢復)' if paused else '恢復接單'))
+    db.session.commit()
+    return jsonify(dict(st, success=True))
 
 
 @pos_bp.route('/pos/display', endpoint='customer_display')

@@ -16,9 +16,12 @@ export async function runPromotionPreview() {
     const seq = ++state.promotionSeq;
     if (!state.cart.length) {
         state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
+        state.eta = 0;
+        renderEta();
         calculateTotal();
         return;
     }
+    refreshEta(seq);
     try {
         const res = await api('/api/promotions/preview', {
             json: { items: state.cart.map(itemPayload), channel: pageData.table ? 'table' : 'kiosk', order_type: $('orderType').value },
@@ -28,6 +31,25 @@ export async function runPromotionPreview() {
         if (seq === state.promotionSeq) state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
     }
     calculateTotal();
+}
+
+// ================================================================ 預估等候時間 (系統設定 → 廚房看板；線上端不顯示)
+export function renderEta() {
+    const row = $('cart-eta-row');
+    if (!row) return;
+    row.classList.toggle('d-none', !(state.eta > 0));
+    setText('cart-eta', state.eta || 0);
+}
+
+export async function refreshEta(seq) {
+    if (!pro.etaEnabled) return;
+    try {
+        const res = await api('/api/eta', { json: { items: state.cart.map(itemPayload) } });
+        if (seq === state.promotionSeq) state.eta = Number(res.minutes) || 0;
+    } catch (err) {
+        if (seq === state.promotionSeq) state.eta = 0;
+    }
+    renderEta();
 }
 
 export function itemPayload(l) {
@@ -59,7 +81,7 @@ export function computeTotals() {
     if (!isGuest && rewardConfig.isEnabled && toggle && toggle.checked) {
         const input = $('pointsToUse');
         const ppd = Math.max(1, Number(rewardConfig.pointsPerDollar) || 1);
-        let maxCash = Math.floor(remaining);
+        let maxCash = Math.floor(remaining + 0.5);   // 與後端相同：上限 = 四捨五入後的應付金額 (百分比優惠券留下的 .5 也折得掉)
         if (rewardConfig.maxDiscount > 0) maxCash = Math.min(maxCash, rewardConfig.maxDiscount);
         const maxPoints = Math.min(state.userPoints, maxCash * ppd);
         let val = Math.floor(Number(input.value) || 0);
@@ -131,16 +153,16 @@ export function renderCoupons(coupons) {
     if (!select) return;
     const list = coupons || [];
     if (!list.length) {
-        Kiosk.setHtml(select, html`<option value="" disabled selected>-- 尚無可用優惠券 --</option>`);
-        if (badge) Kiosk.setHtml(badge, html`<a href="/rewards" class="text-warning text-decoration-none"><i class="bi bi-gift"></i> 去商城兌換</a>`);
+        Kiosk.setHtml(select, html`<option value="" disabled selected>${ui.no_coupons || '-- 尚無可用優惠券 --'}</option>`);
+        if (badge) Kiosk.setHtml(badge, html`<a href="/rewards" class="text-warning text-decoration-none"><i class="bi bi-gift"></i> ${ui.go_rewards || '去商城兌換'}</a>`);
         return;
     }
     const current = state.activePromoCode;
     Kiosk.setHtml(select, [
-        html`<option value="">-- 選擇我的優惠券 --</option>`,
-        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (代碼: ${c.code})${c.min_spend > 0 ? ` - 滿$${Math.round(c.min_spend)}可用` : ''}</option>`),
+        html`<option value="">${ui.pick_coupon || '-- 選擇我的優惠券 --'}</option>`,
+        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (${ui.code_label || '代碼'}: ${c.code})${c.min_spend > 0 ? ` - ${ui.rw_min_spend || '消費滿 $'}${Math.round(c.min_spend)}${ui.rw_usable || '可用'}` : ''}</option>`),
     ]);
-    if (badge) Kiosk.setHtml(badge, html`<span class="badge bg-warning text-dark py-0">${list.length} 張可用</span>`);
+    if (badge) Kiosk.setHtml(badge, html`<span class="badge bg-warning text-dark py-0">${list.length} ${ui.coupons_available || '張可用'}</span>`);
 }
 
 export async function syncLatestUserCoupons() {

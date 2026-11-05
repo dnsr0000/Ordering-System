@@ -12,15 +12,15 @@ from app.models.order import Order, OrderItem
 from app.models.sync import NodeStock, SyncNode
 from app.routes.sync_admin import node_name_map
 from app.errors import AppError
-from app.services import (branch_service, coupon_service, i18n_service, inventory_service, own_delivery_service,
-                          pass_service, payment_service, pickup_service, privacy_service, settings_service,
-                          table_pay_service, table_service)
+from app.services import (branch_service, coupon_service, eta_service, feedback_service, i18n_service, intake_service, inventory_service, receipt_service,
+                          own_delivery_service, pass_service, payment_service, pickup_service, privacy_service,
+                          reorder_service, settings_service, table_pay_service, table_service)
 from app.services.customer_session import current_member
 from app.services.menu_service import menu_categories, storefront_payload
 from app.services.order_service import find_by_client_order_id, find_promo, process_checkout
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
-from app.utils import get_json_dict
+from app.utils import get_json_dict, safe_int
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -123,7 +123,7 @@ def customer_index():
     node_stock = _node_stock(pickup_node) if is_hub else None
     sold_out_ids = _sold_out_ids(items, node_stock)
     # 不在供應時段 / 販售期間、或原料不足 (禁止販售模式) 的餐點：顯示原因並不可點
-    unavailable = {i.id: i.service_status()[1] for i in items if not i.service_status()[0]}
+    unavailable = {i.id: i18n_service.translate_message(i.service_status()[1]) for i in items if not i.service_status()[0]}
     for item_id in (inventory_service.shortage_items(g.tenant_id) if not is_hub else ()):
         unavailable.setdefault(item_id, '')
         sold_out_ids = sold_out_ids | {item_id}
@@ -159,13 +159,18 @@ def customer_index():
         table_expired=False if is_hub else table_service.table_binding_expired(),
         tenant=g.tenant,
         unavailable=unavailable,
+        intake=intake_service.customer_notice(g.tenant_id, pickup_node if is_hub else None),
+        eta_enabled=eta_service.enabled(),
         lang=lang, langs=i18n_service.available_languages(), lang_labels=i18n_service.LANG_LABELS,
         ui=i18n_service.ui_strings(lang), cat_labels=i18n_service.category_labels(lang),
         allergen_labels=i18n_service.allergen_labels(lang), diet_labels=i18n_service.diet_labels(lang),
+        used_allergens=sorted({a for i in items for a in i.allergen_codes}),   # 飲食篩選列只列菜單用到的過敏原
         pro=pro,
         # 待機輪播只在門市點餐機首頁 (未登入、不是顧客手機掃桌位 QR code)
         attract=None if member is not None or session.get('user_name') or (not is_hub and table_service.current_table())
         else _attract_slides(items, is_hub),
+        # 未登入頁的顧客好評 (店長在顧客評價頁勾「公開」的，匿名)
+        public_reviews=feedback_service.public_reviews(g.tenant_id) if not session.get('user_name') else [],
     )
 
 
@@ -181,6 +186,12 @@ def _storefront_extras(member, dining_table, is_hub):
         methods = methods + ['儲值金']
     if not wallet:
         methods = [m for m in methods if m != '儲值金']
+    gift_cfg = settings_service.get('gift_card')
+    gift_kiosk = bool(gift_cfg.get('enabled') and gift_cfg.get('kiosk_enabled')) and not is_hub and dining_table is None
+    if gift_kiosk and '禮物卡' not in methods:
+        methods = methods + ['禮物卡']
+    if not gift_kiosk:
+        methods = [m for m in methods if m != '禮物卡']
     tier = member.tier if member is not None and member_cfg.get('tiers_enabled', True) else None
     return {
         'methods': methods or ['Cash'],
@@ -192,12 +203,16 @@ def _storefront_extras(member, dining_table, is_hub):
         'tierName': tier.name if tier else '',
         'tierDiscount': tier.discount_percent if tier else 0,
         'lineLogin': line_service.login_enabled(),
+        'receiptEmail': receipt_service.email_enabled(),
+        'receiptLine': receipt_service.line_enabled() and bool(member and member.line_user_id),
+        'memberEmail': (member.email if member is not None else '') or '',
         'lineBound': bool(member and member.line_user_id),
         'showAllergens': bool(settings_service.get('menu').get('show_allergens', True)),
         'showCalories': bool(settings_service.get('menu').get('show_calories', True)),
         'pickupSlots': [{'value': t.strftime('%Y-%m-%dT%H:%M'), 'label': lab}
                         for t, lab in pickup_service.slots()] if is_hub else [],
         'serviceCall': dining_table is not None,
+        'etaEnabled': eta_service.enabled() and not is_hub,
         'a11yButton': bool(settings_service.get('menu').get('accessibility_button', True)),
         'homeDelivery': ({'zones': own_delivery_service.zones(),
                           'freeOver': int(own_delivery_service.config().get('free_over') or 0),
@@ -283,6 +298,8 @@ def submit_order():
         pickup_at=data.get('pickup_at') or None,
         delivery=data.get('delivery') or None,
         expected_total=data.get('expected_total'),
+        # 點餐機只收禮物卡卡號 (刷卡授權碼等仍由 POS 提供)
+        payment_info={'gift_code': (data.get('payment_info') or {}).get('gift_code')} if isinstance(data.get('payment_info'), dict) else None,
     )
     extra = {'payment_url': url_for('payment.pay', order_uuid=order.uuid)} if order.payment_status == 'pending' else {}
     from app.routes.pos import track_qr
@@ -334,7 +351,7 @@ def offline_order():
             need_cutlery=bool(payload.get('need_cutlery', True)) and order_type == OrderType.TAKE_OUT,
             note=note[:200], table_input=f'暫存單 {code}', user_id=None, order_source=OrderSource.KIOSK,
             client_ip=request.remote_addr or '', client_order_id=client_order_id,
-            invoice_info=payload.get('invoice') or None)
+            invoice_info=payload.get('invoice') or None, skip_intake=True)
     except AppError as exc:
         # 原本的 /submit_order 還在處理中 (逾時後補送)：同一個訂單編號先完成的那張就是這張暫存單
         same = find_by_client_order_id(g.tenant_id, client_order_id) if exc.status == 409 else None
@@ -370,6 +387,131 @@ def _pickup_info(order, node_names):
     }
 
 
+def _availability_map(items, is_hub, pickup_node):
+    """目前每個品項可否點 (售完 / 不在供應時段 / 原料不足 / 分店庫存)：{id: (可點, 提示)}"""
+    node_stock = _node_stock(pickup_node) if is_hub else None
+    sold_out_ids = _sold_out_ids(items, node_stock)
+    out = {}
+    for i in items:
+        in_service, hint = i.service_status()
+        if not in_service:
+            out[i.id] = (False, hint)
+        elif i.id in sold_out_ids:
+            out[i.id] = (False, '')
+        else:
+            out[i.id] = (True, '')
+    if not is_hub:
+        for item_id in inventory_service.shortage_items(g.tenant_id):
+            if item_id in out and out[item_id][0]:
+                out[item_id] = (False, '')
+    return out
+
+
+@customer_bp.route('/api/menu/availability', endpoint='menu_availability')
+@limiter.limit('120/minute')
+def api_menu_availability():
+    """
+    點餐頁每 30 秒輪詢的「可點 / 售完 / 價格」狀態，帶 ETag：內容沒變時回 304 (不傳內容、前端不重畫)。
+    售完或恢復供應時點餐機不必重新整理就會更新 (以前只有結帳被擋下或重新載入頁面才知道)。
+    """
+    import hashlib
+    import json as _json
+    is_hub = sync_runtime.is_hub()
+    pickup_node = _pickup_node(_online_nodes()) if is_hub else None
+    branch_service.activate(g.tenant_id, branch_service.storefront_branch(pickup_node))
+    items = [i for i in MenuItem.query.all() if not i.is_branch_hidden]
+    avail = _availability_map(items, is_hub, pickup_node)
+    payload = {str(i.id): {'available': avail[i.id][0], 'hint': i18n_service.translate_message(avail[i.id][1]), 'price': i.unit_price,
+                           'original_price': i.list_price, 'prices': {ch: i.price_for(ch) for ch in ('dine_in', 'takeout', 'online', 'delivery')}}
+               for i in items}
+    body = _json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
+    if request.headers.get('If-None-Match') == etag:
+        resp = current_app.response_class(status=304)
+    else:
+        resp = current_app.response_class(body, mimetype='application/json')
+    resp.headers['ETag'] = etag
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
+
+
+def _receipt_order_key():
+    """每張訂單的寄送次數上限 (避免拿自己的訂單當寄信機)"""
+    return f"receipt:{request.view_args.get('order_id')}"
+
+
+@customer_bp.route('/api/my_orders/<int:order_id>/receipt/email', methods=['POST'], endpoint='receipt_email')
+@limiter.limit('10/minute')
+@limiter.limit('5/day', key_func=_receipt_order_key)
+def api_receipt_email(order_id):
+    """收據視窗「寄到信箱」：會員自己的或本次進場訪客的訂單；會員可記住 Email"""
+    from app.services import receipt_service
+    order = _own_order(order_id)
+    data = request.get_json(silent=True) or {}
+    receipt_service.request_email(order, data.get('email'), remember=bool(data.get('remember')))
+    db.session.commit()
+    return jsonify({'success': True, 'message': '電子收據將寄到您的信箱', 'message_i18n': i18n_service.translate_message('電子收據將寄到您的信箱')})
+
+
+@customer_bp.route('/api/my_orders/<int:order_id>/receipt/line', methods=['POST'], endpoint='receipt_line')
+@limiter.limit('10/minute')
+def api_receipt_line(order_id):
+    from app.services import receipt_service
+    order = _own_order(order_id)
+    receipt_service.request_line(order)
+    db.session.commit()
+    return jsonify({'success': True, 'message': '電子收據將傳到您的 LINE', 'message_i18n': i18n_service.translate_message('電子收據將傳到您的 LINE')})
+
+
+@customer_bp.route('/api/gift_cards/balance', methods=['POST'], endpoint='gift_card_balance')
+@limiter.limit('20/minute')
+def api_gift_card_balance():
+    """點餐機禮物卡付款前查餘額：只回遮罩卡號與餘額 (卡號 16 碼本身就是憑證，查詢有頻率限制)"""
+    from app.services import giftcard_service
+    cfg = settings_service.get('gift_card')
+    if not (cfg.get('enabled') and cfg.get('kiosk_enabled')) or sync_runtime.is_hub():
+        raise AppError('此點餐管道未開放禮物卡付款', 404)
+    card = giftcard_service.find(g.tenant_id, (request.get_json(silent=True) or {}).get('code'))
+    if card.status != 'active':
+        raise AppError('此禮物卡已作廢', 409)
+    return jsonify({'success': True, 'masked_code': card.masked_code, 'balance': giftcard_service.balance(card)})
+
+
+@customer_bp.route('/api/eta', methods=['POST'], endpoint='eta')
+@limiter.limit('60/minute')
+def api_eta():
+    """購物車目前內容的預估等候時間 (分鐘)；功能關閉時 minutes = 0"""
+    data = get_json_dict()
+    items = data.get('items') if isinstance(data.get('items'), list) else []
+    if sync_runtime.is_hub():   # 線上端不知道分店的排隊狀況
+        return jsonify({'success': True, 'minutes': 0, 'ready_at': ''})
+    return jsonify(dict(eta_service.status_payload(g.tenant_id, eta_service.pairs_from_items(items, g.tenant_id)),
+                        success=True))
+
+
+def _own_order(order_id):
+    """我的訂單裡的訂單：會員自己的，或本次進場 (訪客) 的"""
+    member = current_member()
+    order = db.session.get(Order, safe_int(order_id, 0))
+    if order is None or order.tenant_id != g.tenant_id:
+        raise AppError('查無此訂單', 404)
+    if member is not None and order.user_id == member.id:
+        return order
+    if member is None and session.get('customer_log_id') and order.customer_log_id == session['customer_log_id'] \
+            and order.user_id is None:
+        return order
+    raise AppError('查無此訂單', 404)
+
+
+@customer_bp.route('/api/reorder/<int:order_id>', endpoint='reorder')
+@limiter.limit('30/minute')
+def api_reorder(order_id):
+    """再點一次：把該筆訂單的品項還原成購物車格式 (價格由前端依目前菜單重算；已下架 / 紅利 / 寄杯 / 贈品略過)"""
+    order = _own_order(order_id)
+    lines, skipped = reorder_service.lines_for(order, g.tenant_id)
+    return jsonify({'success': True, 'lines': lines, 'skipped': skipped})
+
+
 @customer_bp.route('/my_orders', endpoint='my_orders')
 def my_orders():
     """會員看自己的訂單；訪客以本次進場紀錄 (customer_log_id) 歸戶，不會看到撞號訪客的訂單"""
@@ -398,8 +540,12 @@ def my_orders():
         'payment_note': (o.payment_note or '') if o.payment_status == 'pending' else '',
         'order_type': o.order_type,
         'pickup_at': o.pickup_at_label,
+        'eta': o.eta_label,
         'delivery_label': o.delivery_status_label,
+        'delivery_status': o.delivery_status or '',
         'status': o.status_label,
+        'status_code': o.status,
+        'can_reorder': o.status != OrderStatus.CANCELLED and any(not i.is_reward and not i.is_gift for i in o.items),
         'created_at': o.created_at.strftime('%Y-%m-%d %H:%M') if o.created_at else '',
         'items': [i.to_dict() for i in o.items],
     } for idx, o in enumerate(orders)])

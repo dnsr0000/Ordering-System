@@ -16,6 +16,7 @@ a.feature-card:hover { border-color: var(--bs-warning); transform: translateY(-2
 .track-number { font-size: 5rem; font-weight: 800; }
 .offline-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3000; text-align: center; padding: .4rem; background: #b02a37; color: #fff; font-weight: 700; }
 .allergen-badge { font-size: .65rem; }
+.allergen-badge.text-danger { color: #ff8585 !important; }   /* 深底上的紅字對比 4.5:1 以上 (axe) */
 .lang-switch .btn { padding: .1rem .5rem; }
 @media print {
     .no-print { display: none !important; }

@@ -30,6 +30,8 @@ services:
       SYNC_ROLE: hub
       UPLOAD_FOLDER_MEMBER: /app/uploads/member
       UPLOAD_FOLDER_MENU: /app/uploads/menu
+      # 記錄只輸出到 stdout (docker logs，由上方 json-file 設定輪替)，不另外寫檔
+      LOG_FILE: ""
     volumes:
       - app_database:/app/database
       - app_uploads:/app/uploads

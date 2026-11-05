@@ -52,6 +52,9 @@
                 <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openShift" id="posShiftBtn">
                     <i class="bi bi-cash-coin me-1"></i> 交班 <span id="posShiftBadge" class="badge {{ 'bg-success' if pos_cfg.shift else 'bg-secondary' }}">{{ '開班中' if pos_cfg.shift else '未開班' }}</span>
                 </button>
+                <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openIntake" id="posIntakeBtn" title="暫停 / 恢復點餐機、顧客手機與團購的接單 (POS 不受影響)">
+                    <i class="bi bi-pause-circle me-1"></i> 接單 <span id="posIntakeBadge" class="badge {{ 'bg-danger' if pos_cfg.intake.paused else 'bg-success' }}">{{ '已暫停' if pos_cfg.intake.paused else '接單中' }}</span>
+                </button>
                 {% if pos_cfg.hasDrawer %}
                 <button type="button" class="btn btn-outline-light btn-sm fw-bold" data-action="openDrawer" id="posDrawerBtn" title="手動開錢櫃 (會留下稽核紀錄)">
                     <i class="bi bi-inbox me-1"></i> 開錢櫃
@@ -108,7 +111,7 @@
                         <div class="col-md-5">
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text bg-dark border-secondary text-warning"><i class="bi bi-search"></i></span>
-                                <input type="text" id="posSearchInput" class="form-control" placeholder="搜尋餐點名稱或分類 (ESC 清除)..." autocomplete="off">
+                                <input type="text" id="posSearchInput" class="form-control" placeholder="搜尋餐點名稱或分類 / 掃條碼 (Enter 加入，ESC 清除)..." autocomplete="off">
                                 <button class="btn btn-outline-secondary text-white" type="button" data-action="clearSearch" aria-label="清除搜尋">
                                     <i class="bi bi-x-lg"></i>
                                 </button>
@@ -301,6 +304,11 @@
                                 <span class="table-chip" data-action="setTable" data-value="{{ t }}">{{ t }}</span>
                                 {% endfor %}
                             </div>
+                            {% if pos_cfg.quickNotes %}
+                            <div class="d-flex flex-wrap gap-1 mb-1" id="posQuickNotes" aria-label="常用備註">
+                                {% for n in pos_cfg.quickNotes %}<button type="button" class="btn btn-outline-light btn-sm py-0 pos-xxs" data-action="quickNote" data-note="{{ n }}">{{ n }}</button>{% endfor %}
+                            </div>
+                            {% endif %}
                             <div class="row g-1 align-items-center">
                                 <div class="col-6">
                                     <input type="text" id="posOrderNote" class="form-control form-control-sm" placeholder="整單備註 (如: 少油、分開裝)..." maxlength="200">

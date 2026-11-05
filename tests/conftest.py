@@ -293,8 +293,9 @@ def browser():
 
 @pytest.fixture
 def page(browser, live_url):
-    """每個測試一個乾淨的瀏覽器分頁；頁面上的 JS 錯誤與 CSP 違規會讓測試失敗"""
-    context = browser.new_context(base_url=live_url, viewport={'width': 1366, 'height': 900})
+    """每個測試一個乾淨的瀏覽器分頁 (zh-TW：點餐機第一次進站依瀏覽器語言選語言，Playwright 預設 en-US 會變成英文)；
+    頁面上的 JS 錯誤與 CSP 違規會讓測試失敗"""
+    context = browser.new_context(base_url=live_url, viewport={'width': 1366, 'height': 900}, locale='zh-TW')
     pg = context.new_page()
     problems = []
     pg.on('pageerror', lambda err: problems.append(f'JS 錯誤: {err}'))

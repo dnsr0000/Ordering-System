@@ -246,7 +246,7 @@ def _combo_sides_snapshot(line):
     return json.dumps([s.menu_item.uuid for s in line.sides if s.menu_item is not None])
 
 
-def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow_override=False):
+def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow_override=False, member=False):
     if not isinstance(items_data, list) or not items_data:
         raise AppError('點餐清單為空！')
     now = now or datetime.now()
@@ -325,7 +325,7 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
                 raise AppError(f'餐點【{menu_item.name}】非合法加購品項！')
             unit_price = (menu_item.add_on_price or 0) + extra
         else:
-            unit_price = max(0, menu_item.price_for(price_channel) + size_delta) + (combo.additional_price if combo else 0) \
+            unit_price = max(0, menu_item.price_for(price_channel, member=member) + size_delta) + (combo.additional_price if combo else 0) \
                 + choice_extra + extra
 
         original_price = None

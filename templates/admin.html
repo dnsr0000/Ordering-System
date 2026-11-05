@@ -83,7 +83,14 @@
                     <i class="bi bi-clock me-1 text-warning"></i><span id="live-clock">----/--/-- --:--:--</span>
                 </div>
                 <div class="d-flex align-items-center gap-2">
-                    <a href="{{ url_for('settings_admin.index') }}" class="btn btn-warning btn-sm fw-bold text-dark" id="nav-settings"><i class="bi bi-sliders me-1"></i>系統設定與進階功能</a>
+                    {% if current_user.has_permission('settings') %}<a href="{{ url_for('settings_admin.index') }}" class="btn btn-warning btn-sm fw-bold text-dark" id="nav-settings"><i class="bi bi-sliders me-1"></i>系統設定與進階功能</a>{% endif %}
+                    {% if current_user.role not in ('owner', 'manager') %}
+                    {% if current_user.has_permission('menu') %}<a href="{{ url_for('menu_pro.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-menu-pro"><i class="bi bi-clock-history me-1"></i>菜單進階設定</a>{% endif %}
+                    {% if current_user.has_permission('coupons') %}<a href="{{ url_for('promotions.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-promotions"><i class="bi bi-percent me-1"></i>促銷</a>{% endif %}
+                    {% if current_user.has_permission('members') %}<a href="{{ url_for('members_pro.manage') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-members-pro"><i class="bi bi-people me-1"></i>會員經營</a>{% endif %}
+                    {% if current_user.has_permission('feedback') %}<a href="{{ url_for('feedback.index') }}" class="btn btn-outline-warning btn-sm fw-bold" id="nav-feedback"><i class="bi bi-star-half me-1"></i>顧客評價</a>{% endif %}
+                    <a href="{{ url_for('kitchen.kitchen_display') if current_user.role == 'kitchen' else url_for('pos.pos_terminal') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-back-work"><i class="bi bi-arrow-left me-1"></i>回工作畫面</a>
+                    {% endif %}
                     {% if current_user.role in ('owner', 'manager') %}<a href="{{ url_for('live.index') }}" class="btn btn-outline-info btn-sm fw-bold" id="nav-live"><i class="bi bi-speedometer2 me-1"></i>即時看板</a>{% endif %}
                     <a href="{{ url_for('security.account') }}" class="btn btn-outline-light btn-sm fw-bold" id="nav-security"><i class="bi bi-shield-lock me-1"></i>帳號安全{% if not current_user.totp_enabled %} <span class="badge bg-danger">未啟用 2FA</span>{% endif %}</a>
                     {% if current_user.role == 'owner' %}
@@ -119,9 +126,13 @@
 
     <div class="container-fluid px-4">
         <ul class="nav nav-pills mb-4" id="adminTab" role="tablist">
+            {% set tab_perm = {'orders': 'reports', 'analytics': 'reports', 'menu': 'menu', 'rewards': 'coupons', 'users': 'members', 'audit': 'audit'} %}
+            {% set visible_tabs = [] %}
             {% for key, icon, label in [('orders', 'bi-receipt-cutoff', '實時訂單看板'), ('analytics', 'bi-graph-up-arrow', '營運分析'),
                                          ('menu', 'bi-grid-fill', '菜單品項管理'), ('rewards', 'bi-gift-fill', '回饋商城管理'),
-                                         ('users', 'bi-people-fill', '會員名冊與紅利'), ('audit', 'bi-shield-check', '操作稽核日誌')] %}
+                                         ('users', 'bi-people-fill', '會員名冊與紅利'), ('audit', 'bi-shield-check', '操作稽核日誌')]
+               if tab_perm[key] in tabs %}
+            {% set _ = visible_tabs.append(key) %}
             <li class="nav-item me-2" role="presentation">
                 <button class="nav-link{% if loop.first %} active{% endif %}" id="{{ key }}-tab" data-tab-key="{{ key }}" data-bs-toggle="tab"
                         data-bs-target="#{{ key }}-pane" type="button" role="tab">
@@ -133,16 +144,16 @@
 
         <div class="tab-content" id="adminTabContent">
             <!-- 1. 實時訂單看板 (由 admin.js 從 /api/admin_live_orders 載入並即時更新) -->
-            <div class="tab-pane fade show active" id="orders-pane" role="tabpanel">
+            {% if 'reports' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'orders' %} show active{% endif %}" id="orders-pane" role="tabpanel">
                 <div class="row g-3" id="admin-orders-grid">
                     <div class="col-12 text-center py-5 text-white-50">
                         <span class="spinner-border spinner-border-sm me-2" role="status"></span>訂單載入中...
                     </div>
                 </div>
-            </div>
+            </div>{% endif %}
 
             <!-- 2. 營運分析 -->
-            <div class="tab-pane fade" id="analytics-pane" role="tabpanel">
+            {% if 'reports' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'analytics' %} show active{% endif %}" id="analytics-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-bold text-white mb-0"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運分析</h5>
@@ -249,10 +260,10 @@
                         </div>
                     </div>
                 </div>
-            </div>
+            </div>{% endif %}
 
             <!-- 3. 菜單品項管理 -->
-            <div class="tab-pane fade" id="menu-pane" role="tabpanel">
+            {% if 'menu' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'menu' %} show active{% endif %}" id="menu-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
                         <h5 class="fw-bold mb-0 text-white"><i class="bi bi-list-stars text-warning me-2"></i>菜單品項清單</h5>
@@ -430,10 +441,10 @@
                         </table>
                     </div>
                 </div>
-            </div>
+            </div>{% endif %}
 
             <!-- 4. 回饋商城管理 (優惠券 + 兌換餐點) -->
-            <div class="tab-pane fade" id="rewards-pane" role="tabpanel">
+            {% if 'coupons' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'rewards' %} show active{% endif %}" id="rewards-pane" role="tabpanel">
                 <!-- 區塊 A：點數兌換優惠券管理 -->
                 <div class="card card-custom p-4 mb-4 border-warning">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
@@ -621,10 +632,10 @@
                         </table>
                     </div>
                 </div>
-            </div>
+            </div>{% endif %}
 
             <!-- 5. 會員名冊與紅利 -->
-            <div class="tab-pane fade" id="users-pane" role="tabpanel">
+            {% if 'members' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'users' %} show active{% endif %}" id="users-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4 reward-setting-card">
                     <form action="{{ url_for('admin.update_reward_setting') }}" method="POST">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -753,35 +764,17 @@
                     </nav>
                     {% endif %}
                 </div>
-            </div>
+            </div>{% endif %}
 
             <!-- 6. 操作稽核日誌 (StaffAuditLog & AdminLog) -->
-            {% set action_labels = {
-                'POS_CREATE_ORDER': ('POS 收銀建單', 'bg-warning text-dark'),
-                'CANCEL_ORDER': ('取消訂單回滾', 'bg-danger'),
-                'MARK_PICKED_UP': ('取餐核銷', 'bg-success'),
-                'EDIT_USER': ('修改會員/點數', 'bg-info text-dark'),
-                'POS_SET_MEMBER_PIN': ('櫃檯設定PIN', 'bg-info text-dark'),
-                'DELETE_USER': ('刪除會員', 'bg-secondary'),
-                'DELETE_MENU_ITEM': ('刪除菜單品項', 'bg-secondary'),
-                'COUPON_CHANGE': ('優惠券異動', 'bg-secondary'),
-                'COMBO_CHANGE': ('套餐異動', 'bg-secondary'),
-                'UPDATE_REWARD_SETTING': ('紅利設定異動', 'bg-secondary'),
-                'TOGGLE_USER_COUPON': ('會員券核銷切換', 'bg-secondary'),
-                'TOGGLE_REWARD_ITEM': ('紅利商品上下架', 'bg-secondary'),
-                'KITCHEN_COMPLETE_ALL': ('廚房一鍵出餐', 'bg-secondary'),
-                'AUTO_CLOSE_STALE_ORDERS': ('換日自動結案', 'bg-secondary'),
-                'STAFF_CREATE': ('新增員工帳號', 'bg-secondary'),
-                'STAFF_TOGGLE_ACTIVE': ('員工帳號啟停', 'bg-secondary'),
-                'STAFF_RESET_PASSWORD': ('重設員工密碼', 'bg-secondary'),
-                'STAFF_DELETE_ACCOUNT': ('刪除員工帳號', 'bg-secondary'),
-            } %}
-            <div class="tab-pane fade" id="audit-pane" role="tabpanel">
+            {% set action_labels = audit_action_labels %}
+            {% if 'audit' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'audit' %} show active{% endif %}" id="audit-pane" role="tabpanel">
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
                         <div>
-                            <h5 class="fw-bold mb-1 text-warning"><i class="bi bi-shield-check me-2"></i>員工關鍵操作與點數異動稽核日誌</h5>
-                            <small class="text-white-50">自動記錄 POS 收銀建單、會員點數代扣/補發、取消訂單回滾、重設 PIN 碼與刪除資料等操作</small>
+                            <h5 class="fw-bold mb-1 text-warning"><i class="bi bi-shield-check me-2"></i>員工關鍵操作與點數異動稽核日誌 (最近 200 筆)</h5>
+                            <small class="text-white-50">自動記錄 POS 收銀建單、會員點數代扣/補發、取消訂單回滾、重設 PIN 碼與刪除資料等操作；
+                                <a class="text-info" href="{{ url_for('audit.index') }}">完整紀錄 (分頁、依員工 / 動作 / 日期篩選、匯出 Excel)</a></small>
                         </div>
                         <div class="d-flex gap-2">
                             <input type="search" id="auditSearchInput" class="form-control form-control-sm audit-search" placeholder="搜尋員工、單號或內容..." aria-label="搜尋稽核日誌">
@@ -843,7 +836,8 @@
                 </div>
 
                 <div class="card card-custom p-4">
-                    <h6 class="fw-bold text-white mb-3"><i class="bi bi-door-open text-info me-2"></i>後台登入 / 登出日誌 (最近 100 筆)</h6>
+                    <h6 class="fw-bold text-white mb-3"><i class="bi bi-door-open text-info me-2"></i>後台登入 / 登出日誌 (最近 100 筆)
+                        <a class="small text-info ms-2" href="{{ url_for('audit.index', tab='logins') }}">完整紀錄</a></h6>
                     <div class="table-responsive scroll-35">
                         <table class="table table-dark-custom table-sm align-middle mb-0">
                             <thead>
@@ -871,7 +865,7 @@
                         </table>
                     </div>
                 </div>
-            </div>
+            </div>{% endif %}
         </div>
     </div>
 

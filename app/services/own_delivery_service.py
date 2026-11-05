@@ -107,6 +107,8 @@ def depart(order):
     if not order.driver_name:
         raise AppError('請先指派外送員')
     order.delivery_status, order.dispatched_at = 'out', datetime.now()
+    from app.services import push_service
+    push_service.notify_order(order, 'delivery_out')
 
 
 def complete(order, staff):

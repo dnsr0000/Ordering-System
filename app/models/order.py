@@ -56,6 +56,7 @@ class Order(TenantScoped, db.Model):
     payment_note = db.Column(db.String(120), nullable=False, default='', server_default='')
     # 線上點餐預約取餐時間 (空白 = 盡快)；廚房看板與 POS 顯示「預約 HH:MM」
     pickup_at = db.Column(db.DateTime, nullable=True, index=True)   # 預約取餐 (「今天的訂單」條件會用到，需索引)
+    estimated_ready_at = db.Column(db.DateTime, nullable=True)   # 結帳時預估的完成時間 (eta_service；預約單為空)
     # ---- 自有外送 (外送到府)：地址、電話、配送區域、外送費、外送員、配送狀態 (pending → assigned → out → delivered / failed) ----
     delivery_fee = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     delivery_address = db.Column(db.String(200), nullable=False, default='', server_default='')
@@ -128,6 +129,13 @@ class Order(TenantScoped, db.Model):
         return ref
 
     @property
+    def eta_label(self):
+        """預計完成時間 (製作中且有預估時 → HH:MM；其他狀態或預約單為空字串)"""
+        if self.estimated_ready_at is None or self.status != OrderStatus.PENDING or self.pickup_at is not None:
+            return ''
+        return self.estimated_ready_at.strftime('%H:%M')
+
+    @property
     def pickup_at_label(self):
         """預約取餐時間 (今天 → HH:MM，其他日期 → MM/DD HH:MM)；沒有預約為空字串"""
         if self.pickup_at is None:
@@ -158,6 +166,7 @@ class Order(TenantScoped, db.Model):
             'wallet_balance': self.user.wallet_balance if self.user else 0,
             'is_rush': bool(self.is_rush),
             'pickup_at': self.pickup_at_label,
+            'eta': self.eta_label,
             'payment_reference': self.masked_payment_reference,
             'card_last4': self.card_last4 or '',
             'invoice': self.invoice_summary(),
@@ -274,5 +283,9 @@ class OrderFeedback(TenantScoped, db.Model):
     rating = db.Column(db.Integer, nullable=False, default=5)
     comment = db.Column(db.String(500), nullable=False, default='')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now, index=True)
+    # 店家回覆 (第六輪)：回覆一句並通知顧客；勾「公開」後在點餐頁 / 追蹤頁顯示 (匿名化)
+    reply = db.Column(db.String(300), nullable=False, default='', server_default='')
+    replied_at = db.Column(db.DateTime, nullable=True)
+    is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
 
     order = db.relationship('Order')

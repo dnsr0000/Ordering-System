@@ -41,6 +41,8 @@ def register_blueprints(app):
     from app.routes.api_v1 import api_v1
     from app.routes.pnl import pnl_bp
     from app.routes.group_orders import group_bp
+    from app.routes.audit_log import audit_bp
+    from app.routes.tenants_admin import tenants_bp
     from app.sync.hub import sync_api
 
     for bp in (customer_bp, auth_bp, rewards_bp, kitchen_bp, pickup_bp, admin_bp, pos_bp, orders_bp, media_bp,
@@ -50,5 +52,5 @@ def register_blueprints(app):
                member_auth_bp, reports_bp, timeclock_bp, system_bp, security_bp, feedback_bp,
                gift_cards_bp, purchasing_bp, live_bp, dispatch_bp, passes_bp, table_pay_bp,
                branches_bp, marketing_bp, integrations_bp, devices_bp, api_v1,
-               archive_bp, pnl_bp, group_bp):
+               archive_bp, pnl_bp, group_bp, audit_bp, tenants_bp):
         app.register_blueprint(bp)

@@ -21,7 +21,7 @@ from app.models.system import AuthThrottle
 from app.models.table import DiningTable, TablePayment
 from app.models.branch import BranchMenuOverride, StockTransfer
 from app.models.marketing import CampaignSend, MarketingCampaign
-from app.models.integration import ApiKey, Device, WebhookDelivery, WebhookEndpoint, WebhookOrderState
+from app.models.integration import ApiKey, Device, PushSubscription, WebhookDelivery, WebhookEndpoint, WebhookOrderState
 from app.models.expense import CostHistory, Expense
 from app.models.group_order import GroupOrder, GroupOrderEntry
 from app.models.sync import (
@@ -38,6 +38,6 @@ __all__ = [
     'OtpCode', 'Promotion', 'Reservation', 'WaitlistEntry', 'TimeClock', 'WorkSchedule', 'OrderFeedback', 'ServiceCall',
     'StampLedger', 'GiftCard', 'GiftCardLedger', 'Supplier', 'PurchaseOrder', 'PurchaseOrderLine', 'IngredientLot',
     'PassProduct', 'MemberPass', 'PassLedger', 'TablePayment', 'BranchMenuOverride', 'StockTransfer',
-    'MarketingCampaign', 'CampaignSend', 'ApiKey', 'WebhookEndpoint', 'WebhookDelivery', 'WebhookOrderState', 'Device',
+    'MarketingCampaign', 'CampaignSend', 'ApiKey', 'WebhookEndpoint', 'WebhookDelivery', 'WebhookOrderState', 'Device', 'PushSubscription',
     'Expense', 'CostHistory', 'GroupOrder', 'GroupOrderEntry',
 ]

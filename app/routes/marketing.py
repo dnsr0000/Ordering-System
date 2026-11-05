@@ -6,14 +6,14 @@ from flask import Blueprint, flash, g, redirect, render_template, request, send_
 from flask_login import current_user
 from openpyxl import Workbook
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.coupon import Coupon
 from app.models.marketing import CAMPAIGN_KINDS, MarketingCampaign
 from app.services import marketing_service
 from app.services.audit import record_staff_audit
-from app.utils import get_own, neutralize_formulas, role_required
+from app.services.approval_service import permission_required
+from app.utils import get_own, neutralize_formulas
 
 marketing_bp = Blueprint('marketing', __name__)
 
@@ -24,7 +24,7 @@ def _campaign(cid):
 
 
 @marketing_bp.route('/admin/marketing', methods=['GET', 'POST'], endpoint='index')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def index():
     can_run = marketing_service.can_run()
     if request.method == 'POST':

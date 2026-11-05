@@ -7,8 +7,8 @@
     {% for category, message in messages %}
     {% set style, icon = styles.get(category, ('info', 'bi-info-circle-fill')) %}
     <div class="alert alert-{{ style }} alert-dismissible fade show shadow" role="alert">
-      <i class="bi {{ icon }} me-1" aria-hidden="true"></i><span class="flash-text">{{ message|flash_text }}</span>
-      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="關閉"></button>
+      <i class="bi {{ icon }} me-1" aria-hidden="true"></i><span class="flash-text">{{ message|flash_text|tr_msg }}</span>
+      <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="{{ ui.close if ui else '關閉' }}"></button>
     </div>
     {% endfor %}
   </div>

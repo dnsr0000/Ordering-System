@@ -3,14 +3,14 @@ from datetime import date
 
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
-from app.services import settings_service
+from app.services import ai_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.settings_service import TIME_RE
-from app.utils import get_own, role_required, safe_int
+from app.services.approval_service import permission_required
+from app.utils import get_own, safe_int
 
 menu_pro_bp = Blueprint('menu_pro', __name__)
 
@@ -38,7 +38,7 @@ def apply_pro_form(item, form):
         raise AppError('販售結束日不可早於開始日')
     item.avail_start, item.avail_end, item.avail_days = start, end, days
     item.sale_from, item.sale_until = sale_from, sale_until
-    for ch in ('takeout_price', 'online_price', 'delivery_price'):
+    for ch in ('takeout_price', 'online_price', 'delivery_price', 'member_price'):
         setattr(item, ch, max(0, safe_int(form.get(ch), 0)))
     item.allergens = ','.join(a for a in form.getlist('allergens') if a in ALLERGENS)
     item.diet = form.get('diet') if form.get('diet') in DIETS else ''
@@ -54,11 +54,45 @@ def apply_pro_form(item, form):
     item.size_options = ', '.join(f'{n}:{d:+d}' if d else f'{n}:0' for n, d in sizes)
     item.calories = min(5000, max(0, safe_int(form.get('calories'), 0)))
     item.nutrition = (form.get('nutrition') or '').strip()[:200]
+    item.prep_minutes = min(120, max(0, safe_int(form.get('prep_minutes'), 0)))
+    item.prep_note = (form.get('prep_note') or '').strip()[:500]
     return item
 
 
+def translate_menu(overwrite=False):
+    """AI 一鍵翻譯：品項的 name / description 與分類的英 / 日文。預設只填空白欄位 (不覆蓋手填)；回 (填入欄位數, 來源)"""
+    items = MenuItem.query.order_by(MenuItem.id).all()
+    categories = sorted({(i.category or '未分類').strip() for i in items})
+    translations = {t.category: t for t in CategoryTranslation.query.all()}
+    entries = [{'name': i.name, 'description': i.description or ''} for i in items] + [{'name': c, 'description': ''} for c in categories]
+    results, source = ai_service.translate_entries(entries)
+    filled = 0
+
+    def put(obj, field, value, limit):
+        nonlocal filled
+        if value and (overwrite or not getattr(obj, field)):
+            setattr(obj, field, value[:limit])
+            filled += 1
+    for item, got in zip(items, results[:len(items)]):
+        put(item, 'name_en', got['name_en'], 100)
+        put(item, 'name_ja', got['name_ja'], 100)
+        if item.description:
+            put(item, 'description_en', got['description_en'], 300)
+            put(item, 'description_ja', got['description_ja'], 300)
+    for cat, got in zip(categories, results[len(items):]):
+        row = translations.get(cat)
+        if row is None and (got['name_en'] or got['name_ja']):
+            row = CategoryTranslation(tenant_id=g.tenant_id, category=cat)
+            db.session.add(row)
+            translations[cat] = row
+        if row is not None:
+            put(row, 'name_en', got['name_en'], 60)
+            put(row, 'name_ja', got['name_ja'], 60)
+    return filled, source
+
+
 @menu_pro_bp.route('/admin/menu_pro', methods=['GET', 'POST'], endpoint='manage')
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def manage():
     if request.method == 'POST':
         action = request.form.get('action')
@@ -84,6 +118,14 @@ def manage():
                 row.name_en = (request.form.get(f'en__{cat}') or '').strip()[:60]
                 row.name_ja = (request.form.get(f'ja__{cat}') or '').strip()[:60]
             flash('已更新分類翻譯', 'success')
+        elif action == 'translate':
+            filled, source = translate_menu(overwrite=request.form.get('overwrite') == '1')
+            record_staff_audit('MENU_TRANSLATE', details=f'AI 翻譯菜單：填入 {filled} 個欄位 ({source})')
+            if filled:
+                flash(f'已填入 {filled} 個翻譯欄位 ({"Gemini" if source == "gemini" else "規則字典 (未設定 GEMINI_API_KEY，只翻常見分類 / 品名)"})；'
+                      '請逐一檢查後再儲存修改', 'success')
+            else:
+                flash('沒有可填的欄位 (都已有翻譯，或規則字典沒有對應；設定 GEMINI_API_KEY 後可翻譯任意品名)', 'warning')
         else:
             raise AppError('不支援的操作')
         db.session.commit()
@@ -93,4 +135,4 @@ def manage():
     translations = {t.category: t for t in CategoryTranslation.query.all()}
     return render_template('admin_menu_pro.html', items=items, categories=categories, translations=translations,
                            allergens=ALLERGENS, diets=DIETS, weekdays=WEEKDAY_LABELS,
-                           menu_cfg=settings_service.get('menu'))
+                           menu_cfg=dict(settings_service.get('menu'), ai_ready=ai_service.has_api_key()))

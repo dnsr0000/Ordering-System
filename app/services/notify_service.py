@@ -1,11 +1,16 @@
-"""取餐通知：餐點完成時 LINE 推播給綁定 LINE 的會員 (叫號看板語音與手機追蹤頁由前端處理)"""
+"""取餐通知：餐點完成時 LINE 推播給綁定 LINE 的會員、Web Push 給在出餐進度頁訂閱通知的顧客 (push_service)；
+叫號看板語音與手機追蹤頁由前端處理"""
 from app.extensions import db
 from app.services import deferred, settings_service
 
 
 def order_ready(order):
     """訂單轉為已出餐時呼叫 (在狀態變更的交易中)；推播在交易提交後送出"""
-    if order is None or not order.user_id:
+    if order is None:
+        return
+    from app.services import push_service
+    push_service.notify_order(order, 'ready')
+    if not order.user_id:
         return
     cfg = settings_service.get('notify', order.tenant_id)
     if not cfg.get('line_ready'):

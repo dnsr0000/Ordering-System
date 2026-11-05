@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}稽核紀錄 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid py-4 px-4" id="auditPage">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <h1 class="h4 fw-bold mb-0"><i class="bi bi-shield-check me-2 text-warning"></i>稽核紀錄</h1>
+        <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-outline-light" href="{{ url_for('admin.admin_dashboard', tab='audit') }}">回後台首頁</a>
+            <a class="btn btn-sm btn-outline-success" id="auditExportBtn" href="{{ url_for('audit.export', **args) }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel (目前篩選)</a>
+        </div>
+    </div>
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item"><a class="nav-link {{ 'active' if f.tab == 'actions' }}" href="{{ url_for('audit.index') }}">員工操作稽核</a></li>
+        <li class="nav-item"><a class="nav-link {{ 'active' if f.tab == 'logins' }}" href="{{ url_for('audit.index', tab='logins') }}">後台登入 / 登出日誌</a></li>
+    </ul>
+    <form class="row g-2 align-items-end mb-3" method="GET" id="auditFilterForm">
+        <input type="hidden" name="tab" value="{{ f.tab }}">
+        <div class="col-6 col-md-2"><label class="form-label small mb-0" for="af-staff">員工</label>
+            <select class="form-select form-select-sm" id="af-staff" name="staff"><option value="">全部</option>
+                {% for n in staff_names %}<option value="{{ n }}" {{ 'selected' if f.staff == n }}>{{ n }}</option>{% endfor %}</select></div>
+        {% if f.tab == 'actions' %}
+        <div class="col-6 col-md-2"><label class="form-label small mb-0" for="af-action">動作類型</label>
+            <select class="form-select form-select-sm" id="af-action" name="action"><option value="">全部</option>
+                {% for key, meta in action_labels.items() %}<option value="{{ key }}" {{ 'selected' if f.action == key }}>{{ meta[0] }}</option>{% endfor %}</select></div>
+        {% endif %}
+        <div class="col-6 col-md-2"><label class="form-label small mb-0" for="af-start">起始日</label>
+            <input class="form-control form-control-sm" type="date" id="af-start" name="start" value="{{ f.start }}"></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-0" for="af-end">結束日</label>
+            <input class="form-control form-control-sm" type="date" id="af-end" name="end" value="{{ f.end }}"></div>
+        <div class="col-8 col-md-3"><label class="form-label small mb-0" for="af-q">{{ '搜尋 IP' if f.tab == 'logins' else '關鍵字 (單號 / 會員 ID / 內容 / IP)' }}</label>
+            <input class="form-control form-control-sm" type="search" id="af-q" name="q" value="{{ f.q }}" maxlength="100"></div>
+        <div class="col-4 col-md-1 d-flex gap-1">
+            <button class="btn btn-sm btn-outline-info" type="submit">查詢</button>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('audit.index', tab=f.tab) }}">清除</a>
+        </div>
+    </form>
+    <div class="small text-white-50 mb-2" id="auditSummary">共 {{ total }} 筆，第 {{ page }} / {{ pages }} 頁 (每頁 {{ page_size }} 筆)</div>
+    <div class="table-responsive">
+        {% if f.tab == 'logins' %}
+        <table class="table table-dark-custom table-sm align-middle mb-0" id="loginLogTable">
+            <thead><tr class="text-white-50 small"><th>ID</th><th>員工帳號</th><th>登入時間</th><th>登出時間</th><th>IP 位址</th></tr></thead>
+            <tbody>
+            {% for lg in rows %}
+            <tr><td class="text-white-50">#{{ lg.id }}</td><td class="fw-bold text-white">{{ lg.username }}</td>
+                <td class="small text-info">{{ lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '' }}</td>
+                <td class="small text-white-50">{{ lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '尚未登出' }}</td>
+                <td class="small text-white-50">{{ lg.ip_address or '-' }}</td></tr>
+            {% else %}<tr><td colspan="5" class="text-center text-white-50 py-3">沒有符合的紀錄</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <table class="table table-dark-custom table-sm align-middle mb-0" id="auditLogTable">
+            <thead><tr class="text-white-50 small"><th>時間</th><th>員工 (角色)</th><th>動作</th><th>單號 / 會員</th><th>點數</th><th>說明</th><th>IP</th></tr></thead>
+            <tbody>
+            {% for au in rows %}
+            {% set label = action_labels.get(au.action_type, (au.action_type, 'bg-secondary')) %}
+            <tr class="audit-row" data-audit-action="{{ au.action_type }}">
+                <td class="text-white-50 small text-nowrap">{{ au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else '' }}</td>
+                <td><span class="fw-bold text-white">{{ au.staff_username }}</span> <span class="badge bg-secondary">{{ au.staff_role }}</span></td>
+                <td><span class="badge {{ label[1] }}">{{ label[0] }}</span></td>
+                <td class="small">{% if au.target_order_id %}<span class="badge bg-dark border border-secondary me-1">單號 #{{ au.target_order_id }}</span>{% endif %}
+                    {% if au.target_user_id %}<span class="badge bg-dark border border-warning text-warning">會員 #{{ au.target_user_id }}</span>{% endif %}
+                    {% if not au.target_order_id and not au.target_user_id %}<span class="text-white-50">-</span>{% endif %}</td>
+                <td class="fw-bold">{% if au.points_delta %}<span class="{{ 'text-success' if au.points_delta > 0 else 'text-danger' }}">{{ '%+d' % au.points_delta }} 點</span>{% else %}<span class="text-white-50">0</span>{% endif %}</td>
+                <td class="small text-white">{{ au.details }}</td>
+                <td class="small text-white-50">{{ au.ip_address or '-' }}</td>
+            </tr>
+            {% else %}<tr><td colspan="7" class="text-center text-white-50 py-3">沒有符合的紀錄</td></tr>{% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+    {% if pages > 1 %}
+    <nav aria-label="分頁" class="mt-3">
+        <ul class="pagination pagination-sm justify-content-center mb-0" id="auditPagination">
+            <li class="page-item {{ 'disabled' if page == 1 }}"><a class="page-link" href="{{ url_for('audit.index', page=page - 1, **args) }}">上一頁</a></li>
+            {% for p in range([1, page - 3] | max, [pages, page + 3] | min + 1) %}
+            <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="{{ url_for('audit.index', page=p, **args) }}">{{ p }}</a></li>
+            {% endfor %}
+            <li class="page-item {{ 'disabled' if page == pages }}"><a class="page-link" href="{{ url_for('audit.index', page=page + 1, **args) }}">下一頁</a></li>
+        </ul>
+    </nav>
+    {% endif %}
+</main>
+{% endblock %}

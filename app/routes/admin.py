@@ -20,7 +20,8 @@ from app.models.user import AdminLog, StaffAuditLog, User
 from app.routes.sync_admin import node_name_map
 from app.services import (ai_service, analytics_service, backup_service, coupon_service, excel_service, line_service,
                           menu_service, wallet_service)
-from app.services.audit import record_staff_audit
+from app.services.approval_service import permission_required
+from app.services.audit import ACTION_LABELS, record_staff_audit
 from app.services import auth_throttle
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.bootstrap import seed_tenant_defaults
@@ -79,14 +80,21 @@ def admin_dashboard():
 
     if not current_user.is_authenticated:
         return render_template('admin.html', is_admin=False)
-    if current_user.role not in MANAGER_ROLES:
-        # 後台含會員個資與稽核紀錄：櫃檯與廚房直接進入各自的工作畫面
+    from app.models.enums import PAGE_PERMISSIONS
+    tabs = [p for p in PAGE_PERMISSIONS if current_user.has_permission(p)]
+    if current_user.role not in MANAGER_ROLES and not tabs:
+        # 後台含會員個資與稽核紀錄：櫃檯與廚房 (沒有被授權任何後台分頁時) 直接進入各自的工作畫面
         return redirect(url_for('kitchen.kitchen_display' if current_user.role == 'kitchen' else 'pos.pos_terminal'))
+    if current_user.role in MANAGER_ROLES:
+        tabs = list(PAGE_PERMISSIONS) + ['audit']
 
     limit = max(1, request.args.get('limit', 3, type=int))
     orders = analytics_service.load_dashboard_orders()
     start, _end = todays_range()
-    items = MenuItem.query.all()
+    # 套餐分頁逐筆列出每個品項的套餐與配餐：一次載入 (否則每個品項各查一次 combo_option，N+1)
+    from sqlalchemy.orm import selectinload
+    from app.models.menu import ComboOption
+    items = MenuItem.query.options(selectinload(MenuItem.combo_options).selectinload(ComboOption.sides)).all()
     # 會員名冊分頁 + 搜尋 (會員數上千時不再一次載入全部；持券於開啟票券視窗時才載入)
     member_q = (request.args.get('uq') or '').strip()[:50]
     users_query = User.query
@@ -122,8 +130,10 @@ def admin_dashboard():
         reward_setting=get_or_create_reward_setting(g.tenant_id),
         tenant=g.tenant,
         audit_logs=StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all(),
+        audit_action_labels=ACTION_LABELS,
         admin_logs=AdminLog.query.order_by(AdminLog.id.desc()).limit(100).all(),
         is_platform_admin=is_platform_admin(),
+        tabs=tabs,   # 可見的分頁 (櫃檯 / 廚房依授權的頁面權限)
         # 整庫備份/還原只適用於 SQLite (backup_service.require_sqlite)；其他資料庫隱藏並顯示說明
         backup_available=db.engine.dialect.name == 'sqlite',
         db_dialect='PostgreSQL' if db.engine.dialect.name == 'postgresql' else db.engine.dialect.name,
@@ -329,7 +339,7 @@ def _store_uploaded_image(item):
 
 
 @admin_bp.route('/admin/add', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def add_item():
     item = menu_service.apply_menu_form(MenuItem(tenant_id=g.tenant_id, image_path=''), request.form, form_flag)
     _store_uploaded_image(item)
@@ -339,7 +349,7 @@ def add_item():
 
 
 @admin_bp.route('/admin/edit/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def edit_item(id):
     item = db.get_or_404(MenuItem, id)
     menu_service.apply_menu_form(item, request.form, form_flag)
@@ -351,7 +361,7 @@ def edit_item(id):
 
 
 @admin_bp.route('/admin/delete/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def delete_item(id):
     item = db.get_or_404(MenuItem, id)
     if item.image_path:
@@ -363,7 +373,7 @@ def delete_item(id):
 
 
 @admin_bp.route('/admin/add_combo', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def add_combo():
     combo = menu_service.save_combo(ComboOption(tenant_id=g.tenant_id), request.form, form_flag)
     db.session.add(combo)
@@ -374,7 +384,7 @@ def add_combo():
 
 
 @admin_bp.route('/admin/edit_combo/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def edit_combo(id):
     combo = menu_service.save_combo(db.get_or_404(ComboOption, id), request.form, form_flag)
     record_staff_audit('COMBO_CHANGE', details=f"編輯套餐 #{combo.id}：{combo.name} (主餐 #{combo.main_item_id}，加價 ${combo.additional_price})")
@@ -383,7 +393,7 @@ def edit_combo(id):
 
 
 @admin_bp.route('/admin/delete_combo/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def delete_combo(id):
     combo = db.get_or_404(ComboOption, id)
     record_staff_audit('COMBO_CHANGE', details=f"刪除套餐 #{combo.id}：{combo.name}")
@@ -393,7 +403,7 @@ def delete_combo(id):
 
 
 @admin_bp.route('/admin/add_reward', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def add_reward():
     item = db.get_or_404(MenuItem, safe_int(request.form.get('item_id')))
     menu_service.set_item_reward_status(item, True, request.form.get('reward_points'), request.form.get('reward_discount_points'))
@@ -402,7 +412,7 @@ def add_reward():
 
 
 @admin_bp.route('/admin/remove_reward/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def remove_reward_item(id):
     menu_service.set_item_reward_status(db.get_or_404(MenuItem, id), False)
     db.session.commit()
@@ -455,7 +465,7 @@ def _coupon_desc(c):
 
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def add_coupon():
     coupon = _apply_coupon_form(Coupon(tenant_id=g.tenant_id))
     db.session.add(coupon)
@@ -465,7 +475,7 @@ def add_coupon():
 
 
 @admin_bp.route('/admin/edit_coupon/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def edit_coupon(id):
     coupon = db.get_or_404(Coupon, id)
     before = _coupon_desc(coupon)
@@ -476,7 +486,7 @@ def edit_coupon(id):
 
 
 @admin_bp.route('/admin/delete_coupon/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def delete_coupon(id):
     coupon = db.get_or_404(Coupon, id)
     record_staff_audit('COUPON_CHANGE', details=f"刪除優惠券：{coupon.title} ({coupon.code})，連同會員已領取的 {len(coupon.user_coupons)} 張持券")
@@ -489,7 +499,7 @@ def delete_coupon(id):
 # 會員
 # ==============================================================================
 @admin_bp.route('/admin/delete_user/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('members')
 def delete_user(id):
     user = db.get_or_404(User, id)
     if user.photo_path:
@@ -505,7 +515,7 @@ def delete_user(id):
 
 
 @admin_bp.route('/admin/edit_user/<int:id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('members')
 def edit_user(id):
     user = db.get_or_404(User, id)
     old = (user.name, user.phone, user.points or 0)
@@ -555,7 +565,7 @@ def edit_user(id):
 
 
 @admin_bp.route('/admin/coupons/<int:coupon_id>/issue', methods=['POST'], endpoint='issue_coupon')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def issue_coupon(coupon_id):
     """批量發放會員券"""
     coupon = get_own(Coupon, coupon_id, '優惠券')
@@ -589,7 +599,7 @@ def issue_coupon(coupon_id):
 
 
 @admin_bp.route('/admin/coupon_batches/<batch_id>/revoke', methods=['POST'], endpoint='revoke_coupon_batch')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def revoke_coupon_batch(batch_id):
     """撤回一次發放中尚未使用的券 (發錯對象時使用；已使用的保留)"""
     n = coupon_service.revoke_batch(g.tenant_id, str(batch_id)[:36])
@@ -600,7 +610,7 @@ def revoke_coupon_batch(batch_id):
 
 
 @admin_bp.route('/admin/users/<int:user_id>/coupons', endpoint='user_coupons')
-@role_required(*MANAGER_ROLES)
+@permission_required('members')
 def user_coupons(user_id):
     """會員票券視窗的資料 (開啟時才載入)"""
     user = db.get_or_404(User, user_id)
@@ -609,7 +619,7 @@ def user_coupons(user_id):
 
 
 @admin_bp.route('/admin/toggle_user_coupon/<int:uc_id>', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('members')
 def toggle_user_coupon(uc_id):
     uc = db.get_or_404(UserCoupon, uc_id)
     uc.is_used = not uc.is_used
@@ -623,7 +633,7 @@ def toggle_user_coupon(uc_id):
 
 
 @admin_bp.route('/admin/update_reward_setting', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def update_reward_setting():
     s = get_or_create_reward_setting(g.tenant_id)
     before = (s.is_enabled, s.points_per_dollar, s.max_discount_per_order, s.spend_per_point)
@@ -673,12 +683,17 @@ def restore_backup():
     return redirect(_dashboard())
 
 
+EXPORT_TABLE_PERMISSION = {'User': 'members', 'UserCoupon': 'members', 'Coupon': 'coupons', 'MenuItem': 'menu', 'Order': 'reports'}
+
+
 @admin_bp.route('/admin/export_excel', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def export_excel():
-    tables = request.form.getlist('tables')
+    # 資料表依頁面權限過濾：只有「菜單」權限的櫃檯不能匯出會員 / 訂單 (匯出按鈕在菜單分頁，整個路由以 menu 權限進入)
+    tables = [t for t in request.form.getlist('tables')
+              if current_user.has_permission(EXPORT_TABLE_PERMISSION.get(t, 'members'))]
     if not tables:
-        raise AppError('❌ 請至少勾選一個資料表！')
+        raise AppError('❌ 請至少勾選一個資料表 (且您有該資料的頁面權限)！')
     start, end = request.form.get('start_date'), request.form.get('end_date')
     suffix = f"_{start}_to_{end}" if start and end else ''
     return send_file(excel_service.generate_excel_export(tables, start, end), as_attachment=True,
@@ -687,12 +702,14 @@ def export_excel():
 
 
 @admin_bp.route('/admin/import_smart', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def import_smart():
     file = request.files.get('file')
     if not file or not file.filename:
         raise AppError('❌ 請選擇 Excel / CSV 檔案！')
-    counts = excel_service.import_workbook(file)
+    # 會員 / 優惠券工作表需要對應的頁面權限 (只有菜單權限的櫃檯不能匯入會員資料)
+    counts = excel_service.import_workbook(file, allow_users=current_user.has_permission('members'),
+                                           allow_coupons=current_user.has_permission('coupons'))
     flash(f"智慧匯入完成！會員 {counts['User']} 筆、菜單 {counts['MenuItem']} 筆、優惠券 {counts['Coupon']} 筆", 'success')
     return redirect(_dashboard('menu'))
 
@@ -701,7 +718,7 @@ def import_smart():
 # 前端即時資料與 AI 文案
 # ==============================================================================
 @admin_bp.route('/api/admin_live_orders')
-@role_required(*MANAGER_ROLES)
+@permission_required('reports')
 def api_admin_live_orders():
     orders = analytics_service.load_dashboard_orders()
     start, end = todays_range()
@@ -733,7 +750,7 @@ def api_admin_live_orders():
 
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])
-@role_required(*MANAGER_ROLES)
+@permission_required('menu')
 def api_generate_item_description():
     data = get_json_dict()
     name = str(data.get('name', '')).strip()

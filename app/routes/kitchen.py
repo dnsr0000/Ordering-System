@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from flask import Blueprint, g, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy.orm import selectinload
 
@@ -51,6 +51,8 @@ def api_kitchen_orders():
     resolve = kitchen_service.station_resolver()
     menu = {m.id: m for m in MenuItem.query.all()}
     stations = {s.id: s.name for s in kitchen_service.active_stations()}
+    from app.models.inventory import RecipeLine
+    recipe_ids = {r[0] for r in db.session.query(RecipeLine.menu_item_id).distinct()}   # 有配方的品項也有製作卡
     result = []
     for o in orders:
         lines = {}
@@ -63,9 +65,11 @@ def api_kitchen_orders():
                 mine_pending = True
             note = '' if i.is_reward and i.customization == '紅利免費兌換' else (i.customization or '')
             key = (i.item_name, note, sid, i.prepared_at is not None)
+            m = menu.get(i.menu_item_id)
             line = lines.setdefault(key, {'name': i.item_name, 'quantity': 0, 'customization': note,
                                           'station': stations.get(sid, ''), 'done': i.prepared_at is not None,
-                                          'voided': 0})
+                                          'voided': 0, 'menu_item_id': i.menu_item_id,
+                                          'has_card': bool(m is not None and (m.prep_note or m.id in recipe_ids))})
             line['quantity'] += i.quantity if i.quantity is not None else 1   # 單品作廢後剩下的份數 (可能為 0)
             line['voided'] += i.voided_qty or 0
         if station is not None and not mine_pending:
@@ -73,6 +77,7 @@ def api_kitchen_orders():
         result.append({
             'id': o.id,
             'pickup_number': o.display_pickup_number,
+            'eta': o.eta_label,
             'table_number': o.table_number,
             'order_type': o.order_type,
             'order_source': o.order_source,
@@ -89,6 +94,20 @@ def api_kitchen_orders():
         })
     result.sort(key=lambda r: (not r['is_rush'], max(r['timestamp'], r['sort_at'])))
     return jsonify({'success': True, 'orders': result})
+
+
+@kitchen_bp.route('/api/kitchen/prep_card/<int:item_id>', endpoint='prep_card')
+@role_required(*KITCHEN_ROLES)
+def api_prep_card(item_id):
+    """廚房製作卡：做法 (menu_item.prep_note)、製作時間、配方用量 (每份)"""
+    from app.models.inventory import RecipeLine
+    item = get_own(MenuItem, item_id, '品項')
+    recipe = [{'ingredient': rl.ingredient.name, 'quantity': rl.quantity, 'unit': rl.ingredient.unit}
+              for rl in RecipeLine.query.filter_by(menu_item_id=item.id).all() if rl.ingredient is not None]
+    return jsonify({'success': True, 'id': item.id, 'name': item.name, 'category': item.category or '',
+                    'prep_note': item.prep_note or '', 'prep_minutes': item.prep_minutes or 0,
+                    'image': url_for('media.menu_image', filename=item.image_path) if item.image_path else '',
+                    'recipe': recipe})
 
 
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])

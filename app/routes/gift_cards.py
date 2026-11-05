@@ -3,19 +3,19 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy import func
 
-from app.models.enums import MANAGER_ROLES
 from app.errors import AppError
 from app.extensions import db
 from app.models.member import GiftCard, GiftCardLedger
 from app.services import giftcard_service
 from app.services.audit import record_staff_audit
-from app.utils import find_own, get_own, role_required
+from app.services.approval_service import permission_required
+from app.utils import find_own, get_own
 
 gift_cards_bp = Blueprint('gift_cards', __name__)
 
 
 @gift_cards_bp.route('/admin/gift_cards', methods=['GET', 'POST'], endpoint='index')
-@role_required(*MANAGER_ROLES)
+@permission_required('coupons')
 def index():
     if request.method == 'POST':
         card = get_own(GiftCard, request.form.get('card_id'), '禮物卡')

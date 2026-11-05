@@ -17,6 +17,8 @@
 
     {# 頁面資料以 JSON 嵌入 (不會被執行，不受 CSP 限制)，由 Kiosk.pageData() 讀取 #}
     {% block page_data %}{% endblock %}
+    {# 顧客頁非中文時：介面文字給前端 JS (Kiosk.t)；中文與員工頁不輸出 (JS 內建中文) #}
+    {% if lang and lang != 'zh' %}<script type="application/json" id="ui-data">{{ ui|tojson }}</script>{% endif %}
     <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/common.js') }}"></script>
     {% if device_registered %}<script src="{{ url_for('static', filename='js/device.js') }}"></script>{% endif %}

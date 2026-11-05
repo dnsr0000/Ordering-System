@@ -172,11 +172,14 @@ def run_daily_jobs(now=None):
             mark(now.date().isoformat())
             db.session.commit()
             try:
-                run_sqlite_backup(cfg.get('keep_days') or 14)
+                path = run_sqlite_backup(cfg.get('keep_days') or 14)
                 done.append('backup')
             except Exception as exc:  # noqa: BLE001
                 from app.services import monitor_service
                 monitor_service.alert(f'自動備份失敗：{exc}', key='auto-backup', tenant_id=tid)
+            else:
+                from app.services import offsite_backup_service
+                offsite_backup_service.upload_after_backup(path, tid)   # 異地備份 (失敗只通知)
         if not sync_runtime.is_node():
             due, mark = _due_today(f'birthday:{tid}', '09:00', now)
             if due:
@@ -184,6 +187,14 @@ def run_daily_jobs(now=None):
                 db.session.commit()
                 if wallet_service.grant_birthday_gifts(tid, now.date()):
                     done.append('birthday')
+            due, mark = _due_today(f'push_cleanup:{tid}', '04:30', now)
+            if due:   # Web Push 訂閱：訂單早已結束的訂閱清掉
+                mark(now.date().isoformat())
+                db.session.commit()
+                from app.services import push_service
+                if push_service.cleanup(now):
+                    db.session.commit()
+                    done.append('push_cleanup')
             due, mark = _due_today(f'points_expiry:{tid}', '04:00', now)
             if due:   # 點數到期 (先進先出) 與到期前提醒：只在線上端 / 單機執行
                 mark(now.date().isoformat())

@@ -63,7 +63,8 @@ def test_demo_seed_reports_reset_and_remove(app):
         assert any(o.status == 'Cancelled' for o in orders) and any(o.status == 'PickedUp' for o in orders)
         rep = report_service.build_report(tid, start, today)
         assert rep['order_count'] > 0 and rep['cogs'] > 0 and rep['labor_cost'] > 0 and len(rep['by_method']) >= 3
-        pnl = pnl_service.statement(tid, today.replace(day=1) if today.day > 4 else start, today)
+        # 範圍含上個月：每月 1~4 日時本月的示範費用 (5 日起) 都還沒發生，只看本月會是 0 (之前在月初會失敗)
+        pnl = pnl_service.statement(tid, (start - timedelta(days=31)).replace(day=1), today)
         assert pnl['expense_total'] > 0 and pnl['fee_total'] > 0
         journal = accounting_service.journal(tid, start, today)
         assert journal and all(v['debit'] == v['credit'] for v in journal)

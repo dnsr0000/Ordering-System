@@ -91,6 +91,8 @@ class MenuItem(TenantScoped, db.Model):
     takeout_price = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     online_price = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     delivery_price = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    member_price = db.Column(db.Integer, nullable=False, default=0, server_default='0')   # 會員價 (0 = 無；登入會員時與通路價取低者)
+    prep_note = db.Column(db.String(500), nullable=False, default='', server_default='')     # 廚房製作卡 (做法 / 擺盤重點，KDS 點品項顯示)
     # ---- 過敏原 (ALLERGENS 代碼，逗號分隔)、素食、辣度 0~3 ----
     allergens = db.Column(db.String(200), nullable=False, default='', server_default='')
     diet = db.Column(db.String(20), nullable=False, default='', server_default='')
@@ -108,6 +110,8 @@ class MenuItem(TenantScoped, db.Model):
     # 熱量 (大卡，0 = 未標示) 與營養標示文字 (蛋白質 / 脂肪 / 碳水 / 鈉…)
     calories = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     nutrition = db.Column(db.String(200), nullable=False, default='', server_default='')
+    # 製作時間 (分鐘，0 = 用系統設定的預設值)：預估等候時間用 (eta_service)
+    prep_minutes = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     station_id = db.Column(db.Integer, db.ForeignKey('kitchen_station.id', ondelete='SET NULL', name='fk_menu_item_station_id'),
                            nullable=True)
 
@@ -145,12 +149,24 @@ class MenuItem(TenantScoped, db.Model):
     def is_available(self):
         return not self.is_sold_out and (self.stock is None or self.stock > 0) and not self.is_branch_hidden
 
-    def price_for(self, channel='dine_in'):
-        """依通路的售價：特價優先；否則該通路有設定價格 (> 0) 時使用，未設定與內用同價 (都含分店價差)"""
+    def price_for(self, channel='dine_in', member=False):
+        """依通路的售價：特價優先；否則該通路有設定價格 (> 0) 時使用，未設定與內用同價 (都含分店價差)。
+        member=True (登入 / 綁定會員) 且有設會員價時，取會員價與上述價格較低者。"""
         if self.is_discount and (self.discount_price or 0) > 0:
-            return self.sale_price
-        custom = {'takeout': self.takeout_price, 'online': self.online_price, 'delivery': self.delivery_price}.get(channel)
-        return max(0, custom + self.branch_delta) if (custom or 0) > 0 else self.list_price
+            price = self.sale_price
+        else:
+            custom = {'takeout': self.takeout_price, 'online': self.online_price, 'delivery': self.delivery_price}.get(channel)
+            price = max(0, custom + self.branch_delta) if (custom or 0) > 0 else self.list_price
+        if member and (self.member_price or 0) > 0:
+            price = min(price, max(0, self.member_price + self.branch_delta))
+        return price
+
+    def member_deal(self, channel='dine_in'):
+        """會員價比一般價低時回會員價，否則 None (點餐頁 / POS 顯示劃線價用)"""
+        if (self.member_price or 0) <= 0:
+            return None
+        deal = self.price_for(channel, member=True)
+        return deal if deal < self.price_for(channel) else None
 
     def service_status(self, now=None):
         """(是否在供應時段內, 說明)；不在販售期間、非供應星期或時段時不可點"""
@@ -216,10 +232,13 @@ class MenuItem(TenantScoped, db.Model):
             'in_service': in_service,
             'service_hint': hint,
             'prices': {ch: self.price_for(ch) for ch in CHANNELS},
+            'member_prices': {ch: self.price_for(ch, member=True) for ch in CHANNELS},
             'allergens': self.allergen_codes,
             'sizes': [{'name': n, 'delta': d} for n, d in self.sizes],
             'calories': self.calories or 0,
             'nutrition': self.nutrition or '',
+            'prep_minutes': self.prep_minutes or 0,
+            'external_code': self.external_code or '',
             'diet': self.diet or '',
             'spicy_level': self.spicy_level or 0,
             'i18n': {lang: {'name': getattr(self, f'name_{lang}') or '', 'description': getattr(self, f'description_{lang}') or ''}

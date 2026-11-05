@@ -176,6 +176,102 @@
 - H 系統維運：門市資料庫每日自動備份、系統健康 / 錯誤紀錄、Webhook / Email / LINE 錯誤通知、主機時鐘誤差檢查
   (/admin/system)；線上端 PostgreSQL 由 docker compose 的 backup 服務每日備份；PWA (可安裝、斷線提示)。
 
+第五輪 (2026-10-31)
+- 接單控制 (系統設定 → 接單控制；POS 右上角「接單」一鍵切換)：暫停接單 (15 / 30 / 60 分鐘後自動恢復或手動恢復) 後
+  點餐機、顧客手機 (桌邊掃碼 / 線上) 與團購送單一律被擋 (409 intake_paused，點餐頁顯示橫幅)；POS 櫃檯、外送平台訂單與
+  斷線暫存補送、排程送出的團體預購不受影響。每時段訂單上限：以設定的時段長度為單位，同一時段 (盡快 = 下單時間；
+  預約取餐 = 取餐時間) 的點餐機 / 手機 / 線上訂單達上限即拒絕 (409 intake_full)。分店的暫停狀態隨同步上傳到線上端
+  (SyncNode.paused_until)，線上點餐選到暫停中的分店時一併擋下；留下稽核 INTAKE_PAUSE / INTAKE_RESUME。
+- 預估等候時間 (系統設定 → 廚房看板；菜單進階設定可填各餐點的製作時間)：基本等候 + 本單工作量 (最長製作時間 + 其餘每份
+  1 分鐘) + 排隊中訂單剩餘工作量 ÷ 廚房同時製作的訂單數；點餐頁購物車與確認視窗顯示「預估等候約 N 分鐘」
+  (/api/eta)，結帳時把預計完成時間存進訂單 (order.estimated_ready_at；預約單不估)，收據、我的訂單、出餐進度頁 (/track)
+  與廚房看板顯示「預計 HH:MM」，出餐後不再顯示。線上訂單由取餐分店收到時估算並同步回線上端。
+- 再點一次：我的訂單每張訂單 (非已取消) 有「再點一次」，伺服器把品項還原成購物車格式 (套餐 / 任選 / 規格 / 加料 / 客製化文字；
+  /api/reorder/<id>，只能是自己的訂單)，前端依目前菜單重新計價加入購物車；紅利兌換、寄杯、贈品與已下架 / 售完的品項
+  略過並提示。
+- 售完即時更新 (點餐頁)：每 30 秒輪詢 /api/menu/availability (帶 ETag / If-None-Match，沒變化回 304 不重畫)，
+  售完 / 恢復供應 / 不在供應時段 / 改價不必重新整理就會更新卡片與購物車標示；對外 API /api/v1/menu 也帶 ETag。
+- 手機推播通知 (系統設定 → 手機推播通知 Web Push)：顧客在出餐進度頁按「開啟完成通知」後訂閱推播
+  (/api/push/vapid、/api/track/<uuid>/push)，餐點完成 / 外送員出發時推播到手機 (離開頁面、關閉瀏覽器也收得到)；
+  只在 HTTPS 網址有效，門市以 http://IP 開啟時退回頁面內通知；啟用後第一次訂閱自動產生 VAPID 金鑰；
+  訂閱送出後即刪除，超過 7 天的訂閱每日清除；推播伺服器回 404 / 410 時刪除訂閱。
+- 稽核紀錄完整頁 (/admin/audit，店長以上；系統設定 → 稽核紀錄)：員工操作稽核與後台登入 / 登出日誌伺服器端分頁 (每頁 50)，
+  依員工 / 動作類型 / 日期 / 關鍵字 (單號、會員 ID、內容、IP) 篩選，匯出 Excel (目前篩選，最多 20000 筆，留下 AUDIT_EXPORT)。
+  後台首頁的稽核分頁維持最近 200 / 100 筆並連到完整頁；動作名稱集中在 app/services/audit.py 的 ACTION_LABELS。
+- 店家管理 (/admin/tenants，只有平台管理者 = 預設店家負責人)：這台主機上所有店家的狀態、建立日期、員工 / 會員數、
+  分店數與連線狀態、近 30 天訂單與營業額、最近訂單；停用 / 啟用店家 (停用後員工無法登入、點餐頁與店家入口 404、
+  分店同步被拒；預設店家不可停用；稽核 TENANT_TOGGLE)；建立新店家沿用 /tenant/register。
+- POS 條碼：菜單進階設定的「外送平台 / 條碼代碼」(external_code) 就是商品條碼；POS 搜尋框輸入代碼 + Enter 或掃描槍
+  (焦點不在輸入框時連續輸入 + Enter) 直接加入購物車 (有套餐 / 客製化 / 規格的照常跳選擇視窗)；搜尋只剩一個商品時 Enter 也直接加入。
+- 記錄檔與請求識別碼：記錄寫到 LOG_FILE (預設 database/logs/app.log，10 MB × 5 輪替；Docker 設 LOG_FILE= 只輸出 stdout)，
+  有檔案記錄時主控台只留警告以上 (門市的 database/server.log 只剩啟動訊息與錯誤，超過 5 MB 時由 start_store.cmd 換檔)；
+  每個請求有 X-Request-ID (沿用反向代理送來的)，每一行記錄都有 [識別碼]，500 頁面 / JSON 顯示「錯誤代碼」方便對照記錄。
+- 靜態資源版本化：url_for('static') 自動加 ?v=檔案雜湊，更新 JS / CSS 後瀏覽器與 PWA 立刻用新檔；/sw.js 的快取名稱帶
+  static/ 的版本摘要，部署後舊快取整批清除。
+- 點餐頁多語系補齊：點餐頁 (含未登入頁、購物車、結帳確認、收據、我的訂單、套餐 / 客製化視窗、桌邊橫幅) 的介面文字全部改由
+  i18n_service.UI 提供 (中 / 英 / 日)，未登入頁也有語言切換；客製化選項 (正常冰、半糖…) 的「值」維持中文送廚房，只翻顯示文字；
+  修正「清除」按鈕顯示成 <built-in method clear...> (ui.clear 在 Jinja 會取到 dict.clear，鍵改為 clear_filters；
+  tests/test_i18n_coverage.py 檢查鍵名不與 dict 方法撞名、樣板沒有寫死的中文)。菜單內容 (品名 / 說明 / 分類) 仍由店家在菜單進階設定填翻譯。
+- 顧客端全面多語系 (前端翻譯、後端維持中文)：所有顧客看得到的頁面 (註冊 / 登入、忘記 PIN、出餐進度、線上付款與付款結果、
+  桌邊線上結帳、線上訂位 / 訂金 / 訂位狀態、候位、紅利商城、團體預購 (建立 / 參加 / 管理)、隱私權告知、離線頁、錯誤頁、提示訊息)
+  與其 JS (註冊、追蹤、候位、紅利、會員附加功能、離線佇列) 的介面文字都改由 ui.<鍵> / Kiosk.t(鍵, 中文) 提供，字串集中在
+  app/services/i18n_pages.py；頁面為英 / 日文時 base.html 另嵌 #ui-data 字典給 JS。後端 (路由 / service / AppError / flash /
+  HTTP 錯誤) 的訊息仍是中文：i18n_pages.MESSAGES (逐句) 與 MESSAGE_PATTERNS (帶品名 / 數量的樣式) 提供對照，
+  顧客頁的 JSON 錯誤回應另附 message_i18n (Kiosk.api 優先顯示)、flash 經 tr_msg 過濾器翻譯、錯誤頁顯示翻譯；沒有對照的句子原樣顯示。
+  員工頁 (後台 / POS / 廚房 / 取餐 / 看板，STAFF_BLUEPRINTS) 一律中文、不送字典。第一次進站依瀏覽器 Accept-Language 選語言
+  (只選本店有開的語言；中文一律繁中)，之後以 ?lang= 切換並記在 session。訂單狀態 / 外送狀態 / 付款狀態以代碼對照翻譯
+  (my_orders JSON 多了 status_code / delivery_status)。菜單內容 (品名 / 分類 / 說明)、店名、支付品牌名稱不翻譯。
+- 工程品質：ruff (ruff.toml，未定義名稱 / 未使用匯入 / 語法錯誤)、mypy (mypy.ini，app/services 有型別註記的函式)、
+  pip-audit (依賴漏洞，只警告)、pytest --cov (3.13 工作，app/ 低於 85% 失敗) 都在 GitHub Actions 執行；
+  依此升級 Pillow 13.0.0 與 Werkzeug 3.1.9。
+
+第六輪 (2026-10-31 晚)：
+- AI 一鍵翻譯菜單 (菜單進階設定 →「AI 一鍵翻譯菜單」)：品名 / 說明 / 分類的英文與日文由 ai_service.translate_entries 一批
+  25 筆送 Gemini (JSON 回應) 填入空白欄位，不覆蓋手填 (可勾「連已填的也重新翻譯」)；沒有 GEMINI_API_KEY 或回應壞掉時用規則
+  字典 (常見分類 / 品名整字命中才翻)；稽核 MENU_TRANSLATE。
+- 點餐機飲食篩選列 (顯示過敏原時出現)：素食、不辣、不含某過敏原 (只列菜單用到的)；記在 localStorage，「清除」一併清掉。
+- 點餐機禮物卡付款 (系統設定 → 禮物卡 →「點餐機可用禮物卡付款」)：付款方式多「禮物卡」，輸入 16 碼查餘額
+  (POST /api/gift_cards/balance，只回遮罩卡號；20 次 / 分鐘) 後扣款；餘額不足 409 insufficient_gift，請至櫃檯混合付款。
+- 會員價 (菜單進階設定 → 通路價旁「會員」)：MenuItem.member_price；登入 / 綁定會員時與通路價 (含特價) 取低者
+  (MenuItem.price_for(channel, member=True)、member_deal())；點餐頁顯示劃線價 + 會員價徽章，POS 綁定 / 解除會員時購物車重算，
+  菜單資料帶 member_prices；促銷預覽與結帳同樣套用。
+- 電子收據 (系統設定 → 電子收據寄送)：收據視窗「寄到信箱」(需 SMTP；會員可記住 Email，User.email) /「傳到 LINE」
+  (需 LINE Messaging、會員已綁定)；可設定結帳時自動傳給 LINE 綁定會員 (點餐機與 POS 都會)。receipt_service.text_receipt 產生
+  純文字明細，寄送在交易後背景執行，失敗只記錄。API：POST /api/my_orders/<id>/receipt/email | line (會員自己或本次進場訪客)。
+- 廚房製作卡：菜單進階設定「廚房製作卡」(MenuItem.prep_note，做法 / 擺盤)；KDS 有做法或配方的品名變成按鈕，點開顯示做法、
+  製作時間、配方用量 (每份)、圖片 (GET /api/kitchen/prep_card/<id>，第一次點才載入)。
+- 顧客評價回覆與公開精選：後台「顧客評價」每筆可回覆一句 (通知顧客：LINE 文字、追蹤頁 Web Push feedback_reply) 並勾
+  「公開」；4 星以上且有留言的公開評價 (姓名遮罩) 顯示在未登入頁「顧客好評」，追蹤頁顯示店家回覆。稽核 FEEDBACK_REPLY。
+  (評價只上傳不下發：回覆要在看得到該評價的那台主機做。)
+- 後台頁面權限：權限矩陣 (員工帳號 → 額外權限) 新增 menu / coupons / members / feedback / settings 五個頁面權限
+  (店長 / 負責人預設全有)；櫃檯 / 廚房被授權後可進後台，只看到對應分頁 (實時訂單 / 營運分析 = reports、菜單 = menu、
+  回饋商城 = coupons、會員 = members；稽核只有店長以上) 與頁面 (菜單進階設定、促銷 / 行銷 / 禮物卡 / 寄杯、會員經營、顧客評價、
+  系統設定)；對應路由改用 permission_required。
+- 異地備份 (系統設定 → 自動備份 → 異地備份)：每日 SQLite 備份後上傳到 WebDAV、S3 相容儲存 (自行 SigV4 簽章，不需 boto3；
+  AWS / MinIO / R2 / B2) 或自訂指令 (rclone 等，{file} 代入)；只保留最近 N 份；上傳失敗進監控事件 (offsite-backup)；
+  設定頁「測試」會上傳一個小檔再刪掉。
+- 門市一鍵更新 (系統監控 → 版本更新，平台管理者、門市端)：顯示 VERSION 檔的版本 (+ git 短雜湊) 與 GitHub 最新 release
+  (UPDATE_REPO，快取 1 小時)；「下載更新檔」存到 database/updates/；Windows 主機「套用並重啟」以獨立行程執行
+  deploy\windows\update_store.cmd：備份程式檔與資料庫 → 停伺服器 → robocopy 覆蓋 (不動 database / uploads / .env / .venv)
+  → pip install → flask db upgrade → 重啟 (NSSM 服務 / 工作排程 / start_store.cmd)；任一步失敗自動還原；記錄
+  database/updates/update.log。線上端 (Docker) 仍依 DEPLOY.txt。
+- 錯誤回報與指標 (選用)：SENTRY_DSN + pip install sentry-sdk → 未預期錯誤送 Sentry (tag request_id / tenant_id，release 帶版本)；
+  METRICS_TOKEN → GET /metrics?token=… (或 Bearer) 回 Prometheus 文字格式：請求數 (狀態碼類別)、耗時直方圖、今日訂單 / 營業額、
+  待製作、列印 / 發票失敗、分店同步延遲 (行程內計數，多 worker 各一份)。
+- 測試強化：N+1 守門 (tests/support.count_queries；點餐頁 / 可售狀態 / 我的訂單 / POS / 今日訂單 / 廚房 / 後台首頁在資料加倍後
+  查詢數不變，並有上限；順手修掉後台首頁套餐分頁的 N+1)、axe-core 無障礙 (pytest -m e2e，顧客頁嚴重 / 重大違規即失敗；
+  pip install axe-playwright-python，未安裝時跳過)、.github/dependabot.yml 每週 pip 與 actions。
+- 安全收尾 (審視第五 / 六輪新程式)：只有「菜單」權限的櫃檯匯出 Excel 時會員 / 訂單工作表被濾掉、匯入含會員 / 優惠券工作表被拒；
+  異地備份的自訂指令只在門市主機可用 (線上端多店家共用，拒絕)，WebDAV / S3 網址在線上端不可指向內網 (與 Webhook 相同的 SSRF 防護)；
+  設定匯入一律不寫金鑰欄位、非負責人匯入時含金鑰的區塊整個略過；更新檔只從 github.com 下載且上限 300 MB，版本代號不接受 . / ..；
+  更新腳本改從 database\updates\update_store.run.cmd 複本執行 (覆蓋程式檔時不會動到正在執行的批次檔)、只殺伺服器本身 (不加 /t)；
+  電子收據每張訂單每天最多寄 5 次。
+- 修正：百分比優惠券 (例如 85 折) 折完留下小數 (90 × 0.85 = 76.5) 時，點數折抵上限原本是無條件捨去 (76)，顧客永遠剩 $1 折不掉；
+  改為四捨五入後的應付金額 (77)，點餐機 / POS / 後端一致 (tests/test_round6_ops.py)。
+- 小項：顧客頁右上角淺色 / 深色切換 (localStorage；customer.css 的 [data-bs-theme="light"] 覆寫)、PWA「安裝到主畫面」按鈕
+  (beforeinstallprompt 時才出現)、POS 常用備註快捷鍵 (收銀規則 → 常用備註快捷鍵)、系統設定匯出 / 匯入 JSON (不含金鑰與本機專屬區塊；
+  平台管理者 ?secrets=1 可含金鑰；匯入只認得的區塊 / 欄位、型別與範圍檢查)、mypy 對第五 / 六輪新模組開啟 check_untyped_defs。
+
 
 三、快速開始 (Windows 門市 / 單機)
 --------------------------------------------------------------------
@@ -254,8 +350,14 @@
   安全性
     ALLOW_TENANT_REGISTER             1 = 開放公開的「建立新店家」頁 (/tenant/register)。線上端預設 1；門市主機預設 0
                                       (任何連得到主機的人都能建店並取得負責人權限)，平台管理者登入後仍可建立新店
+  記錄檔 (app/services/log_service.py)
+    LOG_FILE                          輪替記錄檔位置 (預設 database/logs/app.log；設為空字串只輸出主控台，Docker 用)
+    LOG_MAX_BYTES / LOG_BACKUP_COUNT  每個記錄檔大小 (預設 10 MB) 與保留個數 (預設 5)
   選用
-    GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議)
+    GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議、一鍵翻譯菜單)
+    SENTRY_DSN                        設定後 (需 pip install sentry-sdk) 未預期錯誤送到 Sentry；SENTRY_TRACES_SAMPLE_RATE 效能取樣 (預設 0)
+    METRICS_TOKEN                     設定後 GET /metrics?token=… 回 Prometheus 指標 (未設定 404)
+    UPDATE_REPO                       版本更新來源 GitHub owner/repo (預設 dnsr0000/Ordering-System)
 
 
 五、常用指令
@@ -365,6 +467,16 @@ Project Root/
 │   │   ├── demo_service.py        一鍵展示資料 (flask demo seed / remove，只寫入示範店家)
 │   │   ├── deferred.py            交易提交後才執行的工作 (開發票、列印、推播)
 │   │   ├── security_service.py    TOTP (RFC 6238)、備用碼、登入工作階段
+│   │   ├── intake_service.py      接單控制：暫停接單 / 每時段訂單上限 / 分店狀態回報線上端 (第五輪)
+│   │   ├── eta_service.py         預估等候時間 (工作量、排隊、預計完成時間)
+│   │   ├── reorder_service.py     再點一次：訂單明細還原成購物車格式
+│   │   ├── push_service.py        Web Push (VAPID + aes128gcm，不依賴 pywebpush)
+│   │   ├── log_service.py         輪替記錄檔、X-Request-ID
+│   │   ├── static_version.py      靜態資源 ?v=雜湊、Service Worker 快取版本
+│   │   ├── receipt_service.py     電子收據 (Email / LINE 純文字明細、結帳自動傳) (第六輪)
+│   │   ├── offsite_backup_service.py  異地備份上傳 (WebDAV / S3 SigV4 / 自訂指令、保留份數)
+│   │   ├── update_service.py      版本檢查 (VERSION、GitHub release)、下載、啟動 update_store.cmd
+│   │   ├── observability.py       /metrics (Prometheus 文字格式)、Sentry 選用初始化
 │   │   └── maintenance_service.py、monitor_service.py   背景排程 (多行程時只由「排程主控」執行)、自動備份、
 │   │                              健康狀態、錯誤通知、時鐘檢查
 │   ├── sync/                  門市 ↔ 線上同步
@@ -405,6 +517,8 @@ Project Root/
 │       ├── pnl.py             營業費用、損益表、成本 / 售價歷史
 │       ├── group_orders.py    團體預購 (/shop/<店家>/group/...、後台 /admin/group-orders)
 │       ├── api_v1.py          對外 API /api/v1 (API 金鑰驗證)
+│       ├── audit_log.py       稽核紀錄完整頁 /admin/audit (分頁 / 篩選 / 匯出)
+│       ├── tenants_admin.py   平台端店家管理 /admin/tenants (平台管理者)
 │       └── health.py          /healthz
 ├── migrations/versions/       0001 舊版基準、0002 重構、0003 同步引擎、0004 線上付款與個資同意、
 │                              0005 門市桌位與掃碼點餐、0006 進階營運功能、0007 優惠券期限與批量發放、
@@ -419,11 +533,12 @@ Project Root/
 │                              0020 API 金鑰 / Webhook、裝置管理、封存訂單累積消費
 │                              0021 營業費用、原料成本 / 售價歷史、0022 團體預購、
 │                              0023 訂單預約取餐時間索引 (負載測試後新增)、0024 訂單 client_order_id 獨立欄位
+│                              0025 接單控制 (分店暫停狀態) / 預估等候時間 (製作時間、預計完成) / Web Push 訂閱
 ├── templates/                 頁面樣板 (全部繼承 base.html)
 ├── static/
 │   ├── css/、js/              各頁面樣式與程式 (theme.css、common.js 為共用；pos.js 為 POS 的進入點 (ES module)，
 │   │                          功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live)；customer.js 為點餐機的
-│   │                          進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout)；floor-plan.js 桌位平面圖、
+│   │                          進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout / live 售完即時更新)；floor-plan.js 桌位平面圖、
 │   │                          device.js 已註冊裝置的心跳與鎖定畫面、
 │   │                          api-docs.js API 說明文件的線上試打、kiosk-offline.js 點餐機斷線暫存與補送)
 │   ├── img/                   預設圖片
@@ -462,8 +577,11 @@ Project Root/
   pytest tests/test_sync_hub_node.py  同步測試的線上端改用 PostgreSQL
   pytest tests/test_pos_checkout.py   只跑一個主題 (有情境依賴的檔案會自動加入前置檔，開頭會列出)
   python tests/test_payment_ecpay_script.py       線上付款：模擬綠界通知走完 30 項情境 (不需網路)
-  GitHub Actions (.github/workflows/tests.yml)：push 到 main 或開 PR 時自動執行 SQLite (Python 3.13 / 3.14)、
-                                      PostgreSQL (含同步測試的線上端) 與瀏覽器端對端測試
+  ruff check . / mypy                 靜態檢查 (ruff.toml、mypy.ini；pip install ruff mypy)
+  pip-audit -r requirements.txt       依賴套件已知漏洞 (pip install pip-audit)
+  pytest --cov=app                    涵蓋率 (pytest-cov 已在 requirements.txt)
+  GitHub Actions (.github/workflows/tests.yml)：push 到 main 或開 PR 時自動執行 lint (ruff / mypy / pip-audit)、
+                                      SQLite (Python 3.13 含涵蓋率門檻 85% / 3.14)、PostgreSQL (含同步測試的線上端) 與瀏覽器端對端測試
   python tests/load_gunicorn_pg.py --url ... --password ... [--database-url ...]
                                       多 worker 負載測試：對執行中的 gunicorn + PostgreSQL + Redis 模擬點餐機 / POS / 廚房 /
                                       SSE / 對外 API 的尖峰流量並檢查一致性 (步驟與參考結果見 DEPLOY.txt 一-11)
@@ -562,10 +680,30 @@ Project Root/
                 test_coupon_issue_expiry        會員專屬券、批量發放 (對象 / 張數 / 每人上限 / 到期 / LINE 通知 / 撤回)、過期與活動期間、
                                                 後台票券視窗 (未使用 / 近 7 天已使用)
                 test_sync_pro_tables            促銷 / 等級 / 翻譯下發、兩店離線使用儲值金合併、收款與退款上傳、發放的會員券同步
+  第五輪        test_intake_eta_reorder         接單控制 (POS 暫停 / 自動恢復 / 權限與稽核 / 每時段上限只算顧客訂單 / 斷線補送不受影響)、
+                                                預估等候時間 (工作量 / 排隊 / 收據 / 追蹤頁 / 廚房 / 關閉)、再點一次 (套餐 / 規格 / 加料還原、略過、權限)
+                                                (分店暫停狀態上傳與線上點餐被擋在 test_sync_hub_node)
+                test_logging_static_version_ci  X-Request-ID、500 頁面錯誤代碼、輪替記錄檔、靜態資源 ?v=、Service Worker 快取名稱、
+                                                CI 設定 (ruff / mypy / pip-audit / coverage)、ruff 全專案通過
+                test_audit_tenants_push         稽核紀錄頁 (分頁 / 篩選 / 匯出 / 防公式注入 / 權限)、店家管理 (平台管理者限定 /
+                                                停用後登入與入口 / 預設店家不可停用)、Web Push (金鑰產生 / 訂閱格式 / 出餐推播加密與
+                                                VAPID 標頭 / 失效訂閱刪除 / 每日清理 / 關閉時隱藏)
+                test_menu_etag_barcode          /api/menu/availability 與 /api/v1/menu 的 ETag / 304、售完 / 時段 / 改價變化、
+                                                POS 條碼資料、mypy 通過
+                test_i18n_coverage              顧客端多語系：鍵名不與 dict 方法撞名、三種語言齊全、所有顧客頁樣板無寫死中文、
+                                                每個顧客頁英 / 日文渲染無中文介面、translate_message (逐句 / 樣式 / 圖示 / 無對照)、
+                                                JSON 錯誤的 message_i18n、flash 翻譯、員工頁維持中文、Accept-Language 偵測
+                test_round6_menu_kiosk          AI 翻譯菜單 (Gemini JSON / 規則字典 / 不覆蓋)、飲食篩選資料、點餐機禮物卡 (查餘額 /
+                                                扣款 / 不足 / 未開放)、會員價 (price_for / 劃線價 / POS 綁定)、後台頁面權限
+                test_round6_receipt_kds_feedback 電子收據 (Email / LINE / 記住 Email / 自動傳)、廚房製作卡、評價回覆與公開好評
+                test_round6_ops                 異地備份 (WebDAV / S3 簽章 / 指令 / 修剪 / 每日 / 測試)、一鍵更新 (版本比較 / 下載 /
+                                                面板)、/metrics 與 Sentry、N+1 守門、設定匯出匯入、POS 常用備註、淺色模式、Dependabot
   瀏覽器        test_e2e_*                      端對端 (後台、顧客點餐、廚房取餐、會員、POS、所有頁面、進階功能、
                                                 改價後購物車更新 test_e2e_price_change、套餐任選 / 混合付款 / 作廢品項 / 平面圖 / 桌邊結帳 / 寄杯 / 菜單工程 / 自動行銷 / 裝置鎖定
                                                 test_e2e_round3、費用登錄 → 損益表 / API 文件線上試打 / 斷線暫存補送 / 團體預購
-                                                test_e2e_round4)
+                                                test_e2e_round4、POS 暫停接單 → 點餐機被擋 / 預估等候與再點一次 / 售完即時更新 /
+                                                POS 掃條碼 / 稽核頁 test_e2e_round5、顧客頁 axe-core 無障礙 / 飲食篩選 / 會員價 /
+                                                點餐機禮物卡 / 製作卡 / 評價回覆與好評 / 頁面權限 test_e2e_round6)
   壓力          test_stress_http                真實 HTTP 壓力測試
                 load_gunicorn_pg                (不是 pytest，直接執行) gunicorn 多 worker + PostgreSQL + Redis 負載測試與一致性檢查
 
@@ -588,8 +726,15 @@ Project Root/
     (跨模組不可重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。
   - 後台儀表板 (admin.html) 的對話框與表單巨集在 templates/_admin_modals.html。
   - 提示訊息 flash(文字, 類別)：圖示由 _flashes.html 依類別 (success / danger / warning / info) 自動加上，文字不要再寫 ✅ ❌。
+  - 顧客頁 (點餐機 / 手機看得到的樣板與 JS) 不寫死中文介面文字：樣板用 {{ ui.鍵 }}，JS 用 Kiosk.t('鍵', '中文備援')
+    (點餐頁 ES module 用 core.js 的 ui.鍵 || '中文')；鍵與中 / 英 / 日文加在 app/services/i18n_pages.py 的 PAGES
+    (點餐頁本身的鍵在 i18n_service.UI)，鍵名不可與 dict 方法同名 (clear、copy、items…)。
+    送給後端的值 (order_type、冰塊 / 甜度選項…) 維持中文，只翻顯示文字。員工頁維持中文，不必翻譯。
+    tests/test_i18n_coverage.py 的 CUSTOMER_TEMPLATES 列出顧客頁樣板，新增顧客頁時一併加入。
 - 後端：
   - 錯誤一律 raise AppError(訊息, 狀態碼)：API 回 {"success": false, "message": …}；表單的 400/409 flash 後導回。
+    訊息一律寫中文；顧客會看到的新訊息請在 app/services/i18n_pages.py 的 MESSAGES (整句) 或 MESSAGE_PATTERNS
+    (帶品名 / 數量，具名群組) 補英 / 日文，顧客頁會自動附 message_i18n / 翻譯 flash。
   - 權限用 @role_required(*MANAGER_ROLES) (角色組合定義在 app/models/enums.py：MANAGER_ROLES / POS_ROLES / KITCHEN_ROLES /
     ALL_STAFF_ROLES，不要在各檔自己寫元組)；整庫備份等用 @platform_admin_required。
   - 查詢自動加上目前店家條件；系統工作需要跨店時用 with tenant_bypass():。
@@ -603,6 +748,15 @@ Project Root/
   - 遷移代號 (revision) 不可超過 32 個字 (PostgreSQL 的 alembic_version 欄位長度，有測試檢查)。
   - 背景工作 / 會被同時觸發的動作先以條件式 UPDATE「搶」再處理 (例如 status pending → sending)，多個行程才不會重複執行。
   - Excel / CSV 匯出含使用者輸入的文字時，用 app/utils.py 的 neutralize_formulas / csv_safe (防公式注入)。
+  - 送出前執行 ruff check . 與 mypy (CI 會擋)；新的 service 函式請加型別註記 (ORM 物件用 Any)；模組層級的 dict / tuple 要標型別。
+  - 記錄用 logging.getLogger(__name__)；每一行會自動帶請求識別碼，不要自己 print。
+  - 新的稽核動作請在 app/services/audit.py 的 ACTION_LABELS 補顯示名稱。
+  - 後台頁面的權限：店長以上的頁面用 @permission_required('menu' | 'coupons' | 'members' | 'feedback' | 'settings')
+    (enums.PERMISSIONS，可個別授權給櫃檯)，不要再用 role_required(*MANAGER_ROLES)；只有負責人的仍用 role_required('owner')。
+  - 列表頁 / API 的查詢數要與資料量無關 (tests/test_round6_ops.py 的 N+1 守門)：關聯用 selectinload 一次載入。
+  - 新模組請加進 mypy.ini 最下方的完整檢查清單 (check_untyped_defs = True)。
+  - 顧客頁的顏色：深底上的文字對比 4.5:1 以上 (e2e 的 axe-core 會擋嚴重 / 重大違規)；表單控制項要有 label 或 aria-label。
+  - 版本：發布新版時改 VERSION 檔 (YYYY.MM.DD) 並在 GitHub 建 release (tag 同版本)，門市才會看到「有新版本」。
 
 
 九、權限與安全

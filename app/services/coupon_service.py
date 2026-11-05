@@ -16,7 +16,7 @@ from sqlalchemy import func, or_
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.coupon import HISTORY_DAYS, Coupon, UserCoupon
+from app.models.coupon import HISTORY_DAYS, Coupon, UserCoupon  # noqa: F401  (路由以 coupon_service.Coupon / HISTORY_DAYS 取用)
 from app.models.user import User
 from app.utils import validate_phone
 

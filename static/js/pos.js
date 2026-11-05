@@ -9,7 +9,8 @@
  */
 import { $, afterHidden, itemMap, modalOf, state } from './pos/core.js';
 import {
-    chooseCombo, clearSearch, confirmModifier, filterMenu, pickItem, redeemItem, selectCategory, syncChoiceMods,
+    chooseCombo, clearSearch, confirmModifier, filterMenu, pickItem, redeemItem, scanCode, searchEnter, selectCategory,
+    syncChoiceMods,
 } from './pos/menu.js';
 import { changeQty, clearCart, renderCart, triggerAddon } from './pos/cart.js';
 import {
@@ -34,6 +35,13 @@ import {
 // 11. 事件綁定
 // ======================================================================
 Kiosk.on(document, 'click', {
+    quickNote: (el) => {   // 常用備註快捷鍵：加進整單備註 (已有就移除，像開關)
+        const input = $('posOrderNote');
+        const parts = (input.value || '').split(/[、,，]\s*/).map((x) => x.trim()).filter(Boolean);
+        const note = el.dataset.note;
+        input.value = (parts.includes(note) ? parts.filter((x) => x !== note) : [...parts, note]).join('、');
+        el.classList.toggle('active', !parts.includes(note));
+    },
     category: (el) => selectCategory(el),
     clearSearch: () => clearSearch(),
     pickItem: (el) => pickItem(el),
@@ -142,6 +150,8 @@ $('posPinModal').addEventListener('shown.bs.modal', () => $('posPinInput').focus
 // 收據顯示後聚焦「關閉」按鈕，按 Enter 即可關閉並接續下一筆
 $('posReceiptModal').addEventListener('shown.bs.modal', () => $('rcpt-close-btn').focus());
 
+// 條碼掃描槍 (鍵盤模擬)：焦點不在輸入框時，短時間內連續輸入的字元 + Enter 視為一次掃描
+const scanBuffer = { text: '', at: 0 };
 document.addEventListener('keydown', (ev) => {
     if (ev.key === 'F2') {
         ev.preventDefault();
@@ -151,6 +161,20 @@ document.addEventListener('keydown', (ev) => {
         holdOrder();
     } else if (ev.key === 'Escape' && document.activeElement === $('posSearchInput')) {
         clearSearch();
+    } else if (ev.key === 'Enter' && document.activeElement === $('posSearchInput')) {
+        ev.preventDefault();
+        searchEnter();
+    } else if (!(ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement || ev.target instanceof HTMLSelectElement)
+               && !document.querySelector('.modal.show')) {
+        const now = Date.now();
+        if (ev.key === 'Enter') {
+            if (scanBuffer.text.length >= 3 && now - scanBuffer.at < 1500 && scanCode(scanBuffer.text)) ev.preventDefault();
+            scanBuffer.text = '';
+        } else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+            if (now - scanBuffer.at > 300) scanBuffer.text = '';
+            scanBuffer.text += ev.key;
+            scanBuffer.at = now;
+        }
     }
 });
 

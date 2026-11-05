@@ -23,10 +23,17 @@
             {% endfor %}
             <div class="col-12"><button class="btn btn-outline-info btn-sm fw-bold" type="submit">儲存分類翻譯</button></div>
         </form>
+        <form method="POST" class="d-flex flex-wrap align-items-center gap-2 mt-3 border-top border-secondary pt-3" id="menuTranslateForm"
+              data-confirm="AI 翻譯會把品名 / 說明 / 分類的英文與日文填進空白欄位 (不覆蓋已填的)，完成後請逐一檢查。繼續？">{{ csrf() }}
+            <input type="hidden" name="action" value="translate">
+            <button class="btn btn-warning btn-sm fw-bold" type="submit"><i class="bi bi-translate me-1"></i>AI 一鍵翻譯菜單</button>
+            <label class="form-check form-check-inline small mb-0"><input class="form-check-input" type="checkbox" name="overwrite" value="1" id="translateOverwrite"><span class="form-check-label" for="translateOverwrite">連已填的也重新翻譯</span></label>
+            <span class="small text-white-50">{% if menu_cfg.ai_ready %}使用 Gemini (GEMINI_API_KEY)；{% else %}未設定 GEMINI_API_KEY：只翻常見分類 / 品名 (規則字典)；{% endif %}菜單內容的翻譯在點餐頁切換語言時顯示。</span>
+        </form>
     </section>
     <div class="table-responsive">
     <table class="table table-dark table-sm align-middle" id="menuProTable">
-        <thead><tr><th>分類</th><th>品項</th><th>內用價</th><th>外帶 / 線上 / 外送</th><th>供應</th><th>標示</th><th>翻譯</th><th>代碼 / 成本</th><th></th></tr></thead>
+        <thead><tr><th>分類</th><th>品項</th><th>內用價</th><th>外帶 / 線上 / 外送 (會員價)</th><th>供應</th><th>標示</th><th>翻譯</th><th>代碼 / 成本</th><th></th></tr></thead>
         <tbody>
         {% for it in items %}
         {% set ok, hint = it.service_status() %}
@@ -34,7 +41,7 @@
             <td class="small text-white-50">{{ it.category }}</td>
             <td class="fw-bold">{{ it.name }}</td>
             <td>${{ it.price }}</td>
-            <td class="small">{{ it.takeout_price or '-' }} / {{ it.online_price or '-' }} / {{ it.delivery_price or '-' }}</td>
+            <td class="small">{{ it.takeout_price or '-' }} / {{ it.online_price or '-' }} / {{ it.delivery_price or '-' }}{% if it.member_price %} <span class="badge bg-info text-dark">會員 ${{ it.member_price }}</span>{% endif %}</td>
             <td class="small">{% if ok %}<span class="text-success">供應中</span>{% else %}<span class="text-warning">{{ hint }}</span>{% endif %}
                 {% if it.avail_start or it.avail_end %}<div class="text-white-50">{{ it.avail_start or '00:00' }}~{{ it.avail_end or '23:59' }}</div>{% endif %}</td>
             <td class="small">{% for a in it.allergen_codes %}<span class="badge bg-danger allergen-badge me-1">{{ allergens[a] }}</span>{% endfor %}
@@ -61,7 +68,8 @@
                     <div class="input-group input-group-sm">
                         <span class="input-group-text">外帶</span><input class="form-control" type="number" min="0" name="takeout_price" value="{{ it.takeout_price }}" aria-label="外帶價">
                         <span class="input-group-text">線上</span><input class="form-control" type="number" min="0" name="online_price" value="{{ it.online_price }}" aria-label="線上價">
-                        <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" name="delivery_price" value="{{ it.delivery_price }}" aria-label="外送價"></div></div>
+                        <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" name="delivery_price" value="{{ it.delivery_price }}" aria-label="外送價">
+                        <span class="input-group-text">會員</span><input class="form-control" type="number" min="0" name="member_price" value="{{ it.member_price }}" aria-label="會員價" title="登入 / 綁定會員時與通路價取低者；0 = 無會員價"></div></div>
                 <div class="col-md-6"><div class="form-label small">過敏原</div>
                     {% for code, label in allergens.items() %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="allergens" value="{{ code }}" id="al-{{ code }}-{{ it.id }}" {{ 'checked' if code in it.allergen_codes }}>
                         <label class="form-check-label small" for="al-{{ code }}-{{ it.id }}">{{ label }}</label></div>{% endfor %}</div>
@@ -74,11 +82,13 @@
                 <div class="col-md-3"><label class="form-label small" for="nja-{{ it.id }}">日本語名</label><input class="form-control form-control-sm" id="nja-{{ it.id }}" name="name_ja" value="{{ it.name_ja }}"></div>
                 <div class="col-md-3"><label class="form-label small" for="den-{{ it.id }}">English description</label><input class="form-control form-control-sm" id="den-{{ it.id }}" name="description_en" value="{{ it.description_en }}"></div>
                 <div class="col-md-3"><label class="form-label small" for="dja-{{ it.id }}">日本語の説明</label><input class="form-control form-control-sm" id="dja-{{ it.id }}" name="description_ja" value="{{ it.description_ja }}"></div>
-                <div class="col-md-3"><label class="form-label small" for="ext-{{ it.id }}">外送平台 / 條碼代碼</label><input class="form-control form-control-sm" id="ext-{{ it.id }}" name="external_code" value="{{ it.external_code }}" placeholder="與平台上的品項代碼相同"></div>
+                <div class="col-md-3"><label class="form-label small" for="ext-{{ it.id }}">外送平台 / 條碼代碼 (POS 掃描槍)</label><input class="form-control form-control-sm" id="ext-{{ it.id }}" name="external_code" value="{{ it.external_code }}" placeholder="與平台上的品項代碼相同"></div>
                 <div class="col-md-3"><label class="form-label small" for="cost-{{ it.id }}">單位成本 (未設定配方時)</label><input class="form-control form-control-sm" id="cost-{{ it.id }}" type="number" min="0" name="unit_cost" value="{{ it.unit_cost }}"></div>
                 <div class="col-md-6"><label class="form-label small" for="size-{{ it.id }}">規格 (名稱:加減價，逗號分隔；第一個為預設)</label><input class="form-control form-control-sm" id="size-{{ it.id }}" name="size_options" value="{{ it.size_options }}" placeholder="例如 中杯:0, 大杯:15, 小杯:-10" maxlength="200"></div>
                 <div class="col-md-3"><label class="form-label small" for="kcal-{{ it.id }}">熱量 (大卡，0 = 不標示)</label><input class="form-control form-control-sm" id="kcal-{{ it.id }}" type="number" min="0" max="5000" name="calories" value="{{ it.calories }}"></div>
-                <div class="col-md-9"><label class="form-label small" for="nutri-{{ it.id }}">營養標示 (選填)</label><input class="form-control form-control-sm" id="nutri-{{ it.id }}" name="nutrition" value="{{ it.nutrition }}" maxlength="200" placeholder="例如 蛋白質 25g、脂肪 18g、碳水化合物 40g、鈉 650mg"></div>
+                <div class="col-md-3"><label class="form-label small" for="prep-{{ it.id }}">製作時間 (分鐘，0 = 預設)</label><input class="form-control form-control-sm" id="prep-{{ it.id }}" type="number" min="0" max="120" name="prep_minutes" value="{{ it.prep_minutes or 0 }}"></div>
+                <div class="col-md-9"><label class="form-label small" for="pn-{{ it.id }}">廚房製作卡 (做法 / 擺盤重點；廚房看板點品名顯示，配方用量自動附上)</label><textarea class="form-control form-control-sm" id="pn-{{ it.id }}" name="prep_note" rows="2" maxlength="500">{{ it.prep_note }}</textarea></div>
+                <div class="col-md-6"><label class="form-label small" for="nutri-{{ it.id }}">營養標示 (選填)</label><input class="form-control form-control-sm" id="nutri-{{ it.id }}" name="nutrition" value="{{ it.nutrition }}" maxlength="200" placeholder="例如 蛋白質 25g、脂肪 18g、碳水化合物 40g、鈉 650mg"></div>
                 <div class="col-12"><button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">儲存「{{ it.name }}」</button></div>
             </form>
         </td></tr>

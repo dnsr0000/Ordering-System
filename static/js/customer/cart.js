@@ -4,7 +4,7 @@
  */
 import {
     $, NON_MAIN_CATEGORIES, REWARD_LABEL, api, availableAddons, channelPrice, html, menuItems, modifierById,
-    setText, state, storeCart,
+    setText, state, storeCart, ui,
 } from './core.js';
 import { calculateTotal, schedulePromotionPreview, setUserPoints } from './totals.js';
 
@@ -247,18 +247,18 @@ export function cartLineHtml(line, idx) {
     const soldOut = line.is_sold_out;
     const desc = lineDescription(line);
     const action = (soldOut || line.is_reward)
-        ? html`<button class="btn btn-sm btn-outline-danger fw-bold" type="button" data-action="remove" data-index="${idx}"><i class="bi bi-trash"></i> 移除</button>`
+        ? html`<button class="btn btn-sm btn-outline-danger fw-bold" type="button" data-action="remove" data-index="${idx}"><i class="bi bi-trash"></i> ${ui.remove || '移除'}</button>`
         : html`<div class="btn-group btn-group-sm">
-                <button class="btn btn-outline-secondary text-white" type="button" data-action="qty" data-index="${idx}" data-delta="-1" aria-label="減少">-</button>
-                <button class="btn btn-outline-secondary text-white" type="button" data-action="qty" data-index="${idx}" data-delta="1" aria-label="增加">+</button>
+                <button class="btn btn-outline-secondary text-white" type="button" data-action="qty" data-index="${idx}" data-delta="-1" aria-label="${ui.decrease || '減少'}">-</button>
+                <button class="btn btn-outline-secondary text-white" type="button" data-action="qty" data-index="${idx}" data-delta="1" aria-label="${ui.increase || '增加'}">+</button>
             </div>`;
     return html`
         <div class="cart-line d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${soldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
             <div>
                 <div class="fw-bold ${soldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
                     ${line.is_reward ? `${REWARD_LABEL} ` : ''}<span class="cart-line-name">${line.name}</span>
-                    ${line.is_add_on ? html`<span class="badge bg-info text-dark ms-1">加購</span>` : ''}
-                    ${soldOut ? html`<span class="badge bg-danger ms-1">已售完</span>` : ''}
+                    ${line.is_add_on ? html`<span class="badge bg-info text-dark ms-1">${ui.addon_badge || '加購'}</span>` : ''}
+                    ${soldOut ? html`<span class="badge bg-danger ms-1">${ui.sold_out || '已售完'}</span>` : ''}
                 </div>
                 ${desc ? html`<small class="d-block ${soldOut ? 'text-decoration-line-through text-white-50' : 'text-info'}">${desc}</small>` : ''}
                 <small class="text-white-50 ${soldOut ? 'text-decoration-line-through' : ''}">$${Math.round(line.price)} x ${line.quantity}</small>
@@ -274,17 +274,17 @@ export function addonRecommendHtml() {
     if (!eligible.length) return '';
     return html`
         <div class="mb-2 p-2 bg-secondary bg-opacity-10 rounded border border-secondary">
-            <div class="text-warning small fw-bold mb-2"><i class="bi bi-stars"></i> 專屬加購優惠</div>
+            <div class="text-warning small fw-bold mb-2"><i class="bi bi-stars"></i> ${ui.addon_offer || '專屬加購優惠'}</div>
             <div class="d-flex gap-2 overflow-auto pb-1 addon-strip">
                 ${eligible.map(({ addon, quota }) => html`
                     <div class="card bg-dark border-secondary p-2 d-inline-block shadow-sm flex-shrink-0 addon-card">
                         <div class="small fw-bold text-white text-truncate" title="${addon.name}">${addon.name}</div>
-                        <div class="text-info cart-tiny">尚可加購 ${quota} 份</div>
+                        <div class="text-info cart-tiny">${(ui.addon_quota || '尚可加購 {n} 份').replace('{n}', quota)}</div>
                         <div class="mt-1">
                             <del class="text-white-50 cart-tiny">$${addon.price}</del>
                             <span class="text-danger fw-bold small">$${addon.add_on_price}</span>
                         </div>
-                        <button class="btn btn-sm btn-outline-info w-100 py-0 mt-1" type="button" data-action="addon" data-id="${addon.id}">加購</button>
+                        <button class="btn btn-sm btn-outline-info w-100 py-0 mt-1" type="button" data-action="addon" data-id="${addon.id}">${ui.addon_badge || '加購'}</button>
                     </div>`)}
             </div>
         </div>`;
@@ -293,12 +293,12 @@ export function addonRecommendHtml() {
 export function updateCartUI() {
     if (enforceAddonQuota()) {
         saveCart();
-        setTimeout(() => alert('⚠️ 購物車餐點異動導致加購品名額不足，已自動調整數量！'), 100);
+        setTimeout(() => alert(`⚠️ ${ui.addon_adjusted || '購物車餐點異動導致加購品名額不足，已自動調整數量！'}`), 100);
     }
     setText('cart-count', state.cart.reduce((sum, l) => sum + l.quantity, 0));
     const container = $('cart-items');
     if (!state.cart.length) {
-        Kiosk.setHtml(container, html`<div class="text-center text-white-50 py-4">購物車目前空空如也</div>`);
+        Kiosk.setHtml(container, html`<div class="text-center text-white-50 py-4">${ui.cart_empty || '購物車目前空空如也'}</div>`);
         $('addon-recommend-container').innerHTML = '';
     } else {
         Kiosk.setHtml(container, state.cart.map(cartLineHtml));
@@ -312,13 +312,13 @@ export function changeQty(index, delta) {
     const line = state.cart[index];
     if (!line) return;
     if (delta > 0 && line.is_reward) {
-        alert('⚠️ 紅利兌換餐點無法直接增加數量，如需多份請前往回饋商城再次兌換！');
+        alert(`⚠️ ${ui.reward_qty || '紅利兌換餐點無法直接增加數量，如需多份請前往回饋商城再次兌換！'}`);
         return;
     }
     if (delta > 0 && line.is_add_on) {
         const def = availableAddons.find((a) => Number(a.id) === line.menu_item_id);
         if (!def || remainingAddonQuota(def) <= 0) {
-            alert('⚠️ 加購品數量已達上限！');
+            alert(`⚠️ ${ui.addon_max || '加購品數量已達上限！'}`);
             return;
         }
     }
@@ -335,13 +335,13 @@ export async function removeLine(index) {
     const line = state.cart[index];
     if (!line) return;
     if (line.is_reward) {
-        if (!confirm(`確定要移除兌換餐點【${line.name}】嗎？移除後將返還扣除的紅利點數。`)) return;
+        if (!confirm((ui.reward_remove_confirm || '確定要移除兌換餐點【{n}】嗎？移除後將返還扣除的紅利點數。').replace('{n}', line.name))) return;
         try {
             const data = await api('/api/refund_reward_item', { json: { item_id: line.menu_item_id, quantity: line.quantity } });
             setUserPoints(data.current_points);
-            alert(`🎉 ${data.message}`);
+            alert(`🎉 ${data.message_i18n || data.message}`);
         } catch (err) {
-            alert(`❌ 退點失敗：${err.message}`);
+            alert(`❌ ${ui.rw_return_failed || '退點失敗：'}${err.message}`);
             return;
         }
         // 退點期間購物車可能已變動：以同一個物件找回位置再移除

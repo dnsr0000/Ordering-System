@@ -47,8 +47,8 @@ body.customer-page {
 
 .add-to-cart-btn { background-color: #f5a500; border: none; color: #111; }
 .add-to-cart-btn:hover { background-color: #ffc964; color: #111; }
-.btn-login { background-color: #2d9cdb; color: #fff; }
-.btn-register { background-color: #28a745; color: #fff; }
+.btn-login { background-color: #1b6fa8; color: #fff; }   /* 深一點的藍：白字對比 4.5:1 以上 (axe color-contrast) */
+.btn-register { background-color: #1e7e34; color: #fff; }   /* 深一點的綠：白字對比 4.5:1 以上 (axe color-contrast) */
 .btn-login:hover, .btn-register:hover { color: #fff; filter: brightness(1.1); }
 
 /* 熱門推薦 / 常點餐點的快速加入卡片 */
@@ -101,6 +101,7 @@ body.customer-page {
     border: 1px solid #3b465c;
 }
 .sort-btn:hover, .price-sort-btn:hover { background-color: #313b4d; color: #fff; border-color: #f5a500; }
+.diet-chip.active { background-color: var(--bs-btn-hover-bg); color: #fff; font-weight: 700; }
 .sort-btn.active,
 .price-sort-btn.active {
     background-color: #f5a500 !important;
@@ -187,3 +188,24 @@ body.customer-page {
 /* 進階功能：出餐進度 QR、過敏原標示 */
 .receipt-qr { width: 140px; height: 140px; }
 .menu-diet .badge { margin-right: .2rem; }
+
+/* ---- 淺色模式 (顧客頁右上角切換；第六輪) ---- */
+[data-bs-theme="light"] body.customer-page { background: linear-gradient(150deg, #f4f5f7 0%, #e9ecef 100%); color: #212529; }
+[data-bs-theme="light"] .customer-page .header { background: rgba(255, 255, 255, 0.92); border-bottom-color: rgba(0, 0, 0, 0.08); }
+[data-bs-theme="light"] .customer-page .header .btn-outline-light { --bs-btn-color: #212529; --bs-btn-border-color: #adb5bd; --bs-btn-hover-bg: #e9ecef; --bs-btn-hover-color: #212529; }
+[data-bs-theme="light"] .customer-page .hero { background: radial-gradient(circle at 20% 25%, rgba(245, 165, 0, 0.35), transparent 45%), linear-gradient(135deg, #343a40, #212529); }
+[data-bs-theme="light"] .customer-page .menu-card, [data-bs-theme="light"] .customer-page .quick-card { background: #ffffff; color: #212529; border-color: #dee2e6; }
+[data-bs-theme="light"] .customer-page .menu-card .text-white-50, [data-bs-theme="light"] .customer-page .quick-card .text-white-50,
+[data-bs-theme="light"] .customer-page .text-white-50 { color: #5c636a !important; }
+[data-bs-theme="light"] .customer-page .menu-name, [data-bs-theme="light"] .customer-page .text-warning { color: #9a6700 !important; }
+[data-bs-theme="light"] .customer-page .text-success { color: #157347 !important; }
+[data-bs-theme="light"] .customer-page .badge.bg-dark { background-color: #e9ecef !important; color: #212529; }
+[data-bs-theme="light"] .customer-page .allergen-badge.text-danger { color: #b02a37 !important; }
+[data-bs-theme="light"] .customer-page .form-control.bg-dark, [data-bs-theme="light"] .customer-page .form-select.bg-dark { background-color: #ffffff !important; color: #212529 !important; border-color: #ced4da !important; }
+[data-bs-theme="light"] .customer-page .offcanvas, [data-bs-theme="light"] .customer-page .bg-dark:not(.badge) { background-color: #f8f9fa !important; color: #212529; }
+[data-bs-theme="light"] .customer-page .text-white:not(.btn):not(.badge), [data-bs-theme="light"] .customer-page .offcanvas .text-white { color: #212529 !important; }
+[data-bs-theme="light"] .customer-page .btn-outline-light { --bs-btn-color: #212529; --bs-btn-border-color: #adb5bd; --bs-btn-hover-bg: #e9ecef; --bs-btn-hover-color: #212529; --bs-btn-active-bg: #dee2e6; --bs-btn-active-color: #212529; }
+[data-bs-theme="light"] .customer-page .modal-content:not(.text-dark) { background-color: #ffffff; color: #212529; }
+[data-bs-theme="light"] .customer-page .border-secondary { border-color: #ced4da !important; }
+[data-bs-theme="light"] .customer-page .sort-btn, [data-bs-theme="light"] .customer-page .price-sort-btn { background-color: #ffffff; color: #212529; border-color: #ced4da; }
+[data-bs-theme="light"] .customer-page .review-card { background-color: #ffffff !important; color: #212529; }

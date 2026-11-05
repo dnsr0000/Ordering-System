@@ -13,10 +13,11 @@ GET  /api/v1/members/<手機>                                 會員姓名、點
 GET  /api/v1/reports/daily?date=YYYY-MM-DD                 當日訂單數、營業額、付款方式 (reports:read)
 """
 import hashlib
+import json
 from datetime import date, datetime, timedelta
 from functools import wraps
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from app.errors import AppError
 from app.extensions import csrf, db, limiter
@@ -124,12 +125,21 @@ def menu():
     from app.services import branch_service
     branch_service.activate_for_request(g.tenant_id)   # 分店主機：本分店的價格 / 下架
     items = MenuItem.query.filter_by(tenant_id=g.tenant_id).order_by(MenuItem.category, MenuItem.id).all()
-    return jsonify({'success': True, 'items': [{
+    body = json.dumps({'success': True, 'items': [{
         'id': m.id, 'uuid': m.uuid, 'name': m.name, 'category': m.category, 'price': m.list_price,
         'prices': {ch: m.price_for(ch) for ch in ('dine_in', 'takeout', 'online', 'delivery')},
         'stock': m.stock, 'is_sold_out': bool(m.is_sold_out), 'is_available': m.is_available,
-        'branch_hidden': m.is_branch_hidden,
-        'external_code': m.external_code or ''} for m in items]})
+        'branch_hidden': m.is_branch_hidden, 'prep_minutes': m.prep_minutes or 0,
+        'external_code': m.external_code or ''} for m in items]}, ensure_ascii=False, separators=(',', ':'))
+    # ETag：串接端定期拉菜單時，沒變化就回 304 (省流量；請帶 If-None-Match)
+    etag = '"' + hashlib.sha1(body.encode('utf-8')).hexdigest()[:20] + '"'
+    if request.headers.get('If-None-Match') == etag:
+        resp = current_app.response_class(status=304)
+    else:
+        resp = current_app.response_class(body, mimetype='application/json')
+    resp.headers['ETag'] = etag
+    resp.headers['Cache-Control'] = 'no-cache'
+    return resp
 
 
 @api_v1.route('/menu/<int:item_id>/availability', methods=['POST'])

@@ -178,7 +178,10 @@
 3. 定期備份 database/ 與 uploads/
    - 系統內建每日自動備份 (後台「系統設定 → 自動備份」設定時間與保留天數，預設 03:30、保留 14 天)：
      一致性快照壓縮成 database\backups\menu-日期.zip，後台「系統監控」(/admin/system) 可查看、立即備份、下載。
-     備份仍在同一台電腦，請另外複製到其他磁碟 / 雲端 (例如把 database\backups 設為雲端同步資料夾)。
+     備份仍在同一台電腦，請另外複製到其他磁碟 / 雲端：「自動備份」設定裡的「異地備份」可在每日備份後自動上傳到
+     WebDAV (Synology / Nextcloud)、S3 相容儲存 (AWS S3 / MinIO / Cloudflare R2 / Backblaze B2：填端點、Access Key /
+     Secret Key、Bucket、Region) 或自訂指令 (例如 rclone copy {file} gdrive:kiosk-backups)，只保留最近 N 份；設定頁「測試」
+     會上傳一個小檔確認；上傳失敗會進「系統監控」的事件並依監控通知管道提醒。
      上傳檔 (照片) 不在自動備份內。
    - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。其他方式：
      (1) 後台「整庫備份」(平台管理者)：一次下載資料庫 + 上傳檔的壓縮檔，適合手動備份。
@@ -194,6 +197,15 @@
    - 備份請放在另一顆磁碟、USB 或雲端同步資料夾，並定期清除過舊的備份。
    - 還原：停止服務 (nssm stop KioskPOS) → 把備份的 menu.db 放回 database\ (同時刪除 menu.db-wal、menu.db-shm)
      與 uploads\ → 啟動服務；或使用後台的「整庫還原」。
+
+3-1. 更新版本 (門市)
+   - 後台「系統監控 → 版本更新」(平台管理者) 會顯示目前版本 (VERSION 檔) 與 GitHub 最新 release：
+     「下載更新檔」→ 營業空檔按「套用並重啟」。主機會執行 deploy\windows\update_store.cmd：
+     備份程式檔 (database\updates\previous-時間.zip) 與資料庫快照 → 停掉伺服器 (NSSM 服務 KioskPOS、工作排程或目前的 python)
+     → 覆蓋程式檔 (不動 database\、uploads\、.env、.venv) → pip install -r requirements.txt → flask db upgrade → 重啟；
+     任一步失敗會自動還原程式檔與資料庫再重啟。過程記錄在 database\updates\update.log，約 1~3 分鐘。
+   - 也可以在主機雙擊 deploy\windows\update_store.cmd (會用 database\updates 裡最新的 zip)。
+   - 主機需能連到 github.com；離線主機請手動下載 release zip 放到 database\updates\ 再執行腳本。
 
 4. Kiosk 瀏覽器全螢幕
    - 點餐機開機後自動以全螢幕開啟點餐頁：在「啟動」資料夾 (Win+R 輸入 shell:startup) 建立捷徑，目標例如：
@@ -305,10 +317,22 @@
 [ ] 進階功能的外部服務 (見第六節)：電子發票、LINE Pay、LINE、簡訊、外送平台、SMTP 都在後台填寫；
     填完按「測試連線」或執行 flask --app run ops check-integrations，並各實際走一次 (小額真實交易)
 [ ] 儲值金屬預收款：啟用前確認履約保證 (信託 / 銀行保證) 與定型化契約揭露義務
+[ ] 手機推播 (系統設定 → 手機推播通知)：只在 HTTPS 網址有效，門市以 http://區網IP 使用時顧客只有頁面開著才會通知；
+    啟用後填聯絡 Email (推播服務商聯絡用)，VAPID 金鑰自動產生並存在該主機的設定 (換網域不必重新產生，但金鑰遺失時
+    舊訂閱全部失效)。
+[ ] 店家管理 (/admin/tenants，平台管理者)：上線前停用測試店家；停用的店家員工無法登入、入口 404、分店同步被拒。
+[ ] 接單控制：POS 右上角「接單」可暫停；時段上限依廚房產能在「系統設定 → 接單控制」設定 (0 = 不限)。
 
 建議
 [ ] 監控：用 UptimeRobot 等服務每分鐘檢查 https://網域/healthz，異常時通知
 [ ] 錯誤通知：docker compose logs 只保留在主機上，可另外接 Sentry 等服務
+[ ] 記錄檔：門市主機在 database\logs\app.log (10 MB × 5 自動輪替，LOG_MAX_BYTES / LOG_BACKUP_COUNT 可調)，
+    database\server.log 只剩啟動訊息與錯誤 (超過 5 MB 時 start_store.cmd 於下次啟動換成 server.log.1)；
+    線上端由 docker logs (json-file 20 MB × 5) 收集，LOG_FILE 已設為空。顧客回報錯誤時請他提供 500 頁面上的「錯誤代碼」
+    (X-Request-ID)，以此在記錄檔中搜尋 [代碼] 即可找到那一次請求的所有記錄；反向代理若已產生 X-Request-ID 會沿用。
+[ ] 更新部署後不必請顧客清快取：靜態檔網址帶版本 (?v=)，PWA 的 Service Worker 也會在下次開啟時換新快取。
+[ ] CI：GitHub Actions 的 lint 工作會跑 ruff / mypy (擋) 與 pip-audit (只警告)；pip-audit 有新漏洞時請升級
+    requirements.txt 的版本並重跑測試。
 [ ] 調整 GUNICORN_WORKERS / GUNICORN_THREADS：每個分店的長輪詢與每個開著的看板 (SSE) 都會占用一條執行緒
 
 
@@ -394,6 +418,12 @@
    - SMTP：Gmail 請開啟兩步驟驗證後建立「應用程式密碼」(smtp.gmail.com、587、STARTTLS)。
    - 監控：可填 Webhook (Discord / Slack / Google Chat)、Email、LINE；系統錯誤、印表機離線、發票開立失敗、
      原料低於安全量、主機時鐘誤差過大時通知 (同一事件 10 分鐘內只通知一次)。
+   - Sentry (選用)：.env 設 SENTRY_DSN 並 pip install "sentry-sdk[flask]"，未預期錯誤會送到 Sentry，事件帶 request_id
+     (對照 app.log) 與店家；SENTRY_TRACES_SAMPLE_RATE 可開效能取樣 (預設 0)。
+   - Prometheus (選用)：.env 設 METRICS_TOKEN 後，監控端抓 GET https://主機/metrics?token=… (或 Authorization: Bearer)；
+     線上端 gunicorn 多 worker 時請求計數是每個 worker 各一份 (訂單 / 營業額等業務指標查資料庫，各 worker 相同)。
+   - 電子收據：「系統設定 → 電子收據寄送」開啟 Email (需 SMTP) / LINE (需 LINE Messaging API) 後，顧客在收據視窗可寄送；
+     可設定結帳時自動傳給 LINE 綁定會員。
 
 8. 網路熱感印表機
    - 支援 ESC/POS 網路印表機 (TCP 9100，例如 Epson TM-T82III、Xprinter)：在後台「印表機與廚房工作站」新增 IP，

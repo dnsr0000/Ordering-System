@@ -52,6 +52,10 @@ export const state = {
     acceptedTotal: null,          // 上次送出時伺服器回報的金額 (顧客已確認)
     featureSort: null,
     priceOrder: null,
+    eta: 0,                       // 預估等候分鐘數 (/api/eta；0 = 未啟用或購物車為空)
+    dietFilter: null,             // 飲食篩選 { veg, mild, allergens[] } (menu.js 由 localStorage 載入)
+    giftCard: null,               // 查過餘額的禮物卡 { code, balance } (付款方式選禮物卡時送 payment_info.gift_code)
+    lastOrderId: null,            // 剛結帳的訂單 (收據視窗寄電子收據用)
 };
 
 /** 價格通路：線上點餐 / 外帶 / 內用 (與後端 order_service._price_channel 相同) */
@@ -60,8 +64,12 @@ export function priceChannel() {
     const sel = $('orderType');
     return sel && sel.value === '外帶' ? 'takeout' : 'dine_in';
 }
+/** 登入會員 (非訪客) 且品項有會員價時，取會員價與通路價較低者 (與後端 MenuItem.price_for(member=True) 相同) */
 export function channelPrice(item) {
-    return Number((item.prices && item.prices[priceChannel()]) || item.price) || 0;
+    const ch = priceChannel();
+    const base = Number((item.prices && item.prices[ch]) || item.price) || 0;
+    if (!isGuest && item.member_prices && item.member_prices[ch] !== undefined) return Math.min(base, Number(item.member_prices[ch]) || base);
+    return base;
 }
 
 export function toggleRow(rowId, valueId, value) {

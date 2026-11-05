@@ -169,6 +169,16 @@ class Config:
     # 內容安全政策：enforce (預設) / report-only (排查用) / off
     CSP_MODE = _env("CSP_MODE", "enforce").lower()
 
+    # ---- 記錄檔 (app/services/log_service.py)：輪替的檔案記錄；LOG_FILE= (空) 只輸出主控台 (Docker 交給 json-file 輪替) ----
+    LOG_FILE = os.getenv("LOG_FILE", os.path.join(DATABASE_DIR, "logs", "app.log"))
+    LOG_MAX_BYTES = max(1024 * 1024, _env_int("LOG_MAX_BYTES", 10 * 1024 * 1024))
+    LOG_BACKUP_COUNT = max(1, _env_int("LOG_BACKUP_COUNT", 5))
+    # ---- 錯誤回報與指標 (第六輪，app/services/observability.py)：都是選用 ----
+    SENTRY_DSN = _env("SENTRY_DSN")                      # 設定後 (並 pip install sentry-sdk) 未預期錯誤送到 Sentry，帶請求識別碼
+    SENTRY_TRACES_SAMPLE_RATE = float(_env("SENTRY_TRACES_SAMPLE_RATE") or 0)
+    METRICS_TOKEN = _env("METRICS_TOKEN")                # 設定後 GET /metrics?token=… (或 Bearer) 回 Prometheus 文字格式
+    UPDATE_REPO = _env("UPDATE_REPO")                    # 版本更新來源 (GitHub owner/repo)，預設 dnsr0000/Ordering-System
+
     # 交易提交後的工作 (開發票、列印、推播) 直接在請求中執行 (測試用；正式環境交給背景執行緒)
     DEFERRED_INLINE = _env_flag("DEFERRED_INLINE", False)
     # 背景排程 (發票重送、列印佇列、生日禮、定期報表、自動備份、監控通知)；測試與 CLI 不啟動

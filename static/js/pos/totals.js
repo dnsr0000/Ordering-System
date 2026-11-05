@@ -75,7 +75,7 @@ export async function runPromoCheck(code) {
 }
 
 export function maxPointsCash(remaining) {
-    let maxCash = Math.floor(remaining);
+    let maxCash = Math.floor(remaining + 0.5);   // 與後端相同：上限 = 四捨五入後的應付金額 (百分比優惠券留下的 .5 也折得掉)
     if (num(rewardConfig.maxDiscount) > 0) maxCash = Math.min(maxCash, num(rewardConfig.maxDiscount));
     return maxCash;
 }

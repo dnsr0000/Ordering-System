@@ -12,7 +12,7 @@
         let left = seconds;
         const timer = setInterval(() => {
             left -= 1;
-            btn.textContent = `${left} 秒後可重送`;
+            btn.textContent = Kiosk.t('resend_in', '{n} 秒後可重送').replace('{n}', left);
             if (left <= 0) {
                 clearInterval(timer);
                 btn.disabled = false;
@@ -29,7 +29,7 @@
             const phone = (phoneInput.value || '').trim();
             if (!/^09\d{8}$/.test(phone)) {
                 msg.className = 'small mb-2 text-danger';
-                msg.textContent = '請先輸入 09 開頭的 10 碼手機號碼';
+                msg.textContent = Kiosk.t('reg_phone_first', '請先輸入 09 開頭的 10 碼手機號碼');
                 return;
             }
             try {

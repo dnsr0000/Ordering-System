@@ -23,7 +23,7 @@ from app.models.integration import DEVICE_KINDS, Device, hash_secret
 COOKIE = 'kiosk_device'
 PAIR_MINUTES = 15
 START_PAGES = {'kiosk': '/', 'pos': '/pos', 'kitchen': '/kitchen', 'display': '/counter', 'other': '/'}
-_VERSION = {}
+_VERSION: dict = {}
 
 
 def app_version():

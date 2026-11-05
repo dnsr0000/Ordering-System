@@ -486,6 +486,8 @@ class Applier:
             order.completed_at, changed = values['completed_at'], True
         if not order.pickup_number and values.get('pickup_number'):
             order.pickup_number, changed = values['pickup_number'], True
+        if order.estimated_ready_at is None and values.get('estimated_ready_at'):   # 分店收到線上訂單後估的完成時間
+            order.estimated_ready_at, changed = values['estimated_ready_at'], True
         # 桌邊掃碼點餐的櫃檯結帳：unpaid → settled；已取消的訂單收到結帳 (兩邊同時操作) 或對方已標記退款 → refund_required
         incoming_pay = values.get('payment_status')
         if incoming_pay in ('settled', 'refund_required') and order.payment_status in ('unpaid', 'settled'):

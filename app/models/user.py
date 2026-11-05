@@ -85,6 +85,7 @@ class User(TenantScoped, db.Model):
     birthday_gift_year = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     tier_id = db.Column(db.Integer, db.ForeignKey('member_tier.id', ondelete='SET NULL', name='fk_user_tier_id'), nullable=True)
     line_user_id = db.Column(db.String(64), nullable=False, default='', server_default='', index=True)
+    email = db.Column(db.String(120), nullable=False, default='', server_default='')   # 電子收據寄送 (顧客自己填、可記住)
     wallet_balance = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     total_spent = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     phone_verified_at = db.Column(db.DateTime, nullable=True)

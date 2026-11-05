@@ -38,6 +38,42 @@ export function clearSearch() {
     filterMenu();
 }
 
+/**
+ * 條碼 / 商品代碼 (菜單進階設定的「外送平台 / 條碼代碼」)：掃描槍打字後送 Enter，代碼完全相符時直接加入
+ * (有套餐 / 客製化 / 規格的商品一樣走選擇視窗)。回傳是否有對應的商品。
+ */
+export function scanCode(raw) {
+    const code = String(raw || '').trim().toLowerCase();
+    if (!code) return false;
+    const item = [...itemMap.values()].find((i) => (i.external_code || '').trim().toLowerCase() === code);
+    if (!item) return false;
+    if (!isItemAvailable(item.id)) {
+        alert(`⚠️ 【${item.name}】已售完或目前不供應`);
+        return true;
+    }
+    const card = document.getElementById(`pos-card-${item.id}`);
+    if (card) pickItem(card);
+    else if ((item.combos || []).length > 0) openComboModal(item);
+    else startConfigure({ item, combo: null, mode: 'normal' });
+    return true;
+}
+
+/** 搜尋框按 Enter：先當條碼找；找不到且只剩一個符合的商品時直接加入 */
+export function searchEnter() {
+    const input = $('posSearchInput');
+    const q = (input.value || '').trim();
+    if (!q) return;
+    if (scanCode(q)) {
+        clearSearch();
+        return;
+    }
+    const visible = [...document.querySelectorAll('.pos-menu-col:not(.d-none) [data-action="pickItem"]')];
+    if (visible.length === 1) {
+        pickItem(visible[0]);
+        clearSearch();
+    }
+}
+
 // ======================================================================
 // 2. 點選商品 / 紅利兌換 / 套餐
 // ======================================================================

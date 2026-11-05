@@ -3,7 +3,6 @@
 POS 外送到府，以及線上端的線上點餐與分店現場銷售 (兩個資料庫) 之間的競爭。
 驗證：不超賣、庫存不為負、失敗的一方得到明確的「庫存不足」(平台訂單拒單)、取餐號不重複、同一張平台單重送不重複建立。
 """
-import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest

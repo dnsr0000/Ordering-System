@@ -7,9 +7,8 @@ import pytest
 
 from app.extensions import db
 from app.models.order import Order, OrderFeedback, ServiceCall
-from tests.support import (assert_flash, checkout, default_tenant_id, guest_client, line, make_item, make_member,
-                           member_client)
-from tests.test_sync_hub_node import Env, _add_item, _checkout, _item, _member, _order, _register_member, tenant_ctx
+from tests.support import (default_tenant_id, guest_client, line, make_item)
+from tests.test_sync_hub_node import Env, _add_item, _checkout, _item, _member, _register_member, tenant_ctx
 
 CARD = {'auth_code': 'A12345', 'card_last4': '4242'}
 

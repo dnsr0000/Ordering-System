@@ -202,7 +202,7 @@ def test_track_page_and_pwa(app, staff_client):
 # ---------------------------------------------------------------------------
 def test_menu_pro_and_i18n(app, admin_client, store_settings):
     iid = make_item(app, '多語系牛肉麵', price=160, stock=20, category='多語系分類')
-    other = make_item(app, '代碼重複測試', price=10, stock=5, external_code='DUP-1')
+    make_item(app, '代碼重複測試', price=10, stock=5, external_code='DUP-1')
     form = {'action': 'item', 'item_id': iid, 'avail_days': list('1234567'), 'takeout_price': '150',
             'allergens': ['peanut', 'gluten', 'bogus'], 'diet': 'vegan', 'spicy_level': '2', 'name_en': 'Beef Noodle Soup',
             'name_ja': '牛肉麺', 'description_en': 'Slow braised', 'external_code': 'BN-01', 'unit_cost': '60'}

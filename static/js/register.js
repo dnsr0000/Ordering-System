@@ -20,7 +20,7 @@
 
     async function openCamera(video) {
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('此裝置或瀏覽器不支援相機');
+            throw new Error(Kiosk.t('reg_no_camera', '此裝置或瀏覽器不支援相機'));
         }
         const stream = await navigator.mediaDevices.getUserMedia(CAMERA_CONSTRAINTS);
         video.srcObject = stream;
@@ -52,9 +52,9 @@
         const phoneBtn = document.getElementById('btn-phone-login');
         let stream = null;
 
-        const faceBtnIdle = html`<i class="bi bi-camera-fill me-1"></i> 登入`;
-        const faceBtnRetry = html`<i class="bi bi-camera-fill me-1"></i> 重新辨識登入`;
-        const phoneBtnIdle = html`<i class="bi bi-box-arrow-in-right me-1"></i> 手機號碼登入`;
+        const faceBtnIdle = html`<i class="bi bi-camera-fill me-1"></i> ${Kiosk.t('login', '登入')}`;
+        const faceBtnRetry = html`<i class="bi bi-camera-fill me-1"></i> ${Kiosk.t('reg_face_retry', '重新辨識登入')}`;
+        const phoneBtnIdle = html`<i class="bi bi-box-arrow-in-right me-1"></i> ${Kiosk.t('reg_phone_tab', '手機號碼登入')}`;
 
         async function startCamera() {
             if (stream) return;
@@ -63,7 +63,7 @@
                 show(cameraStatus, false);
             } catch (err) {
                 console.warn('相機開啟失敗:', err);
-                cameraStatus.textContent = '無法開啟相機，請確認瀏覽器權限，或改用手機號碼登入';
+                cameraStatus.textContent = Kiosk.t('reg_camera_failed', '無法開啟相機，請確認瀏覽器權限，或改用手機號碼登入');
                 show(cameraStatus, true);
             }
         }
@@ -74,15 +74,15 @@
         }
 
         function welcome(data) {
-            alert(`🎉 歡迎回來，${data.user_name}！`);
+            alert(`🎉 ${Kiosk.t('welcome_back', '歡迎回來，')}${data.user_name}${Kiosk.t('welcome_back_b', '！')}`);
             window.location.href = HOME_URL;
         }
 
         async function faceLogin() {
-            setButton(faceBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>人臉比對中...`, true);
+            setButton(faceBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>${Kiosk.t('reg_face_matching', '人臉比對中...')}`, true);
             const blob = await captureFrame(video, canvas);
             if (!blob) {
-                alert('擷取畫面失敗，請確認鏡頭正常！');
+                alert(Kiosk.t('reg_capture_failed', '擷取畫面失敗，請確認鏡頭正常！'));
                 setButton(faceBtn, faceBtnIdle, false);
                 return;
             }
@@ -93,7 +93,7 @@
                 stopCamera();
                 welcome(data);
             } catch (err) {
-                alert(err.message || '人臉辨識未通過，請對準鏡頭重新嘗試！');
+                alert(err.message || Kiosk.t('reg_face_failed', '人臉辨識未通過，請對準鏡頭重新嘗試！'));
                 setButton(faceBtn, faceBtnRetry, false);
             }
         }
@@ -103,10 +103,10 @@
             const phone = document.getElementById('loginPhoneInput').value.trim();
             const pin = document.getElementById('loginPinInput').value.trim();
             if (!phone || !pin) {
-                alert('請輸入手機號碼與 4~6 位安全 PIN 碼！');
+                alert(Kiosk.t('reg_need_phone_pin', '請輸入手機號碼與 4~6 位安全 PIN 碼！'));
                 return;
             }
-            setButton(phoneBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>登入中...`, true);
+            setButton(phoneBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>${Kiosk.t('reg_logging_in', '登入中...')}`, true);
             try {
                 welcome(await Kiosk.api('/phone_login', { json: { phone, pin } }));
             } catch (err) {
@@ -142,7 +142,7 @@
         // 送出後鎖定按鈕，避免重複註冊
         const submitIdle = submitBtn.innerHTML;
         form.addEventListener('submit', () => {
-            setButton(submitBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>註冊中...`, true);
+            setButton(submitBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>${Kiosk.t('reg_registering', '註冊中...')}`, true);
         });
         // 從下一頁按「上一頁」回來 (bfcache) 時恢復按鈕
         window.addEventListener('pageshow', () => {
@@ -201,7 +201,7 @@
                 stream = await openCamera(video);
             } catch (err) {
                 console.warn('相機存取失敗:', err);
-                alert('無法存取攝影機，請檢查瀏覽器權限！');
+                alert(Kiosk.t('reg_camera_denied', '無法存取攝影機，請檢查瀏覽器權限！'));
                 modal.hide();
             }
         }
@@ -222,13 +222,13 @@
             const dt = new DataTransfer();
             dt.items.add(file);
             photoInput.files = dt.files;
-            setPhotoStatus(html`<i class="bi bi-check-circle-fill text-success"></i> 已成功拍攝相片：<strong>${file.name}</strong>`);
+            setPhotoStatus(html`<i class="bi bi-check-circle-fill text-success"></i> ${Kiosk.t('reg_photo_taken', '已成功拍攝相片：')}<strong>${file.name}</strong>`);
             modal.hide();
         }
 
         photoInput.addEventListener('change', () => {
             const file = photoInput.files && photoInput.files[0];
-            setPhotoStatus(file ? html`<i class="bi bi-file-earmark-image text-info"></i> 已選取檔案：<strong>${file.name}</strong>` : '');
+            setPhotoStatus(file ? html`<i class="bi bi-file-earmark-image text-info"></i> ${Kiosk.t('reg_file_chosen', '已選取檔案：')}<strong>${file.name}</strong>` : '');
         });
 
         // 彈窗關閉 (取消、右上角 X、使用此照片) 一律關閉鏡頭

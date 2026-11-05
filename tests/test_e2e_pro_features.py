@@ -167,7 +167,7 @@ def test_pos_delivery_mode(app, page):
 def test_pos_live_orders_refund_modal(app, page):
     login_staff(app, 'e2e_pos')
     from tests.support import make_item
-    iid = make_item(app, 'E2E 退款餐', price=90, stock=5)
+    make_item(app, 'E2E 退款餐', price=90, stock=5)
     browser_staff_login(page, ADMIN_USERNAME, ADMIN_PASSWORD)
     assert page.goto('/pos').ok
     page.wait_for_load_state('networkidle')

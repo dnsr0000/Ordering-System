@@ -50,6 +50,18 @@
         <h3 class="text-white-50 mt-3">目前無待製作訂單，廚房備料中！</h3>
     </div>
 </main>
+<!-- 製作卡：點品名顯示做法 / 配方用量 (菜單進階設定 → 廚房製作卡) -->
+<div class="modal fade" id="prepCardModal" tabindex="-1" aria-hidden="true" aria-labelledby="prepCardTitle">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark text-white border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="prepCardTitle"><i class="bi bi-journal-text me-1"></i>製作卡</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+            </div>
+            <div class="modal-body" id="prepCardBody"></div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block page_data %}

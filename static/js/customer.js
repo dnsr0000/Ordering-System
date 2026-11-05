@@ -1,7 +1,7 @@
 /*
  * 顧客自助點餐 (Kiosk) 頁面 (templates/customer.html) 的進入點 (ES module)：事件綁定與啟動。
  * 各功能拆在 static/js/customer/ (core 共用狀態與工具、cart 購物車與加購、totals 促銷 / 金額 / 優惠券 / 點數、
- * menu 套餐 / 客製化 / 寄杯 / 篩選排序、checkout 結帳 / 收據 / 桌邊帳單 / 我的訂單)。
+ * menu 套餐 / 客製化 / 寄杯 / 篩選排序、checkout 結帳 / 收據 / 桌邊帳單 / 我的訂單 / 再點一次、live 售完即時更新)。
  * 菜單資料由後端以 JSON 嵌入 (page-data)，畫面上的使用者資料一律經 Kiosk.html 跳脫後才插入 DOM。
  *
  * 購物車存在 localStorage 'kiosk_cart' (紅利商城兌換的商品也會寫進來)，每一列格式：
@@ -13,13 +13,14 @@ import { $, IDLE_TIMEOUT_MS, clearStoredCart, loadCart, pageData, state, storeCa
 import { changeQty, normalizeLine, removeLine, repriceCart } from './customer/cart.js';
 import { applyPromoCode, calculateTotal, renderCoupons, syncLatestUserCoupons, togglePoints } from './customer/totals.js';
 import {
-    callService, confirmModifiers, cyclePriceSort, filterMenu, pickCombo, resetFilters, startAdd, syncChoiceMods,
+    callService, confirmModifiers, cyclePriceSort, filterMenu, pickCombo, resetFilters, startAdd, syncChoiceMods, toggleDietFilter,
     toggleFeatureSort, triggerAddon, usePass,
 } from './customer/menu.js';
 import {
-    INVOICE_PLACEHOLDERS, confirmCheckout, fetchMyOrders, finishOrder, openPreview, openTableBill, payTableBill,
-    showMyOrders,
+    INVOICE_PLACEHOLDERS, checkGiftCard, confirmCheckout, fetchMyOrders, finishOrder, openPreview, openTableBill, payTableBill,
+    reorder, sendReceipt, showMyOrders, togglePaymentExtras,
 } from './customer/checkout.js';
+import { startAvailabilityPolling } from './customer/live.js';
 
 // 桌邊呼叫服務 (掃桌位 QR code 後，登入前後都可使用)
 Kiosk.on(document, 'click', { 'call-service': (el) => callService(el) });
@@ -48,10 +49,15 @@ function main() {
         'checkout': () => confirmCheckout(),
         'finish': () => finishOrder(),
         'my-orders': () => showMyOrders(),
+        'reorder': (el) => reorder(el.dataset.id),
         'logout': () => clearStoredCart(),
         'sort': (el) => toggleFeatureSort(el.dataset.mode),
         'price-sort': () => cyclePriceSort(),
         'reset-filters': () => resetFilters(),
+        'diet-filter': (el) => toggleDietFilter(el),
+        'gift-card-check': () => checkGiftCard(),
+        'receipt-email': () => sendReceipt('email'),
+        'receipt-line': () => sendReceipt('line'),
     });
     Kiosk.on(document, 'input', {
         'filter': () => filterMenu(),
@@ -64,6 +70,7 @@ function main() {
             applyPromoCode();
         },
         'toggle-points': () => togglePoints(),
+        'payment-method': () => togglePaymentExtras(),
         'order-type': (el) => {
             $('takeoutExtraBox').classList.toggle('d-none', el.value !== '外帶' && el.value !== '外送到府');
             if ($('homeDeliveryBox')) $('homeDeliveryBox').classList.toggle('d-none', el.value !== '外送到府');
@@ -101,9 +108,11 @@ function main() {
     // ================================================================ 初始化
     state.cart = loadCart().map(normalizeLine).filter(Boolean);
     document.querySelectorAll('#menuList .menu-row').forEach((row, i) => { row.dataset.order = i; });
+    if ($('dietFilterBar')) filterMenu();   // 套用上次記住的飲食篩選
     renderCoupons(pageData.coupons);
     storeCart(state.cart);   // 寫回正規化後的格式
     repriceCart();     // 購物車留在瀏覽器的是加入當時的價格：以目前菜單重算 (店家可能已改價)
     // 點餐機無人操作自動登出；桌邊掃碼點餐是顧客自己的手機，不自動登出
     if (!pageData.table) Kiosk.idleLogout({ timeoutMs: IDLE_TIMEOUT_MS });
+    startAvailabilityPolling();   // 售完 / 恢復供應 / 改價不必重新整理 (每 30 秒，304 時不重畫)
 }

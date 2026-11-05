@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}店家管理 - 平台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid py-4 px-4" id="tenantsPage">
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+        <div>
+            <h1 class="h4 fw-bold mb-1"><i class="bi bi-buildings me-2 text-warning"></i>店家管理 (平台管理者)</h1>
+            <div class="small text-white-50">這台主機上的所有店家：{{ tenants | length }} 家 (啟用中 {{ active_count }} 家)。停用後該店家的員工無法登入、點餐頁與店家入口回 404、分店同步被拒；資料保留，可隨時再啟用。</div>
+        </div>
+        <div class="d-flex gap-2">
+            <a class="btn btn-sm btn-outline-light" href="{{ url_for('admin.admin_dashboard') }}">回後台首頁</a>
+            <a class="btn btn-sm btn-warning fw-bold text-dark" href="{{ url_for('admin.tenant_register') }}"><i class="bi bi-plus-lg me-1"></i>建立新店家</a>
+        </div>
+    </div>
+    <div class="small text-white-50 mb-3">公開註冊 (ALLOW_TENANT_REGISTER)：<span class="badge {{ 'bg-warning text-dark' if register_open else 'bg-secondary' }}">{{ '開放' if register_open else '關閉 (只有平台管理者可建立)' }}</span></div>
+    <div class="table-responsive">
+        <table class="table table-dark-custom table-sm align-middle mb-0" id="tenantTable">
+            <thead><tr class="text-white-50 small">
+                <th>店家</th><th>代號</th><th>狀態</th><th>建立日期</th><th>員工</th><th>會員</th><th>分店 (線上)</th><th>最近分店連線</th>
+                <th>近 {{ days }} 天訂單</th><th>近 {{ days }} 天營業額</th><th>最近訂單</th><th></th>
+            </tr></thead>
+            <tbody>
+            {% for t in tenants %}
+            <tr class="tenant-row {{ 'opacity-50' if not t.is_active }}" data-slug="{{ t.slug }}">
+                <td class="fw-bold text-white">{{ t.name }}{% if t.is_default %} <span class="badge bg-info text-dark">預設 / 平台</span>{% endif %}</td>
+                <td><a class="text-info" href="{{ url_for('customer.tenant_storefront', tenant_slug=t.slug) }}" target="_blank" rel="noopener">{{ t.slug }}</a></td>
+                <td><span class="badge {{ 'bg-success' if t.is_active else 'bg-danger' }}">{{ '啟用' if t.is_active else '已停用' }}</span></td>
+                <td class="small text-white-50">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '' }}</td>
+                <td>{{ t.staff }}</td>
+                <td>{{ t.members }}</td>
+                <td>{% if t.nodes.count %}{{ t.nodes.count }} (<span class="{{ 'text-success' if t.nodes.online else 'text-white-50' }}">{{ t.nodes.online }} 連線中</span>){% else %}<span class="text-white-50">-</span>{% endif %}</td>
+                <td class="small text-white-50">{{ t.nodes.last_seen.strftime('%m-%d %H:%M') if t.nodes.last_seen else '-' }}</td>
+                <td>{{ t.orders }}</td>
+                <td>${{ '{:,}'.format(t.revenue) }}</td>
+                <td class="small text-white-50">{{ t.last_order_at.strftime('%Y-%m-%d %H:%M') if t.last_order_at else '-' }}</td>
+                <td class="text-end">
+                    {% if not t.is_default %}
+                    <form method="POST" action="{{ url_for('tenants.toggle', tenant_id=t.id) }}" class="d-inline"
+                          data-confirm="{{ '確定要停用店家「' ~ t.name ~ '」？停用後員工無法登入、顧客無法點餐。' if t.is_active else '確定要重新啟用店家「' ~ t.name ~ '」？' }}">
+                        {{ csrf() }}
+                        <button class="btn btn-sm {{ 'btn-outline-danger' if t.is_active else 'btn-outline-success' }}" type="submit">{{ '停用' if t.is_active else '啟用' }}</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</main>
+{% endblock %}

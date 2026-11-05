@@ -335,7 +335,7 @@ def _check_xlsx_size(file_storage):
         raise AppError('❌ 檔案內容過大 (解壓後超過 30MB)，請分批匯入！')
 
 
-def import_workbook(file_storage):
+def import_workbook(file_storage, allow_users=True, allow_coupons=True):
     """
     匯入 CSV (菜單) 或 Excel (多工作表：會員 / 菜單 / 優惠券，依工作表名稱或欄位辨識)。
     全部工作表在同一筆交易：任一表失敗整批 rollback。回傳 {'User': n, 'MenuItem': n, 'Coupon': n}。
@@ -357,6 +357,9 @@ def import_workbook(file_storage):
             continue
         cols = {str(c).lower() for c in df.columns}
         if 'User' in sheet or '會員' in sheet or cols & {'電話(phone)', 'phone', '電話'}:
+            if not allow_users:
+                db.session.rollback()
+                raise AppError(f'❌ 工作表【{sheet}】是會員資料，您沒有「會員」頁面權限，無法匯入')
             counts['User'] += _import_users(df)
         elif 'MenuItem' in sheet or '菜單' in sheet or cols & {'單價(price)', 'price', '單價'}:
             try:
@@ -365,6 +368,9 @@ def import_workbook(file_storage):
                 db.session.rollback()
                 raise AppError(f'❌ 菜單工作表【{sheet}】解析失敗：{e.message}')
         elif 'Coupon' in sheet or '優惠券' in sheet or cols & {'代碼(code)', 'code', '代碼'}:
+            if not allow_coupons:
+                db.session.rollback()
+                raise AppError(f'❌ 工作表【{sheet}】是優惠券，您沒有「優惠券」頁面權限，無法匯入')
             counts['Coupon'] += _import_coupons(df)
     db.session.commit()
     return counts

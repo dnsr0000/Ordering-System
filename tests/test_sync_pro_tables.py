@@ -5,7 +5,7 @@
 import pytest
 
 from tests.support import line
-from tests.test_sync_hub_node import Env, _member, _register_member, tenant_ctx
+from tests.test_sync_hub_node import Env, _register_member, tenant_ctx
 
 
 @pytest.fixture(scope='module')

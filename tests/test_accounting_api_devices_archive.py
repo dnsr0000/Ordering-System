@@ -506,7 +506,7 @@ def test_archive_keys_rows_by_uuid_even_if_ids_are_reused(app, tmp_path, monkeyp
     from app.services import archive_service
     tid = _tenant(app, 'archive-reuse')
     monkeypatch.setattr(archive_service, 'archive_dir', lambda: str(tmp_path))
-    old = datetime.now() - timedelta(days=3 * 365)
+    # (三年前的時間由封存服務自行計算)
     with _ctx(app, tid):
         engine, meta = archive_service._archive_engine(tid)
         with engine.begin() as conn:

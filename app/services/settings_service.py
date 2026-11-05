@@ -129,6 +129,8 @@ SECTIONS = {s.key: s for s in (
                 Field('display_message', '客顯螢幕待機標語', default='歡迎光臨',
                       help='POS「客顯」視窗 (第二螢幕) 沒有點餐時顯示的文字'),
                 Field('receipt_footer', '收據頁尾文字', default='謝謝光臨，請憑取餐號碼取餐！'),
+                Field('quick_notes', '常用備註快捷鍵 (逗號分隔)', default='少油, 少鹽, 不要蔥, 分開裝, 餐具 2 份',
+                      help='POS 備註欄上方的快捷按鈕，按一下就加進整單備註'),
             )),
     # ------------------------------------------------------------------ C 廚房出餐
     Section('kds', '廚房看板', 'C 廚房出餐', 'bi-fire',
@@ -137,6 +139,22 @@ SECTIONS = {s.key: s for s in (
                 Field('warn_minutes', '超過幾分鐘顯示黃色', 'int', 8, min=1, max=120),
                 Field('late_minutes', '超過幾分鐘顯示紅色 (逾時)', 'int', 15, min=1, max=240),
                 Field('sound', '新訂單提示音', 'bool', True),
+                Field('eta_enabled', '顯示預估等候時間 (點餐頁、收據、出餐進度)', 'bool', True,
+                      help='依「製作中」訂單的工作量與餐點製作時間估算 (菜單進階設定可設定各餐點的製作時間)'),
+                Field('eta_base_minutes', '基本等候 (分鐘)', 'int', 3, min=0, max=60, help='沒有排隊時的最少等候時間 (裝盤、叫號)'),
+                Field('eta_default_prep', '餐點預設製作時間 (分鐘)', 'int', 5, min=1, max=120, help='餐點未設定製作時間時使用'),
+                Field('eta_parallel', '廚房同時製作幾張訂單', 'int', 3, min=1, max=50, help='排隊訂單的工作量會除以這個數'),
+            )),
+    Section('order_intake', '接單控制', 'C 廚房出餐', 'bi-pause-circle',
+            '暫停接單 (POS 右上角可一鍵切換) 與每時段訂單上限：只擋點餐機、顧客手機 (桌邊 / 線上) 與團購送單，'
+            'POS 櫃檯與外送平台訂單不受影響。分店的暫停狀態會隨同步回報線上端，線上點餐選到該分店時一併擋下。',
+            (
+                Field('paused', '暫停接單', 'bool', False),
+                Field('resume_at', '自動恢復時間 (由 POS 設定；空白 = 手動恢復)', placeholder='例如 2026-10-31T18:30'),
+                Field('message', '暫停時顯示給顧客的訊息', default='目前訂單較多，暫停接單中，請稍後再試或洽櫃檯。'),
+                Field('window_minutes', '時段長度 (分鐘)', 'int', 15, min=5, max=120),
+                Field('max_orders_per_window', '每時段最多接幾張訂單 (0 = 不限)', 'int', 0, min=0, max=1000,
+                      help='盡快取餐的訂單以下單時間計算；預約取餐以取餐時間所在的時段計算'),
             )),
     Section('notify', '取餐通知', 'C 廚房出餐', 'bi-megaphone',
             '叫號看板語音、顧客手機追蹤頁、LINE 推播。',
@@ -147,7 +165,24 @@ SECTIONS = {s.key: s for s in (
                 Field('line_ready', '餐點完成時 LINE 通知綁定的會員', 'bool', False, help='需先設定 LINE Messaging API'),
                 Field('line_ready_template', 'LINE 通知內容', default='{shop}：您的餐點 (取餐號 {number}) 已完成，請至櫃檯取餐！'),
             )),
+    Section('receipt', '電子收據寄送', 'C 廚房出餐', 'bi-envelope-paper',
+            '結帳後顧客可在收據視窗把明細寄到 Email (需設定 SMTP) 或傳到已綁定的 LINE；也可結帳時自動傳給 LINE 綁定會員。',
+            (
+                Field('email_enabled', 'Email 電子收據', 'bool', False, help='需先設定「寄信伺服器 (SMTP)」'),
+                Field('line_enabled', 'LINE 電子收據', 'bool', False, help='需先設定 LINE Messaging API；只有綁定 LINE 的會員'),
+                Field('auto_line', '結帳時自動傳給 LINE 綁定會員', 'bool', False),
+                Field('footer', '收據結尾文字', default='感謝您的惠顧'),
+            )),
     # ------------------------------------------------------------------ D 菜單
+    Section('push', '手機推播通知 (Web Push)', 'C 廚房出餐', 'bi-phone-vibrate',
+            '顧客在出餐進度頁 (收據 QR code) 按「開啟完成通知」後，餐點完成 / 外送出發時推播到手機，離開頁面也收得到。'
+            '只在 HTTPS 網址有效 (門市 Wi-Fi 以 http://IP 開啟時退回頁面內通知)；啟用後第一次訂閱時自動產生 VAPID 金鑰。',
+            (
+                Field('enabled', '啟用 Web Push', 'bool', False),
+                Field('contact_email', '聯絡 Email (VAPID sub，推播服務商聯絡用)', 'email', placeholder='admin@example.com'),
+                Field('vapid_public_key', 'VAPID 公鑰 (自動產生)', placeholder='留空 = 第一次訂閱時自動產生'),
+                Field('vapid_private_key', 'VAPID 私鑰 (自動產生)', 'secret'),
+            ), enabled_field='enabled'),
     Section('menu', '菜單顯示', 'D 菜單', 'bi-translate',
             '點餐頁的語言與標示。',
             (
@@ -226,6 +261,8 @@ SECTIONS = {s.key: s for s in (
                       help='依法禮券不得記載使用期限，且須提供履約保證 (銀行保證 / 信託 / 同業連帶保證)，啟用前請確認'),
                 Field('preset_amounts', '常用面額 (逗號分隔)', default='500, 1000, 2000'),
                 Field('max_amount', '單張面額上限', 'int', 10000, min=100, max=100000),
+                Field('kiosk_enabled', '點餐機可用禮物卡付款', 'bool', False,
+                      help='顧客在自助點餐機輸入 16 碼卡號查餘額並扣款 (餘額不足時請至櫃檯以混合付款補差額)'),
             ), enabled_field='enabled'),
     Section('feedback', '顧客評價', 'E 會員行銷', 'bi-star-half',
             '顧客在出餐追蹤頁 (收據 QR code) 為餐點評分；高分邀請到 Google 留下評論，低分通知店家。',
@@ -413,6 +450,20 @@ SECTIONS = {s.key: s for s in (
                 Field('enabled', '啟用每日自動備份', 'bool', True),
                 Field('time', '備份時間', 'time', '03:30'),
                 Field('keep_days', '保留天數', 'int', 14, min=1, max=365),
+                Field('offsite', '異地備份 (每日備份後上傳)', 'select', 'none',
+                      (('none', '不上傳'), ('webdav', 'WebDAV (Nextcloud / Synology / 群暉 WebDAV…)'),
+                       ('s3', 'S3 相容儲存 (AWS S3 / MinIO / Cloudflare R2 / Backblaze B2)'),
+                       ('command', '自訂指令 (例如 rclone copy {file} gdrive:backups)')),
+                      help='上傳失敗會進「監控與錯誤通知」；按「測試」會上傳一個小檔案確認設定'),
+                Field('offsite_url', 'WebDAV 資料夾網址 / S3 端點', 'url', '',
+                      placeholder='https://nas.example.com/remote.php/dav/files/user/backups  或  https://s3.ap-northeast-1.amazonaws.com'),
+                Field('offsite_user', 'WebDAV 帳號 / S3 Access Key'),
+                Field('offsite_password', 'WebDAV 密碼 / S3 Secret Key', 'secret'),
+                Field('offsite_bucket', 'S3 Bucket (可加路徑，例如 shop-backups/store1)'),
+                Field('offsite_region', 'S3 Region', default='auto', help='AWS 填區域代碼 (ap-northeast-1)；MinIO / R2 / B2 填 auto'),
+                Field('offsite_command', '自訂上傳指令', placeholder='rclone copy {file} gdrive:kiosk-backups',
+                      help='{file} 會換成備份檔完整路徑；在門市主機上必須能直接執行'),
+                Field('offsite_keep', '異地保留份數 (WebDAV / S3)', 'int', 30, min=1, max=365),
             ), enabled_field='enabled'),
     Section('security', '帳號安全', 'H 維運', 'bi-shield-lock',
             '員工帳號的兩步驟驗證與閒置自動登出。每位員工在後台「帳號安全」頁自行設定驗證 App。',
@@ -435,7 +486,7 @@ for _s in SECTIONS.values():
 # 讀取 / 儲存
 # ---------------------------------------------------------------------------
 # 不由總部下發的區塊 (沒有金鑰但屬於這台主機本身的設定)
-LOCAL_ONLY_SECTIONS = {'backup'}
+LOCAL_ONLY_SECTIONS = {'backup', 'order_intake'}
 
 
 def hq_managed(key):
@@ -617,7 +668,7 @@ def form_view(key):
 
 
 # 「測試連線」：{key: callable(settings_dict) -> 訊息字串 (失敗拋 AppError)}，由各服務模組註冊
-TESTERS = {}
+TESTERS: dict = {}
 
 
 def register_tester(key):
@@ -629,3 +680,72 @@ def register_tester(key):
 
 def split_lines(value):
     return [v.strip() for v in re.split(r'[\n,，;]+', str(value or '')) if v.strip()]
+
+
+# ---------------------------------------------------------------------------
+# 設定匯出 / 匯入 (第六輪)：開新店快速複製營運規則；金鑰 (secret 欄位) 與本機專屬區塊不匯出
+# ---------------------------------------------------------------------------
+EXPORT_VERSION = 1
+
+
+def export_all(tenant_id=None, include_secrets=False):
+    """{'version', 'exported_at', 'sections': {key: {欄位: 值}}}"""
+    out = {}
+    for key, section in SECTIONS.items():
+        if key in LOCAL_ONLY_SECTIONS:
+            continue
+        data = get(key, tenant_id)
+        out[key] = {f.name: data.get(f.name) for f in section.fields if include_secrets or f.type != 'secret'}
+    return {'version': EXPORT_VERSION, 'exported_at': datetime.now().isoformat(timespec='seconds'), 'sections': out}
+
+
+def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, allow_secrets=False):
+    """套用匯出檔：只認得的區塊 / 欄位、型別檢查後寫入；回傳 (套用的區塊數, 略過的鍵)。由呼叫端 commit。
+    allow_secrets=False (非負責人)：含金鑰的區塊整個略過 (與設定頁只有負責人能改相同)，金鑰欄位一律不從匯入檔寫入。"""
+    if not isinstance(payload, dict) or not isinstance(payload.get('sections'), dict):
+        raise AppError('匯入檔格式不正確 (需要 sections)')
+    if int(payload.get('version') or 0) > EXPORT_VERSION:
+        raise AppError('匯入檔版本比目前系統新，請先更新系統')
+    applied, skipped = 0, []
+    for key, values in payload['sections'].items():
+        section = SECTIONS.get(key)
+        if section is None or key in LOCAL_ONLY_SECTIONS or (only_keys is not None and key not in only_keys):
+            skipped.append(key)
+            continue
+        if not allow_secrets and any(f.type == 'secret' for f in section.fields):
+            skipped.append(key)
+            continue
+        if not isinstance(values, dict):
+            skipped.append(key)
+            continue
+        clean = {}
+        for f in section.fields:
+            if f.name not in values or f.type == 'secret':   # 金鑰不經匯入檔寫入 (匯出檔也不含)
+                continue
+            v = values[f.name]
+            if f.type == 'bool':
+                clean[f.name] = bool(v)
+            elif f.type in ('int', 'float'):
+                try:
+                    clean[f.name] = int(v) if f.type == 'int' else float(v)
+                except (TypeError, ValueError):
+                    skipped.append(f'{key}.{f.name}')
+                    continue
+                if f.min is not None:
+                    clean[f.name] = max(f.min, clean[f.name])
+                if f.max is not None:
+                    clean[f.name] = min(f.max, clean[f.name])
+            elif f.type == 'multi':
+                allowed = {o[0] for o in f.options}
+                clean[f.name] = [x for x in (v if isinstance(v, list) else []) if x in allowed]
+            elif f.type == 'select':
+                if v in {o[0] for o in f.options}:
+                    clean[f.name] = v
+                else:
+                    skipped.append(f'{key}.{f.name}')
+            else:
+                clean[f.name] = str(v if v is not None else '')[:2000]
+        if clean:
+            put(key, clean, tenant_id, changed_by=changed_by)
+            applied += 1
+    return applied, skipped
