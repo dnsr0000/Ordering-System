@@ -1,0 +1,314 @@
+/* 數位看板 (門市上方大螢幕)：固定滿版、不捲動；字級依視窗高度縮放，1080p 到 4K 都能用 */
+.signage-page {
+    overflow: hidden;
+    background: var(--kiosk-bg);
+}
+
+.signage {
+    display: grid;
+    grid-template-rows: auto 1fr auto auto;
+    height: 100vh;
+    padding: 1.2vh 1.6vw;
+    gap: 1vh;
+}
+
+/* ---------------- 標頭 ---------------- */
+.sg-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6vh 1vw;
+    border-bottom: 2px solid var(--kiosk-border);
+}
+.sg-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.8vw;
+    font-size: 3.4vh;
+}
+.sg-headline {
+    font-size: 3.6vh;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+}
+.sg-header-right {
+    display: flex;
+    align-items: center;
+    gap: 1.2vw;
+}
+.sg-clock {
+    font-size: 2.8vh;
+    font-weight: 700;
+    color: var(--kiosk-accent);
+    font-variant-numeric: tabular-nums;
+}
+.sg-intake {
+    font-size: 2.2vh;
+    font-weight: 700;
+    color: #111;
+    background: var(--kiosk-warning);
+    border-radius: 999px;
+    padding: 0.5vh 1.2vw;
+}
+
+/* ---------------- 菜單 ---------------- */
+.sg-main {
+    display: grid;
+    grid-template-columns: repeat(var(--sg-columns, 3), minmax(0, 1fr));
+    gap: 1.2vw;
+    min-height: 0;
+}
+.sg-empty {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1vh;
+    color: var(--kiosk-muted);
+    font-size: 3vh;
+}
+.sg-empty .bi { font-size: 8vh; }
+
+.sg-category {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: var(--kiosk-surface);
+    border: 1px solid var(--kiosk-border);
+    border-radius: 1.4vh;
+    overflow: hidden;
+}
+.sg-category-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.8vw;
+    padding: 1vh 1.2vw;
+    background: var(--kiosk-accent);
+    color: #111;
+}
+.sg-category-name {
+    font-size: 2.9vh;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+}
+.sg-category-en {
+    font-size: 1.8vh;
+    font-weight: 600;
+    opacity: 0.8;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.sg-category-part {
+    margin-left: auto;
+    font-size: 1.7vh;
+    font-weight: 700;
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+}
+.sg-items {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;          /* 永遠撐滿整欄：JS 以它的高度量「一欄放得下幾個品項」 */
+    padding: 0.6vh 0.8vw;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.sg-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.8vw;
+    padding: 0.9vh 0.4vw;
+    border-bottom: 1px dashed rgba(148, 163, 184, 0.35);
+    position: relative;
+}
+.sg-item:last-child { border-bottom: 0; }
+.sg-thumb {
+    width: 6.2vh;
+    height: 6.2vh;
+    border-radius: 1vh;
+    object-fit: cover;
+    background: var(--kiosk-card);
+}
+.sg-thumb-blank {
+    width: 0;
+    height: 6.2vh;
+}
+.sg-item-main { min-width: 0; }
+.sg-item-name {
+    font-size: 2.6vh;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sg-item-en {
+    font-size: 1.7vh;
+    color: var(--kiosk-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sg-tags { display: inline-flex; gap: 0.3vw; margin-left: 0.4vw; vertical-align: middle; }
+.sg-tag {
+    font-size: 1.5vh;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0.4vh 0.5vw;
+    border-radius: 0.6vh;
+    color: #111;
+    background: var(--kiosk-success);
+}
+.sg-tag-new { background: #38bdf8; }
+.sg-tag-hot { background: #fb923c; }
+.sg-tag-spicy { background: var(--kiosk-danger); color: #fff; }
+.sg-tag-veg { background: #a3e635; }
+
+.sg-price {
+    font-size: 2.8vh;
+    font-weight: 800;
+    color: var(--kiosk-accent);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+.sg-price-original {
+    display: block;
+    font-size: 1.6vh;
+    font-weight: 500;
+    color: var(--kiosk-muted);
+    text-decoration: line-through;
+}
+
+/* 售完：整列變暗、蓋上戳章 */
+.sg-item.is-sold-out .sg-item-main,
+.sg-item.is-sold-out .sg-price,
+.sg-item.is-sold-out .sg-thumb { opacity: 0.35; filter: grayscale(1); }
+.sg-stamp {
+    position: absolute;
+    right: 28%;
+    top: 50%;
+    transform: translateY(-50%) rotate(-8deg);
+    font-size: 2vh;
+    font-weight: 900;
+    letter-spacing: 0.15em;
+    color: var(--kiosk-danger);
+    border: 0.35vh solid var(--kiosk-danger);
+    border-radius: 0.8vh;
+    padding: 0.2vh 0.8vw;
+    background: rgba(11, 15, 25, 0.85);
+    white-space: nowrap;
+}
+.sg-stamp small {
+    display: block;
+    font-size: 1.3vh;
+    letter-spacing: 0.1em;
+    text-align: center;
+}
+.sg-stamp.is-hint {
+    color: var(--kiosk-warning);
+    border-color: var(--kiosk-warning);
+    letter-spacing: 0.02em;
+}
+
+/* ---------------- 換頁指示 ---------------- */
+.sg-pages {
+    display: flex;
+    justify-content: center;
+    gap: 0.6vw;
+    height: 1.4vh;
+}
+.sg-page-dot {
+    width: 1.2vh;
+    height: 1.2vh;
+    border-radius: 50%;
+    background: var(--kiosk-border);
+    transition: background 0.3s;
+}
+.sg-page-dot.is-active { background: var(--kiosk-accent); }
+
+/* ---------------- 頁尾：促銷標語 + 取餐叫號 ---------------- */
+.sg-footer {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1.2vw;
+    padding: 0.8vh 1vw;
+    border-top: 2px solid var(--kiosk-border);
+    min-height: 8vh;
+}
+.sg-promo {
+    display: flex;
+    align-items: center;
+    gap: 0.8vw;
+    font-size: 2.6vh;
+    min-width: 0;
+}
+.sg-promo.d-none + .sg-pickup { grid-column: 1 / -1; }
+.sg-promo-text {
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity 0.4s;
+}
+.sg-promo-text.is-fading { opacity: 0; }
+
+.sg-pickup {
+    display: flex;
+    align-items: center;
+    gap: 0.8vw;
+    justify-self: end;
+}
+.sg-pickup-label {
+    font-size: 2.2vh;
+    font-weight: 800;
+    color: var(--kiosk-success);
+    line-height: 1.1;
+    text-align: center;
+}
+.sg-pickup-label small {
+    display: block;
+    font-size: 1.3vh;
+    letter-spacing: 0.1em;
+    font-weight: 600;
+}
+.sg-pickup-numbers {
+    display: flex;
+    gap: 0.5vw;
+    flex-wrap: nowrap;
+}
+.sg-pickup-none { color: var(--kiosk-muted); font-size: 2.4vh; }
+.sg-number {
+    font-size: 3.4vh;
+    font-weight: 900;
+    font-variant-numeric: tabular-nums;
+    color: #111;
+    background: var(--kiosk-success);
+    border-radius: 1vh;
+    padding: 0.3vh 0.8vw;
+    animation: sg-pop 0.5s ease-out;
+}
+.sg-called {
+    display: flex;
+    gap: 0.4vw;
+    align-items: center;
+    font-size: 2vh;
+    color: #67e8f9;
+    font-weight: 700;
+}
+.sg-called .sg-number { background: #67e8f9; font-size: 2.6vh; }
+
+@keyframes sg-pop {
+    from { transform: scale(0.6); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sg-number { animation: none; }
+    .sg-promo-text { transition: none; }
+}

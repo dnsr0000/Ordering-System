@@ -25,6 +25,7 @@ from app.services.audit import ACTION_LABELS, record_staff_audit
 from app.services import auth_throttle
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.bootstrap import seed_tenant_defaults
+from app.services.event_bus import order_event_bus
 from app.services.order_service import todays_range
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
@@ -345,6 +346,7 @@ def add_item():
     _store_uploaded_image(item)
     db.session.add(item)
     db.session.commit()
+    order_event_bus.notify(g.tenant_id)   # 數位看板 / 點餐機即時更新售完與價格
     return redirect(_dashboard('menu'))
 
 
@@ -357,6 +359,7 @@ def edit_item(id):
                                         request.form.get('reward_discount_points'))
     _store_uploaded_image(item)
     db.session.commit()
+    order_event_bus.notify(g.tenant_id)   # 數位看板 / 點餐機即時更新售完與價格
     return redirect(_dashboard(request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')))
 
 
@@ -369,6 +372,7 @@ def delete_item(id):
     record_staff_audit('DELETE_MENU_ITEM', details=f'刪除菜單品項：{item.name} (${item.price})')
     db.session.delete(item)
     db.session.commit()
+    order_event_bus.notify(g.tenant_id)   # 數位看板 / 點餐機即時更新售完與價格
     return redirect(_dashboard('menu'))
 
 
@@ -711,6 +715,7 @@ def import_smart():
     counts = excel_service.import_workbook(file, allow_users=current_user.has_permission('members'),
                                            allow_coupons=current_user.has_permission('coupons'))
     flash(f"智慧匯入完成！會員 {counts['User']} 筆、菜單 {counts['MenuItem']} 筆、優惠券 {counts['Coupon']} 筆", 'success')
+    order_event_bus.notify(g.tenant_id)
     return redirect(_dashboard('menu'))
 
 

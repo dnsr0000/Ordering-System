@@ -195,6 +195,23 @@ SECTIONS = {s.key: s for s in (
                 Field('attract_message', '待機輪播標語', default='觸碰螢幕開始點餐'),
                 Field('accessibility_button', '顯示「大字 / 高對比」切換按鈕', 'bool', True),
             )),
+    Section('signage', '數位看板 (門市大螢幕)', 'D 菜單', 'bi-tv',
+            '門市上方大螢幕的菜單看板 (網址 /signage，免登入)：與菜單售完狀態即時同步，輪播促銷標語與取餐叫號。'
+            '以瀏覽器全螢幕 (F11) 開啟即可。',
+            (
+                Field('enabled', '啟用數位看板', 'bool', True),
+                Field('headline', '看板標題', default='', placeholder='空白 = 店名'),
+                Field('categories', '顯示的分類 (逗號分隔，依此順序)', default='', help='空白 = 全部分類 (依名稱排序)'),
+                Field('columns', '每頁分類欄數', 'int', 3, min=1, max=4),
+                Field('page_seconds', '分類超過一頁時幾秒換頁', 'int', 10, min=3, max=120),
+                Field('show_images', '顯示餐點照片', 'bool', True),
+                Field('show_english', '顯示英文名稱 (菜單進階設定的翻譯)', 'bool', True),
+                Field('hide_sold_out', '售完的餐點直接隱藏', 'bool', False, help='關閉時仍顯示，並標示「售完 Sold Out」'),
+                Field('show_pickup', '底部顯示取餐叫號與候位叫號', 'bool', True),
+                Field('promo_lines', '輪播促銷標語 (一行一則)', 'textarea', '',
+                      help='空白時自動輪播「促銷活動」中進行中的活動名稱'),
+                Field('promo_seconds', '標語輪播秒數', 'int', 8, min=3, max=120),
+            ), enabled_field='enabled'),
     Section('inventory', '原物料庫存', 'D 菜單', 'bi-box-seam',
             '依配方 (每份餐點的原料用量) 自動扣料、低庫存警示。',
             (

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}數位看板 - {{ tenant.name }}{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/signage.css') }}">
+{% endblock %}
+
+{% block body_class %}signage-page{% endblock %}
+
+{% block content %}
+<div class="signage" id="signage" data-columns="{{ config.columns }}" data-placeholder="{{ url_for('static', filename='img/placeholder.svg') }}">
+    <header class="sg-header">
+        <div class="sg-brand">
+            <i class="bi bi-shop text-warning"></i>
+            <h1 class="sg-headline mb-0" id="sgHeadline">{{ config.headline }}</h1>
+        </div>
+        <div class="sg-header-right">
+            <div class="sg-intake d-none" id="sgIntake"><i class="bi bi-pause-circle-fill me-2"></i><span id="sgIntakeText"></span></div>
+            <div class="sg-clock" id="sgClock">00:00:00</div>
+        </div>
+    </header>
+
+    <main class="sg-main" id="sgMain" aria-live="polite">
+        <div class="sg-empty" id="sgEmpty">
+            <i class="bi bi-hourglass-split"></i>
+            <div>載入菜單中…</div>
+        </div>
+    </main>
+
+    <div class="sg-pages d-none" id="sgPages" aria-hidden="true"></div>
+
+    <footer class="sg-footer">
+        <div class="sg-promo" id="sgPromo">
+            <i class="bi bi-megaphone-fill text-warning"></i>
+            <div class="sg-promo-text" id="sgPromoText"></div>
+        </div>
+        {% if config.showPickup %}
+        <div class="sg-pickup" id="sgPickup">
+            <div class="sg-pickup-label">請取餐<small>Ready</small></div>
+            <div class="sg-pickup-numbers" id="sgReady"><span class="sg-pickup-none">—</span></div>
+            <div class="sg-called d-none" id="sgCalled"></div>
+        </div>
+        {% endif %}
+    </footer>
+</div>
+{% endblock %}
+
+{% block page_data %}
+<script type="application/json" id="page-data">{{ config|tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/signage.js') }}"></script>
+{% endblock %}

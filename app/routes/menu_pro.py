@@ -8,6 +8,7 @@ from app.extensions import db
 from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
 from app.services import ai_service, settings_service
 from app.services.audit import record_staff_audit
+from app.services.event_bus import order_event_bus
 from app.services.settings_service import TIME_RE
 from app.services.approval_service import permission_required
 from app.utils import get_own, safe_int
@@ -129,6 +130,7 @@ def manage():
         else:
             raise AppError('不支援的操作')
         db.session.commit()
+        order_event_bus.notify(g.tenant_id)   # 數位看板：供應時段 / 價格 / 翻譯變更即時更新
         return redirect(url_for('menu_pro.manage', _anchor=f"item-{request.form.get('item_id')}" if action == 'item' else None))
     items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all()
     categories = sorted({(i.category or '未分類').strip() for i in items})

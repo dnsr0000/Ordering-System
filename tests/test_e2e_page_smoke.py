@@ -12,7 +12,7 @@ def demo_data(app):
     seed_demo(app)
 
 
-@pytest.mark.parametrize('path', ['/?shop=default', '/register', '/face_login', '/counter', '/tenant/register', '/admin',
+@pytest.mark.parametrize('path', ['/?shop=default', '/register', '/face_login', '/counter', '/signage', '/tenant/register', '/admin',
                                   '/privacy?shop=default'])
 def test_public_pages_load(page, path):
     resp = page.goto(path)
