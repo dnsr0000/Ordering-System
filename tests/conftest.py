@@ -343,6 +343,7 @@ NEEDS = {
     'test_coupons_and_rewards': ['test_menu_admin', 'test_member_accounts'],
     'test_pos_checkout': ['test_coupons_and_rewards'],
     'test_order_status_and_cancel': ['test_pos_checkout'],
+    'test_admin_layout': ['test_menu_admin'],   # /admin/menu 的品項列 (進階設定在每列展開) 需要有餐點
 }
 
 

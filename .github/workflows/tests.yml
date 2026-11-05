@@ -46,6 +46,10 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      # 前端共用純邏輯 (static/js/shared/) 的測試以 node 執行 (tests/test_shared_js_logic.py)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: pip install -r requirements-dev.txt
       # 3.13 另外計算涵蓋率 (app/ 的行數涵蓋率低於門檻就失敗；報告在工作摘要)
       - run: pytest -q
@@ -79,6 +83,9 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: pip install -r requirements-dev.txt
       - run: PGPASSWORD=kiosk psql -h 127.0.0.1 -U kiosk -d kiosk_test -c "CREATE DATABASE kiosk_sync_test"
       - run: pytest -q

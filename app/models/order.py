@@ -284,7 +284,7 @@ class OrderFeedback(TenantScoped, db.Model):
     rating = db.Column(db.Integer, nullable=False, default=5)
     comment = db.Column(db.String(500), nullable=False, default='')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now, index=True)
-    # 店家回覆 (第六輪)：回覆一句並通知顧客；勾「公開」後在點餐頁 / 追蹤頁顯示 (匿名化)
+    # 店家回覆：回覆一句並通知顧客；勾「公開」後在點餐頁 / 追蹤頁顯示 (匿名化)
     reply = db.Column(db.String(300), nullable=False, default='', server_default='')
     replied_at = db.Column(db.DateTime, nullable=True)
     is_public = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())

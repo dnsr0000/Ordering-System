@@ -492,7 +492,8 @@ I AI、語音與多語系
 --------------------------------------------------------------------
 測試一律使用暫存資料庫與暫存資料夾，不讀 .env，不會動到 database/、uploads/ 與 static/。
   pip install -r requirements-dev.txt  安裝測試工具 (pytest、pytest-cov、playwright、axe-playwright-python)
-  pytest -q                           後端測試 (SQLite)
+  pytest -q                           後端測試 (SQLite)；需要 node (前端共用純邏輯的測試 test_shared_js_logic 以 node 執行，
+                                      沒有 node 時該測試跳過)
   set TEST_DATABASE_URL=postgresql://kiosk:kiosk@127.0.0.1/kiosk_test → pytest   同一套測試改在 PostgreSQL 上跑 (該資料庫會被清空)
   playwright install chromium (第一次) → pytest -m e2e   瀏覽器端對端測試 (實際操作各頁面；JS 錯誤或違反 CSP 都會失敗；
                                       含 axe-core 無障礙檢查)
@@ -509,7 +510,8 @@ I AI、語音與多語系
                                       PostgreSQL + Redis 模擬點餐機 / POS / 廚房 / SSE / 對外 API 的尖峰流量並檢查一致性
                                       (步驟與參考結果見 DEPLOY.txt 一-11)
   GitHub Actions (.github/workflows/tests.yml)：push 到 main 或開 PR 時安裝 requirements-dev.txt 並執行 lint (ruff / mypy；
-  pip-audit 只警告)、unit (SQLite，Python 3.13 含涵蓋率門檻 85% / 3.14)、postgres (含同步測試的線上端)、e2e 四組工作；
+  pip-audit 只警告)、unit (SQLite，Python 3.13 含涵蓋率門檻 85% / 3.14，另裝 node 22 跑前端純邏輯測試)、postgres (含同步測試
+  的線上端)、e2e 四組工作；
   .github/dependabot.yml 每週檢查 pip 與 actions。
 
 測試檔 (tests/，檔名即測試主題；新的測試一律放這裡並照此命名)
@@ -544,7 +546,10 @@ I AI、語音與多語系
   優惠券        test_coupon_security (猜碼鎖定、公開代碼限會員 / 每人次數、最高折抵、代碼格式、跨店隔離、商城剩餘張數)、
                 test_coupon_issue_expiry (會員專屬券、批量發放、過期與活動期間、後台票券視窗)
   報表與前端    test_reports_and_excel (營運分析、Excel 匯出 / 匯入、儀表板與稽核)、test_deploy_config (/healthz、反向代理標頭、
-                部署設定檔)、test_frontend_static_files (CSP、外部網址、XSS、POS / 點餐機模組的 import / export 對得上、檔案大小)
+                部署設定檔)、test_frontend_static_files (CSP、外部網址、XSS、POS / 點餐機 / shared 模組的 import / export 對得上、
+                檔案大小)、test_shared_js_logic (以 node 執行 tests/js/shared_spec.mjs：金額順序與進位、加購配額、單價、合併鍵、
+                payload、發票、預覽排程；沒有 node 時跳過)、test_shared_utils (app/utils.py 的日期 / 時間 / 分頁 / ETag / Excel /
+                門市限定等共用工具)
   同步          test_sync_hub_node (一個線上端 + 兩家分店的完整情境，含分店暫停狀態上傳)、test_sync_admin_pages (分店管理、
                 同步狀態、線上點餐選分店)、test_sync_security (分店權杖外流時的限制)、test_sync_invariants (全部跑完後檢查同步
                 不變量)、test_sync_pro_tables (促銷 / 等級 / 翻譯下發、兩店離線使用儲值金合併、收款與退款上傳、會員券同步)
@@ -557,7 +562,8 @@ I AI、語音與多語系
   進階功能      test_payments_refunds_wallet (刷卡授權碼、LINE Pay 扣款 / 退款、部分退款、作廢、儲值金)、test_einvoice_ecpay
                 (電子發票加解密、載具 / 統編、開立 / 重送 / 作廢 / 折讓)、test_shifts_and_table_split (交班 / 帳差、必須開班、
                 換桌、分開結帳、多種付款、員工權限)、test_kitchen_printing_inventory (工作站 KDS、加急、熱感印表機出單、原物料
-                扣料 / 盤點)、test_receipt_kds_feedback (電子收據、廚房製作卡、評價回覆與公開好評)、test_members_line_sms (會員
+                扣料 / 盤點)、test_receipt_kds_feedback (電子收據、廚房製作卡、評價回覆與公開好評)、test_receipt_rows_shared
+                (熱感機與純文字收據由同一份 receipt_rows 產生、禮物卡遮罩)、test_members_line_sms (會員
                 等級、生日禮、儲值金調整、LINE 登入 / 推播、簡訊驗證)、test_loyalty_giftcards_member_data (點數到期、集點卡、
                 推薦好友、禮物卡、會員下載資料與刪除帳號)、test_marketing_deposits_anomalies (RFM 分群與自動行銷、訂位訂金 /
                 退刷 / 未到停權 / 提醒、員工異常偵測、交班帳差通知)、test_delivery_and_reservations (外送平台 Webhook、線上訂位
@@ -675,7 +681,8 @@ Project Root/
 ├── database/                  menu.db、.secret_key、menu.db.bak-* (還原前另存)、caddy-root.crt (本機模擬)、backups/ (每日自動備份)、
 │                              archive/ (封存檔，需備份)、updates/、logs/、system_events.jsonl [不進版控]
 ├── models/                    人臉辨識模型 (YuNet、SFace .onnx，自動下載) 與選用的 Qwen2.5 GGUF [都不進版控]
-├── tests/                     所有測試 (檔名即測試主題)、support.py 共用輔助、conftest.py (RUN_ORDER / NEEDS)
+├── tests/                     所有測試 (檔名即測試主題)、support.py 共用輔助、conftest.py (RUN_ORDER / NEEDS)、
+│                              js/shared_spec.mjs (node 執行的前端共用純邏輯測試)
 ├── deploy/                    gunicorn.conf.py、entrypoint.sh、Caddyfile、hub.env.example、pg_backup.sh / pg_restore_check.sh、
 │                              windows/ (install_autostart.ps1、start_store.cmd、update_store.cmd)
 ├── Dockerfile、docker-compose.yml、.dockerignore、.github/workflows/tests.yml、.github/dependabot.yml、ruff.toml、mypy.ini、

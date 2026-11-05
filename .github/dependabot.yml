@@ -1,4 +1,4 @@
-# 每週檢查 Python 套件與 GitHub Actions 的更新 (第六輪)；安全性更新另外即時開 PR
+# 每週檢查 Python 套件與 GitHub Actions 的更新；安全性更新另外即時開 PR
 version: 2
 updates:
   - package-ecosystem: pip

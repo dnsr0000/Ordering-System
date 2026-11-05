@@ -1,5 +1,5 @@
 """
-對外整合 (第三輪 #14)：API 金鑰、Webhook 端點與送出紀錄；裝置管理 (#15)。門市 / 線上端本機資料，不同步。
+對外整合 (#14)：API 金鑰、Webhook 端點與送出紀錄；裝置管理 (#15)。門市 / 線上端本機資料，不同步。
 """
 import secrets
 from datetime import datetime
@@ -121,7 +121,7 @@ class Device(CreatedAtMixin, LastSeenMixin, KindLabelMixin, TenantScoped, db.Mod
 
 class PushSubscription(CreatedAtMixin, TenantScoped, db.Model):
     """
-    Web Push 訂閱 (第五輪)：顧客在出餐進度頁按「開啟完成通知」後，瀏覽器的推播端點存在這裡；
+    Web Push 訂閱：顧客在出餐進度頁按「開啟完成通知」後，瀏覽器的推播端點存在這裡；
     餐點完成 / 外送出發時由 push_service 推播 (離開頁面也收得到)。綁定單一訂單 (order_uuid) 或會員 (user_id)；本機資料，不同步。
     """
     __tablename__ = 'push_subscription'

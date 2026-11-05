@@ -337,7 +337,8 @@
     線上端由 docker logs (json-file 20 MB × 5) 收集，LOG_FILE 已設為空。顧客回報錯誤時請他提供 500 頁面上的「錯誤代碼」
     (X-Request-ID)，以此在記錄檔中搜尋 [代碼] 即可找到那一次請求的所有記錄；反向代理若已產生 X-Request-ID 會沿用。
 [ ] 更新部署後不必請顧客清快取：靜態檔網址帶版本 (?v=)，PWA 的 Service Worker 也會在下次開啟時換新快取。
-[ ] CI：GitHub Actions 安裝 requirements-dev.txt，lint 工作會跑 ruff / mypy (擋) 與 pip-audit (只警告，掃三個 requirements 檔)；
+[ ] CI：GitHub Actions 安裝 requirements-dev.txt (unit / postgres 工作另裝 node 22 跑前端共用純邏輯測試)，lint 工作會跑
+    ruff / mypy (擋) 與 pip-audit (只警告，掃三個 requirements 檔)；
     pip-audit 有新漏洞時請升級 requirements*.txt 的版本並重跑測試 (測試指令見 README.txt 七)。
 [ ] 調整 GUNICORN_WORKERS / GUNICORN_THREADS：每個分店的長輪詢與每個開著的看板 (SSE) 都會占用一條執行緒
 
