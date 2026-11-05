@@ -9,6 +9,7 @@ from app.models.coupon import Coupon
 from app.models.enums import OrderSource, POS_ROLES
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
+from app.models.table import DiningTable
 from app.models.user import User
 from app.routes.sync_admin import node_name_map
 from app.services import (approval_service, coupon_service, giftcard_service, intake_service, loyalty_service,
@@ -47,6 +48,18 @@ def _approver(data):
     return lambda perm, label: approval_service.require_approval(perm, data, label)
 
 
+def _quick_tables(pos_cfg):
+    """POS 桌號快速填入標籤：桌位管理啟用的桌號 (依排序) + 設定裡的稱呼 (外帶客、電話預訂…)，去重、最多 16 個"""
+    names = [t.name for t in DiningTable.query.filter_by(is_active=True).order_by(DiningTable.sort_order, DiningTable.name).all()]
+    names += settings_service.split_lines(pos_cfg.get('quick_tables'))
+    out = []
+    for n in names:
+        n = n.strip()[:30]
+        if n and n not in out:
+            out.append(n)
+    return out[:16]
+
+
 def pos_settings_payload():
     """POS 頁面需要的設定 (付款方式、服務費、刷卡機、LINE Pay、發票、交班…)"""
     from app.services import linepay
@@ -63,6 +76,7 @@ def pos_settings_payload():
         'allowPriceOverride': bool(pos_cfg.get('allow_price_override', True)),
         'requireShift': bool(pos_cfg.get('require_shift')),
         'quickNotes': settings_service.split_lines(pos_cfg.get('quick_notes'))[:12],
+        'quickTables': _quick_tables(pos_cfg),
         'cardRequireAuth': bool(card.get('require_auth_code')),
         'cardRequireLast4': bool(card.get('require_last4')),
         'linePayIntegrated': linepay.is_enabled(),

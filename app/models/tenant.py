@@ -46,6 +46,7 @@ class StaffAccount(UserMixin, SyncMixin, db.Model):
     totp_backup_codes = db.Column(db.Text, nullable=False, default='[]', server_default='[]')
     # 「登出所有裝置」時遞增：舊的登入工作階段全部失效 (同步到各分店)
     hourly_wage = db.Column(db.Integer, nullable=False, default=0, server_default='0')   # 時薪 (本機，人事成本率)
+    max_hours_week = db.Column(db.Integer, nullable=False, default=0, server_default='0')   # 每週工時上限 (0 = 用排班參數；本機)
     session_epoch = db.Column(db.Integer, nullable=False, default=0, server_default='0')
 
     tenant = db.relationship('Tenant', backref=db.backref('staff_accounts', lazy=True))

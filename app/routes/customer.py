@@ -171,7 +171,13 @@ def customer_index():
         else _attract_slides(items, is_hub),
         # 未登入頁的顧客好評 (店長在顧客評價頁勾「公開」的，匿名)
         public_reviews=feedback_service.public_reviews(g.tenant_id) if not session.get('user_name') else [],
+        chat=_chat_widget(),
     )
+
+
+def _chat_widget():
+    from app.routes.public_extras import chat_widget_config
+    return chat_widget_config()
 
 
 def _storefront_extras(member, dining_table, is_hub):
@@ -210,6 +216,7 @@ def _storefront_extras(member, dining_table, is_hub):
         'showAllergens': bool(settings_service.get('menu').get('show_allergens', True)),
         'showCalories': bool(settings_service.get('menu').get('show_calories', True)),
         'showCarbon': bool(settings_service.get('menu').get('show_carbon', True)),
+        'voiceOrdering': bool(settings_service.get('menu').get('voice_ordering', True)),
         'pickupSlots': [{'value': t.strftime('%Y-%m-%dT%H:%M'), 'label': lab}
                         for t, lab in pickup_service.slots()] if is_hub else [],
         'serviceCall': dining_table is not None,
@@ -235,6 +242,24 @@ def _attract_slides(items, is_hub):
     slides = [{'name': i.name, 'price': i.unit_price, 'image': url_for('media.menu_image', filename=i.image_path)}
               for i in (featured or pool)[:8]]
     return {'seconds': seconds, 'message': cfg.get('attract_message') or '觸碰螢幕開始點餐', 'slides': slides}
+
+
+@customer_bp.route('/api/voice/parse', methods=['POST'], endpoint='voice_parse')
+@limiter.limit('30/minute')
+def api_voice_parse():
+    """語音點餐：把顧客說的話解析成品項 (前端先顯示確認畫面，顧客確認後才加入購物車)"""
+    from app.services import voice_order_service
+    cfg = settings_service.get('menu')
+    if not cfg.get('voice_ordering', True):
+        raise AppError('本店未開放語音點餐', 404)
+    text = str(get_json_dict().get('text') or '').strip()[:voice_order_service.MAX_TEXT]
+    if not text:
+        raise AppError('沒有聽到內容，請再說一次')
+    branch_service.activate_for_request(g.tenant_id)
+    items = [i for i in MenuItem.query.all() if not i.is_branch_hidden and not i.is_reward]
+    addons = [m.to_dict() for m in ModifierOption.query.filter_by(is_active=True, category='addons').all()]
+    result = voice_order_service.parse(text, items, addons, use_llm=bool(cfg.get('voice_llm', True)))
+    return jsonify(dict(result, success=True))
 
 
 @customer_bp.route('/api/user_available_coupons')

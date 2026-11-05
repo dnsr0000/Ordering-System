@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}員工可排時段{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="availabilityPage">
+    {% call page_header('員工可排時段', 'bi-calendar-week', '每位員工每週哪幾天、幾點到幾點可以上班，與每週工時上限；自動排班只會排在這些時段內') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.auto_schedule') }}">自動排班</a>
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.admin') }}">打卡與排班</a>
+    {% endcall %}
+    <div class="row g-3">
+        {% for s in staff %}
+        <div class="col-lg-6"><div class="card rounded-4 p-3 h-100" data-staff-id="{{ s.id }}">
+            <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="save"><input type="hidden" name="staff_id" value="{{ s.id }}">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="fw-bold"><i class="bi bi-person-badge me-1"></i>{{ s.username }} <span class="small text-white-50">({{ s.role }})</span></div>
+                    <label class="small text-white-50 d-flex align-items-center gap-1">每週上限
+                        <input class="form-control form-control-sm" type="number" min="0" max="80" name="max_hours_week" value="{{ s.max_hours_week or '' }}" placeholder="{{ rules.max_hours_week }}" aria-label="每週工時上限" style="width: 4.5rem"> 小時</label>
+                </div>
+                {% set rows = avail.get(s.id, []) %}
+                <table class="table table-dark table-sm align-middle mb-2 availability-table"><thead><tr><th>星期</th><th>可排起</th><th>可排迄</th><th></th></tr></thead><tbody>
+                {% for n in range((rows|length) + 2) %}
+                {% set r = rows[n] if n < rows|length else none %}
+                <tr>
+                    <td><select class="form-select form-select-sm" name="weekday" aria-label="星期"><option value="">--</option>
+                        {% for w in range(1, 8) %}<option value="{{ w }}" {{ 'selected' if r and r.weekday == w }}>週{{ '一二三四五六日'[w - 1] }}</option>{% endfor %}</select></td>
+                    <td><input class="form-control form-control-sm" type="time" name="start_time" value="{{ r.start_time if r else '' }}" aria-label="起"></td>
+                    <td><input class="form-control form-control-sm" type="time" name="end_time" value="{{ r.end_time if r else '' }}" aria-label="迄"></td>
+                    <td class="small text-white-50">{{ '留空刪除' if r else '' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody></table>
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="small text-white-50">{% if rows %}{{ rows|length }} 段可排時段{% else %}<span class="text-warning">尚未填寫，自動排班不會排到此人</span>{% endif %}</span>
+                    <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">儲存</button>
+                </div>
+            </form>
+        </div></div>
+        {% else %}
+        <div class="col-12 text-white-50">沒有啟用中的員工帳號</div>
+        {% endfor %}
+    </div>
+</main>
+{% endblock %}

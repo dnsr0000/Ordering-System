@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}自動排班{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="autoSchedulePage">
+    {% call page_header('自動排班', 'bi-magic', '依過去同一個星期幾的來客數估算每天每小時需要的人力，在員工可排時段內自動分配班別；預覽確認後再套用') %}
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.availability') }}">員工可排時段</a>
+    <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.admin', start=g_plan.week_start, end=g_plan.week_end) }}">打卡與排班</a>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='staffing') }}">排班參數</a>
+    {% endcall %}
+    <form class="d-flex flex-wrap gap-2 align-items-end mb-3" method="GET">
+        <input class="form-control form-control-sm" type="date" name="week" value="{{ g_plan.week_start }}" aria-label="週一日期" style="width: 11rem">
+        <button class="btn btn-outline-info btn-sm" type="submit">產生預覽</button>
+        <span class="small text-white-50">{{ g_plan.week_start }} ～ {{ g_plan.week_end }}・每日 ≤ {{ g_plan.rules.max_hours_day }} 小時、每週 ≤ {{ g_plan.rules.max_hours_week }} 小時、最多連續 {{ g_plan.rules.max_consecutive_days }} 天 (勞基法 §30 / §36)、班別 {{ g_plan.rules.shift_hours }} 小時</span>
+    </form>
+    <div class="row g-3 mb-3">
+        {% for label, value, cls in [('已分配班別', g_plan.assigned, 'text-success'), ('排不出人的班別', g_plan.unfilled, 'text-danger' if g_plan.unfilled else ''),
+                                     ('可排員工', g_plan.summary|length, ''), ('未填可排時段', g_plan.skipped|length, 'text-warning' if g_plan.skipped else '')] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value {{ cls }}">{{ value }}</div></div></div>
+        {% endfor %}
+    </div>
+    {% if g_plan.skipped %}<div class="alert alert-warning small">尚未填可排時段的員工不會被排到：{{ g_plan.skipped|join('、') }}。<a href="{{ url_for('timeclock.availability') }}">去填寫</a></div>{% endif %}
+    <form method="POST" id="applyForm">{{ csrf() }}<input type="hidden" name="week" value="{{ g_plan.week_start }}">
+        <div class="row g-3">
+            <section class="col-lg-8"><div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">一週班表預覽</h2>
+                <table class="table table-dark table-sm align-middle mb-0" id="autoScheduleTable">
+                    <thead><tr><th>日期</th><th>班別</th><th>員工</th><th class="text-end">需要 / 已排 (人時)</th></tr></thead>
+                    <tbody>
+                    {% set ns = namespace(i=0) %}
+                    {% for d in g_plan.days %}
+                    {% if not d.shifts %}
+                    <tr class="text-white-50"><td>{{ d.date.strftime('%m/%d') }} (週{{ d.weekday }})</td><td colspan="2">{{ '已排足' if d.need_hours else '無歷史資料，無法估算' }}</td><td class="text-end">{{ d.need_hours }} / {{ d.have_hours }}</td></tr>
+                    {% endif %}
+                    {% for r in d.shifts %}
+                    <tr class="{{ 'table-danger' if not r.staff_id }}" data-shift>
+                        <td>{% if loop.first %}{{ d.date.strftime('%m/%d') }} (週{{ d.weekday }}){% endif %}</td>
+                        <td>{{ r.start }}–{{ r.end }} <span class="small text-white-50">{{ r.hours }} 小時</span></td>
+                        <td>{% if r.staff_id %}<i class="bi bi-person-check me-1 text-success"></i>{{ r.username }}
+                            <input type="hidden" name="date_{{ ns.i }}" value="{{ d.date }}"><input type="hidden" name="staff_{{ ns.i }}" value="{{ r.staff_id }}">
+                            <input type="hidden" name="start_{{ ns.i }}" value="{{ r.start }}"><input type="hidden" name="end_{{ ns.i }}" value="{{ r.end }}">
+                            {% set ns.i = ns.i + 1 %}
+                            {% else %}<span class="text-danger">未排 (沒有符合條件的員工)</span>{% endif %}</td>
+                        <td class="text-end">{% if loop.first %}{{ d.need_hours }} / {{ d.have_hours }}{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    </tbody>
+                </table>
+                <input type="hidden" name="count" value="{{ ns.i }}">
+                <div class="d-flex justify-content-between align-items-center mt-3">
+                    <span class="small text-white-50">套用後會新增到班表 (已存在相同班別的不重複)；既有班表不會被刪除。</span>
+                    <button class="btn btn-warning fw-bold text-dark" type="submit" {{ 'disabled' if not g_plan.assigned }}>套用 {{ g_plan.assigned }} 個班別</button>
+                </div>
+            </div></section>
+            <section class="col-lg-4"><div class="card rounded-4 p-3">
+                <h2 class="h6 fw-bold">本週工時分配</h2>
+                <table class="table table-dark table-sm mb-0"><thead><tr><th>員工</th><th class="text-end">班數</th><th class="text-end">工時 / 上限</th></tr></thead><tbody>
+                {% for s in g_plan.summary %}
+                <tr><td>{{ s.username }}</td><td class="text-end">{{ s.shifts }}</td><td class="text-end {{ 'text-warning' if s.hours >= s.cap }}">{{ s.hours }} / {{ s.cap }}</td></tr>
+                {% else %}<tr><td colspan="3" class="text-white-50">沒有填寫可排時段的員工</td></tr>{% endfor %}
+                </tbody></table>
+            </div></section>
+        </div>
+    </form>
+</main>
+{% endblock %}

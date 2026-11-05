@@ -49,7 +49,7 @@ class TableSpec:
 
 # 依外鍵相依順序排列：被參照的資料表在前
 SPECS = (
-    TableSpec(StaffAccount, natural_key=('username',), local_only=frozenset({'hourly_wage'})),
+    TableSpec(StaffAccount, natural_key=('username',), local_only=frozenset({'hourly_wage', 'max_hours_week'})),
     TableSpec(MenuItem, local_only=frozenset({'stock', 'total_stock', 'is_sold_out', 'station_id'})),
     # 分店價格 / 分店上下架：總部設定，只下發給該分店 (見 app/sync/hub.py 的下載範圍)
     TableSpec(BranchMenuOverride, direction='down', natural_key=('node_uuid', 'menu_item_id')),

@@ -7,6 +7,7 @@
 {% block content %}
 <main class="container py-4" id="staffingPage">
     {% call page_header('排班建議', 'bi-people', '依過去同一個星期幾的各時段訂單數估算需要的人力，與班表比較') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.auto_schedule', week=p.target) }}">自動排班 (一週)</a>
     <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.admin', start=p.target, end=p.target) }}">打卡與排班</a>
     <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.edit', key='staffing') }}">排班參數</a>
     {% endcall %}

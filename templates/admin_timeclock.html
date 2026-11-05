@@ -10,6 +10,8 @@
     <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.punch') }}" target="_blank" rel="noopener">打卡頁</a>
     <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('timeclock.export', start=start, end=end) }}">匯出 Excel</a>
     <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.staffing') }}">排班建議</a>
+    <a class="btn btn-outline-warning btn-sm" href="{{ url_for('timeclock.auto_schedule') }}">自動排班</a>
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('timeclock.availability') }}">可排時段</a>
     {% if current_user.role == 'owner' %}<a class="btn btn-outline-light btn-sm" href="{{ url_for('admin.staff_accounts') }}">員工權限</a>{% endif %}
     {% endcall %}
     <form method="GET" class="d-flex gap-2 mb-3"><input class="form-control form-control-sm" type="date" name="start" value="{{ start }}" aria-label="起" style="width: 10rem">

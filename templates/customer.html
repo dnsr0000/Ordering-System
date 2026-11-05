@@ -3,7 +3,7 @@
 {% block title %}{{ ui.site_title }} (Kiosk){% endblock %}
 {% block body_class %}customer-page{% endblock %}
 
-{% block head %}
+{% block head %}{% if chat %}<link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot.css') }}">{% endif %}
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/customer.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
@@ -247,6 +247,7 @@
                 <div class="input-group">
                     <span class="input-group-text"><i class="bi bi-search"></i></span>
                     <input id="searchInput" type="text" class="form-control" placeholder="{{ ui.search }}" data-action="filter">
+                    {% if pro and pro.voiceOrdering %}<button type="button" class="btn btn-warning fw-bold" id="voiceBtn" data-action="voice-open" title="{{ ui.voice_btn }}" aria-label="{{ ui.voice_btn }}"><i class="bi bi-mic-fill"></i></button>{% endif %}
                 </div>
             </div>
             <div class="col-md-3 mb-2">
@@ -552,6 +553,43 @@
 </div>
 
 <!-- 套餐組合選擇彈窗 -->
+{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}"></div>{% endif %}
+{% if pro and pro.voiceOrdering %}
+<div class="modal fade" id="voiceModal" tabindex="-1" aria-hidden="true" aria-labelledby="voiceModalTitle">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-warning">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold text-warning" id="voiceModalTitle"><i class="bi bi-mic-fill me-2"></i>{{ ui.voice_title }}</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="small text-white-50" id="voiceHint">{{ ui.voice_hint }}</p>
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                    <button type="button" class="btn btn-warning fw-bold text-dark" id="voiceStartBtn" data-action="voice-start"><i class="bi bi-mic-fill me-1"></i>{{ ui.voice_start }}</button>
+                    <button type="button" class="btn btn-outline-light d-none" id="voiceStopBtn" data-action="voice-stop"><i class="bi bi-stop-fill me-1"></i>{{ ui.voice_stop }}</button>
+                    <span class="small text-info d-none" id="voiceStatus" aria-live="polite"></span>
+                </div>
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" id="voiceText" placeholder="{{ ui.voice_type_ph }}" maxlength="200" autocomplete="off">
+                    <button type="button" class="btn btn-outline-warning" data-action="voice-parse" id="voiceParseBtn">{{ ui.voice_parse }}</button>
+                </div>
+                <div class="small text-white-50 mb-2 d-none" id="voiceHeard"></div>
+                <div id="voiceResult" class="d-none">
+                    <div class="fw-bold mb-2">{{ ui.voice_result }}</div>
+                    <div class="small text-info mb-2 d-none" id="voiceSourceNote"><i class="bi bi-stars me-1"></i>{{ ui.voice_source_ai }}</div>
+                    <ul class="list-group mb-2" id="voiceLines"></ul>
+                    <div class="small text-warning d-none" id="voiceUnmatched"></div>
+                </div>
+                <div class="text-white-50 d-none" id="voiceEmpty">{{ ui.voice_none }}</div>
+            </div>
+            <div class="modal-footer border-secondary">
+                <button type="button" class="btn btn-outline-light" data-bs-dismiss="modal">{{ ui.cancel if ui.cancel else '取消' }}</button>
+                <button type="button" class="btn btn-warning fw-bold text-dark d-none" id="voiceAddBtn" data-action="voice-add"><i class="bi bi-cart-plus me-1"></i>{{ ui.voice_add }}</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 <div class="modal fade" id="comboModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
   <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content combo-modal-content">
@@ -867,4 +905,5 @@
 {% if not is_online and not dining_table %}<script src="{{ url_for('static', filename='js/kiosk-offline.js') }}" data-shop="{{ g.tenant.slug }}"></script>{% endif %}
 {% if not session.get('user_name') %}<script src="{{ url_for('static', filename='js/kiosk-attract.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
+{% if chat %}<script src="{{ url_for('static', filename='js/chatbot.js') }}"></script>{% endif %}
 {% endblock %}

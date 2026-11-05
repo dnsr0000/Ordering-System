@@ -35,3 +35,17 @@ class WorkSchedule(TenantScoped, db.Model):
     note = db.Column(db.String(100), nullable=False, default='')
 
     staff = db.relationship('StaffAccount')
+
+
+class StaffAvailability(TenantScoped, db.Model):
+    """員工可排時段 (自動排班用)：每週幾 (1=一 … 7=日) 的幾點到幾點可以上班，可多段；本機資料、不同步"""
+    __tablename__ = 'staff_availability'
+
+    id = db.Column(db.Integer, primary_key=True)
+    staff_account_id = db.Column(db.Integer, db.ForeignKey('staff_account.id', ondelete='CASCADE'), nullable=False, index=True)
+    weekday = db.Column(db.Integer, nullable=False)
+    start_time = db.Column(db.String(5), nullable=False)
+    end_time = db.Column(db.String(5), nullable=False)
+    note = db.Column(db.String(100), nullable=False, default='', server_default='')
+
+    staff = db.relationship('StaffAccount')

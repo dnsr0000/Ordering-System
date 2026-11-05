@@ -169,6 +169,70 @@ def export():
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
+@timeclock_bp.route('/admin/availability', methods=['GET', 'POST'], endpoint='availability')
+@role_required(*MANAGER_ROLES)
+def availability():
+    """員工可排時段與每週工時上限 (自動排班的輸入)"""
+    from app.services import scheduling_service
+    if request.method == 'POST':
+        f = request.form
+        if f.get('action') != 'save':
+            raise AppError('不支援的操作')
+        staff = get_own(StaffAccount, f.get('staff_id'), '員工')
+        rows = []
+        for weekday, st, en in zip(f.getlist('weekday'), f.getlist('start_time'), f.getlist('end_time')):
+            if not weekday:
+                continue
+            if not (TIME_RE.match(st or '') and TIME_RE.match(en or '')):
+                raise AppError('可排時段的時間格式應為 HH:MM')
+            rows.append((safe_int(weekday, 0), st, en))
+        n = scheduling_service.set_availability(g.tenant_id, staff, rows)
+        staff.max_hours_week = min(84, max(0, safe_int(f.get('max_hours_week'), 0)))
+        record_staff_audit('AVAILABILITY_CHANGE', details=f'更新 {staff.username} 的可排時段 ({n} 段，每週上限 {staff.max_hours_week or "預設"})')
+        db.session.commit()
+        flash(f'已更新 {staff.username} 的可排時段', 'success')
+        return redirect(url_for('timeclock.availability'))
+    staff = StaffAccount.query.filter_by(tenant_id=g.tenant_id, deleted_at=None, is_active=True).order_by(StaffAccount.username).all()
+    from app.models.staff import StaffAvailability
+    avail = {}
+    for row in StaffAvailability.query.order_by(StaffAvailability.weekday, StaffAvailability.start_time).all():
+        avail.setdefault(row.staff_account_id, []).append(row)
+    return render_template('admin_availability.html', staff=staff, avail=avail, rules=scheduling_service.config(g.tenant_id))
+
+
+@timeclock_bp.route('/admin/staffing/auto', methods=['GET', 'POST'], endpoint='auto_schedule')
+@role_required(*MANAGER_ROLES)
+def auto_schedule():
+    """一鍵生成一週班表 (預覽 → 套用)，說明見 app/services/scheduling_service.py"""
+    from app.services import scheduling_service
+    raw = request.values.get('week') or ''
+    try:
+        week = date.fromisoformat(raw) if raw else date.today() + timedelta(days=7 - date.today().weekday())
+    except ValueError:
+        raise AppError('日期格式不正確')
+    if request.method == 'POST':
+        f = request.form
+        assignments = []
+        for i in range(safe_int(f.get('count'), 0)):
+            try:
+                d = date.fromisoformat(f.get(f'date_{i}') or '')
+            except ValueError:
+                continue
+            st, en = (f.get(f'start_{i}') or '').strip(), (f.get(f'end_{i}') or '').strip()
+            sid = safe_int(f.get(f'staff_{i}'), 0)
+            if sid and TIME_RE.match(st) and TIME_RE.match(en):
+                assignments.append((d, sid, st, en))
+        if not assignments:
+            raise AppError('沒有可套用的班別')
+        n = scheduling_service.apply(g.tenant_id, assignments)
+        record_staff_audit('SCHEDULE_AUTO', details=f'自動排班套用 {week} 起一週：新增 {n} 筆班表')
+        db.session.commit()
+        flash(f'已加入 {n} 筆班表', 'success')
+        return redirect(url_for('timeclock.admin', start=scheduling_service.week_start_of(week).isoformat(),
+                                end=(scheduling_service.week_start_of(week) + timedelta(days=6)).isoformat()))
+    return render_template('admin_auto_schedule.html', g_plan=scheduling_service.generate(g.tenant_id, week))
+
+
 @timeclock_bp.route('/admin/staffing', methods=['GET', 'POST'], endpoint='staffing')
 @role_required(*MANAGER_ROLES)
 def staffing():

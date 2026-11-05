@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.track_title }}{{ ui.title_sep }}{{ shop.name if shop else '' }}{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
+{% if chat %}<link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot.css') }}">{% endif %}
 <link rel="manifest" href="{{ url_for('public.manifest') }}">{% endblock %}
 {% block content %}
 <main class="container py-4 text-center" id="track-page" style="max-width: 480px">
@@ -46,7 +47,9 @@
         <a class="btn btn-success btn-sm mt-2 d-none" id="feedbackReview" target="_blank" rel="noopener"><i class="bi bi-google me-1"></i>{{ ui.fb_google }}</a>
     </section>
 </main>
+{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}"></div>{% endif %}
 {% endblock %}
 {% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='js/track.js') }}"></script>
+{% if chat %}<script src="{{ url_for('static', filename='js/chatbot.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>{% endblock %}

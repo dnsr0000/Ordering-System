@@ -20,7 +20,7 @@ def test_public_pages_load(page, path):
     page.wait_for_load_state('networkidle')
 
 
-@pytest.mark.parametrize('path', ['/admin', '/admin/staff', '/pos', '/kitchen', '/pickup'])
+@pytest.mark.parametrize('path', ['/admin', '/admin/staff', '/pos', '/kitchen', '/pickup', '/admin/availability', '/admin/staffing/auto', '/admin/system'])
 def test_owner_pages_load(page, path):
     browser_staff_login(page, ADMIN_USERNAME, ADMIN_PASSWORD)
     resp = page.goto(path)

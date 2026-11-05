@@ -21,9 +21,11 @@ import {
     reorder, sendReceipt, showMyOrders, togglePaymentExtras,
 } from './customer/checkout.js';
 import { startAvailabilityPolling } from './customer/live.js';
+import { voiceActions } from './customer/voice.js';
 
 // 桌邊呼叫服務 (掃桌位 QR code 後，登入前後都可使用)
 Kiosk.on(document, 'click', { 'call-service': (el) => callService(el) });
+Kiosk.on(document, 'click', voiceActions);   // 語音點餐 (後台可關閉；沒有按鈕時不會觸發)
 
 // 未登入的歡迎頁：清掉上一位顧客留下的購物車 (登出、閒置登出都會回到這裡)，其餘功能不啟動
 if (pageData.loggedIn) {

@@ -135,6 +135,8 @@ def health(tenant_id):
     if sync_runtime.is_node():
         info['sync_last_ok'] = sync_runtime.get_state('last_success_at', '')
         info['sync_last_error'] = sync_runtime.get_state('last_error', '')
+    from app.services import ai_service
+    info['ai'] = ai_service.ai_status()
     return info
 
 

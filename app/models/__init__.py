@@ -14,7 +14,7 @@ from app.models.member import (MemberTier, WalletLedger, OtpCode, StampLedger, G
                                MemberPass, PassLedger)
 from app.models.promotion import Promotion
 from app.models.reservation import Reservation, WaitlistEntry
-from app.models.staff import TimeClock, WorkSchedule
+from app.models.staff import StaffAvailability, TimeClock, WorkSchedule
 from app.models.order import Order, OrderItem, DailyCounter, OrderFeedback, ServiceCall, DeliveryPosition
 from app.models.coupon import Coupon, UserCoupon
 from app.models.system import AuthThrottle
@@ -39,5 +39,5 @@ __all__ = [
     'StampLedger', 'GiftCard', 'GiftCardLedger', 'Supplier', 'PurchaseOrder', 'PurchaseOrderLine', 'IngredientLot',
     'PassProduct', 'MemberPass', 'PassLedger', 'TablePayment', 'BranchMenuOverride', 'StockTransfer',
     'MarketingCampaign', 'CampaignSend', 'ApiKey', 'WebhookEndpoint', 'WebhookDelivery', 'WebhookOrderState', 'Device', 'PushSubscription',
-    'Expense', 'CostHistory', 'GroupOrder', 'GroupOrderEntry', 'DeliveryPosition',
+    'Expense', 'CostHistory', 'GroupOrder', 'GroupOrderEntry', 'DeliveryPosition', 'StaffAvailability',
 ]

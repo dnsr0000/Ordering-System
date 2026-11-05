@@ -131,6 +131,9 @@ SECTIONS = {s.key: s for s in (
                 Field('receipt_footer', '收據頁尾文字', default='謝謝光臨，請憑取餐號碼取餐！'),
                 Field('quick_notes', '常用備註快捷鍵 (逗號分隔)', default='少油, 少鹽, 不要蔥, 分開裝, 餐具 2 份',
                       help='POS 備註欄上方的快捷按鈕，按一下就加進整單備註'),
+                Field('quick_tables', '桌號 / 顧客稱呼快捷鍵 (逗號分隔)', default='外帶客, 電話預訂',
+                      help='POS「桌號或顧客稱呼」欄位上方的快速填入標籤；桌位管理裡啟用的桌號會自動排在前面，'
+                           '這裡填的是桌號以外的稱呼 (例如 外帶客、電話預訂、外送平台)。按「外帶客」會同時切成外帶'),
             )),
     # ------------------------------------------------------------------ C 廚房出餐
     Section('kds', '廚房看板', 'C 廚房出餐', 'bi-fire',
@@ -197,6 +200,10 @@ SECTIONS = {s.key: s for s in (
                       help='點餐機首頁閒置多久後全螢幕輪播推薦餐點 (0 = 不輪播)；觸碰螢幕即回到首頁'),
                 Field('attract_message', '待機輪播標語', default='觸碰螢幕開始點餐'),
                 Field('accessibility_button', '顯示「大字 / 高對比」切換按鈕', 'bool', True),
+                Field('voice_ordering', '語音點餐 (點餐頁麥克風按鈕)', 'bool', True,
+                      help='顧客用說的點餐：瀏覽器語音辨識 (需 HTTPS 或本機網址) → 先以菜單規則解析，聽不懂再交給 AI '
+                           '(Gemini → 本機模型)；一律先顯示確認畫面才加入購物車'),
+                Field('voice_llm', '規則解析不到時使用 AI 解析', 'bool', True),
             )),
     Section('signage', '數位看板 (門市大螢幕)', 'D 菜單', 'bi-tv',
             '門市上方大螢幕的菜單看板 (網址 /signage，免登入)：與菜單售完狀態即時同步，輪播促銷標語與取餐叫號。'
@@ -223,6 +230,21 @@ SECTIONS = {s.key: s for s in (
                 Field('alert_notify', '低於安全量時通知 (LINE / Email / Webhook)', 'bool', True),
                 Field('expiry_warn_days', '原料批號到期前幾天提醒', 'int', 3, min=0, max=60),
                 Field('po_email_supplier', '送出採購單時 Email 給供應商', 'bool', False, help='需設定寄信伺服器 (SMTP)'),
+            ), enabled_field='enabled'),
+    Section('chatbot', 'AI 客服機器人', 'D 菜單', 'bi-robot',
+            '點餐頁與出餐進度頁右下角的對話窗：過敏原 / 素食 / 辣度只從菜單標示直接查 (不經 AI 改寫)，訂單進度直接讀訂單，'
+            '營業資訊與常見問答用這裡填的文字；其他問題才交給 AI (Gemini → 本機模型)，AI 回答會標示「請以櫃檯為準」。',
+            (
+                Field('enabled', '啟用客服機器人', 'bool', False),
+                Field('bot_name', '機器人名稱', default='小幫手'),
+                Field('welcome', '開場白', default='您好！可以問我餐點內容、過敏原、營業時間或訂單進度。'),
+                Field('store_info', '營業資訊 (時間 / 地址 / 電話 / 停車)', 'textarea', '',
+                      help='顧客問營業時間、地址、電話時直接回這段文字，例如「每日 11:00–21:00，週一公休。地址：…；電話：…」'),
+                Field('faq', '常見問答 (每行「關鍵字1 關鍵字2 => 回答」)', 'textarea', '',
+                      help='例如「停車 車位 => 店門口有 3 個機車位，汽車請停對面公有停車場」；關鍵字命中越多的優先'),
+                Field('llm_enabled', '其他問題交給 AI 回答', 'bool', True,
+                      help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫 Gemini (有費用) 或本機模型'),
+                Field('fallback', '答不出來時的回覆', default='這個問題我不太確定，請直接洽詢櫃檯人員，謝謝！'),
             ), enabled_field='enabled'),
     # ------------------------------------------------------------------ E 會員行銷
     Section('line', 'LINE 登入與官方帳號', 'E 會員行銷', 'bi-chat-dots',
@@ -428,6 +450,10 @@ SECTIONS = {s.key: s for s in (
                 Field('min_staff', '營業時段最少人數', 'int', 1, min=0, max=50),
                 Field('shift_hours', '建議班別長度 (小時)', 'int', 4, min=2, max=12),
                 Field('weeks', '參考過去幾週同一個星期幾', 'int', 4, min=1, max=12),
+                Field('max_hours_day', '自動排班：每日工時上限 (小時)', 'int', 8, min=1, max=12, help='勞基法 §30 正常工時每日 8 小時'),
+                Field('max_hours_week', '自動排班：每週工時上限 (小時)', 'int', 40, min=1, max=84,
+                      help='勞基法 §30 每週 40 小時；員工可在「可排時段」另設較低的個人上限'),
+                Field('max_consecutive_days', '自動排班：最多連續工作天數', 'int', 6, min=1, max=12, help='勞基法 §36 每七天至少一天例假'),
             )),
     Section('group_order', '團體預購', 'F 通路', 'bi-people-fill',
             '主揪建立團購連結分享給同事，每個人自己點餐，截止時合併成一張預約取餐訂單 (到店付款)。'

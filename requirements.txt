@@ -45,5 +45,7 @@ axe-playwright-python==0.1.8
 
 # ---- 選用：錯誤回報 (.env SENTRY_DSN)：pip install "sentry-sdk[flask]" ----
 # sentry-sdk[flask]
-# ---- 選用：本地 Qwen2.5 SLM 推論 (需 C++ 編譯環境，安裝較耗時)。沒有安裝時自動改用 Gemini / 規則引擎 ----
+# ---- 選用：本地 Qwen2.5 SLM 推論 (語音點餐 / 客服 / 文案的離線備援)。沒有安裝時自動改用 Gemini / 規則引擎，
+#      系統健康頁會顯示原因。用預編譯 CPU 版不需要 C++ 編譯環境：
+#      pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu ----
 # llama-cpp-python

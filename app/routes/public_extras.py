@@ -60,7 +60,8 @@ def _track_payload(order):
 def track(order_uuid):
     order = _order_by_uuid(order_uuid)
     shop = db.session.get(Tenant, order.tenant_id)
-    return render_template('track.html', order=order, shop=shop, data=dict(_track_payload(order), uuid=order.uuid))
+    return render_template('track.html', order=order, shop=shop, data=dict(_track_payload(order), uuid=order.uuid),
+                           chat=chat_widget_config(order))
 
 
 @public_bp.route('/api/track/<order_uuid>', endpoint='track_api')
@@ -108,6 +109,48 @@ def track_push(order_uuid):
         push_service.subscribe(order, data.get('subscription'), user_id=order.user_id)
         db.session.commit()
     return jsonify({'success': True})
+
+
+@public_bp.route('/api/chat', methods=['POST'], endpoint='chat')
+@limiter.limit('20/minute')
+def chat():
+    """顧客端 AI 客服：{message, history: [{role, text}], order_uuid?}；過敏原純檢索，其他才交給 AI"""
+    from app.services import chatbot_service
+    data = get_json_dict()
+    order = None
+    order_uuid = str(data.get('order_uuid') or '')[:36]
+    with tenant_bypass():
+        if len(order_uuid) >= 30:
+            order = Order.query.filter_by(uuid=order_uuid).first()
+        tenant_id = order.tenant_id if order is not None else g.tenant_id
+        if not chatbot_service.enabled(tenant_id):
+            return jsonify({'success': False, 'message': '本店未啟用客服機器人'}), 404
+        shop = db.session.get(Tenant, tenant_id)
+        history = data.get('history') if isinstance(data.get('history'), list) else []
+        if order is not None and g.tenant_id != tenant_id:   # 追蹤頁可能是別家店的訂單：以訂單的店家查菜單
+            from app.tenant_context import _use_tenant
+            _use_tenant(shop, remember=False)
+        result = chatbot_service.answer(data.get('message'), order=order, history=history[-6:], tenant_id=tenant_id,
+                                        shop_name=shop.name if shop else '')
+    return jsonify(dict(result, success=True))
+
+
+def chat_widget_config(order=None):
+    """樣板用：對話窗的設定 (未啟用時回 None)"""
+    from app.services import chatbot_service, i18n_service
+    tenant_id = order.tenant_id if order is not None else g.tenant_id
+    if not chatbot_service.enabled(tenant_id):
+        return None
+    cfg = chatbot_service.config(tenant_id)
+    lang = i18n_service.effective_language()
+    ui = i18n_service.ui_strings(lang)
+    return {
+        'title': ui.get('chat_title', '線上客服'), 'botName': cfg.get('bot_name') or '小幫手',
+        'subtitle': ui.get('chat_subtitle', ''), 'welcome': cfg.get('welcome') or '',
+        'placeholder': ui.get('chat_placeholder', ''), 'send': ui.get('chat_send', ''), 'aiNote': ui.get('chat_ai_note', ''),
+        'failed': ui.get('chat_failed', ''), 'orderUuid': order.uuid if order is not None else '',
+        'suggestions': '|'.join(chatbot_service._suggestions(order)),
+    }
 
 
 @public_bp.route('/manifest.webmanifest', endpoint='manifest')

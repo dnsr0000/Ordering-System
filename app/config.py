@@ -135,6 +135,9 @@ class Config:
     SFACE_MODEL = os.path.join(MODELS_DIR, "face_recognition_sface_2021dec.onnx")
     LOCAL_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
     GEMINI_API_KEY = _env("GEMINI_API_KEY")
+    # Gemini 模型：主要模型 503 (過載) / 5xx 時重試一次，再改用備援模型；都失敗才降到本機 SLM / 規則引擎
+    GEMINI_MODEL = _env("GEMINI_MODEL") or "gemini-3.6-flash"
+    GEMINI_FALLBACK_MODEL = _env("GEMINI_FALLBACK_MODEL") or "gemini-3.5-flash-lite"
 
     MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
     MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024

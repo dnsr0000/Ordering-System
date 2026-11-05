@@ -1,6 +1,8 @@
 """
 AI 文案與營運建議，三層降級：Google Gemini → 本機 Qwen2.5 SLM (選用) → 規則引擎。
-- Gemini 失敗或被限流時冷卻 60 秒，期間直接使用下一層。
+- Gemini：主要模型 (GEMINI_MODEL) 回 503 / 5xx 或逾時先重試一次，再改用備援模型 (GEMINI_FALLBACK_MODEL)；
+  都失敗時依原因冷卻 (金鑰錯誤 60 秒、限流 30 秒、過載 20 秒)，期間直接使用下一層。最近一次錯誤可在系統健康頁看到。
+- 本機 SLM：需要 llama-cpp-python 與模型檔；沒裝套件 / 找不到檔案時記錄原因 (ai_status) 並降到規則引擎，不會一直重試載入。
 - 營運建議以「今日訂單狀態」為快取鍵，只有訂單變動才重新產生，且在背景執行緒呼叫 API，不拖慢頁面。
 """
 import atexit
@@ -16,11 +18,18 @@ from flask import current_app
 
 logger = logging.getLogger(__name__)
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_TIMEOUT = (5, 30)        # (連線, 讀取) 秒
+RETRY_DELAY = 1.0               # 503 / 5xx / 逾時後重試前等待 (測試可改為 0)
+COOLDOWN = {'auth': 60, 'rate': 30, 'overload': 20}
+LLAMA_INSTALL_HINT = ('pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu '
+                      '(預編譯 CPU 版，不需要 C++ 編譯環境)')
 _PLACEHOLDER_KEYS = {"", "YOUR_API_KEY", "1234", "none"}
 _gemini_cooldown_until = 0.0
+_gemini_last: dict = {'ok_at': 0.0, 'error_at': 0.0, 'error': '', 'model': ''}   # 系統健康頁顯示
 _local_llm = None
 _local_llm_loaded = False
+_local_llm_error = ''
 _llm_lock = threading.Lock()
 _advice_cache: dict = {}  # tenant_id -> {'signature', 'advice', 'fetching'}
 
@@ -34,44 +43,112 @@ def has_api_key() -> bool:
     return _api_key() is not None
 
 
-def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None):
-    """呼叫 Gemini；失敗回傳 None (並在 401/403/429 時冷卻 60 秒)"""
+def gemini_models():
+    """依序嘗試的模型：主要模型、備援模型 (去除重複 / 空白)"""
+    out = []
+    for name in (current_app.config.get('GEMINI_MODEL'), current_app.config.get('GEMINI_FALLBACK_MODEL')):
+        name = (name or '').strip()
+        if name and name not in out:
+            out.append(name)
+    return out or ['gemini-3.6-flash']
+
+
+def _note_error(status, detail, model):
+    _gemini_last.update(error_at=time.time(), error=f'{status} {detail}'.strip(), model=model)
+
+
+def _extract_text(payload):
+    parts = (payload.get('candidates') or [{}])[0].get('content', {}).get('parts') or []
+    return (parts[0].get('text') or '').strip() if parts else ''
+
+
+def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_mode=False):
+    """
+    呼叫 Gemini；失敗回傳 None。
+    每個模型最多試 2 次 (503 / 5xx / 逾時後等 RETRY_DELAY 秒重試)，主要模型失敗改用備援模型；
+    金鑰錯誤 (401/403) 立刻冷卻 60 秒，限流 (429) 換模型再試、都不行冷卻 30 秒，過載 / 連線問題冷卻 20 秒。
+    """
     global _gemini_cooldown_until
     api_key = api_key or _api_key()
     if not api_key or time.time() < _gemini_cooldown_until:
         return None
-    try:
-        resp = requests.post(
-            GEMINI_URL, timeout=15,
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-            json={"contents": [{"parts": [{"text": prompt}]}],
-                  "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}},
-        )
-        if resp.status_code in (401, 403, 429):
-            _gemini_cooldown_until = time.time() + 60
-        if resp.status_code != 200:
-            logger.warning('Gemini 回應 %s，改用下一層', resp.status_code)
-            return None
-        parts = (resp.json().get('candidates') or [{}])[0].get('content', {}).get('parts') or []
-        return (parts[0].get('text') or '').strip() if parts else None
-    except Exception as e:  # noqa: BLE001
-        logger.warning('Gemini 連線異常 (%s)，改用下一層', e)
-        return None
+    body = {"contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
+    if json_mode:
+        body["generationConfig"]["responseMimeType"] = "application/json"
+    reason = 'overload'
+    for model in gemini_models():
+        for attempt in (1, 2):
+            try:
+                resp = requests.post(GEMINI_URL.format(model=model), timeout=GEMINI_TIMEOUT,
+                                     headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=body)
+            except requests.RequestException as e:
+                _note_error('', f'連線異常 {e.__class__.__name__}', model)
+                logger.warning('Gemini (%s) 連線異常 (%s)，第 %d 次', model, e, attempt)
+                if attempt == 1:
+                    time.sleep(RETRY_DELAY)
+                continue
+            status = resp.status_code
+            if status == 200:
+                try:
+                    text = _extract_text(resp.json())
+                except ValueError:
+                    text = ''
+                if text:
+                    _gemini_last.update(ok_at=time.time(), model=model, error='')
+                    return text
+                _note_error(status, '回應沒有內容', model)
+                break
+            detail = ''
+            try:
+                detail = (resp.json().get('error') or {}).get('message', '')[:160]
+            except ValueError:
+                pass
+            _note_error(status, detail, model)
+            if status in (401, 403):
+                _gemini_cooldown_until = time.time() + COOLDOWN['auth']
+                logger.warning('Gemini 金鑰無效或無權限 (%s)，冷卻 %d 秒', status, COOLDOWN['auth'])
+                return None
+            if status == 429:
+                reason = 'rate'
+                logger.warning('Gemini (%s) 被限流 (429)，改用下一個模型', model)
+                break
+            if status in (500, 502, 503, 504):
+                logger.warning('Gemini (%s) 回應 %s (過載)，第 %d 次', model, status, attempt)
+                if attempt == 1:
+                    time.sleep(RETRY_DELAY)
+                continue
+            logger.warning('Gemini (%s) 回應 %s %s，改用下一個模型', model, status, detail)
+            break
+    _gemini_cooldown_until = time.time() + COOLDOWN[reason]
+    logger.warning('Gemini 全部模型失敗，冷卻 %d 秒後再試；改用下一層', COOLDOWN[reason])
+    return None
 
 
 def _get_local_llm():
-    """第一次需要時才載入本機模型 (llama-cpp-python 為選用套件)"""
-    global _local_llm, _local_llm_loaded
+    """第一次需要時才載入本機模型 (llama-cpp-python 為選用套件)；失敗原因記在 _local_llm_error，不重複嘗試"""
+    global _local_llm, _local_llm_loaded, _local_llm_error
     if not _local_llm_loaded:
         _local_llm_loaded = True
         path = current_app.config.get('LOCAL_MODEL_PATH')
-        if path and os.path.exists(path):
+        if not path:
+            _local_llm_error = '未設定本機模型路徑 (LOCAL_MODEL_PATH)'
+        elif not os.path.exists(path):
+            _local_llm_error = f'找不到模型檔：{path}'
+        else:
             try:
                 from llama_cpp import Llama
-                _local_llm = Llama(model_path=path, n_ctx=2048, n_batch=512, n_threads=4, verbose=False)
-                atexit.register(_close_local_llm)
-            except Exception as e:  # noqa: BLE001
-                logger.warning('本機 SLM 載入失敗: %s', e)
+            except ImportError:
+                _local_llm_error = f'未安裝 llama-cpp-python：{LLAMA_INSTALL_HINT}'
+            else:
+                try:
+                    _local_llm = Llama(model_path=path, n_ctx=2048, n_batch=512, n_threads=4, verbose=False)
+                    atexit.register(_close_local_llm)
+                    _local_llm_error = ''
+                except Exception as e:  # noqa: BLE001
+                    _local_llm_error = f'模型載入失敗：{e}'
+        if _local_llm_error:
+            logger.warning('本機 SLM 無法使用：%s (改用規則引擎)', _local_llm_error)
     return _local_llm
 
 
@@ -89,20 +166,104 @@ def _close_local_llm():
             pass
 
 
-def run_local_slm(prompt_text, max_tokens=100):
+DEFAULT_SYSTEM = '你是一位專業餐飲營運顧問，請嚴格使用台灣繁體中文回答，禁止思考草稿。'
+
+
+def run_local_slm(prompt_text, max_tokens=100, system=None, stop=None, temperature=0.3, lock_timeout=3.0):
+    """本機 Qwen 推論 (ChatML)；模型不可用或忙碌中回 None"""
     llm = _get_local_llm()
-    if llm is None or not _llm_lock.acquire(timeout=3.0):
+    if llm is None or not _llm_lock.acquire(timeout=lock_timeout):
         return None
     try:
         llm.reset()
-        prompt = ("<|im_start|>system\n你是一位專業餐飲營運顧問，請嚴格使用台灣繁體中文回答，禁止思考草稿。<|im_end|>\n"
+        prompt = (f"<|im_start|>system\n{system or DEFAULT_SYSTEM}<|im_end|>\n"
                   f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n")
-        res = llm(prompt, max_tokens=max_tokens, temperature=0.3, stop=["<|im_end|>", "\n\n"])
+        res = llm(prompt, max_tokens=max_tokens, temperature=temperature, stop=stop or ["<|im_end|>", "\n\n"])
         return res["choices"][0]["text"].strip()
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logger.warning('本機 SLM 推論失敗：%s', e)
         return None
     finally:
         _llm_lock.release()
+
+
+def local_available():
+    return _get_local_llm() is not None
+
+
+def ai_status():
+    """系統健康頁：Gemini 與本機模型目前的狀態"""
+    now = time.time()
+    path = current_app.config.get('LOCAL_MODEL_PATH') or ''
+    try:
+        import llama_cpp  # noqa: F401
+        installed = True
+    except ImportError:
+        installed = False
+    return {
+        'gemini': {
+            'configured': has_api_key(),
+            'models': gemini_models(),
+            'cooldown_seconds': max(0, int(_gemini_cooldown_until - now)),
+            'last_ok': _gemini_last['ok_at'],
+            'last_error': _gemini_last['error'],
+            'last_error_at': _gemini_last['error_at'],
+            'last_model': _gemini_last['model'],
+        },
+        'local': {
+            'installed': installed,
+            'model_path': path,
+            'model_exists': bool(path and os.path.exists(path)),
+            'loaded': _local_llm is not None,
+            'tried': _local_llm_loaded,
+            'error': _local_llm_error,
+            'install_hint': LLAMA_INSTALL_HINT,
+        },
+    }
+
+
+def extract_json(text):
+    """從模型回應中取出第一個 JSON 物件 / 陣列 (容忍 ```json 圍欄與前後說明)；失敗回 None"""
+    import json
+    if not text:
+        return None
+    text = text.strip()
+    m = re.search(r'```(?:json)?\s*(.*?)```', text, re.S)
+    if m:
+        text = m.group(1).strip()
+    candidates = sorted((text.find(o), o, c) for o, c in (('{', '}'), ('[', ']')) if text.find(o) >= 0)
+    for start, _opener, closer in candidates:   # 先出現的括號優先 (陣列裡的物件不會被誤抓成答案)
+        end = text.rfind(closer)
+        if end <= start:
+            continue
+        try:
+            return json.loads(text[start:end + 1])
+        except ValueError:
+            continue
+    return None
+
+
+def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None):
+    """結構化輸出：Gemini (JSON 模式) → 本機 SLM；回 (解析後的物件, 來源) 或 (None, '')"""
+    data = extract_json(gemini_generate(prompt, max_tokens=max_tokens, temperature=0.1, json_mode=True))
+    if data is not None:
+        return data, 'gemini'
+    data = extract_json(run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system,
+                                      stop=["<|im_end|>"], temperature=0.1))
+    if data is not None:
+        return data, 'local'
+    return None, ''
+
+
+def generate_text(prompt, max_tokens=400, system=None, local_max_tokens=None, temperature=0.3):
+    """自由文字：Gemini → 本機 SLM；回 (文字, 來源) 或 (None, '')"""
+    text = gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature)
+    if text:
+        return text, 'gemini'
+    text = run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system, temperature=temperature)
+    if text:
+        return text, 'local'
+    return None, ''
 
 
 def _clean_text(text, min_len=10):
