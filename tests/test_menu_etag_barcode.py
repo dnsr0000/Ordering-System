@@ -1,5 +1,5 @@
 """
-第五輪 (階段 4)：點餐頁菜單狀態輪詢 /api/menu/availability (ETag / 304)、對外 API /api/v1/menu 的 ETag、
+點餐頁菜單狀態輪詢 /api/menu/availability (ETag / 304)、對外 API /api/v1/menu 的 ETag、
 POS 條碼 (external_code) 與型別檢查設定。
 """
 import os
@@ -66,8 +66,8 @@ def test_menu_availability_requires_no_login_but_tenant_scoped(app):
 
 
 def test_public_api_menu_etag(app, no_rate_limit):
-    from tests.test_accounting_api_devices_archive import _tenant
-    tid = _tenant(app, 'etag-api-shop')
+    from tests.support import get_or_create_tenant
+    tid = get_or_create_tenant(app, 'etag-api-shop')
     owner = login_staff(app, 'etag_api_owner', 'owner', tenant_id=tid)
     key = _create_key(owner, ['menu:read'])
     c = app.test_client()

@@ -2,10 +2,12 @@
 部署說明：線上端 (Docker) 與本機門市端 (Windows)
 ====================================================================
 
-架構
-- 本機門市端：Windows 電腦 + Waitress (serve_windows.py) + SQLite (database/menu.db)，可完全離線營業。
+架構 (系統角色與資料分工見 README.txt 一、同步規則見 SYNC.txt)
+- 本機門市端：Windows 電腦 + Waitress (serve_windows.py) + SQLite (database/menu.db)，可完全離線營業；
+  安裝 requirements-store.txt (含人臉辨識)。
 - 線上端 (SYNC_ROLE=hub)：Linux 主機 + Docker：
     caddy (自動 HTTPS 反向代理，80/443) → app (gunicorn gthread，多 worker) → postgres + redis
+  映像只安裝 requirements.txt (核心套件)：線上端沒有人臉辨識 (會員人臉登入只在門市)、沒有測試工具。
   相關檔案：Dockerfile、docker-compose.yml、deploy/hub.env.example、deploy/gunicorn.conf.py、
             deploy/entrypoint.sh、deploy/Caddyfile。
 
@@ -144,11 +146,15 @@
 1. 安裝
    - 安裝 Python 3.13 (勾選 Add to PATH)，在專案資料夾 (例如 C:\kiosk) 執行：
        python -m venv venv
-       venv\Scripts\pip install -r requirements.txt
-     (gunicorn 只用於 Linux，Windows 上會自動略過。)
+       venv\Scripts\pip install -r requirements-store.txt
+     (requirements-store.txt = 核心套件 + numpy / opencv-python-headless 人臉辨識；gunicorn 只用於 Linux，Windows 上會自動略過。
+      套件清單的三層說明見 README.txt 3.2。)
    - 從舊版升級時，OpenCV 已改用 opencv-python-headless，請先移除舊套件再安裝，避免兩個套件互相覆蓋：
        venv\Scripts\pip uninstall -y opencv-python
-       venv\Scripts\pip install -r requirements.txt
+       venv\Scripts\pip install -r requirements-store.txt
+   - 人臉辨識模型檔 (models/*.onnx) 不在程式包內：第一次啟動時自動從 OpenCV Zoo 下載 (主機需能連 github.com)，
+     或先在有網路的電腦執行 venv\Scripts\flask --app run models download 再把 models\ 複製過去；
+     後台「系統監控與備份」的「人臉辨識登入」方塊顯示可用 / 停用與原因 (README.txt 3.3)。
    - 複製 .env.example 為 .env，至少設定 ADMIN_USERNAME / ADMIN_PASSWORD。
    - Windows 時區必須是「(UTC+08:00) 台北」並開啟自動校時 (營業日、換日結案都依電腦時間)。
    - 先手動執行一次 venv\Scripts\python serve_windows.py，確認 http://127.0.0.1:5000/ 可開啟。
@@ -177,12 +183,11 @@
 
 3. 定期備份 database/ 與 uploads/
    - 系統內建每日自動備份 (後台「系統設定 → 自動備份」設定時間與保留天數，預設 03:30、保留 14 天)：
-     一致性快照壓縮成 database\backups\menu-日期.zip，後台「系統監控」(/admin/system) 可查看、立即備份、下載。
+     一致性快照壓縮成 database\backups\menu-日期.zip，後台「系統監控與備份」(/admin/system) 可查看、立即備份、下載。
      備份仍在同一台電腦，請另外複製到其他磁碟 / 雲端：「自動備份」設定裡的「異地備份」可在每日備份後自動上傳到
      WebDAV (Synology / Nextcloud)、S3 相容儲存 (AWS S3 / MinIO / Cloudflare R2 / Backblaze B2：填端點、Access Key /
-     Secret Key、Bucket、Region) 或自訂指令 (例如 rclone copy {file} gdrive:kiosk-backups)，只保留最近 N 份；設定頁「測試」
-     會上傳一個小檔確認；上傳失敗會進「系統監控」的事件並依監控通知管道提醒。
-     上傳檔 (照片) 不在自動備份內。
+     Secret Key、Bucket、Region) 或自訂指令 (例如 rclone copy {file} gdrive:kiosk-backups)；設定頁「測試」會上傳一個
+     小檔確認 (功能說明見 README.txt 五-H)。上傳檔 (照片) 不在自動備份內。
    - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。其他方式：
      (1) 後台「整庫備份」(平台管理者)：一次下載資料庫 + 上傳檔的壓縮檔，適合手動備份。
      (2) 排程自動備份：建立 C:\kiosk\backup.bat，內容例如：
@@ -199,10 +204,11 @@
      與 uploads\ → 啟動服務；或使用後台的「整庫還原」。
 
 3-1. 更新版本 (門市)
-   - 後台「系統監控 → 版本更新」(平台管理者) 會顯示目前版本 (VERSION 檔) 與 GitHub 最新 release：
+   - 後台「系統監控與備份 → 版本更新」(平台管理者) 會顯示目前版本 (VERSION 檔) 與 GitHub 最新 release：
      「下載更新檔」→ 營業空檔按「套用並重啟」。主機會執行 deploy\windows\update_store.cmd：
      備份程式檔 (database\updates\previous-時間.zip) 與資料庫快照 → 停掉伺服器 (NSSM 服務 KioskPOS、工作排程或目前的 python)
-     → 覆蓋程式檔 (不動 database\、uploads\、.env、.venv) → pip install -r requirements.txt → flask db upgrade → 重啟；
+     → 覆蓋程式檔 (不動 database\、uploads\、.env、.venv；更新包不含模型檔，models\ 既有的 .onnx 會保留)
+     → pip install -r requirements-store.txt → flask db upgrade → 重啟；
      任一步失敗會自動還原程式檔與資料庫再重啟。過程記錄在 database\updates\update.log，約 1~3 分鐘。
    - 也可以在主機雙擊 deploy\windows\update_store.cmd (會用 database\updates 裡最新的 zip)。
    - 主機需能連到 github.com；離線主機請手動下載 release zip 放到 database\updates\ 再執行腳本。
@@ -215,7 +221,8 @@
      Edge 可用：msedge.exe --kiosk "http://127.0.0.1:5000/?shop=店家代碼" --edge-kiosk-type=fullscreen --no-first-run
      --kiosk-printing 會直接列印到預設印表機 (80mm 熱感應收據機請設為預設印表機)。
      離開全螢幕：Alt+F4。
-   - 人臉登入需要相機：瀏覽器只允許 https 或 http://127.0.0.1 使用相機。
+   - 人臉登入需要相機 (且門市主機已安裝 requirements-store.txt 並下載模型檔，見二-1)：瀏覽器只允許 https 或
+     http://127.0.0.1 使用相機。
      點餐機若不是伺服器本機 (以 http://區網IP:5000 連線)，Chrome 需加上
        --unsafely-treat-insecure-origin-as-secure=http://區網IP:5000
      (必須同時指定 --user-data-dir)，第一次開啟時允許相機權限。
@@ -252,9 +259,7 @@
    - 斷網時照常營業，後台「同步狀態」頁會顯示最後一次錯誤；恢復連線後自動補齊。
    - 手動同步：後台「同步狀態」→「立即同步」，或在命令列執行 flask --app run sync now / sync status。
 
-3. 一個線上店家可以有多家分店 (每家一台門市伺服器、各自一組權杖)：
-   菜單、優惠券、紅利設定、員工帳號、會員與點數在所有分店共用；訂單只送到負責出餐的分店；
-   庫存各分店獨立 (線上端只保存各分店回報的庫存快照，用於線上點餐)。
+3. 一個線上店家可以有多家分店 (每家一台門市伺服器、各自一組權杖)；哪些資料共用、哪些各店獨立見 README.txt 一與 SYNC.txt。
 
 4. 注意事項
    - SYNC_HUB_URL 必須是 https (權杖與會員資料經由此連線傳送)。
@@ -279,7 +284,8 @@
 [ ] 多分店叫貨 / 調撥：各店原料名稱要一致 (依名稱對應)；總部中央廚房的原料建立在線上端後台「原物料與配方」。
     分店價格 / 上下架在線上端設定，分店約 20 秒內套用 (分店離線時於恢復連線後套用)
 [ ] 後台建立正式使用的員工帳號 (owner / manager / staff / kitchen)，停用或刪除測試帳號
-[ ] 升級舊版門市：先 pip uninstall -y opencv-python，再 pip install -r requirements.txt
+[ ] 升級舊版門市：先 pip uninstall -y opencv-python，再 pip install -r requirements-store.txt (pandas 已不需要，可一併移除)
+[ ] 門市人臉辨識：後台「系統監控與備份」的「人臉辨識登入」顯示「可用」(模型檔已下載、套件已安裝)；線上端沒有此功能
 
 業務 / 法規面
 [ ] 線上付款 (見第五節)：目前預設為綠界「測試環境」。正式收款前需向綠界申請正式特店 (需公司/商號資料)，
@@ -290,7 +296,7 @@
     門市主機預設關閉
 [ ] 整庫備份 (系統監控頁的「立即備份 / 下載」與後台「匯出系統完整備份包」) 只有平台管理者 (預設店家負責人) 可用
 [ ] POS 動用會員儲值金 / 點數 / 寄杯預設需驗證會員身分 (掃會員動態條碼或會員輸入 PIN，否則店長核准)；
-    小店信任櫃檯可在「系統設定 → 會員經營」關閉
+    小店信任櫃檯可在「系統設定 → 會員等級 / 生日禮 / 儲值金」關閉
 [ ] 訂位訂金：門市主機要能從外部以 HTTPS 連線 (綠界回傳 /payment/ecpay/reservation_notify)，門市 .env 設定 PUBLIC_BASE_URL
     與綠界正式特店 ECPAY_MERCHANT_ID / ECPAY_HASH_KEY / ECPAY_HASH_IV、ECPAY_STAGE=0；退款失敗會通知，請到綠界後台處理。
     訂金不退的規則 (幾小時前可退、未到不退) 請在訂位頁或店內公告。
@@ -331,8 +337,8 @@
     線上端由 docker logs (json-file 20 MB × 5) 收集，LOG_FILE 已設為空。顧客回報錯誤時請他提供 500 頁面上的「錯誤代碼」
     (X-Request-ID)，以此在記錄檔中搜尋 [代碼] 即可找到那一次請求的所有記錄；反向代理若已產生 X-Request-ID 會沿用。
 [ ] 更新部署後不必請顧客清快取：靜態檔網址帶版本 (?v=)，PWA 的 Service Worker 也會在下次開啟時換新快取。
-[ ] CI：GitHub Actions 的 lint 工作會跑 ruff / mypy (擋) 與 pip-audit (只警告)；pip-audit 有新漏洞時請升級
-    requirements.txt 的版本並重跑測試。
+[ ] CI：GitHub Actions 安裝 requirements-dev.txt，lint 工作會跑 ruff / mypy (擋) 與 pip-audit (只警告，掃三個 requirements 檔)；
+    pip-audit 有新漏洞時請升級 requirements*.txt 的版本並重跑測試 (測試指令見 README.txt 七)。
 [ ] 調整 GUNICORN_WORKERS / GUNICORN_THREADS：每個分店的長輪詢與每個開著的看板 (SSE) 都會占用一條執行緒
 
 
@@ -340,7 +346,7 @@
 --------------------------------------------------------------------
 線上點餐的流程：會員選取餐分店 → 結帳 → 導到綠界付款頁刷卡 → 綠界通知線上端付款成功 → 訂單才送到分店廚房。
 逾時 (PAYMENT_TIMEOUT_MINUTES，預設 15 分鐘) 未付款：線上端先向綠界查詢確認，未付款就自動取消並回補庫存與點數。
-線上點餐只開放會員；門市 (含顧客用手機連門市網站) 仍可訪客點餐、到店付款。
+線上點餐只開放會員；門市仍可訪客點餐、到店付款。付款方式 (ATM / 超商代碼) 與退刷等功能說明見 README.txt 五-A。
 
 1. 測試環境 (預設，免註冊、不會真的扣款)
    - 不需設定任何金鑰，使用綠界公開的測試特店 3002607。
@@ -412,7 +418,7 @@
        foodpanda   https://您的網域/webhooks/foodpanda/<店家代碼>   (Bearer 權杖)
      Webhook 會在收到訂單的那台主機建立訂單。門市主機通常在店內網路，請用 Cloudflare Tunnel 等把上述路徑開放給平台，
      或先使用 POS「外送單」手動登錄 (不需申請)。
-   - 在「菜單進階設定」把平台上的品項代碼填在餐點的「外送 / 條碼代碼」；找不到品項的訂單會被拒單並通知。
+   - 在「菜單與套餐」頁該餐點的「進階」把平台上的品項代碼填在「外送平台 / 條碼代碼」；找不到品項的訂單會被拒單並通知。
 
 7. 寄信 (SMTP)、錯誤通知、定期報表
    - SMTP：Gmail 請開啟兩步驟驗證後建立「應用程式密碼」(smtp.gmail.com、587、STARTTLS)。

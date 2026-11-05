@@ -1,5 +1,5 @@
 """
-門市一鍵更新 (第六輪)：
+門市一鍵更新：
 - 目前版本：專案根目錄 VERSION 檔 (+ git 短雜湊，若有 .git)。
 - 最新版本：GitHub Releases (UPDATE_REPO，預設 dnsr0000/Ordering-System)，沒有 release 時退回最新 tag；快取 1 小時。
 - 下載：release 的 zipball 存到 database/updates/<tag>.zip (只下載，不套用)。

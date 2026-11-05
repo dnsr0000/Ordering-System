@@ -231,7 +231,7 @@ def test_admin_issue_coupon_and_split_ticket_view(app, page, admin_client):
         ucs = UserCoupon.query.filter_by(code='E2EGIFT').order_by(UserCoupon.id).all()
         ucs[0].is_used, ucs[0].used_at = True, datetime.now() - timedelta(days=1)
         db.session.commit()
-    assert page.goto('/admin?tab=users').ok
+    assert page.goto('/admin/members').ok
     page.wait_for_load_state('networkidle')
     page.locator('tr', has_text='0968800001').locator('[data-action="user-coupons"]').click()
     body = page.locator('#userCouponsModalBody')
@@ -294,12 +294,12 @@ def test_security_page_2fa_setup_and_member_search(app, page):
     expect(page.locator('#backupCodes')).to_be_visible()
     expect(page.locator('#sessionTable')).to_contain_text('這台')
 
-    assert page.goto('/admin?tab=users').ok
+    assert page.goto('/admin/members').ok
     page.wait_for_load_state('networkidle')
-    page.fill('#memberSearchForm input[name="uq"]', '0968800077')
+    page.fill('#memberSearchForm input[name="q"]', '0968800077')
     page.locator('#memberSearchForm button[type="submit"]').click()
     page.wait_for_load_state('networkidle')
-    expect(page.locator('#memberTable tbody tr')).to_have_count(1)
+    expect(page.locator('#memberTable tbody tr[data-user-id]')).to_have_count(1)
     expect(page.locator('#memberTable')).to_contain_text('E2E 搜尋會員')
     page.locator('#memberTable [data-action="user-coupons"]').click()
     expect(page.locator('#userCouponsModalBody')).to_contain_text('未使用 (0)')

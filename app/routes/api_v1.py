@@ -1,5 +1,5 @@
 """
-對外 API v1 (第三輪 #14)：以 API 金鑰 (Authorization: Bearer kk_...) 驗證，依金鑰的權限範圍開放。
+對外 API v1 (#14)：以 API 金鑰 (Authorization: Bearer kk_...) 驗證，依金鑰的權限範圍開放。
 後台「API 與 Webhook」建立金鑰 (只顯示一次)。每把金鑰每分鐘最多 120 次請求。
 
 GET  /api/v1/orders?since=ISO時間&after_id=&until=&status=&limit=   訂單 (orders:read)，依建立時間排序；

@@ -1,5 +1,5 @@
 """
-第五輪 (階段 2)：記錄檔輪替與請求識別碼 (log_service)、靜態資源版本化 (static_version)、CI 靜態檢查設定。
+記錄檔輪替與請求識別碼 (log_service)、靜態資源版本化 (static_version)、CI 靜態檢查設定。
 """
 import logging
 import os
@@ -160,7 +160,7 @@ def test_ci_workflow_has_lint_audit_and_coverage():
     assert '--cov=app' in wf and '--cov-fail-under=' in wf
     assert os.path.exists(os.path.join(ROOT, 'ruff.toml')) and os.path.exists(os.path.join(ROOT, 'mypy.ini'))
     assert '- run: mypy' in wf
-    assert 'pytest-cov' in _read('requirements.txt')
+    assert 'pytest-cov' in _read('requirements-dev.txt') and 'pip install -r requirements-dev.txt' in wf
 
 
 def test_ruff_passes_on_repository():

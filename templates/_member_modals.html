@@ -1,0 +1,51 @@
+{#- 會員頁 (admin_members.html) 的對話框：編輯會員資料、會員持券管理 (內容由 admin-members.js 產生)。 -#}
+{% from "_macros.html" import modal_head %}
+    <!-- 編輯會員 Modal -->
+    <div class="modal fade" id="editUserModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯會員資料', 'bi-person-gear') }}
+                <form id="editUserForm" method="POST" autocomplete="off">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-name">會員姓名</label>
+                            <input type="text" class="form-control" name="name" id="edit-user-name" maxlength="100" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-phone">手機號碼</label>
+                            <input type="tel" class="form-control" name="phone" id="edit-user-phone" pattern="09[0-9]{8}" maxlength="10" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-points">紅利點數 (點)</label>
+                            <input type="number" min="0" class="form-control" name="points" id="edit-user-points" required>
+                            <!-- 開啟視窗當下的點數：後端只套用「差額」，期間顧客消費賺到/花掉的點數不會被蓋掉 -->
+                            <input type="hidden" name="loaded_points" id="edit-user-loaded-points">
+                            <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="edit-user-pin">重設手機登入 PIN 碼 (選填，4~6位數字)</label>
+                            <input type="password" class="form-control" name="pin" id="edit-user-pin" placeholder="不修改請留空" pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" data-lpignore="true" data-1p-ignore>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存會員變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 會員專屬票券管理 Modal -->
+    <div class="modal fade" id="userCouponsModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                <div class="modal-header border-secondary">
+                    <h5 class="modal-title fw-bold text-warning" id="userCouponsModalTitle">會員票券管理</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+                </div>
+                <div class="modal-body p-4" id="userCouponsModalBody"></div>
+            </div>
+        </div>
+    </div>

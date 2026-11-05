@@ -1,5 +1,5 @@
 """
-Web Push 推播 (第五輪)：顧客在出餐進度頁 (/track) 按「開啟完成通知」後，瀏覽器的推播訂閱存進 push_subscription；
+Web Push 推播：顧客在出餐進度頁 (/track) 按「開啟完成通知」後，瀏覽器的推播訂閱存進 push_subscription；
 餐點完成 (出餐) 或外送員出發時，就算顧客已離開頁面 / 關閉瀏覽器也收得到系統通知。
 - 協定：RFC 8291 (aes128gcm 加密，http-ece) + RFC 8292 (VAPID 簽章，py-vapid)，以 requests 送到瀏覽器廠商的推播伺服器；
   不依賴 pywebpush (它需要 aiohttp)。
@@ -32,12 +32,8 @@ MAX_PER_ORDER = 5
 KEEP_DAYS = 7
 
 
-def config(tenant_id: int | None = None) -> dict:
-    return settings_service.get('push', tenant_id)
-
-
-def enabled(tenant_id: int | None = None) -> bool:
-    return bool(config(tenant_id).get('enabled'))
+config = settings_service.reader('push')
+enabled = settings_service.flag('push')
 
 
 def _b64url(raw: bytes) -> str:

@@ -10,6 +10,7 @@ import { renderCart } from './cart.js';
 import { bindMember, clearMember } from './member.js';
 import { invoicePayload, onOrderTypeChange, resetPromo } from './totals.js';
 import { showReceipt } from './checkout.js';
+import { paymentDetails } from './pro.js';
 
 // ======================================================================
 // 9. 掛單 / 取單
@@ -321,7 +322,7 @@ export async function settleTable(btn) {
     const method = card.querySelector('.table-pay-method').value;
     const cash = method === 'Cash' ? num(card.querySelector('.table-cash').value) : 0;
     const t = (state.unpaidTables || []).find((x) => String(x.table_id) === String(btn.dataset.id));
-    const extra = await window.PosPro.paymentDetails(method, t ? num(t.total) : 0);
+    const extra = await paymentDetails(method, t ? num(t.total) : 0);
     if (extra === null) return;
     btn.disabled = true;
     try {

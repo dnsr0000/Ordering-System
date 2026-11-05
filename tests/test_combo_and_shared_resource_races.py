@@ -14,7 +14,7 @@ import pytest
 from app.extensions import db, limiter
 from app.models.menu import ComboOption, ComboOptionItem, MenuItem
 from app.models.order import Order
-from tests.support import checkout, default_tenant_id, guest_client, line, login_staff, make_item, run_together
+from tests.support import (checkout, default_tenant_id, guest_client, item_stock, line, login_staff, make_item, run_together)
 
 POS = '/api/pos/checkout'
 
@@ -36,11 +36,6 @@ def _combo(app, main_id, side_ids, name='測試套餐', price=50):
             db.session.add(ComboOptionItem(tenant_id=tid, combo_option_id=combo.id, menu_item_id=sid, position=pos))
         db.session.commit()
         return combo.id
-
-
-def _stock(app, item_id):
-    with app.app_context():
-        return db.session.get(MenuItem, item_id).stock
 
 
 # ===========================================================================
@@ -73,8 +68,8 @@ def test_combo_sides_and_standalone_sales_share_stock_across_channels(app, admin
     ok = [n for n, r in enumerate(results) if r.status_code == 200]
     sold_combo = sum(1 for n in ok if n < 3 or 6 <= n < 8)
     sold_fries = sum(1 for n in ok if 3 <= n < 6) + sum(2 for n in ok if n >= 8)
-    assert sold_fries + sold_combo == 5 and _stock(app, fries) == 0
-    assert _stock(app, burger) == 50 - sold_combo
+    assert sold_fries + sold_combo == 5 and item_stock(app, fries) == 0
+    assert item_stock(app, burger) == 50 - sold_combo
 
 
 def test_cancel_restores_the_sides_that_were_sold_even_if_combo_changed(app, admin_client):
@@ -86,19 +81,19 @@ def test_cancel_restores_the_sides_that_were_sold_even_if_combo_changed(app, adm
     mgr = login_staff(app, 'combo_mgr')
     first = checkout(mgr, [line(burger, combo_option_id=combo)], url=POS, cash_received=500).get_json()['order_id']
     second = checkout(mgr, [line(burger, 2, combo_option_id=combo)], url=POS, cash_received=500).get_json()['order_id']
-    assert (_stock(app, cola), _stock(app, tea)) == (17, 20)
+    assert (item_stock(app, cola), item_stock(app, tea)) == (17, 20)
 
     with app.app_context():   # 店家把套餐的飲料由可樂改成紅茶
         db.session.query(ComboOptionItem).filter_by(combo_option_id=combo).update({'menu_item_id': tea})
         db.session.commit()
     assert mgr.post(f'/api/orders/{first}/status', json={'status': 'Cancelled'}).status_code == 200
-    assert (_stock(app, cola), _stock(app, tea)) == (18, 20), '回補當時賣出的可樂，紅茶不變'
+    assert (item_stock(app, cola), item_stock(app, tea)) == (18, 20), '回補當時賣出的可樂，紅茶不變'
 
     with app.app_context():   # 套餐整個刪除
         db.session.delete(db.session.get(ComboOption, combo))
         db.session.commit()
     assert mgr.post(f'/api/orders/{second}/status', json={'status': 'Cancelled'}).status_code == 200
-    assert (_stock(app, cola), _stock(app, tea), _stock(app, burger)) == (20, 20, 20)
+    assert (item_stock(app, cola), item_stock(app, tea), item_stock(app, burger)) == (20, 20, 20)
 
 
 def test_combo_with_discontinued_or_off_hours_side_cannot_be_ordered(app):
@@ -115,7 +110,7 @@ def test_combo_with_discontinued_or_off_hours_side_cannot_be_ordered(app):
     combo2 = _combo(app, burger, [breakfast], '早餐套餐')
     r = checkout(guest_client(app), [line(burger, combo_option_id=combo2)])
     assert r.status_code == 400 and '限時豆漿' in r.get_json()['message']
-    assert _stock(app, burger) == 20
+    assert item_stock(app, burger) == 20
 
 
 # ===========================================================================

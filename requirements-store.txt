@@ -1,0 +1,8 @@
+# 門市 (Windows 點餐機 / POS) 的安裝清單：核心套件 + 人臉辨識登入。
+# 沒有裝這兩個套件時程式照常啟動，只是人臉註冊 / 登入不可用 (線上端 Docker 就是這樣)。
+-r requirements.txt
+
+# ---- 人臉辨識 (app/services/cv_service.py：YuNet 偵測 + SFace 特徵；模型檔啟動時自動下載到 models/) ----
+numpy==2.5.3
+# 只用 cv2.imread 與 YuNet / SFace 人臉模型，不需要視窗功能：headless 版在伺服器 / 容器內不需 GUI 函式庫 (libGL 等)
+opencv-python-headless==5.0.0.93

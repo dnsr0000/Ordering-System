@@ -1,4 +1,4 @@
-"""第三輪 #4~#6：桌位平面圖、桌邊線上結帳 (綠界)、寄杯 / 多次券"""
+"""桌位平面圖、桌邊線上結帳 (綠界)、寄杯 / 多次券"""
 from datetime import datetime, timedelta
 
 import pytest

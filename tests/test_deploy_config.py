@@ -85,11 +85,15 @@ def test_gunicorn_conf(monkeypatch):
 
 def test_deploy_files():
     requirements = _read('requirements.txt')
-    assert re.search(r'^opencv-python-headless==', requirements, re.M)
-    assert not re.search(r'^opencv[-_]python==', requirements, re.M)
+    store, dev = _read('requirements-store.txt'), _read('requirements-dev.txt')
+    assert re.search(r'^opencv-python-headless==', store, re.M) and re.search(r'^numpy==', store, re.M)
+    assert not re.search(r'^(opencv[-_]python|opencv-python-headless|numpy|pandas|pytest|playwright)([=<>~ ;]|$)', requirements, re.M),         '核心清單不含人臉辨識與測試套件 (線上端映像只裝核心)'
+    assert '-r requirements.txt' in store and '-r requirements-store.txt' in dev and re.search(r'^pytest==', dev, re.M)
     assert re.search(r'^gunicorn==[\d.]+; sys_platform != "win32"$', requirements, re.M)
 
     dockerfile = _read('Dockerfile')
+    assert 'pip install -r requirements.txt' in dockerfile and 'pip install -r requirements-store' not in dockerfile and 'cv2' not in dockerfile
+    assert 'pip install -r requirements-store.txt' in _read('deploy/windows/update_store.cmd'), '門市更新裝含人臉辨識的清單'
     assert 'TZ=Asia/Taipei' in dockerfile and 'tzdata' in dockerfile
     assert re.search(r'^USER (?!root)\w+', dockerfile, re.M)
     assert 'HEALTHCHECK' in dockerfile and '/healthz' in dockerfile

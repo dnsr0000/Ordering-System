@@ -92,14 +92,16 @@ def test_branch_cannot_push_hq_settings(env):
 def test_member_list_paginated_and_searchable(app, admin_client):
     for i in range(55):
         make_member(app, f'分頁會員{i:02d}', f'0955{i:06d}')
-    page = admin_client.get('/admin?tab=users').get_data(as_text=True)
+    page = admin_client.get('/admin/members').get_data(as_text=True)
     assert len(re.findall(r'<tr data-user-id=', page)) == 50 and 'id="memberPager"' in page
     assert '分頁會員54' in page, '最新加入的在前'
-    page2 = admin_client.get('/admin?tab=users&up=2').get_data(as_text=True)
+    page2 = admin_client.get('/admin/members?page=2').get_data(as_text=True)
     assert 'id="memberPager"' in page2 and len(re.findall(r'<tr data-user-id=', page2)) >= 5
-    found = admin_client.get('/admin?tab=users&uq=0955000003').get_data(as_text=True)
+    found = admin_client.get('/admin/members?q=0955000003').get_data(as_text=True)
     assert len(re.findall(r'<tr data-user-id=', found)) == 1 and '分頁會員03' in found
-    assert '找不到符合的會員' in admin_client.get('/admin?tab=users&uq=不存在的人').get_data(as_text=True)
+    assert '找不到符合的會員' in admin_client.get('/admin/members?q=不存在的人').get_data(as_text=True)
+    spent = admin_client.get('/admin/members?sort=spent').get_data(as_text=True)
+    assert len(re.findall(r'<tr data-user-id=', spent)) == 50, '依累積消費排序仍分頁'
     uid = int(re.search(r'<tr data-user-id="(\d+)"', found).group(1))
     data = admin_client.get(f'/admin/users/{uid}/coupons').get_json()
     assert data['success'] is True and data['coupons'] == [] and data['unused'] == 0

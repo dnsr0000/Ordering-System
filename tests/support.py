@@ -7,6 +7,8 @@ import uuid
 
 from PIL import Image
 
+from app.extensions import db
+
 CSRF_META_RE = re.compile(r'<meta\s+name="csrf-token"\s+content="([^"]+)"')
 
 
@@ -20,6 +22,34 @@ def jpeg_bytes(width=120, height=120, color=(210, 160, 130)):
     Image.new('RGB', (width, height), color=color).save(buf, format='JPEG', quality=85)
     buf.seek(0)
     return buf
+
+
+def get_or_create_tenant(app, slug):
+    """以網址代號取得 (沒有就建立) 測試用的另一家店，回傳 id"""
+    from app.models.tenant import Tenant
+    with app.app_context():
+        t = Tenant.query.filter_by(slug=slug).first()
+        if t is None:
+            t = Tenant(name=f'測試 {slug}', slug=slug)
+            db.session.add(t)
+            db.session.commit()
+        return t.id
+
+
+@contextmanager
+def tenant_request(app, tenant_id):
+    """在指定店家的請求情境中執行 (g.tenant 已設定，查詢自動依店家過濾)"""
+    from app.models.tenant import Tenant
+    from app.tenant_context import _use_tenant
+    with app.test_request_context('/'):
+        _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
+        yield
+
+
+def item_stock(app, item_id):
+    from app.models.menu import MenuItem
+    with app.app_context():
+        return db.session.get(MenuItem, item_id).stock
 
 
 def default_tenant_id(app):

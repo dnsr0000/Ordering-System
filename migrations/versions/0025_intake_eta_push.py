@@ -1,4 +1,4 @@
-"""第五輪：接單控制 (分店暫停接單狀態)、預估等候時間 (品項製作時間、訂單預計完成時間)、Web Push 訂閱
+"""接單控制 (分店暫停接單狀態)、預估等候時間 (品項製作時間、訂單預計完成時間)、Web Push 訂閱
 
 Revision ID: 0025_intake_eta_push
 Revises: 0024_order_client_order_id

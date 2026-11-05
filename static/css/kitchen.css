@@ -56,6 +56,6 @@
 @keyframes kds-rush-pulse { 50% { outline-color: rgba(220, 53, 69, 0.3); } }
 .kds-station-tabs .btn { min-width: 6rem; }
 
-/* 製作卡 (第六輪) */
+/* 製作卡 */
 .kds-prep-card { line-height: inherit; vertical-align: baseline; }
 .kds-prep-note { white-space: pre-wrap; }

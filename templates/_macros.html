@@ -15,4 +15,11 @@
 
 {% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
 
+{% macro modal_head(title, icon, color='text-warning') -%}
+    <div class="modal-header border-secondary">
+        <h5 class="modal-title fw-bold {{ color }}"><i class="bi {{ icon }} me-2"></i>{{ title }}</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="關閉"></button>
+    </div>
+{%- endmacro %}
+
 {% macro status_badge(text, kind='secondary') %}<span class="badge bg-{{ kind }}{% if kind in ('warning', 'info', 'light') %} text-dark{% endif %}">{{ text }}</span>{% endmacro %}

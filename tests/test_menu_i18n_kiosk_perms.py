@@ -1,5 +1,5 @@
 """
-第六輪 (階段 1)：AI 一鍵翻譯菜單 (Gemini 批次 / 規則字典 / 不覆蓋手填)、點餐機飲食篩選列 (素食 / 不辣 / 不含過敏原)、
+AI 一鍵翻譯菜單 (Gemini 批次 / 規則字典 / 不覆蓋手填)、點餐機飲食篩選列 (素食 / 不辣 / 不含過敏原)、
 點餐機禮物卡付款 (查餘額 / 扣款 / 餘額不足 / 未開放)、會員價 (price_for(member) / 點餐頁劃線價 / POS 綁定會員)、
 後台頁面權限 (櫃檯授權 menu / coupons / members / settings / feedback 後可進對應分頁與頁面)。
 """
@@ -209,16 +209,18 @@ def test_page_permissions_grant_staff_access_to_back_office_pages(app):
         acc.permissions = 'menu,coupons'
         db.session.commit()
     html = staff.get('/admin').get_data(as_text=True)
-    assert 'id="menu-pane"' in html and 'id="rewards-pane"' in html
-    assert 'id="users-pane"' not in html and 'id="audit-pane"' not in html and 'id="orders-pane"' not in html, '沒授權的分頁不渲染 (含會員個資)'
+    assert 'id="rewards-pane"' in html and 'id="orders-pane"' not in html, '沒授權的分頁不渲染'
     assert 'id="nav-menu-pro"' in html and 'id="nav-promotions"' in html and 'id="nav-back-work"' in html and 'id="nav-settings"' not in html
-    assert staff.get('/admin/menu_pro').status_code == 200 and staff.get('/admin/promotions').status_code == 200
-    assert staff.get('/admin/members_pro').status_code == 403 and staff.get('/admin/settings').status_code == 403
+    menu = staff.get('/admin/menu').get_data(as_text=True)
+    assert 'id="menu-pane"' in menu and 'id="menuItemTable"' in menu, '菜單頁 (品項 + 套餐 + 進階設定) 以 menu 權限進入'
+    assert staff.get('/admin/promotions').status_code == 200
+    assert staff.get('/admin/members').status_code == 403 and staff.get('/admin/settings').status_code == 403, '會員頁含個資：沒有 members 權限 403'
     assert staff.post('/admin/delete_user/1', data={}).status_code == 403
     # 店長：全部分頁
     manager = login_staff(app, 'perm_page_manager', 'manager')
     html = manager.get('/admin').get_data(as_text=True)
-    assert all(f'id="{p}-pane"' in html for p in ('orders', 'analytics', 'menu', 'rewards', 'users', 'audit'))
+    assert all(f'id="{p}-pane"' in html for p in ('home', 'orders', 'rewards'))
+    assert manager.get('/admin/menu').status_code == 200 and manager.get('/admin/members').status_code == 200
     assert 'id="nav-settings"' in html
     # 員工帳號頁列出新權限
     owner = login_staff(app, 'perm_page_owner', 'owner')

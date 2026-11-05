@@ -182,6 +182,9 @@ def create_app(config_class=Config):
     if not app.testing and not _running_cli():
         from app.services.maintenance_service import start_scheduler
         start_scheduler(app)
+        # 人臉模型檔不進版控：裝了 opencv 但缺檔時在背景下載 (flask models download 也可手動執行)
+        from app.services.cv_service import ensure_models_async
+        ensure_models_async()
 
     # 分店：伺服器啟動後在背景與線上端同步 (CLI 指令與測試不啟動)
     if (app.config['SYNC_ROLE'] == 'node' and app.config['SYNC_AUTOSTART'] and not app.testing

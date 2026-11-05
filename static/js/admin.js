@@ -1,13 +1,14 @@
 /*
- * 店家管理後台 (共用部分)：頁籤記憶、時鐘、實時訂單看板、營運分析即時更新、稽核日誌篩選。
- * 菜單/套餐/圖片裁切見 admin-menu.js；優惠券/會員見 admin-members.js。
- * 本檔需最先載入，提供 window.AdminPage 給其他後台腳本共用。
+ * 後台共用腳本 (後台首頁 admin.html 與菜單頁 admin_menu.html)：頁籤記憶、實時訂單看板、總覽數字與菜單庫存的即時更新。
+ * 菜單 / 套餐 / 圖片裁切見 admin-menu.js；優惠券與兌換餐點見 admin-coupons.js；會員頁見 admin-members.js。
+ * 本檔需最先載入，提供 window.AdminPage 給 admin-menu.js 共用。
  */
 (function () {
     'use strict';
     const { html } = Kiosk;
     const data = Kiosk.pageData();
     const TAB_STORAGE_KEY = 'adminActiveTab';
+    const $ = (id) => document.getElementById(id);
 
     // localStorage 在無痕模式或被封鎖時可能丟出例外，一律包起來
     const storage = {
@@ -22,7 +23,7 @@
     }
 
     function showModal(id) {
-        bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
+        bootstrap.Modal.getOrCreateInstance($(id)).show();
     }
 
     const AdminPage = window.AdminPage = {
@@ -36,14 +37,15 @@
         rememberTab: (key) => storage.set(TAB_STORAGE_KEY, key),
     };
 
-    // ---------------------------------------------------------------- 頁籤 (記住上次停留的分頁)
+    // ---------------------------------------------------------------- 頁籤 (記住上次停留的分頁；只有後台首頁有)
     function initTabs() {
+        if (!$('adminTab')) return;
         const params = new URLSearchParams(window.location.search);
         const target = params.get('tab') || AdminPage.activeTab();
-        const btn = document.getElementById(`${target}-tab`) || document.getElementById('home-tab') || document.getElementById('orders-tab');
+        const btn = $(`${target}-tab`) || $('home-tab');
         if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
         if (params.has('tab')) {
-            AdminPage.rememberTab(target);
+            AdminPage.rememberTab(btn ? btn.dataset.tabKey : 'home');
             params.delete('tab');
             const query = params.toString();
             window.history.replaceState({}, document.title, window.location.pathname + (query ? `?${query}` : ''));
@@ -53,24 +55,12 @@
         });
     }
 
-    // ---------------------------------------------------------------- 時鐘 (YYYY/MM/DD HH:MM:SS)
-    function startClock(el) {
-        if (!el) return;
-        const pad = (n) => String(n).padStart(2, '0');
-        const tick = () => {
-            const d = new Date();
-            el.textContent = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-        };
-        tick();
-        setInterval(tick, 1000);
-    }
-
     // ---------------------------------------------------------------- 實時訂單看板
     const STATUS_OPTIONS = [
         ['Pending', '⏳ 製作中'], ['Completed', '✅ 已出餐'], ['PickedUp', '📦 已取餐'], ['Cancelled', '❌ 已取消'],
     ];
     const STATUS_BORDER = { Pending: 'border-warning', Completed: 'border-success', PickedUp: 'border-secondary', Cancelled: 'border-danger' };
-    const grid = document.getElementById('admin-orders-grid');
+    const grid = $('admin-orders-grid');
 
     // 線上付款狀態 (退款處理中：訂單取消後才收到付款，請到綠界廠商後台退款)
     const PAYMENT_BADGES = {
@@ -162,16 +152,16 @@
         syncLive();
     }
 
-    // ---------------------------------------------------------------- 菜單庫存即時同步
+    // ---------------------------------------------------------------- 菜單庫存即時同步 (菜單頁的清單)
     function updateMenuStock(menuItems) {
         menuItems.forEach((it) => {
             const soldOut = it.is_sold_out || it.stock <= 0;
-            const badge = document.getElementById(`item-stock-badge-${it.id}`);
+            const badge = $(`item-stock-badge-${it.id}`);
             if (badge) {
                 badge.textContent = it.stock;
                 badge.className = `badge fw-bold px-2 py-1 ${soldOut ? 'bg-danger' : (it.stock <= 5 ? 'bg-warning text-dark' : 'bg-success')}`;
             }
-            const tagCell = document.getElementById(`item-tags-${it.id}`);
+            const tagCell = $(`item-tags-${it.id}`);
             if (tagCell) {
                 const existing = tagCell.querySelector('.sold-out-badge');
                 if (soldOut && !existing) {
@@ -192,14 +182,14 @@
         });
     }
 
-    // ---------------------------------------------------------------- 營運分析
+    // ---------------------------------------------------------------- 總覽數字
     function setText(id, value) {
-        const el = document.getElementById(id);
+        const el = $(id);
         if (el) el.textContent = value;
     }
 
     function renderTopItems(topItems) {
-        const el = document.getElementById('stat-top-items');
+        const el = $('stat-top-items');
         if (!el || !Array.isArray(topItems)) return;
         const max = Math.max(0, ...topItems.map((t) => Number(t.quantity) || 0));
         Kiosk.setHtml(el, topItems.length ? topItems.map((t, idx) => {
@@ -219,13 +209,13 @@
     }
 
     function updateAnalytics(stats) {
-        if (!stats) return;
+        if (!stats || !$('stat-today-orders')) return;
         setText('stat-today-orders', stats.today_orders);
         setText('stat-today-revenue', `$${stats.today_revenue}`);
         setText('stat-pending-count', stats.pending_count);
         const stale = Number(stats.stale_pending_count) || 0;
         setText('stat-stale-pending-n', stale);
-        const staleEl = document.getElementById('stat-stale-pending');
+        const staleEl = $('stat-stale-pending');
         if (staleEl) staleEl.hidden = stale <= 0;
         setText('stat-eta-minutes', `${stats.eta_minutes} 分鐘`);
         setText('stat-eta-basis', stats.eta_based_on_samples
@@ -238,7 +228,7 @@
         renderTopItems(stats.top_items);
     }
 
-    // ---------------------------------------------------------------- 即時同步 (SSE + 備援輪詢)
+    // ---------------------------------------------------------------- 即時同步 (SSE + 備援輪詢)：需要「報表」頁面權限
     const rankingLimit = Math.max(1, Number(data.rankingLimit) || 3);
     let sessionExpired = false;
     let eventSource = null;
@@ -264,6 +254,7 @@
     }
 
     function startLiveSync() {
+        if (!data.liveSync || !(grid || $('menuItemTable') || $('stat-top-items'))) return;
         syncLive();
         if (window.EventSource) {
             eventSource = Kiosk.onOrdersChanged(syncLive);
@@ -291,39 +282,24 @@
 
     // ---------------------------------------------------------------- 熱門排行筆數
     function submitRankingLimit() {
-        const input = document.getElementById('rankingLimitInput');
+        const input = $('rankingLimitInput');
         let limit = Math.floor(Number(input && input.value));
         if (!limit || limit < 1) limit = 3;
         limit = Math.min(limit, 100);
-        AdminPage.rememberTab('analytics');
+        AdminPage.rememberTab('home');
         window.location.href = `${data.loginUrl || '/admin'}?limit=${limit}`;
-    }
-
-    // ---------------------------------------------------------------- 稽核日誌篩選
-    function filterAuditTable() {
-        const q = (document.getElementById('auditSearchInput')?.value || '').trim().toLowerCase();
-        const act = document.getElementById('auditActionFilter')?.value || 'all';
-        document.querySelectorAll('#staffAuditTable .audit-row').forEach((row) => {
-            const matchAct = act === 'all' || row.dataset.auditAction === act;
-            const matchText = !q || row.textContent.toLowerCase().includes(q);
-            row.hidden = !(matchAct && matchText);
-        });
     }
 
     // ---------------------------------------------------------------- 初始化
     initTabs();
-    startClock(document.getElementById('live-clock'));
-
-    Kiosk.on(grid, 'change', { 'order-status': (el) => changeOrderStatus(el) });
+    if (grid) Kiosk.on(grid, 'change', { 'order-status': (el) => changeOrderStatus(el) });
     Kiosk.on(document, 'click', { 'ranking-limit': submitRankingLimit });
-    document.getElementById('rankingLimitInput')?.addEventListener('keydown', (ev) => {
+    $('rankingLimitInput')?.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter') {
             ev.preventDefault();
             submitRankingLimit();
         }
     });
-    document.getElementById('auditSearchInput')?.addEventListener('input', filterAuditTable);
-    document.getElementById('auditActionFilter')?.addEventListener('change', filterAuditTable);
     document.querySelectorAll('textarea.auto-expand-desc').forEach((ta) => ta.addEventListener('input', () => autoExpand(ta)));
 
     startLiveSync();

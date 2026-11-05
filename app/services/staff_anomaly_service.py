@@ -1,5 +1,5 @@
 """
-員工異常偵測 (第三輪 #12)：依收銀員比較
+員工異常偵測 (#12)：依收銀員比較
 
 - 作廢 / 退款：整單作廢 (Refund kind=cancel)、部分退款與單品作廢 (kind=partial) 的次數與金額，佔自己營業額的比例
 - 折扣 / 改價：整單手動折扣 (order.manual_discount)、收銀改價 (order_item.original_price) 的次數與少收金額

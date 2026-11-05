@@ -8,7 +8,7 @@
 - 'role:owner' / 'role:manager' (店長以上) / 'role:pos' (櫃檯以上) / 'role:kitchen' (廚房以上)
 - 'sync:hub' / 'sync:node' / 'sync:store' (單機或分店)
 - 'platform'：平台管理者；'register'：允許公開註冊店家
-以 dict 參數 tab='menu' 的項目會連到後台首頁的對應分頁 (/admin?tab=menu)。
+以 dict 參數 tab='orders' 的項目會連到後台首頁的對應分頁 (/admin?tab=orders)。
 """
 from flask import current_app, request, url_for
 from flask_login import current_user
@@ -17,11 +17,10 @@ from app.sync import runtime as sync_runtime
 
 ROLE_RANK = {'kitchen': 1, 'staff': 1, 'manager': 2, 'owner': 3}
 
-NAV_GROUPS = (
+NAV_GROUPS: tuple = (
     ('today', '今日營運', 'bi-sun', (
         ('總覽', 'admin.admin_dashboard', 'bi-speedometer2', None, {}),
         ('實時訂單', 'admin.admin_dashboard', 'bi-receipt-cutoff', 'perm:reports', {'tab': 'orders'}),
-        ('營運分析', 'admin.admin_dashboard', 'bi-graph-up-arrow', 'perm:reports', {'tab': 'analytics'}),
         ('即時看板', 'live.index', 'bi-broadcast', 'role:manager', {}),
         ('櫃檯 POS', 'pos.pos_terminal', 'bi-pc-display-horizontal', 'role:pos', {'_blank': True}),
         ('廚房 KDS', 'kitchen.kitchen_display', 'bi-fire', 'role:kitchen', {'_blank': True}),
@@ -30,8 +29,7 @@ NAV_GROUPS = (
         ('數位看板', 'signage.board', 'bi-tv', None, {'_blank': True}),
     )),
     ('menu', '菜單', 'bi-grid-fill', (
-        ('菜單與套餐', 'admin.admin_dashboard', 'bi-grid-fill', 'perm:menu', {'tab': 'menu'}),
-        ('菜單進階設定', 'menu_pro.manage', 'bi-clock-history', 'perm:menu', {}),
+        ('菜單與套餐', 'menu_pro.manage', 'bi-grid-fill', 'perm:menu', {}),
         ('菜單工程分析', 'reports.menu_engineering', 'bi-grid-3x3-gap', 'perm:reports', {}),
         ('原物料與配方', 'inventory.manage', 'bi-box-seam', 'perm:inventory', {}),
         ('供應商與採購', 'purchasing.index', 'bi-truck', 'perm:inventory', {}),
@@ -39,8 +37,7 @@ NAV_GROUPS = (
         ('分店叫貨 / 調撥', 'branches.transfers', 'bi-arrow-left-right', 'perm:inventory', {}),
     )),
     ('customers', '顧客與行銷', 'bi-people-fill', (
-        ('會員名冊', 'admin.admin_dashboard', 'bi-people-fill', 'perm:members', {'tab': 'users'}),
-        ('會員經營', 'members_pro.manage', 'bi-award', 'perm:members', {}),
+        ('會員', 'members_pro.manage', 'bi-people-fill', 'perm:members', {}),
         ('回饋商城與優惠券', 'admin.admin_dashboard', 'bi-gift-fill', 'perm:coupons', {'tab': 'rewards'}),
         ('促銷活動', 'promotions.manage', 'bi-tags', 'perm:coupons', {}),
         ('集點 / 寄杯', 'passes.index', 'bi-cup-hot', 'role:manager', {}),

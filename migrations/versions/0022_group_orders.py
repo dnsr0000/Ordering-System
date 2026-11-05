@@ -1,4 +1,4 @@
-"""第四輪：團體預購 (group_order / group_order_entry，門市本機資料)
+"""團體預購 (group_order / group_order_entry，門市本機資料)
 
 Revision ID: 0022_group_orders
 Revises: 0021_expenses_cost_history

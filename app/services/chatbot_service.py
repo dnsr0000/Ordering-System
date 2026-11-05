@@ -31,12 +31,8 @@ ALLERGEN_KEYWORDS = {
 }
 
 
-def config(tenant_id=None):
-    return settings_service.get('chatbot', tenant_id)
-
-
-def enabled(tenant_id=None):
-    return bool(config(tenant_id).get('enabled'))
+config = settings_service.reader('chatbot')
+enabled = settings_service.flag('chatbot')
 
 
 def _items():

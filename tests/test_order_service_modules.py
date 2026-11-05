@@ -1,4 +1,4 @@
-"""第四輪：order_service 拆成 order_pricing / order_stock / order_checkout / order_lifecycle 後，對外介面不變、依賴方向單純"""
+"""order_service 拆成 order_pricing / order_stock / order_checkout / order_lifecycle 後，對外介面不變、依賴方向單純"""
 import importlib
 import os
 import re

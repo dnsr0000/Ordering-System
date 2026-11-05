@@ -100,6 +100,23 @@ def register_cli(app: Flask):
 
     app.cli.add_command(payments_cli)
 
+    models_cli = AppGroup('models', help='人臉辨識模型檔 (models/*.onnx 不進版控)')
+
+    @models_cli.command('download')
+    @click.option('--force', is_flag=True, help='已存在也重新下載')
+    def models_download_command(force):
+        """下載 YuNet / SFace 人臉模型 (伺服器啟動時也會自動補下載；這裡可先手動下載或重新下載)"""
+        from app.services import cv_service
+        if not cv_service.FACE_AVAILABLE:
+            click.echo('提示：尚未安裝 opencv-python-headless / numpy (pip install -r requirements-store.txt)，模型下載後仍無法使用人臉辨識')
+        try:
+            done = cv_service.download_models(force=force, log=click.echo)
+        except Exception as exc:   # noqa: BLE001
+            raise click.ClickException(str(exc))
+        click.echo('已完成：' + ('、'.join(done) if done else '模型檔都已存在'))
+
+    app.cli.add_command(models_cli)
+
     ops_cli = AppGroup('ops', help='維運：發票重送、每日排程、備份、外部服務連線檢查')
 
     @ops_cli.command('retry-invoices')

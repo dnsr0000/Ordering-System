@@ -21,8 +21,7 @@ VERIFIED_TTL = 15 * 60
 MAX_REMEMBERED = 20
 
 
-def enabled(tenant_id=None):
-    return bool(settings_service.get('member', tenant_id).get('pos_verify', True))
+enabled = settings_service.flag('member', 'pos_verify', True)
 
 
 def mark_verified(user_id, now=None):

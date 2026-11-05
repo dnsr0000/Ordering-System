@@ -1,4 +1,4 @@
-"""第三輪 #9、#11、#12：會員分群與自動行銷、訂位訂金 / 未到 / 提醒、員工異常偵測"""
+"""會員分群與自動行銷、訂位訂金 / 未到 / 提醒、員工異常偵測"""
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -14,7 +14,7 @@ from app.models.shift import CashShift
 from app.models.tenant import Tenant
 from app.models.user import User
 from app.services import line_service, monitor_service, payment_ecpay
-from tests.support import assert_flash, login_staff, make_member, member_client, run_together
+from tests.support import (assert_flash, get_or_create_tenant, login_staff, make_member, member_client, run_together, tenant_request)
 from tests.test_members_line_sms import line_api  # noqa: F401  (fixture)
 
 
@@ -30,28 +30,6 @@ def alerts(monkeypatch):
     out = []
     monkeypatch.setattr(monitor_service, 'alert', lambda msg, **kw: out.append(msg))
     return out
-
-
-def _tenant(app, slug):
-    with app.app_context():
-        t = Tenant.query.filter_by(slug=slug).first()
-        if t is None:
-            t = Tenant(name=f'測試 {slug}', slug=slug)
-            db.session.add(t)
-            db.session.commit()
-        return t.id
-
-
-def _ctx(app, tenant_id):
-    from contextlib import contextmanager
-
-    @contextmanager
-    def cm():
-        from app.tenant_context import _use_tenant
-        with app.test_request_context('/'):
-            _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
-            yield
-    return cm()
 
 
 # ===========================================================================
@@ -72,11 +50,11 @@ def test_rfm_scores_and_segments():
 def test_segments_winback_broadcast_and_admin(app, monkeypatch, alerts):
     from app.services import marketing_service, settings_service
     from app.services.order_service import process_checkout
-    tid = _tenant(app, 'mkt-shop')
+    tid = get_or_create_tenant(app, 'mkt-shop')
     pushes = []
     monkeypatch.setattr(line_service, '_post', lambda url, **kw: pushes.append((url, kw['json'])) or (200, {}))
     now = datetime.now()
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         settings_service.put('line', {'messaging_enabled': True, 'messaging_access_token': 'bot'}, tid)
         item = MenuItem(tenant_id=tid, name='行銷測試餐', price=100, stock=500, total_stock=500)
         db.session.add(item)
@@ -360,9 +338,9 @@ def test_reservation_reminder_by_line(app, line_api, store_settings):  # noqa: F
 # ===========================================================================
 def test_staff_anomalies_flags_page_and_notify(app, alerts):
     from app.services import settings_service, staff_anomaly_service
-    tid = _tenant(app, 'anomaly-shop')
+    tid = get_or_create_tenant(app, 'anomaly-shop')
     now = datetime.combine(date.today(), datetime.min.time()) + timedelta(hours=12)   # 固定今天中午 (避免跨午夜)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         settings_service.put('anomaly', {'notify': True}, tid)
         item = MenuItem(tenant_id=tid, name='異常測試餐', price=100, stock=999, total_stock=999)
         db.session.add(item)
@@ -406,7 +384,7 @@ def test_staff_anomalies_flags_page_and_notify(app, alerts):
 
 
 def test_shift_close_with_large_difference_alerts(app, alerts, store_settings):
-    tid = _tenant(app, 'anomaly-shop')
+    tid = get_or_create_tenant(app, 'anomaly-shop')
     owner = login_staff(app, 'anomaly_owner', 'owner', tenant_id=tid)
     assert owner.post('/api/pos/shift/open', json={'opening_cash': 1000}).status_code == 200
     r = owner.post('/api/pos/shift/close', json={'counted_cash': 700})

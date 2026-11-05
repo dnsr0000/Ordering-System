@@ -240,8 +240,8 @@ def test_admin_view_splits_and_keeps_seven_days(app, admin_client):
         assert coupon_service.unused_count(db.session.get(User, uid)) == 2
         # 資料沒有刪除
         assert UserCoupon.query.filter_by(user_id=uid).count() == 6
-    page = admin_client.get('/admin').get_data(as_text=True)
-    assert '管理票券 (2)' in page
+    page = admin_client.get('/admin/members').get_data(as_text=True)
+    assert '票券 (2)' in page
     # 切換已使用 / 未使用的回應也套用同樣規則
     r = admin_client.post(f'/admin/toggle_user_coupon/{ids[4]}').get_json()
     assert r['unused'] == 1 and [c['status'] for c in r['coupons']].count('used') == 2

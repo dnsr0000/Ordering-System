@@ -1,4 +1,4 @@
-"""後台「顧客評價」：餐後滿意度統計與留言 (店長以上，或授權 feedback 權限的員工)；回覆與公開精選 (第六輪)"""
+"""後台「顧客評價」：餐後滿意度統計與留言 (店長以上，或授權 feedback 權限的員工)；回覆與公開精選"""
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from app.extensions import db

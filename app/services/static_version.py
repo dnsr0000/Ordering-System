@@ -1,5 +1,5 @@
 """
-靜態資源版本化 (第五輪)：url_for('static', filename=...) 自動加上 ?v=<檔案內容雜湊>，
+靜態資源版本化：url_for('static', filename=...) 自動加上 ?v=<檔案內容雜湊>，
 更新 JS / CSS 後瀏覽器與 PWA 快取 (sw.js 以 URL 為鍵) 立刻改抓新檔，不必手動清快取。
 - 雜湊只算一次並快取 (正式環境)；DEBUG / TESTING 時檔案修改時間變了會重算。
 - /sw.js 的快取名稱帶整個 static/ 的版本摘要：部署後 Service Worker 更新，舊快取整批清掉。

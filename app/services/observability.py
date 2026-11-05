@@ -1,5 +1,5 @@
 """
-錯誤回報與指標 (第六輪)，都是選用：
+錯誤回報與指標，都是選用：
 - Sentry：.env 設 SENTRY_DSN 並 pip install sentry-sdk；未預期的例外送到 Sentry，事件帶 request_id (對照 app.log) 與店家。
 - Prometheus 指標：.env 設 METRICS_TOKEN 後 GET /metrics?token=… (或 Authorization: Bearer) 回文字格式：
   請求數 (依狀態碼類別)、請求耗時直方圖、今日訂單數 / 營業額、待製作訂單、同步延遲 (分店)、列印 / 發票失敗數。

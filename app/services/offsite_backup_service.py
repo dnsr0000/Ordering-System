@@ -1,5 +1,5 @@
 """
-異地備份 (第六輪)：每日 SQLite 備份完成後上傳到 WebDAV / S3 相容儲存 / 自訂指令 (rclone 等)。
+異地備份：每日 SQLite 備份完成後上傳到 WebDAV / S3 相容儲存 / 自訂指令 (rclone 等)。
 - 設定在「自動備份」區塊 (offsite*)；上傳失敗進監控事件 (key offsite-backup)，不影響本機備份。
 - S3 以 SigV4 自行簽章 (不依賴 boto3)；WebDAV 用 PUT / PROPFIND / DELETE；都只保留最近 N 份 (offsite_keep)。
 - 設定頁的「測試」會上傳一個小檔案 (kiosk-backup-test.txt) 再刪掉。
@@ -25,8 +25,7 @@ TIMEOUT = 60
 BACKUP_RE = re.compile(r'menu-\d{8}-\d{6}\.zip$')
 
 
-def config(tenant_id: int | None = None) -> dict[str, Any]:
-    return settings_service.get('backup', tenant_id)
+config = settings_service.reader('backup')
 
 
 def enabled(tenant_id: int | None = None) -> bool:

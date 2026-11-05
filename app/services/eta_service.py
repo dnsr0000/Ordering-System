@@ -23,12 +23,8 @@ MAX_MINUTES = 180
 HIDDEN_PAYMENT_STATUSES = ('pending', 'expired', 'authorizing')   # 尚未付款的線上訂單還不會進廚房
 
 
-def config(tenant_id: int | None = None) -> dict:
-    return settings_service.get('kds', tenant_id)
-
-
-def enabled(tenant_id: int | None = None) -> bool:
-    return bool(config(tenant_id).get('eta_enabled', True))
+config = settings_service.reader('kds')
+enabled = settings_service.flag('kds', 'eta_enabled', True)
 
 
 def _prep_of(item, default_prep):

@@ -6,6 +6,7 @@ import { $, api, html, modalOf, num, pad3, posCfg, setHtml, state, SUBMIT_LABEL 
 import { repriceCart } from './menu.js';
 import { renderCart } from './cart.js';
 import { applyServerPrices, clearMember, refreshBoundMember } from './member.js';
+import { askLinePayKey, withApproval, withMemberVerify } from './pro.js';
 import {
     broadcastPaid, invoicePayload, isHomeDelivery, onInvoiceTypeChange, onOrderTypeChange, recalcTotals, resetPromo,
     updateCashChange,
@@ -130,14 +131,14 @@ export async function submitOrder() {
     if (!state.checkout || state.checkout.sig !== sig) state.checkout = { id: Kiosk.newOrderId(), sig };
 
     if (payMethod === 'Line Pay' && posCfg.linePayIntegrated) {
-        const key = await window.PosPro.askLinePayKey(finalTotal);
+        const key = await askLinePayKey(finalTotal);
         if (!key) return;
         payload.payment_info = { one_time_key: key };
     }
     setSubmitting(true);
     try {
         // 主管核准 (改價、折扣…) 與會員身分驗證 (儲值金 / 點數 / 寄杯) 都可能要求補資料後重送
-        const res = await window.PosPro.withApproval((extra) => window.PosPro.withMemberVerify(
+        const res = await withApproval((extra) => withMemberVerify(
             (verify) => api('/api/pos/checkout', { json: { ...payload, ...extra, ...verify, client_order_id: state.checkout.id } })));
         state.checkout = null;
         if (state.member && res.wallet_balance !== undefined) state.member.wallet_balance = res.wallet_balance;

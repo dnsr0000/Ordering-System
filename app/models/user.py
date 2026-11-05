@@ -1,7 +1,13 @@
+import math
+from array import array
 from datetime import datetime
 
-import numpy as np
 from sqlalchemy.types import LargeBinary, TypeDecorator
+
+try:   # numpy 隨人臉辨識套件 (requirements-store.txt) 安裝；線上端沒有時以標準函式庫 array 處理特徵
+    import numpy as np
+except ImportError:   # pragma: no cover - 依安裝環境而定
+    np = None
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.extensions import db
@@ -13,13 +19,35 @@ FEATURE_MAGIC_PREFIX = b"NPF32v1:"
 FEATURE_DIM = 128
 
 
+def _flatten(values):
+    for v in values:
+        if isinstance(v, (list, tuple, array)):
+            yield from _flatten(v)
+        else:
+            yield v
+
+
 def as_valid_feature(arr):
-    """轉為一維 float32；維度不是 FEATURE_DIM 或含 NaN/Inf 時回傳 None"""
+    """轉為一維 float32 陣列：有 numpy 時回 numpy 陣列 (人臉比對用)，沒有時回標準函式庫 array('f')；
+    維度不是 FEATURE_DIM 或含 NaN/Inf 時回傳 None"""
+    if np is not None:
+        try:
+            vec = np.asarray(arr, dtype=np.float32).reshape(-1)
+        except Exception:
+            return None
+        if vec.shape[0] != FEATURE_DIM or not np.all(np.isfinite(vec)):
+            return None
+        return vec
     try:
-        vec = np.asarray(arr, dtype=np.float32).reshape(-1)
-    except Exception:
+        if hasattr(arr, 'tolist'):   # numpy 陣列 (cv_service 的 SFace 輸出為 (1, 128))
+            arr = arr.tolist()
+        if isinstance(arr, array) and arr.typecode == 'f':
+            vec = array('f', arr)
+        else:
+            vec = array('f', (float(v) for v in _flatten(arr if isinstance(arr, (list, tuple, array)) else list(arr))))
+    except (TypeError, ValueError, OverflowError):
         return None
-    if vec.shape[0] != FEATURE_DIM or not np.all(np.isfinite(vec)):
+    if len(vec) != FEATURE_DIM or not all(math.isfinite(v) for v in vec):
         return None
     return vec
 
@@ -43,11 +71,13 @@ def decode_feature_bytes(raw):
     payload = raw[len(FEATURE_MAGIC_PREFIX):]
     if len(payload) != FEATURE_DIM * 4:
         return None
-    return as_valid_feature(np.frombuffer(payload, dtype=np.float32).copy())
+    vec = array('f')
+    vec.frombytes(payload)
+    return as_valid_feature(vec)
 
 
 class FeatureVector(TypeDecorator):
-    """人臉特徵欄位：ORM 層存取 numpy 陣列，資料庫中為 NPF32v1 二進位"""
+    """人臉特徵欄位：ORM 層存取 128 維 float32 陣列 (array('f'))，資料庫中為 NPF32v1 二進位"""
     impl = LargeBinary
     cache_ok = True
 

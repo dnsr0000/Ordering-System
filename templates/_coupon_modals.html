@@ -1,0 +1,211 @@
+{#- 後台首頁「回饋商城」分頁的對話框：新增 / 編輯 / 批量發放優惠券、上架 (或修改) 兌換餐點。
+    變數 items、coupon_targets、member_tiers、line_push_ready 來自 admin.admin_dashboard；折扣提示由 admin-coupons.js 綁定。 -#}
+{% from "_macros.html" import modal_head %}
+
+{% macro coupon_fields(prefix) -%}
+    {# prefix 為 coupon (新增) 或 edit-coupon (編輯) #}
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-title">優惠券名稱</label>
+        <input type="text" class="form-control" name="title" id="{{ prefix }}-title" placeholder="例如：全單現折 $50 優惠券" required>
+    </div>
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-code">促銷折扣代碼 (英文大寫/數字)</label>
+        <input type="text" class="form-control text-uppercase" name="code" id="{{ prefix }}-code" placeholder="例如：NEW50 或 VIP85" required
+               minlength="3" maxlength="30" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,29}" title="3~30 碼英文、數字、- 或 _">
+    </div>
+    <div class="row g-2 mb-3">
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-disc-type">折抵模式</label>
+            <select class="form-select coupon-disc-type" name="discount_type" id="{{ prefix }}-disc-type" data-prefix="{{ prefix }}">
+                <option value="fixed">折抵固定金額 (元)</option>
+                <option value="percent">打折 (折數)</option>
+            </select>
+        </div>
+        <div class="col-6">
+            <label class="form-label small fw-bold" id="{{ prefix }}-disc-val-label" for="{{ prefix }}-disc-val">折抵金額 (NT$)</label>
+            <input type="number" step="1" min="0" class="form-control coupon-disc-val" name="discount_value" id="{{ prefix }}-disc-val" data-prefix="{{ prefix }}" placeholder="50" required>
+            <div id="{{ prefix }}-disc-hint" class="small mt-1 fw-bold" style="display: none;"></div>
+        </div>
+    </div>
+    <div class="mb-3">
+        <label class="form-label small fw-bold" for="{{ prefix }}-min-spend">最低消費門檻 (NT$)</label>
+        <input type="number" min="0" class="form-control" name="min_spend" id="{{ prefix }}-min-spend" placeholder="例如：滿 200 元可用" value="0">
+    </div>
+    <div class="mb-3 text-start">
+        <label class="form-label small fw-bold text-white" for="{{ prefix }}-per-user-limit">每位會員可兌換次數上限</label>
+        <input type="text" class="form-control per-user-limit" id="{{ prefix }}-per-user-limit" name="per_user_limit"
+               value="無上限" placeholder="輸入次數或填無上限">
+        <small class="text-white-50 hint-xs">填寫「無上限」或 0 代表不限制；填寫數字（例如 1）代表每位會員限換 1 次。</small>
+    </div>
+    <div class="row g-2 mb-3">
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-reward-points">兌換所需點數</label>
+            <input type="number" min="0" class="form-control" name="reward_points" id="{{ prefix }}-reward-points" placeholder="例如：45" required>
+        </div>
+        <div class="col-6">
+            <label class="form-label small fw-bold" for="{{ prefix }}-reward-discount">限時特惠點數 (無填 0)</label>
+            <input type="number" min="0" class="form-control" name="reward_discount_points" id="{{ prefix }}-reward-discount" placeholder="0" value="0">
+        </div>
+    </div>
+    <div class="form-check form-switch mb-3">
+        <input class="form-check-input" type="checkbox" role="switch" name="member_only" value="1" id="{{ prefix }}-member-only">
+        <label class="form-check-label small fw-bold" for="{{ prefix }}-member-only">會員專屬券 (只能由後台發放，不在紅利商城、不能當公開代碼使用)</label>
+    </div>
+    <div class="p-3 rounded border border-secondary">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-calendar-range me-1"></i>使用期限 (都不填 = 永久有效)</div>
+        <div class="row g-2 mb-2">
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-from">活動開始日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_from" id="{{ prefix }}-valid-from">
+            </div>
+            <div class="col-6">
+                <label class="form-label small" for="{{ prefix }}-valid-until">活動結束日</label>
+                <input type="date" class="form-control form-control-sm" name="valid_until" id="{{ prefix }}-valid-until">
+            </div>
+        </div>
+        <label class="form-label small" for="{{ prefix }}-valid-days">會員領取後幾天內有效 (0 = 不限)</label>
+        <input type="number" min="0" max="3650" class="form-control form-control-sm" name="valid_days" id="{{ prefix }}-valid-days" value="0">
+        <small class="text-white-50 hint-xs">活動結束後，會員已持有但未使用的券也一併失效；兩者都有時以較早者為準。</small>
+    </div>
+    <div class="p-3 rounded border border-secondary mt-3">
+        <div class="small fw-bold text-warning mb-2"><i class="bi bi-shield-lock me-1"></i>防濫用</div>
+        <label class="form-label small" for="{{ prefix }}-max-discount">單筆最高折抵金額 (0 = 不限，建議百分比折扣設定)</label>
+        <input type="number" min="0" class="form-control form-control-sm mb-2" name="max_discount" id="{{ prefix }}-max-discount" value="0">
+        <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="login_required" value="1" id="{{ prefix }}-login-required">
+            <label class="form-check-label small" for="{{ prefix }}-login-required">公開代碼限登入會員使用 (訪客不能用)</label>
+        </div>
+        <label class="form-label small mt-2" for="{{ prefix }}-uses-per-member">公開代碼每位會員可使用次數 (0 = 不限；設定後自動限會員)</label>
+        <input type="number" min="0" max="1000" class="form-control form-control-sm" name="uses_per_member" id="{{ prefix }}-uses-per-member" value="0">
+        <small class="text-white-50 hint-xs">紅利券與會員專屬券本來就必須持有才能使用，每張只能用一次；以上兩項用於所有人都知道的公開代碼。</small>
+    </div>
+{%- endmacro %}
+
+    <!-- 新增優惠券 Modal -->
+    <div class="modal fade" id="createCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('新增回饋優惠券', 'bi-ticket-perforated-fill') }}
+                <form action="{{ url_for('admin.add_coupon') }}" method="POST" id="createCouponForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">{{ coupon_fields('coupon') }}</div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">建立並上架優惠券</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量發放優惠券 Modal -->
+    <div class="modal fade" id="issueCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('批量發放優惠券', 'bi-send') }}
+                <form id="issueCouponForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3 p-2 rounded bg-dark border border-secondary">
+                            <div class="fw-bold text-warning" id="issue-coupon-title"></div>
+                            <small class="text-white-50">代碼 <span id="issue-coupon-code"></span>｜每人上限 <span id="issue-coupon-limit"></span>｜期限 <span id="issue-coupon-period"></span></small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-target">發放對象</label>
+                            <select class="form-select" name="target" id="issue-target">
+                                {% for key, label in coupon_targets.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-tier-row">
+                            <label class="form-label small fw-bold" for="issue-tier">會員等級</label>
+                            <select class="form-select" name="tier_id" id="issue-tier">
+                                {% for t in member_tiers %}<option value="{{ t.id }}">{{ t.name }} (累積 ${{ t.min_spend }} 以上)</option>{% else %}<option value="">尚未建立會員等級</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3 d-none" id="issue-phones-row">
+                            <label class="form-label small fw-bold" for="issue-phones">手機號碼 (每行一個，或以逗號分隔)</label>
+                            <textarea class="form-control" name="phones" id="issue-phones" rows="4" placeholder="0912345678&#10;0987654321"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="issue-quantity">每位會員發放張數</label>
+                            <input type="number" class="form-control" name="quantity" id="issue-quantity" min="1" max="10" value="1" required>
+                            <small class="text-white-50 hint-xs">已達「每人上限」的會員會略過 (上限包含之前兌換或發放的張數)。</small>
+                        </div>
+                        <div class="mb-3">
+                            <span class="form-label small fw-bold d-block mb-1">到期設定</span>
+                            <div class="form-check"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-coupon" value="coupon" checked>
+                                <label class="form-check-label small" for="issue-exp-coupon">依優惠券設定的使用期限</label></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-days" value="days">
+                                <label class="form-check-label small" for="issue-exp-days">發放後</label>
+                                <input type="number" class="form-control form-control-sm w-auto" name="valid_days" min="1" max="3650" value="30" aria-label="天數">
+                                <span class="small">天內有效</span></div>
+                            <div class="form-check d-flex align-items-center gap-2"><input class="form-check-input" type="radio" name="expire_mode" id="issue-exp-date" value="date">
+                                <label class="form-check-label small" for="issue-exp-date">指定到期日</label>
+                                <input type="date" class="form-control form-control-sm w-auto" name="expires_on" aria-label="到期日"></div>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" role="switch" name="notify_line" value="1" id="issue-notify" {{ '' if line_push_ready else 'disabled' }}>
+                            <label class="form-check-label small" for="issue-notify">以 LINE 通知已綁定的會員{% if not line_push_ready %} (尚未設定 LINE 推播){% endif %}</label>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4"><i class="bi bi-send me-1"></i>確認發放</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 編輯優惠券 Modal -->
+    <div class="modal fade" id="editCouponModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('編輯回饋優惠券', 'bi-pencil-square') }}
+                <form id="editCouponForm" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">{{ coupon_fields('edit-coupon') }}</div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4">儲存變更</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上架 / 修改兌換餐點 Modal (同一個表單：已上架的餐點按「修改點數」會預先帶入) -->
+    <div class="modal fade" id="addRewardModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('上架餐點至回饋商城', 'bi-gift-fill') }}
+                <form action="{{ url_for('admin.add_reward') }}" method="POST" id="addRewardForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-body p-4">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-item">選擇菜單品項</label>
+                            <select class="form-select" name="item_id" id="add-reward-item" required>
+                                <option value="" disabled selected>請選擇要上架的餐點...</option>
+                                {% for it in items %}
+                                <option value="{{ it.id }}">{{ it.name }} (原價 ${{ it.price }}) - {{ it.category }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-points">兌換所需點數</label>
+                            <input type="number" min="1" class="form-control" name="reward_points" id="add-reward-points" placeholder="例如：50" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold" for="add-reward-discount">限時優惠點數 (無特價請填 0)</label>
+                            <input type="number" min="0" class="form-control" name="reward_discount_points" id="add-reward-discount" placeholder="例如：30" value="0">
+                        </div>
+                        <div class="small text-white-50">餐點本身的價格、庫存、照片在「菜單與套餐」頁編輯。</div>
+                    </div>
+                    <div class="modal-footer border-secondary justify-content-between">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark px-4" id="add-reward-submit">確認上架商城</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>

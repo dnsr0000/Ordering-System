@@ -1,0 +1,169 @@
+{#- 匯出 (Excel 報表 / 整庫備份 ZIP) 與匯入 (Excel、CSV / ZIP 還原) 對話框：後台首頁與菜單頁共用。
+    變數 is_platform_admin、backup_available、db_dialect 由 admin.data_modal_context() 提供。 -#}
+{% from "_macros.html" import modal_head %}
+    <!-- 匯出資料 Modal (Excel 報表 / 完整系統備份包 ZIP) -->
+    <div class="modal fade" id="unifiedExportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('資料匯出與備份中心', 'bi-cloud-arrow-down-fill') }}
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-export-excel-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-export-excel">
+                                <i class="bi bi-file-earmark-spreadsheet me-1"></i> 匯出 Excel 營業報表 (.xlsx)
+                            </button>
+                        </li>
+                        {% if is_platform_admin and backup_available %}
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-export-zip-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-export-zip">
+                                <i class="bi bi-archive-fill me-1"></i> 匯出系統完整備份包 (.zip)
+                            </button>
+                        </li>
+                        {% endif %}
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel 報表匯出 -->
+                        <div class="tab-pane fade show active" id="pane-export-excel">
+                            <form action="{{ url_for('admin.export_excel') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <h6 class="fw-bold text-white-50 mb-2">勾選欲匯出的資料表：</h6>
+                                <div class="row g-2 mb-3">
+                                    {% for value, label in [('MenuItem', '菜單品項'), ('User', '會員資料'), ('Order', '訂單總覽'), ('OrderItem', '訂單明細'),
+                                                            ('Coupon', '優惠券'), ('UserCoupon', '會員持券'), ('Analytics', '營運分析'), ('AdminLog', '進出與稽核')] %}
+                                    <div class="col-6 col-md-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="tables" value="{{ value }}" id="ex_{{ value }}" checked>
+                                            <label class="form-check-label" for="ex_{{ value }}">{{ label }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50" for="export-start-date">開始日期 (留空為不限)</label>
+                                        <input type="date" name="start_date" id="export-start-date" class="form-control form-control-sm">
+                                    </div>
+                                    <div class="col-6">
+                                        <label class="form-label small text-white-50" for="export-end-date">結束日期 (留空為不限)</label>
+                                        <input type="date" name="end_date" id="export-end-date" class="form-control form-control-sm">
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-warning fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-download me-1"></i> 下載 Excel 營業報表 (.xlsx)
+                                </button>
+                            </form>
+                            {% if is_platform_admin and not backup_available %}
+                            <div class="alert alert-info small mt-3 mb-0 backup-unavailable">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                目前使用 {{ db_dialect }} 資料庫，整庫備份包 (.zip) 只適用於本機 SQLite；請改用 <code>pg_dump</code> 或雲端資料庫的備份功能。
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if is_platform_admin and backup_available %}
+                        <!-- 分頁 B：完整備份包 ZIP (含所有店家資料，僅平台管理者可見) -->
+                        <div class="tab-pane fade" id="pane-export-zip">
+                            <div class="p-3 rounded bg-black bg-opacity-25 border border-secondary mb-3">
+                                <h6 class="fw-bold text-warning mb-2"><i class="bi bi-info-circle me-1"></i>備份包收錄內容：</h6>
+                                <ul class="small text-white-50 mb-0 ps-3">
+                                    <li><strong>SQLite 資料庫檔案 (<code>menu.db</code>)</strong>：完整包含所有菜單、會員、點數、訂單與優惠券紀錄。</li>
+                                    <li><strong>會員註冊人臉照片 (<code>uploads/member/</code>)</strong>：會員人臉辨識用照片。</li>
+                                    <li><strong>餐點商品相片 (<code>uploads/menu/</code>)</strong>：菜單展示圖檔。</li>
+                                </ul>
+                            </div>
+                            <form action="{{ url_for('admin.backup_system') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
+                                    <i class="bi bi-file-zip-fill me-1"></i> 下載完整備份包 (.zip)
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匯入資料 Modal (Excel 智慧同步 / ZIP 系統還原) -->
+    <div class="modal fade" id="unifiedImportModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content card-custom text-white shadow-lg">
+                {{ modal_head('資料匯入與系統還原', 'bi-cloud-arrow-up-fill', 'text-info') }}
+                <div class="modal-body p-4">
+                    <ul class="nav nav-pills mb-4 nav-fill" role="tablist">
+                        <li class="nav-item">
+                            <button class="nav-link active fw-bold" id="tab-import-excel-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-import-excel">
+                                <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel / CSV 資料同步
+                            </button>
+                        </li>
+                        {% if is_platform_admin and backup_available %}
+                        <li class="nav-item">
+                            <button class="nav-link fw-bold" id="tab-restore-zip-btn" type="button" data-bs-toggle="pill" data-bs-target="#pane-restore-zip">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i> 還原 ZIP 備份包 (覆蓋還原)
+                            </button>
+                        </li>
+                        {% endif %}
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- 分頁 A：Excel/CSV 智慧匯入 -->
+                        <div class="tab-pane fade show active" id="pane-import-excel">
+                            <p class="small text-white-50 mb-3">
+                                支援上傳先前後台匯出的 <code>Kiosk_Export_*.xlsx</code> 報表或自訂菜單 <code>.csv</code> 檔案，系統將自動比對並更新現有品項與資料。
+                            </p>
+                            <form action="{{ url_for('admin.import_smart') }}" method="POST" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="mb-3">
+                                    <label class="form-label small text-white-50" for="import-file">選擇 Excel / CSV 檔案</label>
+                                    <input type="file" name="file" id="import-file" class="form-control" accept=".xlsx,.csv" required>
+                                </div>
+                                <button type="submit" class="btn btn-info fw-bold text-dark w-100 py-2">
+                                    <i class="bi bi-upload me-1"></i> 開始智慧辨識並匯入
+                                </button>
+                            </form>
+                            {% if is_platform_admin and not backup_available %}
+                            <div class="alert alert-info small mt-3 mb-0 backup-unavailable">
+                                <i class="bi bi-info-circle-fill me-1"></i>
+                                目前使用 {{ db_dialect }} 資料庫，整庫還原 (.zip) 只適用於本機 SQLite；請改用資料庫本身的還原工具 (例如 <code>pg_restore</code>)。
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        {% if is_platform_admin and backup_available %}
+                        <!-- 分頁 B：ZIP 完整還原 (覆蓋資料庫與相片；僅平台管理者可見) -->
+                        <div class="tab-pane fade" id="pane-restore-zip">
+                            <div class="alert alert-danger py-2 small mb-3">
+                                <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                                <strong>注意</strong>：此操作將還原 SQLite 資料庫檔案與相片，請確保備份來源正確無誤。
+                            </div>
+                            <form action="{{ url_for('admin.restore_backup') }}" method="POST" enctype="multipart/form-data"
+                                  data-confirm="⚠️ 警告：還原將覆蓋現有資料庫與相片，確定要繼續嗎？">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="mb-3">
+                                    <label class="form-label small text-white-50" for="restore-file">選取先前下載的 <code>Kiosk_Full_Backup_*.zip</code> 備份檔</label>
+                                    <input type="file" name="backup_zip" id="restore-file" class="form-control" accept=".zip" required>
+                                </div>
+                                <div class="row g-2 mb-3 small text-white-50">
+                                    {% for name, label in [('restore_db', '還原資料庫 (menu.db)'), ('restore_photos', '還原會員照片'),
+                                                           ('restore_menu_photos', '還原餐點照片'), ('overwrite_photos', '覆蓋同名照片')] %}
+                                    <div class="col-6">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" name="{{ name }}" value="1" id="r_{{ name }}" checked>
+                                            <label class="form-check-label text-white" for="r_{{ name }}">{{ label }}</label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <button type="submit" class="btn btn-danger fw-bold w-100 py-2">
+                                    <i class="bi bi-arrow-repeat me-1"></i> 確認上傳並執行系統還原
+                                </button>
+                            </form>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>

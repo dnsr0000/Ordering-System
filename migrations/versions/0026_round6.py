@@ -1,4 +1,4 @@
-"""第六輪：會員價 (menu_item.member_price)、KDS 製作卡 (menu_item.prep_note)、顧客評價回覆 / 公開 (order_feedback.reply / replied_at / is_public)、
+"""會員價 (menu_item.member_price)、KDS 製作卡 (menu_item.prep_note)、顧客評價回覆 / 公開 (order_feedback.reply / replied_at / is_public)、
 員工額外權限欄位加長 (staff_account.permissions 300 → 500，頁面權限碼變多)、會員 Email (user.email，電子收據)
 
 Revision ID: 0026_round6

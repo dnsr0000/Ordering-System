@@ -173,7 +173,7 @@ def rule_parse(text, items, addons):
             taken[i] = True
         return True
 
-    # 第一輪：完整品名 (含英文名)，長的先比
+    # 完整品名 (含英文名)，長的先比
     for name, item in _name_index(items):
         start = 0
         key = name.lower()
@@ -183,7 +183,7 @@ def rule_parse(text, items, addons):
                 break
             claim(pos, pos + len(key), item)
             start = pos + len(key)
-    # 第二輪：沒對到的片段若「唯一」包含在某個品名裡 (顧客只說「牛肉堡」而菜單是「炙燒起司牛肉堡」) 也算命中
+    # 沒對到的片段若「唯一」包含在某個品名裡 (顧客只說「牛肉堡」而菜單是「炙燒起司牛肉堡」) 也算命中
     leftover = []
     run_start = None
     runs = []

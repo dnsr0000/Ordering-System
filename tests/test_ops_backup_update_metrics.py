@@ -1,5 +1,5 @@
 """
-第六輪 (階段 3)：異地備份上傳 (WebDAV / S3 簽章 / 自訂指令 / 修剪 / 每日備份後呼叫 / 設定頁測試)、
+異地備份上傳 (WebDAV / S3 簽章 / 自訂指令 / 修剪 / 每日備份後呼叫 / 設定頁測試)、
 門市一鍵更新 (版本比較 / GitHub 查詢與快取 / 下載 / 系統頁面板 / Windows 以外不可套用)、
 錯誤回報與指標 (/metrics 需 METRICS_TOKEN、Prometheus 格式、請求計數；Sentry 選用初始化)、
 N+1 守門 (資料加倍查詢數不變)、Dependabot 設定存在。
@@ -378,7 +378,7 @@ def test_pos_quick_notes_and_customer_theme_toggle(app, store_settings):
 
 
 # ---------------------------------------------------------------------------
-# 安全審視 (第六輪收尾)：權限邊界與對外連線
+# 安全審視 (收尾)：權限邊界與對外連線
 # ---------------------------------------------------------------------------
 def test_menu_permission_cannot_export_or_import_member_data(app):
     import io
@@ -394,10 +394,14 @@ def test_menu_permission_cannot_export_or_import_member_data(app):
     assert_flash(staff, '頁面權限')
     assert staff.post('/admin/export_excel', data={'tables': ['MenuItem']}).status_code == 200
     # 匯入：含會員工作表的 Excel 被拒
-    import pandas as pd
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'User'
+    ws.append(['姓名(name)', '電話(phone)'])
+    ws.append(['偷渡會員', '0977800199'])
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf) as xw:
-        pd.DataFrame([{'姓名(name)': '偷渡會員', '電話(phone)': '0977800199'}]).to_excel(xw, sheet_name='User', index=False)
+    wb.save(buf)
     buf.seek(0)
     r = staff.post('/admin/import_smart', data={'file': (buf, 'members.xlsx')}, content_type='multipart/form-data')
     assert r.status_code == 302

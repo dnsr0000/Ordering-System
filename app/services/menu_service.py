@@ -3,7 +3,6 @@ import os
 import re
 import uuid
 
-import pandas as pd
 from sqlalchemy import case, update
 
 from app.errors import AppError
@@ -220,27 +219,36 @@ MENU_COLUMN_MAPPING = {
 }
 
 
+def is_blank(val):
+    """匯入檔的空值：openpyxl 空儲存格是 None、CSV 空欄位是 ''，兩者一律視為「沒填」"""
+    return val is None or val == ''
+
+
 def parse_bool(val):
-    return not pd.isna(val) and str(val).strip().lower() in ('1', 'true', '是', 'yes', 'y')
+    return not is_blank(val) and str(val).strip().lower() in ('1', 'true', '是', 'yes', 'y')
 
 
 def _cell(row, key, default=None):
     val = row.get(key, default)
-    return default if val is None or (not isinstance(val, str) and pd.isna(val)) else val
+    return default if is_blank(val) else val
 
 
-def upsert_menu_items_from_df(df):
+def upsert_menu_items_from_rows(rows, columns=None):
     """
     以餐點名稱為鍵新增或更新菜單 (由呼叫端 commit，多工作表匯入時整批同一交易)。
+    rows 是 list[dict] (檔案標題 → 儲存格值)；columns 是檔案的標題清單 (沒有資料列時仍可檢查必要欄位)。
     - 檔案沒有庫存欄位時不覆蓋既有庫存；總量永遠不小於庫存。
     - 紅利防呆：兌換點數為 0 或高於單價時關閉紅利；特惠點數不小於兌換點數時歸 0。
     回傳處理筆數；缺少必要欄位時拋出 AppError。
     """
-    df = df.rename(columns=MENU_COLUMN_MAPPING)
-    if 'name' not in df.columns or 'price' not in df.columns:
+    if columns is None:
+        columns = set().union(*rows) if rows else set()
+    columns = {MENU_COLUMN_MAPPING.get(c, c) for c in columns}
+    if 'name' not in columns or 'price' not in columns:
         raise AppError('檔案缺少必要欄位：「餐點名稱」或「單價」！')
     count = 0
-    for _, row in df.iterrows():
+    for row in rows:
+        row = {MENU_COLUMN_MAPPING.get(key, key): val for key, val in row.items()}
         name = str(_cell(row, 'name', '')).strip()
         if not name or name == '目前無資料':
             continue
@@ -302,3 +310,18 @@ def storefront_payload(items, modifiers, reward_setting):
 
 def menu_categories(items):
     return sorted({(i.category or '未分類').strip() for i in items})
+
+
+def item_form_data(item):
+    """後台「編輯品項」視窗的預設值 (以 JSON 嵌入菜單頁，取代按鈕上的大量 data-* 屬性)"""
+    return {
+        'id': item.id, 'name': item.name, 'category': item.category or '', 'modifiers': item.modifiers or 'none',
+        'price': item.price or 0, 'stock': item.stock or 0, 'total_stock': item.total_stock or 0,
+        'is_sold_out': bool(item.is_sold_out), 'is_discount': bool(item.is_discount),
+        'discount_price': item.discount_price or 0, 'description': item.description or '',
+        'image_path': item.image_path or '', 'is_recommended': bool(item.is_manual_popular or item.is_recommended),
+        'is_new': bool(item.is_new), 'is_reward': bool(item.is_reward), 'reward_points': item.reward_points or 0,
+        'reward_discount_points': item.reward_discount_points or 0, 'can_be_add_on': bool(item.can_be_add_on),
+        'add_on_price': item.add_on_price or 0, 'addon_trigger_type': item.addon_trigger_type or 'any',
+        'addon_trigger_target': item.addon_trigger_target or '',
+    }

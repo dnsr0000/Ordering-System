@@ -31,7 +31,15 @@ def _login(page):
 
 
 def _open_tab(page, key):
-    page.click(f'#{key}-tab')
+    """首頁分頁 (home / orders / rewards) 用頁籤；菜單與會員各是獨立頁面"""
+    if key == 'menu':
+        assert page.goto('/admin/menu').ok
+    elif key == 'users':
+        assert page.goto('/admin/members').ok
+    else:
+        if not page.locator('#adminTab').count():
+            assert page.goto('/admin').ok
+        page.click(f'#{key}-tab')
     expect(page.locator(f'#{key}-pane')).to_be_visible()
 
 
@@ -58,7 +66,7 @@ def test_login_wrong_password_then_success(page):
     page.fill('input[name="password"]', ADMIN_PASSWORD)
     page.click('button[type="submit"]')
     expect(page.locator('#adminTab')).to_be_visible()
-    expect(page.locator('#live-clock')).to_have_text(re.compile(r'^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}$'))
+    expect(page.locator('#adminTopClock')).to_have_text(re.compile(r'^\d{2}:\d{2}:\d{2}$'))
     # 平台管理者看得到整庫備份/還原分頁
     expect(page.locator('#pane-export-zip')).to_have_count(1)
     expect(page.locator('#pane-restore-zip')).to_have_count(1)
@@ -84,7 +92,7 @@ def test_add_menu_item_via_form(page, app):
     modal.locator('#add-addon-target').select_option('飲料')
     modal.locator('button[type="submit"]').click()
 
-    row = page.locator('#menuItemTable tbody tr', has_text=name)
+    row = page.locator('#menuItemTable tbody tr.menu-row', has_text=name)
     expect(row).to_be_visible()  # 送出後導回 ?tab=menu 並自動切到菜單分頁
     expect(row).to_contain_text('<b>描述不是粗體</b>')
     expect(row).to_contain_text('[限分類:飲料]')
@@ -100,7 +108,7 @@ def test_add_menu_item_via_form(page, app):
     expect(edit.locator('#edit-addon-target')).to_have_value('飲料')
     edit.locator('#edit-price').fill('130')
     edit.locator('button[type="submit"]').click()
-    expect(page.locator('#menuItemTable tbody tr', has_text=name)).to_contain_text('$130')
+    expect(page.locator('#menuItemTable tbody tr.menu-row', has_text=name)).to_contain_text('$130')
     with app.app_context():
         assert MenuItem.query.filter_by(name=name).one().price == 130
 
@@ -131,7 +139,7 @@ def test_menu_image_crop_upload_and_delete(page, app):
     assert modal.locator('#add-image-file').evaluate('el => el.files[0].name').startswith('cropped_')
     modal.locator('button[type="submit"]').click()
 
-    row = page.locator('#menuItemTable tbody tr', has_text=name)
+    row = page.locator('#menuItemTable tbody tr.menu-row', has_text=name)
     expect(row).to_be_visible()
     with app.app_context():
         item = MenuItem.query.filter_by(name=name).one()
@@ -150,7 +158,7 @@ def test_menu_image_crop_upload_and_delete(page, app):
         raise AssertionError('餐點圖片載入失敗')
 
     row.locator('form[data-confirm] button[type="submit"]').click()
-    expect(page.locator('#menuItemTable tbody tr', has_text=name)).to_have_count(0)
+    expect(page.locator('#menuItemTable tbody tr.menu-row', has_text=name)).to_have_count(0)
     with app.app_context():
         from app.extensions import db
         assert db.session.get(MenuItem, item_id) is None
@@ -225,14 +233,15 @@ def test_dashboard_analytics_and_order_status(page, app):
         order_id = order.id
 
     _login(page)
-    # 實時訂單看板：訂單卡片以純文字顯示品名與備註
+    # 實時訂單看板 (登入後預設在總覽，先切過去)：訂單卡片以純文字顯示品名與備註
+    _open_tab(page, 'orders')
     card = page.locator('#admin-orders-grid .card', has_text=name)
     expect(card).to_be_visible()
     expect(card).to_contain_text('備註：<b>少冰</b>')
     expect(card).to_contain_text(f'單號 #{order_id}')
 
-    # 營運分析：熱門排行 (stat-top-items) 有資料
-    _open_tab(page, 'analytics')
+    # 總覽：熱門排行 (stat-top-items) 有資料
+    _open_tab(page, 'home')
     top = page.locator('#stat-top-items')
     expect(top).to_be_visible()
     expect(top).to_contain_text(name)
@@ -243,7 +252,7 @@ def test_dashboard_analytics_and_order_status(page, app):
     page.fill('#rankingLimitInput', '5')
     page.press('#rankingLimitInput', 'Enter')
     page.wait_for_url(re.compile(r'limit=5'))
-    expect(page.locator('#analytics-pane')).to_be_visible()
+    expect(page.locator('#home-pane')).to_be_visible()
     expect(page.locator('#stat-top-items')).to_contain_text(name)
 
     # 在看板上把訂單改為「已出餐」
@@ -263,7 +272,7 @@ def test_xss_names_render_as_text(page):
     expect(item_name).to_have_text(XSS_ITEM)
     expect(page.locator('#comboTable')).to_contain_text(XSS_COMBO)
     # 編輯視窗的輸入框帶入原始字串
-    page.locator('#menuItemTable tbody tr', has_text=XSS_ITEM).locator('[data-action="edit-item"]').click()
+    page.locator('#menuItemTable tbody tr.menu-row', has_text=XSS_ITEM).locator('[data-action="edit-item"]').click()
     expect(page.locator('#edit-name')).to_have_value(XSS_ITEM)
     _close_modal(page, 'editItemModal')
 

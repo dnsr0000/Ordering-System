@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}會員 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
+{% set PLACEHOLDER_IMG = url_for('static', filename='img/placeholder.svg') %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="members-page">
+    {% call page_header('會員', 'bi-people-fill', '會員名冊、點數與票券；等級 (依累積消費自動升級)、生日禮、儲值金與 LINE 推播',
+                        back_url=url_for('settings_admin.edit', key='member'), back_label='等級 / 生日禮 / 儲值設定') %}
+    <a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='line') }}">LINE 設定</a>
+    {% if current_user.has_permission('coupons') %}<a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('admin.admin_dashboard', tab='rewards') }}">回饋商城與優惠券</a>{% endif %}
+    {% endcall %}
+    <div class="row g-3 mb-4">
+        {% for label, value in [('會員數', stats.members), ('已綁定 LINE', stats.line_bound), ('儲值金餘額合計', '$' ~ '{:,}'.format(stats.wallet_total)), ('本月壽星', stats.birthday_month)] %}
+        <div class="col-6 col-md-3"><div class="stat-tile"><div class="stat-label">{{ label }}</div><div class="stat-value">{{ value }}</div></div></div>
+        {% endfor %}
+    </div>
+    <div class="row g-4">
+        <section class="col-xl-4">
+            <div class="card rounded-4 p-3 mb-4" id="memberTiersCard">
+                <h2 class="h5 fw-bold text-warning">會員等級</h2>
+                <p class="small text-white-50">累積消費達門檻自動升級 (只升不降)。贈點倍數套用在結帳贈點；會員折扣在優惠券之後、點數折抵之前計算。</p>
+                {% for t in tiers %}
+                <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="tier_id" value="{{ t.id }}">
+                    <span class="badge bg-{{ t.color }} {{ 'text-dark' if t.color in ('warning', 'info', 'light') }}">{{ t.name }}</span>
+                    <input class="form-control form-control-sm" name="name" value="{{ t.name }}" aria-label="名稱" style="width: 6rem">
+                    <input class="form-control form-control-sm" type="number" name="min_spend" value="{{ t.min_spend }}" aria-label="累積消費門檻" title="累積消費門檻" style="width: 7rem">
+                    <input class="form-control form-control-sm" type="number" step="0.1" name="points_multiplier" value="{{ t.points_multiplier }}" aria-label="贈點倍數" title="贈點倍數" style="width: 5rem">
+                    <input class="form-control form-control-sm" type="number" name="discount_percent" value="{{ t.discount_percent }}" aria-label="折扣%" title="會員折扣 %" style="width: 4.5rem">
+                    <select class="form-select form-select-sm" name="color" aria-label="顏色" style="width: 6.5rem">{% for c in colors %}<option value="{{ c }}" {{ 'selected' if t.color == c }}>{{ c }}</option>{% endfor %}</select>
+                    <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit_tier">儲存</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete_tier" aria-label="刪除"><i class="bi bi-trash"></i></button>
+                </form>
+                {% else %}<div class="small text-white-50 mb-2">尚未設定等級</div>{% endfor %}
+                <form method="POST" class="row g-1 align-items-end mt-2" id="addTierForm">{{ csrf() }}<input type="hidden" name="action" value="add_tier">
+                    <div class="col-3"><label class="form-label small mb-0" for="tier-name">名稱</label><input class="form-control form-control-sm" id="tier-name" name="name" placeholder="金卡" required></div>
+                    <div class="col-3"><label class="form-label small mb-0" for="tier-min">累積消費</label><input class="form-control form-control-sm" id="tier-min" type="number" name="min_spend" value="0"></div>
+                    <div class="col-2"><label class="form-label small mb-0" for="tier-mul">贈點倍數</label><input class="form-control form-control-sm" id="tier-mul" type="number" step="0.1" name="points_multiplier" value="1"></div>
+                    <div class="col-2"><label class="form-label small mb-0" for="tier-disc">折扣%</label><input class="form-control form-control-sm" id="tier-disc" type="number" name="discount_percent" value="0"></div>
+                    <div class="col-2"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
+                </form>
+                <form method="POST" class="mt-2">{{ csrf() }}<input type="hidden" name="action" value="recompute_tiers">
+                    <button class="btn btn-outline-info btn-sm" type="submit">重新計算所有會員的累積消費與等級</button></form>
+            </div>
+            <div class="card rounded-4 p-3 mb-4" id="lineBroadcastCard">
+                <h2 class="h5 fw-bold text-success">LINE 推播</h2>
+                {% if not line_ready %}<div class="small text-warning mb-2">尚未啟用 LINE 官方帳號推播 (系統設定 → LINE)。</div>{% endif %}
+                <form method="POST" id="broadcastForm" data-confirm="確定要推播給所選會員？">{{ csrf() }}<input type="hidden" name="action" value="broadcast">
+                    <select class="form-select form-select-sm mb-2" name="target" aria-label="推播對象">
+                        <option value="all">所有綁定 LINE 的會員</option><option value="birthday_month">本月壽星</option>
+                        {% for t in tiers %}<option value="tier:{{ t.id }}">等級：{{ t.name }}</option>{% endfor %}
+                    </select>
+                    <textarea class="form-control form-control-sm mb-2" name="message" rows="3" maxlength="1000" placeholder="例如：本週末全品項 9 折！" aria-label="推播內容" required></textarea>
+                    <button class="btn btn-success btn-sm fw-bold" type="submit" {{ 'disabled' if not line_ready }}>送出推播</button>
+                </form>
+            </div>
+            <div class="card rounded-4 p-3 mb-4" id="birthdayCard">
+                <h2 class="h5 fw-bold">生日禮</h2>
+                <div class="small text-white-50 mb-2">{% if cfg.birthday_enabled %}已啟用：每天自動送給本月壽星 (點數 {{ cfg.birthday_points }}{% if cfg.birthday_coupon_code %}、優惠券 {{ cfg.birthday_coupon_code }}{% endif %})；分店主機不執行，由總店 / 單機送出。{% else %}尚未啟用生日禮。{% endif %}</div>
+                <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="birthday_now"><button class="btn btn-outline-warning btn-sm" type="submit" {{ 'disabled' if not cfg.birthday_enabled }}>立即送出本月生日禮</button></form>
+            </div>
+            <div class="card rounded-4 p-3" id="walletLedgerCard">
+                <h2 class="h6 fw-bold">最近儲值金異動</h2>
+                <table class="table table-dark table-sm mb-0"><tbody>
+                {% for w in ledger %}<tr><td class="small">{{ w.created_at.strftime('%m-%d %H:%M') }}</td><td>{{ names.get(w.user_id, w.user_id) }}</td>
+                    <td>{{ {'topup': '加值', 'bonus': '加值贈送', 'pay': '消費', 'refund': '退回', 'adjust': '調整'}.get(w.reason, w.reason) }}</td>
+                    <td class="{{ 'text-danger' if w.delta < 0 else 'text-success' }}">{{ '%+d' % w.delta }}</td><td class="small text-white-50">{{ w.note }}</td></tr>
+                {% else %}<tr><td class="text-white-50">尚無異動</td></tr>{% endfor %}
+                </tbody></table>
+            </div>
+        </section>
+
+        <section class="col-xl-8">
+            <div class="card card-custom p-4" id="users-pane">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                    <h2 class="h5 fw-bold mb-0 text-white"><i class="bi bi-people text-warning me-2"></i>會員名冊
+                        <span class="small text-white-50 fw-normal ms-1">共 {{ total }} 位</span></h2>
+                    <form method="GET" action="{{ url_for('members_pro.manage') }}" class="d-flex gap-2" id="memberSearchForm" role="search">
+                        <select class="form-select form-select-sm w-auto" name="sort" aria-label="排序" data-autosubmit>
+                            <option value="" {{ 'selected' if not sort }}>最新加入在前</option>
+                            <option value="spent" {{ 'selected' if sort == 'spent' }}>累積消費高到低</option>
+                        </select>
+                        <input type="search" class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="搜尋姓名或手機" aria-label="搜尋會員">
+                        <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap"><i class="bi bi-search"></i> 搜尋</button>
+                        {% if q %}<a class="btn btn-sm btn-outline-secondary text-nowrap" href="{{ url_for('members_pro.manage', sort=sort or None) }}">清除</a>{% endif %}
+                    </form>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-dark-custom align-middle" id="memberTable">
+                        <thead>
+                            <tr class="text-white-50 small">
+                                <th>頭像</th>
+                                <th>會員</th>
+                                <th>累積消費</th>
+                                <th>點數</th>
+                                {% if cfg.wallet_enabled %}<th>儲值金</th>{% endif %}
+                                <th>票券</th>
+                                <th>人臉</th>
+                                <th>最後登入</th>
+                                <th class="text-end">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for u in users %}
+                            <tr data-user-id="{{ u.id }}">
+                                <td class="col-avatar">
+                                    <img src="{{ url_for('media.member_photo', filename=u.photo_path) if u.id in member_photo_ids else PLACEHOLDER_IMG }}" class="rounded-circle object-fit-cover border border-secondary" width="45" height="45" alt="">
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-white member-name">{{ u.name }}
+                                        {% if u.tier %}<span class="badge bg-{{ u.tier.color }} {{ 'text-dark' if u.tier.color in ('warning', 'info', 'light') }} ms-1">{{ u.tier.name }}</span>{% endif %}
+                                        {% if u.line_user_id %}<span class="badge bg-success ms-1">LINE</span>{% endif %}</div>
+                                    <div class="small text-white-50">{{ u.phone }}{% if u.birthday %} · 生日 {{ u.birthday.strftime('%m/%d') }}{% endif %}</div>
+                                </td>
+                                <td>${{ '{:,}'.format(u.total_spent or 0) }}</td>
+                                <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill text-danger me-1"></i>{{ u.points }} 點</span></td>
+                                {% if cfg.wallet_enabled %}<td>${{ u.wallet_balance or 0 }}</td>{% endif %}
+                                <td>
+                                    <button class="btn btn-outline-warning btn-sm fw-bold" type="button" data-action="user-coupons"
+                                            data-user-id="{{ u.id }}" data-user-name="{{ u.name }}">
+                                        <i class="bi bi-ticket-perforated"></i> 票券 ({{ coupon_counts.get(u.id, 0) }})
+                                    </button>
+                                </td>
+                                <td>
+                                    {% if u.feature is not none %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>已建檔</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">未建檔</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if u.last_login_at %}
+                                    <span class="text-info small fw-bold"><i class="bi bi-clock-history me-1"></i>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                                    {% else %}
+                                    <span class="text-white-50 small">尚未記錄</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-user"
+                                            data-id="{{ u.id }}" data-name="{{ u.name }}" data-phone="{{ u.phone }}" data-points="{{ u.points }}">
+                                        <i class="bi bi-pencil-square"></i> 編輯
+                                    </button>
+                                    <button class="btn btn-outline-warning btn-sm me-1" type="button" data-bs-toggle="collapse" data-bs-target="#member-pro-{{ u.id }}" aria-expanded="false" aria-controls="member-pro-{{ u.id }}">
+                                        <i class="bi bi-sliders"></i> 進階
+                                    </button>
+                                    <form action="{{ url_for('admin.delete_user', id=u.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？">
+                                        {{ csrf() }}
+                                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            <tr class="collapse member-pro-row" id="member-pro-{{ u.id }}"><td colspan="{{ 9 if cfg.wallet_enabled else 8 }}">
+                                <div class="d-flex flex-wrap gap-3 p-2 border border-secondary rounded">
+                                    <form method="POST" class="d-flex flex-wrap gap-1 align-items-center member-pro-form">{{ csrf() }}<input type="hidden" name="action" value="member"><input type="hidden" name="user_id" value="{{ u.id }}">
+                                        <label class="small text-white-50 mb-0" for="bd-{{ u.id }}">生日</label>
+                                        <input class="form-control form-control-sm" type="date" name="birthday" id="bd-{{ u.id }}" value="{{ u.birthday or '' }}" style="width: 9rem">
+                                        <label class="small text-white-50 mb-0 ms-2" for="tier-{{ u.id }}">等級</label>
+                                        <select class="form-select form-select-sm" name="tier_id" id="tier-{{ u.id }}" style="width: 7rem"><option value="">無等級</option>{% for t in tiers %}<option value="{{ t.id }}" {{ 'selected' if u.tier_id == t.id }}>{{ t.name }}</option>{% endfor %}</select>
+                                        {% if u.line_user_id %}<div class="form-check ms-2"><input class="form-check-input" type="checkbox" name="unbind_line" value="1" id="ul-{{ u.id }}"><label class="form-check-label small" for="ul-{{ u.id }}">解除 LINE 綁定</label></div>{% endif %}
+                                        <button class="btn btn-sm btn-outline-light" type="submit">儲存</button>
+                                    </form>
+                                    {% if current_user.role == 'owner' and cfg.wallet_enabled %}
+                                    <form method="POST" class="d-flex gap-1 align-items-center">{{ csrf() }}<input type="hidden" name="action" value="wallet_adjust"><input type="hidden" name="user_id" value="{{ u.id }}">
+                                        <input class="form-control form-control-sm" type="number" name="delta" placeholder="儲值金 ±" aria-label="儲值金調整" style="width: 6rem">
+                                        <input class="form-control form-control-sm" name="note" placeholder="調整原因" aria-label="調整原因">
+                                        <button class="btn btn-sm btn-outline-warning text-nowrap" type="submit">調整儲值金</button></form>
+                                    {% endif %}
+                                </div>
+                            </td></tr>
+                            {% else %}
+                            <tr><td colspan="{{ 9 if cfg.wallet_enabled else 8 }}" class="text-center py-4 text-white-50">{{ '找不到符合的會員' if q else '目前尚無會員' }}</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% if pages > 1 %}
+                <nav aria-label="會員分頁" id="memberPager">
+                    <ul class="pagination pagination-sm justify-content-center mb-0 mt-2">
+                        {% set first = [1, page - 3]|max %}{% set last = [pages, page + 3]|min %}
+                        <li class="page-item {{ 'disabled' if page == 1 }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=page - 1) }}">上一頁</a></li>
+                        {% for p in range(first, last + 1) %}
+                        <li class="page-item {{ 'active' if p == page }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=p) }}">{{ p }}</a></li>
+                        {% endfor %}
+                        <li class="page-item {{ 'disabled' if page == pages }}"><a class="page-link" href="{{ url_for('members_pro.manage', q=q or None, sort=sort or None, page=page + 1) }}">下一頁</a></li>
+                    </ul>
+                    <div class="text-center small text-white-50 mt-1">第 {{ page }} / {{ pages }} 頁</div>
+                </nav>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+</main>
+{% include "_member_modals.html" %}
+{% endblock %}
+
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {'couponHistoryDays': coupon_history_days} | tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-members.js') }}"></script>{% endblock %}

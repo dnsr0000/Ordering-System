@@ -160,7 +160,7 @@
 .staff-main .card { background: var(--admin-panel); border: 1px solid var(--kiosk-border); }
 .staff-reset-input { width: 145px; }
 
-/* 版本更新 (第六輪) */
+/* 版本更新 */
 .update-notes { white-space: pre-wrap; max-height: 12rem; overflow: auto; }
 
 /* 桌位管理：每個欄位上方的小標題 (桌號 / 排序 / 座位數 / 區域 / 形狀) */
