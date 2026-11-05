@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% from "_macros.html" import page_header, csrf %}
+{% block title %}菜單與套餐 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/cropperjs/cropper.min.css') }}">{% endblock %}
+{% set PLACEHOLDER_IMG = url_for('static', filename='img/placeholder.svg') %}
+{% block content %}
+<main class="container-fluid px-4 py-4" id="menu-page">
+    {% call page_header('菜單與套餐', 'bi-grid-fill', '品項、套餐、庫存與紅利兌換；每個品項的「進階」可設定供應時段、通路價、過敏原、規格與英日文名稱',
+                        back_url=url_for('settings_admin.edit', key='menu'), back_label='菜單顯示設定') %}
+    <button class="btn btn-outline-info btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
+        <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel 菜單
+    </button>
+    <button class="btn btn-outline-light btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
+        <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
+    </button>
+    <button class="btn btn-warning btn-sm fw-bold text-dark" type="button" data-bs-toggle="modal" data-bs-target="#addItemModal">
+        <i class="bi bi-plus-lg me-1"></i> 新增品項
+    </button>
+    {% endcall %}
+
+    <!-- 1. 品項清單 (基本欄位用「編輯」視窗；供應時段 / 通路價 / 標示 / 翻譯在「進階」展開列) -->
+    <div class="card card-custom p-4 mb-4" id="menu-pane">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+            <h2 class="h5 fw-bold mb-0 text-white"><i class="bi bi-list-stars text-warning me-2"></i>菜單品項清單
+                <span class="small text-white-50 fw-normal ms-1">共 {{ items | length }} 項</span></h2>
+            <input type="search" class="form-control form-control-sm w-auto" id="menuFilterInput" placeholder="篩選品名 / 分類" aria-label="篩選品項">
+        </div>
+        <div class="table-responsive">
+            <table class="table table-dark-custom align-middle" id="menuItemTable">
+                <thead>
+                    <tr class="text-white-50 small">
+                        <th>圖片</th>
+                        <th>餐點名稱</th>
+                        <th>分類</th>
+                        <th>單價 / 通路價</th>
+                        <th>標籤與標示</th>
+                        <th>商城</th>
+                        <th>數量 (剩餘 / 總量)</th>
+                        <th>供應</th>
+                        <th class="text-end col-actions">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    {% set stock = item.stock or 0 %}
+                    {% set ok, hint = item.service_status() %}
+                    <tr data-item-id="{{ item.id }}" class="menu-row" data-filter="{{ (item.name ~ ' ' ~ (item.category or '') ~ ' ' ~ (item.name_en or '')) | lower }}">
+                        <td class="col-thumb">
+                            <img src="{{ url_for('media.menu_image', filename=item.image_path) if item.image_path else PLACEHOLDER_IMG }}" class="rounded-3 object-fit-cover" width="55" height="55" alt="">
+                        </td>
+                        <td>
+                            <div class="fw-bold text-white item-name">{{ item.name }}</div>
+                            <small class="text-white-50">{{ item.description or '無描述' }}</small>
+                            {% if item.name_en or item.name_ja %}<div class="small text-info">{{ item.name_en }}{% if item.name_ja %} / {{ item.name_ja }}{% endif %}</div>{% endif %}
+                        </td>
+                        <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                        <td>
+                            <div class="fw-bold text-warning">${{ item.price }}</div>
+                            {% if item.takeout_price or item.online_price or item.delivery_price or item.member_price %}
+                            <div class="small text-white-50" title="外帶 / 線上 / 外送 (會員)">{{ item.takeout_price or '-' }} / {{ item.online_price or '-' }} / {{ item.delivery_price or '-' }}{% if item.member_price %} <span class="badge bg-info text-dark">會員 ${{ item.member_price }}</span>{% endif %}</div>
+                            {% endif %}
+                        </td>
+                        <td id="item-tags-{{ item.id }}">
+                            {% if item.is_sold_out or stock <= 0 %}<span class="badge bg-secondary me-1 sold-out-badge">已售完</span>{% endif %}
+                            {% if item.is_manual_popular or item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
+                            {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
+                            {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
+                            {% if item.can_be_add_on %}
+                            <span class="badge bg-info text-dark me-1" title="加購條件：{{ item.addon_trigger_type }} - {{ item.addon_trigger_target }}">
+                                可加購 (${{ item.add_on_price }})
+                                {% if item.addon_trigger_type == 'category' %}[限分類:{{ item.addon_trigger_target }}]{% elif item.addon_trigger_type == 'item' %}[限餐點:{{ item.addon_trigger_target }}]{% endif %}
+                            </span>
+                            {% endif %}
+                            {% for a in item.allergen_codes %}<span class="badge bg-danger allergen-badge me-1">{{ allergens[a] }}</span>{% endfor %}
+                            {% if item.diet %}<span class="badge bg-success allergen-badge me-1">{{ diets[item.diet] }}</span>{% endif %}
+                            {% if item.spicy_level %}<span class="badge bg-warning text-dark allergen-badge me-1">辣 {{ item.spicy_level }}</span>{% endif %}
+                        </td>
+                        <td>
+                            {% if item.is_reward %}
+                            <div class="d-inline-flex flex-column align-items-start gap-1">
+                                <span class="badge bg-warning text-dark"><i class="bi bi-gift-fill me-1"></i>{{ item.reward_points }}點</span>
+                                {% if item.reward_discount_points and item.reward_discount_points > 0 %}
+                                <span class="badge bg-danger">特價 {{ item.reward_discount_points }}點</span>
+                                {% endif %}
+                            </div>
+                            {% else %}
+                            <span class="badge bg-dark text-white-50 border border-secondary">未上架</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="d-inline-flex align-items-center bg-dark border border-secondary rounded px-2 py-1 shadow-sm">
+                                <span id="item-stock-badge-{{ item.id }}" class="badge {% if stock <= 0 or item.is_sold_out %}bg-danger{% elif stock <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %} fw-bold px-2 py-1" title="剩餘數量">{{ stock }}</span>
+                                <span class="text-white-50 mx-1 small">/</span>
+                                <span class="badge bg-secondary text-white fw-bold px-2 py-1" title="總量">{{ item.total_stock or 0 }}</span>
+                            </div>
+                        </td>
+                        <td class="small">{% if ok %}<span class="text-success">供應中</span>{% else %}<span class="text-warning">{{ hint }}</span>{% endif %}
+                            {% if item.avail_start or item.avail_end %}<div class="text-white-50">{{ item.avail_start or '00:00' }}~{{ item.avail_end or '23:59' }}</div>{% endif %}</td>
+                        <td class="text-end text-nowrap">
+                            <div class="d-inline-flex justify-content-end align-items-center gap-2">
+                                <button class="btn btn-outline-primary btn-sm" type="button" data-action="edit-item" data-id="{{ item.id }}">
+                                    <i class="bi bi-pencil-square"></i> 編輯
+                                </button>
+                                <button class="btn btn-outline-warning btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#edit-{{ item.id }}" aria-expanded="false" aria-controls="edit-{{ item.id }}">
+                                    <i class="bi bi-sliders"></i> 進階
+                                </button>
+                                <form action="{{ url_for('admin.delete_item', id=item.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除品項【{{ item.name }}】嗎？">
+                                    {{ csrf() }}
+                                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr class="collapse menu-pro-row" id="edit-{{ item.id }}" data-for="{{ item.id }}"><td colspan="9">
+                        <form method="POST" class="row g-2 p-2 border border-secondary rounded menu-pro-form" data-item-id="{{ item.id }}">{{ csrf() }}
+                            <input type="hidden" name="action" value="item"><input type="hidden" name="item_id" value="{{ item.id }}">
+                            <div class="col-md-3"><label class="form-label small" for="as-{{ item.id }}">供應時段</label>
+                                <div class="input-group input-group-sm"><input class="form-control" type="time" id="as-{{ item.id }}" name="avail_start" value="{{ item.avail_start }}">
+                                    <span class="input-group-text">~</span><input class="form-control" type="time" name="avail_end" value="{{ item.avail_end }}" aria-label="結束"></div>
+                                <div class="form-text text-white-50">空白 = 全天；可跨午夜 (22:00~02:00)</div></div>
+                            <div class="col-md-3"><div class="form-label small">供應星期</div>
+                                {% for n in range(1, 8) %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="avail_days" value="{{ n }}" id="d{{ n }}-{{ item.id }}" {{ 'checked' if (n|string) in (item.avail_days or '1234567') }}>
+                                    <label class="form-check-label small" for="d{{ n }}-{{ item.id }}">{{ weekdays[n - 1] }}</label></div>{% endfor %}</div>
+                            <div class="col-md-3"><label class="form-label small" for="sf-{{ item.id }}">販售期間 (季節限定)</label>
+                                <div class="input-group input-group-sm"><input class="form-control" type="date" id="sf-{{ item.id }}" name="sale_from" value="{{ item.sale_from or '' }}">
+                                    <span class="input-group-text">~</span><input class="form-control" type="date" name="sale_until" value="{{ item.sale_until or '' }}" aria-label="販售結束"></div></div>
+                            <div class="col-md-3"><div class="form-label small">通路價 (0 = 同內用 ${{ item.price }})</div>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">外帶</span><input class="form-control" type="number" min="0" name="takeout_price" value="{{ item.takeout_price }}" aria-label="外帶價">
+                                    <span class="input-group-text">線上</span><input class="form-control" type="number" min="0" name="online_price" value="{{ item.online_price }}" aria-label="線上價">
+                                    <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" name="delivery_price" value="{{ item.delivery_price }}" aria-label="外送價">
+                                    <span class="input-group-text">會員</span><input class="form-control" type="number" min="0" name="member_price" value="{{ item.member_price }}" aria-label="會員價" title="登入 / 綁定會員時與通路價取低者；0 = 無會員價"></div></div>
+                            <div class="col-md-6"><div class="form-label small">過敏原</div>
+                                {% for code, label in allergens.items() %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="allergens" value="{{ code }}" id="al-{{ code }}-{{ item.id }}" {{ 'checked' if code in item.allergen_codes }}>
+                                    <label class="form-check-label small" for="al-{{ code }}-{{ item.id }}">{{ label }}</label></div>{% endfor %}</div>
+                            <div class="col-md-3"><label class="form-label small" for="diet-{{ item.id }}">素食</label>
+                                <select class="form-select form-select-sm" id="diet-{{ item.id }}" name="diet"><option value="">葷食 / 不標示</option>
+                                    {% for code, label in diets.items() %}<option value="{{ code }}" {{ 'selected' if item.diet == code }}>{{ label }}</option>{% endfor %}</select></div>
+                            <div class="col-md-3"><label class="form-label small" for="sp-{{ item.id }}">辣度</label>
+                                <select class="form-select form-select-sm" id="sp-{{ item.id }}" name="spicy_level">{% for n, l in [(0, '不辣'), (1, '小辣'), (2, '中辣'), (3, '大辣')] %}<option value="{{ n }}" {{ 'selected' if item.spicy_level == n }}>{{ l }}</option>{% endfor %}</select></div>
+                            <div class="col-md-3"><label class="form-label small" for="nen-{{ item.id }}">English name</label><input class="form-control form-control-sm" id="nen-{{ item.id }}" name="name_en" value="{{ item.name_en }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="nja-{{ item.id }}">日本語名</label><input class="form-control form-control-sm" id="nja-{{ item.id }}" name="name_ja" value="{{ item.name_ja }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="den-{{ item.id }}">English description</label><input class="form-control form-control-sm" id="den-{{ item.id }}" name="description_en" value="{{ item.description_en }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="dja-{{ item.id }}">日本語の説明</label><input class="form-control form-control-sm" id="dja-{{ item.id }}" name="description_ja" value="{{ item.description_ja }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="ext-{{ item.id }}">外送平台 / 條碼代碼 (POS 掃描槍)</label><input class="form-control form-control-sm" id="ext-{{ item.id }}" name="external_code" value="{{ item.external_code }}" placeholder="與平台上的品項代碼相同"></div>
+                            <div class="col-md-3"><label class="form-label small" for="cost-{{ item.id }}">單位成本 (未設定配方時)</label><input class="form-control form-control-sm" id="cost-{{ item.id }}" type="number" min="0" name="unit_cost" value="{{ item.unit_cost }}"></div>
+                            <div class="col-md-6"><label class="form-label small" for="size-{{ item.id }}">規格 (名稱:加減價，逗號分隔；第一個為預設)</label><input class="form-control form-control-sm" id="size-{{ item.id }}" name="size_options" value="{{ item.size_options }}" placeholder="例如 中杯:0, 大杯:15, 小杯:-10" maxlength="200"></div>
+                            <div class="col-md-3"><label class="form-label small" for="kcal-{{ item.id }}">熱量 (大卡，0 = 不標示)</label><input class="form-control form-control-sm" id="kcal-{{ item.id }}" type="number" min="0" max="5000" name="calories" value="{{ item.calories }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="carbon-{{ item.id }}">碳足跡 (g CO₂e / 份，0 = 不標示)</label>
+                                <div class="input-group input-group-sm"><input class="form-control form-control-sm" id="carbon-{{ item.id }}" type="number" min="0" max="1000000" name="carbon_grams" value="{{ item.carbon_grams }}" {{ 'readonly' if item.carbon_auto }}>
+                                    <div class="input-group-text"><input class="form-check-input mt-0 me-1" type="checkbox" name="carbon_auto" value="1" id="carbon-auto-{{ item.id }}" {{ 'checked' if item.carbon_auto }} title="依「原物料」頁的配方與原料碳排係數自動計算"><label class="small mb-0" for="carbon-auto-{{ item.id }}">依配方</label></div></div></div>
+                            <div class="col-md-3"><label class="form-label small" for="prep-{{ item.id }}">製作時間 (分鐘，0 = 預設)</label><input class="form-control form-control-sm" id="prep-{{ item.id }}" type="number" min="0" max="120" name="prep_minutes" value="{{ item.prep_minutes or 0 }}"></div>
+                            <div class="col-md-9"><label class="form-label small" for="pn-{{ item.id }}">廚房製作卡 (做法 / 擺盤重點；廚房看板點品名顯示，配方用量自動附上)</label><textarea class="form-control form-control-sm" id="pn-{{ item.id }}" name="prep_note" rows="2" maxlength="500">{{ item.prep_note }}</textarea></div>
+                            <div class="col-md-6"><label class="form-label small" for="nutri-{{ item.id }}">營養標示 (選填)</label><input class="form-control form-control-sm" id="nutri-{{ item.id }}" name="nutrition" value="{{ item.nutrition }}" maxlength="200" placeholder="例如 蛋白質 25g、脂肪 18g、碳水化合物 40g、鈉 650mg"></div>
+                            <div class="col-12"><button class="btn btn-warning btn-sm fw-bold text-dark" type="submit">儲存「{{ item.name }}」的進階設定</button></div>
+                        </form>
+                    </td></tr>
+                    {% else %}
+                    <tr><td colspan="9" class="text-center py-4 text-white-50">目前尚無任何菜單品項</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 2. 套餐組合清單 -->
+    <div class="card card-custom p-4 mb-4 border-success">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            <h2 class="h5 fw-bold mb-0 text-white"><i class="bi bi-box-seam text-success me-2"></i>套餐組合清單</h2>
+            <button class="btn btn-success btn-sm fw-bold text-white" type="button" data-bs-toggle="modal" data-bs-target="#addComboModal">
+                <i class="bi bi-plus-lg me-1"></i> 新增套餐組合
+            </button>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-dark-custom align-middle" id="comboTable">
+                <thead>
+                    <tr class="text-white-50 small">
+                        <th>關聯主餐</th>
+                        <th>套餐名稱</th>
+                        <th>升級加購價</th>
+                        <th>配餐內容清單 (Sides)</th>
+                        <th>標籤狀態</th>
+                        <th class="text-end">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% set combo_count = namespace(n=0) %}
+                    {% for item in items %}
+                    {% for combo in item.combo_options %}
+                    {% set combo_count.n = combo_count.n + 1 %}
+                    {% set sides = combo.fixed_sides | selectattr('menu_item') | list %}
+                    <tr>
+                        <td><span class="badge bg-secondary">{{ item.name }}</span></td>
+                        <td class="fw-bold text-white">{{ combo.name }}</td>
+                        <td class="fw-bold text-danger">+${{ combo.additional_price }}</td>
+                        <td>
+                            <ul class="mb-0 list-unstyled small text-white-50">
+                                {% for side in sides %}
+                                <li>- {{ side.menu_item.name }} {% if side.customizable and side.menu_item.has_modifiers %}<span class="badge bg-info text-dark py-0 badge-xs">可客製</span>{% endif %}</li>
+                                {% endfor %}
+                            </ul>
+                        </td>
+                        <td>
+                            {% if not item.is_available %}
+                            <span class="badge bg-secondary me-1">主餐售完</span>
+                            {% elif not combo.is_available %}
+                            <span class="badge bg-warning text-dark me-1">配餐缺貨</span>
+                            {% else %}
+                            <span class="badge bg-success me-1">正常供應</span>
+                            {% endif %}
+                            {% if combo.can_addon %}
+                            <span class="badge bg-info text-dark me-1">可加購</span>
+                            {% else %}
+                            <span class="badge bg-secondary text-white-50 me-1">不可加購</span>
+                            {% endif %}
+                            <span class="badge bg-dark text-white-50 border border-secondary">{{ sides | length }}樣附餐</span>
+                            {% for group, options in combo.choice_groups %}
+                            <span class="badge bg-dark text-warning border border-warning ms-1">{{ group }} {{ options | length }} 選 1</span>
+                            {% endfor %}
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-combo"
+                                    data-id="{{ combo.id }}"
+                                    data-main-id="{{ combo.main_item_id }}"
+                                    data-name="{{ combo.name }}"
+                                    data-price="{{ combo.additional_price }}"
+                                    data-desc="{{ combo.description or '' }}"
+                                    {% for side in sides[:3] %}
+                                    data-item{{ loop.index }}="{{ side.menu_item_id }}"
+                                    data-item{{ loop.index }}-cust="{{ 1 if side.customizable else 0 }}"
+                                    {% endfor %}
+                                    data-choices="{{ combo.choices_text }}"
+                                    data-can-addon="{{ 1 if combo.can_addon else 0 }}">
+                                <i class="bi bi-pencil-square"></i> 編輯
+                            </button>
+                            <form action="{{ url_for('admin.delete_combo', id=combo.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除套餐組合【{{ combo.name }}】嗎？">
+                                {{ csrf() }}
+                                <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% endfor %}
+                    {% if combo_count.n == 0 %}
+                    <tr><td colspan="6" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 3. 分類翻譯與 AI 一鍵翻譯 (點餐頁切換語言時顯示) -->
+    <section class="card card-custom p-4 mb-4" id="menuI18nSection">
+        <h2 class="h5 fw-bold text-info"><i class="bi bi-translate me-2"></i>分類翻譯</h2>
+        <form method="POST" class="row g-2" id="categoryI18nForm">{{ csrf() }}<input type="hidden" name="action" value="categories">
+            {% for cat in categories %}
+            {% set t = translations.get(cat) %}
+            <div class="col-md-4 col-xl-3">
+                <input type="hidden" name="category" value="{{ cat }}">
+                <div class="small fw-bold mb-1">{{ cat }}</div>
+                <div class="input-group input-group-sm mb-1"><span class="input-group-text">EN</span><input class="form-control" name="en__{{ cat }}" value="{{ t.name_en if t else '' }}" aria-label="{{ cat }} 英文"></div>
+                <div class="input-group input-group-sm"><span class="input-group-text">日</span><input class="form-control" name="ja__{{ cat }}" value="{{ t.name_ja if t else '' }}" aria-label="{{ cat }} 日文"></div>
+            </div>
+            {% endfor %}
+            <div class="col-12"><button class="btn btn-outline-info btn-sm fw-bold" type="submit">儲存分類翻譯</button></div>
+        </form>
+        <form method="POST" class="d-flex flex-wrap align-items-center gap-2 mt-3 border-top border-secondary pt-3" id="menuTranslateForm"
+              data-confirm="AI 翻譯會把品名 / 說明 / 分類的英文與日文填進空白欄位 (不覆蓋已填的)，完成後請逐一檢查。繼續？">{{ csrf() }}
+            <input type="hidden" name="action" value="translate">
+            <button class="btn btn-warning btn-sm fw-bold" type="submit"><i class="bi bi-translate me-1"></i>AI 一鍵翻譯菜單</button>
+            <label class="form-check form-check-inline small mb-0"><input class="form-check-input" type="checkbox" name="overwrite" value="1" id="translateOverwrite"><span class="form-check-label" for="translateOverwrite">連已填的也重新翻譯</span></label>
+            <span class="small text-white-50">{% if menu_cfg.ai_ready %}使用 Gemini (GEMINI_API_KEY)；{% else %}未設定 GEMINI_API_KEY：只翻常見分類 / 品名 (規則字典)；{% endif %}品項的英日文名稱在各品項的「進階」設定。</span>
+        </form>
+    </section>
+</main>
+{% include "_menu_modals.html" %}
+{% include "_data_modals.html" %}
+{% endblock %}
+
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {
+    'staticMenuUrl': request.script_root + '/media/menu/',
+    'placeholderImg': PLACEHOLDER_IMG,
+    'loginUrl': url_for('admin.admin_dashboard'),
+    'menuItems': admin_menu_items,
+    'liveSync': current_user.has_permission('reports'),
+} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/cropperjs/cropper.min.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<script src="{{ url_for('static', filename='js/admin-menu.js') }}"></script>
+{% endblock %}

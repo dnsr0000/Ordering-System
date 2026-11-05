@@ -1,4 +1,5 @@
-"""後台：菜單進階設定 (供應時段 / 排程、通路價、過敏原與素食、多語系、外送代碼、成本)"""
+"""後台：菜單與套餐頁 (/admin/menu)：品項與套餐清單 (新增 / 編輯 / 刪除的 POST 在 admin.py)，
+以及每個品項的進階設定 (供應時段 / 排程、通路價、過敏原與素食、多語系、外送代碼、成本) 與分類翻譯"""
 from datetime import date
 
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
@@ -6,7 +7,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, url_f
 from app.errors import AppError
 from app.extensions import db
 from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
-from app.services import ai_service, settings_service
+from app.services import ai_service, menu_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.settings_service import TIME_RE
@@ -98,7 +99,8 @@ def translate_menu(overwrite=False):
     return filled, source
 
 
-@menu_pro_bp.route('/admin/menu_pro', methods=['GET', 'POST'], endpoint='manage')
+@menu_pro_bp.route('/admin/menu_pro', methods=['GET', 'POST'])   # 舊網址 (url_for 用先註冊的 /admin/menu)
+@menu_pro_bp.route('/admin/menu', methods=['GET', 'POST'], endpoint='manage')
 @permission_required('menu')
 def manage():
     if request.method == 'POST':
@@ -138,9 +140,16 @@ def manage():
         db.session.commit()
         order_event_bus.notify(g.tenant_id)   # 數位看板：供應時段 / 價格 / 翻譯變更即時更新
         return redirect(url_for('menu_pro.manage', _anchor=f"item-{request.form.get('item_id')}" if action == 'item' else None))
-    items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all()
+    from sqlalchemy.orm import selectinload
+    from app.models.menu import ComboOption
+    from app.routes.admin import data_modal_context
+    # 套餐清單逐筆列出每個品項的套餐與配餐：一次載入 (否則每個品項各查一次 combo_option，N+1)
+    items = (MenuItem.query.options(selectinload(MenuItem.combo_options).selectinload(ComboOption.sides))
+             .order_by(MenuItem.category, MenuItem.name).all())
     categories = sorted({(i.category or '未分類').strip() for i in items})
     translations = {t.category: t for t in CategoryTranslation.query.all()}
-    return render_template('admin_menu_pro.html', items=items, categories=categories, translations=translations,
+    return render_template('admin_menu.html', items=items, categories=categories, translations=translations,
+                           admin_menu_items=[menu_service.item_form_data(i) for i in items],
                            allergens=ALLERGENS, diets=DIETS, weekdays=WEEKDAY_LABELS,
-                           menu_cfg=dict(settings_service.get('menu'), ai_ready=ai_service.has_api_key()))
+                           menu_cfg=dict(settings_service.get('menu'), ai_ready=ai_service.has_api_key()),
+                           **data_modal_context())

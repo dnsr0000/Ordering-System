@@ -16,12 +16,8 @@ from app.services import settings_service
 CODE_LENGTH = 16
 
 
-def config(tenant_id=None):
-    return settings_service.get('gift_card', tenant_id)
-
-
-def enabled(tenant_id=None):
-    return bool(config(tenant_id).get('enabled'))
+config = settings_service.reader('gift_card')
+enabled = settings_service.flag('gift_card')
 
 
 def normalize_code(raw):

@@ -1,20 +1,25 @@
-"""後台：會員等級、生日、儲值金調整、LINE 推播"""
+"""後台：會員頁 (/admin/members)：名冊 (分頁、搜尋、排序；編輯 / 刪除 / 票券的 POST 在 admin.py)、
+會員等級、生日、儲值金調整、LINE 推播"""
 from datetime import date
 
-from flask import Blueprint, flash, g, redirect, render_template, request, url_for
+import os
+
+from flask import Blueprint, current_app, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from app.errors import AppError
 from app.extensions import db
 from app.models.member import MemberTier, WalletLedger
 from app.models.user import User
-from app.services import line_service, settings_service, wallet_service
+from app.services import coupon_service, line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
+from app.services.upload_paths import upload_file_path
 from app.utils import get_own, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
+PAGE_SIZE = 50
 
 
 def _user(uid):
@@ -22,7 +27,8 @@ def _user(uid):
     return user
 
 
-@members_pro_bp.route('/admin/members_pro', methods=['GET', 'POST'], endpoint='manage')
+@members_pro_bp.route('/admin/members_pro', methods=['GET', 'POST'])   # 舊網址 (url_for 用先註冊的 /admin/members)
+@members_pro_bp.route('/admin/members', methods=['GET', 'POST'], endpoint='manage')
 @permission_required('members')
 def manage():
     if request.method == 'POST':
@@ -107,13 +113,21 @@ def manage():
         else:
             raise AppError('不支援的操作')
         db.session.commit()
-        return redirect(url_for('members_pro.manage', q=request.args.get('q') or None))
+        return redirect(url_for('members_pro.manage', q=request.args.get('q') or None, sort=request.args.get('sort') or None,
+                                page=request.args.get('page') or None))
 
-    q = (request.args.get('q') or '').strip()
+    # 名冊：分頁 + 搜尋 + 排序 (會員數上千時不一次載入全部；持券於開啟票券視窗時才載入)
+    q = (request.args.get('q') or '').strip()[:50]
+    sort = 'spent' if request.args.get('sort') == 'spent' else ''
     users_q = User.query
     if q:
         users_q = users_q.filter((User.name.contains(q)) | (User.phone.contains(q)))
-    users = users_q.order_by(User.total_spent.desc(), User.id).limit(200).all()
+    total = users_q.count()
+    pages = max(1, -(-total // PAGE_SIZE))
+    page = min(max(1, safe_int(request.args.get('page'), 1)), pages)
+    order = (User.total_spent.desc(), User.id) if sort == 'spent' else (User.id.desc(),)
+    users = users_q.order_by(*order).offset((page - 1) * PAGE_SIZE).limit(PAGE_SIZE).all()
+    member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
     tiers = wallet_service.tiers()
     stats = {
         'members': User.query.count(),
@@ -124,6 +138,11 @@ def manage():
     }
     ledger = WalletLedger.query.order_by(WalletLedger.id.desc()).limit(50).all()
     names = {u.id: u.name for u in User.query.filter(User.id.in_({w.user_id for w in ledger})).all()} if ledger else {}
-    return render_template('admin_members_pro.html', users=users, tiers=tiers, stats=stats, q=q, colors=TIER_COLORS,
+    return render_template('admin_members.html', users=users, tiers=tiers, stats=stats, q=q, sort=sort, page=page, pages=pages,
+                           total=total, colors=TIER_COLORS,
+                           # 只顯示實際存在的會員照片 (檔案遺失時改顯示預設圖，避免瀏覽器出現 404)
+                           member_photo_ids={u.id for u in users if os.path.isfile(upload_file_path(member_dir, u.photo_path) or '')},
+                           coupon_counts={u.id: coupon_service.unused_count(u) for u in users},
+                           coupon_history_days=coupon_service.HISTORY_DAYS,
                            cfg=settings_service.get('member'), line_ready=line_service.messaging_enabled(),
                            ledger=ledger, names=names)

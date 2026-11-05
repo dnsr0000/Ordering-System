@@ -28,6 +28,9 @@
             <div class="stat-value {{ 'text-success' if ai.local.loaded else ('text-danger' if ai.local.error else ('text-warning' if not ai.local.installed or not ai.local.model_exists else '')) }}">
                 {{ '已載入' if ai.local.loaded else ('未安裝套件' if not ai.local.installed else ('找不到模型檔' if not ai.local.model_exists else ('載入失敗' if ai.local.error else '尚未使用 (第一次需要時載入)'))) }}</div>
             <div class="small text-white-50">{% if ai.local.error %}<span class="text-danger">{{ ai.local.error[:160] }}</span>{% elif not ai.local.installed %}安裝：{{ ai.local.install_hint }}{% else %}{{ ai.local.model_path }}{% endif %}</div></div></div>
+        <div class="col-12 col-md-6"><div class="stat-tile" id="faceTile"><div class="stat-label">人臉辨識登入 (門市)</div>
+            <div class="stat-value {{ 'text-success' if health.face_ok else 'text-warning' }}">{{ '可用' if health.face_ok else '停用' }}</div>
+            <div class="small text-white-50">{{ health.face_reason or 'YuNet 偵測 + SFace 特徵 (models/*.onnx)' }}</div></div></div>
     </div>
     <div class="row g-3 mb-4">
         {% for label, value, url in [('待開立發票', health.invoice_pending, url_for('invoices.list_invoices', status='pending')), ('開立失敗發票', health.invoice_failed, url_for('invoices.list_invoices', status='failed')),

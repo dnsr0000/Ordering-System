@@ -1,9 +1,8 @@
-"""第三輪 #13~#16：會計匯出、對外 API / Webhook、裝置管理、舊資料封存"""
+"""會計匯出、對外 API / Webhook、裝置管理、舊資料封存"""
 import hashlib
 import hmac
 import json
 import re
-from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -15,10 +14,9 @@ from app.models.menu import MenuItem
 from app.models.order import Order
 from app.models.payment import Invoice, PaymentRecord
 from app.models.sync import SyncTombstone
-from app.models.tenant import Tenant
 from app.models.user import CustomerLog, User
 from app.services import monitor_service, webhook_service
-from tests.support import assert_flash, checkout, line, login_staff, make_item
+from tests.support import assert_flash, checkout, get_or_create_tenant, line, login_staff, make_item, tenant_request
 
 
 @pytest.fixture
@@ -33,24 +31,6 @@ def alerts(monkeypatch):
     out = []
     monkeypatch.setattr(monitor_service, 'alert', lambda msg, **kw: out.append(msg))
     return out
-
-
-def _tenant(app, slug):
-    with app.app_context():
-        t = Tenant.query.filter_by(slug=slug).first()
-        if t is None:
-            t = Tenant(name=f'測試 {slug}', slug=slug)
-            db.session.add(t)
-            db.session.commit()
-        return t.id
-
-
-@contextmanager
-def _ctx(app, tenant_id):
-    from app.tenant_context import _use_tenant
-    with app.test_request_context('/'):
-        _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
-        yield
 
 
 def _item(tid, name, price=100):
@@ -72,10 +52,10 @@ def _buy(tid, item_id, qty=1, **kw):
 # ===========================================================================
 def test_accounting_journal_balances_and_exports(app):
     from app.services import accounting_service
-    tid = _tenant(app, 'acct-shop')
+    tid = get_or_create_tenant(app, 'acct-shop')
     day = date(2026, 9, 15)
     at = datetime(2026, 9, 15, 12, 0)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         for kind, method, amount in (('sale', 'Cash', 1050), ('settle', 'Credit Card', 2100), ('sale', '儲值金', 210),
                                      ('refund', 'Cash', -105), ('topup', 'Cash', 1000), ('gift_sale', 'Credit Card', 500),
                                      ('pay_out', 'Cash', -100), ('pay_in', 'Cash', 300)):
@@ -122,11 +102,11 @@ def _create_key(owner, scopes, name='ERP'):
 
 
 def test_public_api_scopes_and_tenant_isolation(app, no_rate_limit):
-    tid = _tenant(app, 'api-shop')
+    tid = get_or_create_tenant(app, 'api-shop')
     owner = login_staff(app, 'api_owner', 'owner', tenant_id=tid)
     key = _create_key(owner, ['orders:read', 'menu:read', 'members:read', 'reports:read'])
     writer = _create_key(owner, ['menu:write'], name='庫存同步')
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         item_id = _item(tid, 'API 測試餐', 120)
         db.session.add(User(tenant_id=tid, name='API 會員', phone='0977400001', photo_path='', points=15))
         db.session.commit()
@@ -155,7 +135,7 @@ def test_public_api_scopes_and_tenant_isolation(app, no_rate_limit):
     feed = c.get('/api/v1/orders?cursor=0', headers=h).get_json()
     assert [o['uuid'] for o in feed['orders']] == list(uuids)
     assert c.get(f"/api/v1/orders?cursor={feed['next_cursor']}", headers=h).get_json()['orders'] == []
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         o = Order.query.filter_by(uuid=uuids[0]).one()
         o.status = 'Completed'
         db.session.commit()
@@ -187,7 +167,7 @@ def test_public_api_scopes_and_tenant_isolation(app, no_rate_limit):
 
 
 def test_webhook_events_signature_retry_and_ssrf_guard(app, monkeypatch, alerts):
-    tid = _tenant(app, 'hook-shop')
+    tid = get_or_create_tenant(app, 'hook-shop')
     owner = login_staff(app, 'hook_owner', 'owner', tenant_id=tid)
     r = owner.post('/admin/integrations', data={'action': 'create_hook', 'name': 'ERP', 'url': 'http://erp.example.test/x',
                                                 'events': ['order.created']}, follow_redirects=True)
@@ -201,7 +181,7 @@ def test_webhook_events_signature_retry_and_ssrf_guard(app, monkeypatch, alerts)
         sent.append((url, body, headers))
         return 200
 
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         ep = WebhookEndpoint.query.filter_by(tenant_id=tid).one()
         item_id = _item(tid, 'Webhook 測試餐', 80)
         order = _buy(tid, item_id)
@@ -308,9 +288,9 @@ def test_device_pair_heartbeat_lock_and_reload(app, admin_client, no_rate_limit)
 def test_archive_moves_old_orders_and_logs_keeps_member_spend(app):
     import sqlalchemy as sa
     from app.services import archive_service, wallet_service
-    tid = _tenant(app, 'archive-shop')
+    tid = get_or_create_tenant(app, 'archive-shop')
     old = datetime.now() - timedelta(days=3 * 365)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         item_id = _item(tid, '封存測試餐', 100)
         u = User(tenant_id=tid, name='封存會員', phone='0977500001', photo_path='')
         db.session.add(u)
@@ -336,7 +316,7 @@ def test_archive_moves_old_orders_and_logs_keeps_member_spend(app):
     assert 'data-archive-count="order">3<' in page and 'id="archiveRunBtn"' in page
     r = owner.post('/admin/archive', data={'action': 'run'}, follow_redirects=True)
     assert '訂單 3 筆' in r.get_data(as_text=True)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         assert Order.query.filter(Order.id.in_(old_ids)).count() == 0
         assert db.session.get(Order, stuck_id) is not None and db.session.get(Order, recent_id) is not None
         assert PaymentRecord.query.filter(PaymentRecord.order_id.in_(old_ids)).count() == 0
@@ -390,8 +370,8 @@ def test_campaign_and_webhook_delivery_are_claimed_once(app, monkeypatch):
     from app.models.marketing import MarketingCampaign
     from app.services import marketing_service
     from tests.support import run_together
-    tid = _tenant(app, 'claim-shop')
-    with _ctx(app, tid):
+    tid = get_or_create_tenant(app, 'claim-shop')
+    with tenant_request(app, tid):
         c = MarketingCampaign(tenant_id=tid, name='排程中', kind='broadcast', segment='all', message='hi',
                               send_at=datetime.now() - timedelta(minutes=1), status='running')
         db.session.add(c)
@@ -457,8 +437,8 @@ def test_webhook_target_checks_and_pinned_connection(app, monkeypatch):
 
 
 def test_webhook_line_pay_authorizing_order_events(app, monkeypatch):
-    tid = _tenant(app, 'hook-shop2')
-    with _ctx(app, tid):
+    tid = get_or_create_tenant(app, 'hook-shop2')
+    with tenant_request(app, tid):
         ep = WebhookEndpoint(tenant_id=tid, name='ERP', url='https://erp.example.test/h',
                              events=','.join(webhook_service.WEBHOOK_EVENTS), created_at=datetime.now() - timedelta(days=1))
         db.session.add(ep)
@@ -489,7 +469,7 @@ def test_exports_neutralize_formulas_and_api_key_not_in_cookie(app):
     assert [c.data_type for c in ws['A'][1:]] == ['s', 's'] and ws['A2'].value == '=1+1'
     text = accounting_service.to_csv(['名稱'], [['=1+1']]).read().decode('utf-8')
     assert "'=1+1" in text
-    tid = _tenant(app, 'cookie-shop')
+    tid = get_or_create_tenant(app, 'cookie-shop')
     owner = login_staff(app, 'cookie_owner', 'owner', tenant_id=tid)
     r = owner.post('/admin/integrations', data={'action': 'create_key', 'name': 'x', 'scopes': ['menu:read']})
     raw = re.search(r'kk_[A-Za-z0-9_-]+', r.get_data(as_text=True)).group(0)
@@ -504,10 +484,10 @@ def test_archive_keys_rows_by_uuid_even_if_ids_are_reused(app, tmp_path, monkeyp
     """SQLite 刪除最大 id 後會重複使用該 id：封存檔以 uuid 為主鍵，不會覆蓋先前封存的資料"""
     import sqlalchemy as sa
     from app.services import archive_service
-    tid = _tenant(app, 'archive-reuse')
+    tid = get_or_create_tenant(app, 'archive-reuse')
     monkeypatch.setattr(archive_service, 'archive_dir', lambda: str(tmp_path))
     # (三年前的時間由封存服務自行計算)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         engine, meta = archive_service._archive_engine(tid)
         with engine.begin() as conn:
             rows = [type('R', (), {'_mapping': {'id': 99999, 'uuid': f'u-{i}', 'tenant_id': tid, 'item_name': f'品項{i}',

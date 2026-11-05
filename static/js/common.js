@@ -211,7 +211,7 @@
         if (btn) setA11y(!document.documentElement.classList.contains('a11y-large'));
     });
 
-    // ---------------------------------------------------------------- 淺色 / 深色 (顧客頁，第六輪)
+    // ---------------------------------------------------------------- 淺色 / 深色 (顧客頁，)
     // 按鈕 data-action="toggle-theme"；記在 localStorage (顧客自己的手機會記住)；<html data-bs-theme="light|dark">
     const THEME_KEY = 'kiosk-theme';
 
@@ -239,7 +239,7 @@
         if (btn) setTheme(document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light');
     });
 
-    // ---------------------------------------------------------------- PWA 安裝提示 (第六輪)
+    // ---------------------------------------------------------------- PWA 安裝提示
     // 瀏覽器允許安裝時顯示 #pwaInstallBtn (顧客頁)；按下後呼叫瀏覽器的安裝對話框
     let installEvent = null;
     window.addEventListener('beforeinstallprompt', (ev) => {

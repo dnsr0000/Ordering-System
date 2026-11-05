@@ -292,7 +292,7 @@
   更新腳本改從 database\updates\update_store.run.cmd 複本執行 (覆蓋程式檔時不會動到正在執行的批次檔)、只殺伺服器本身 (不加 /t)；
   電子收據每張訂單每天最多寄 5 次。
 - 修正：百分比優惠券 (例如 85 折) 折完留下小數 (90 × 0.85 = 76.5) 時，點數折抵上限原本是無條件捨去 (76)，顧客永遠剩 $1 折不掉；
-  改為四捨五入後的應付金額 (77)，點餐機 / POS / 後端一致 (tests/test_round6_ops.py)。
+  改為四捨五入後的應付金額 (77)，點餐機 / POS / 後端一致 (tests/test_ops_backup_update_metrics.py)。
 - 小項：顧客頁右上角淺色 / 深色切換 (localStorage；customer.css 的 [data-bs-theme="light"] 覆寫)、PWA「安裝到主畫面」按鈕
   (beforeinstallprompt 時才出現)、POS 常用備註快捷鍵 (收銀規則 → 常用備註快捷鍵)、系統設定匯出 / 匯入 JSON (不含金鑰與本機專屬區塊；
   平台管理者 ?secrets=1 可含金鑰；匯入只認得的區塊 / 欄位、型別與範圍檢查)、mypy 對第五 / 六輪新模組開啟 check_untyped_defs。
@@ -620,7 +620,7 @@ Project Root/
                 test_web_security               CSRF (全路由掃描)、安全標頭、訊息跳脫、錯誤輸入不出 500
                 test_rate_limits_and_lockout    登入頻率限制、PIN 鎖定、X-Forwarded-For 信任
                 test_tenants_and_isolation      新店家註冊、店家入口、跨店資料隔離
-                test_security_audit2            資安審查第二輪：整庫備份限平台管理者、門市不開放公開建店、綠界測試金鑰需明確允許、
+                test_security_hardening            資安審查第二輪：整庫備份限平台管理者、門市不開放公開建店、綠界測試金鑰需明確允許、
                                                 LINE 待綁定清除 / 逾時、打卡頁遮罩帳號、已註冊裝置不受帳號鎖定、
                                                 POS 動用儲值金 / 點數需會員驗證 (條碼 / PIN / 核准)、訂單 uuid 由伺服器產生、
                                                 監控 Webhook 與線上端寄信 / 校時 / 印表機不可連內網、簡訊全店上限
@@ -718,17 +718,17 @@ Project Root/
                 test_i18n_coverage              顧客端多語系：鍵名不與 dict 方法撞名、三種語言齊全、所有顧客頁樣板無寫死中文、
                                                 每個顧客頁英 / 日文渲染無中文介面、translate_message (逐句 / 樣式 / 圖示 / 無對照)、
                                                 JSON 錯誤的 message_i18n、flash 翻譯、員工頁維持中文、Accept-Language 偵測
-                test_round6_menu_kiosk          AI 翻譯菜單 (Gemini JSON / 規則字典 / 不覆蓋)、飲食篩選資料、點餐機禮物卡 (查餘額 /
+                test_menu_i18n_kiosk_perms          AI 翻譯菜單 (Gemini JSON / 規則字典 / 不覆蓋)、飲食篩選資料、點餐機禮物卡 (查餘額 /
                                                 扣款 / 不足 / 未開放)、會員價 (price_for / 劃線價 / POS 綁定)、後台頁面權限
-                test_round6_receipt_kds_feedback 電子收據 (Email / LINE / 記住 Email / 自動傳)、廚房製作卡、評價回覆與公開好評
-                test_round6_ops                 異地備份 (WebDAV / S3 簽章 / 指令 / 修剪 / 每日 / 測試)、一鍵更新 (版本比較 / 下載 /
+                test_receipt_kds_feedback 電子收據 (Email / LINE / 記住 Email / 自動傳)、廚房製作卡、評價回覆與公開好評
+                test_ops_backup_update_metrics                 異地備份 (WebDAV / S3 簽章 / 指令 / 修剪 / 每日 / 測試)、一鍵更新 (版本比較 / 下載 /
                                                 面板)、/metrics 與 Sentry、N+1 守門、設定匯出匯入、POS 常用備註、淺色模式、Dependabot
   瀏覽器        test_e2e_*                      端對端 (後台、顧客點餐、廚房取餐、會員、POS、所有頁面、進階功能、
                                                 改價後購物車更新 test_e2e_price_change、套餐任選 / 混合付款 / 作廢品項 / 平面圖 / 桌邊結帳 / 寄杯 / 菜單工程 / 自動行銷 / 裝置鎖定
-                                                test_e2e_round3、費用登錄 → 損益表 / API 文件線上試打 / 斷線暫存補送 / 團體預購
-                                                test_e2e_round4、POS 暫停接單 → 點餐機被擋 / 預估等候與再點一次 / 售完即時更新 /
-                                                POS 掃條碼 / 稽核頁 test_e2e_round5、顧客頁 axe-core 無障礙 / 飲食篩選 / 會員價 /
-                                                點餐機禮物卡 / 製作卡 / 評價回覆與好評 / 頁面權限 test_e2e_round6)
+                                                test_e2e_combo_split_void、費用登錄 → 損益表 / API 文件線上試打 / 斷線暫存補送 / 團體預購
+                                                test_e2e_expenses_api_offline_group、POS 暫停接單 → 點餐機被擋 / 預估等候與再點一次 / 售完即時更新 /
+                                                POS 掃條碼 / 稽核頁 test_e2e_intake_eta_barcode_audit、顧客頁 axe-core 無障礙 / 飲食篩選 / 會員價 /
+                                                點餐機禮物卡 / 製作卡 / 評價回覆與好評 / 頁面權限 test_e2e_a11y_filters_receipt_perms)
   壓力          test_stress_http                真實 HTTP 壓力測試
                 load_gunicorn_pg                (不是 pytest，直接執行) gunicorn 多 worker + PostgreSQL + Redis 負載測試與一致性檢查
 
@@ -778,7 +778,7 @@ Project Root/
   - 新的稽核動作請在 app/services/audit.py 的 ACTION_LABELS 補顯示名稱。
   - 後台頁面的權限：店長以上的頁面用 @permission_required('menu' | 'coupons' | 'members' | 'feedback' | 'settings')
     (enums.PERMISSIONS，可個別授權給櫃檯)，不要再用 role_required(*MANAGER_ROLES)；只有負責人的仍用 role_required('owner')。
-  - 列表頁 / API 的查詢數要與資料量無關 (tests/test_round6_ops.py 的 N+1 守門)：關聯用 selectinload 一次載入。
+  - 列表頁 / API 的查詢數要與資料量無關 (tests/test_ops_backup_update_metrics.py 的 N+1 守門)：關聯用 selectinload 一次載入。
   - 新模組請加進 mypy.ini 最下方的完整檢查清單 (check_untyped_defs = True)。
   - 顧客頁的顏色：深底上的文字對比 4.5:1 以上 (e2e 的 axe-core 會擋嚴重 / 重大違規)；表單控制項要有 label 或 aria-label。
   - 版本：發布新版時改 VERSION 檔 (YYYY.MM.DD) 並在 GitHub 建 release (tag 同版本)，門市才會看到「有新版本」。

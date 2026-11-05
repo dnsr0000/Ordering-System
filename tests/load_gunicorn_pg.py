@@ -1,5 +1,5 @@
 """
-多 worker 負載測試 (第四輪)：對「正在執行的伺服器」(gunicorn 多 worker + PostgreSQL + Redis) 模擬尖峰時段，
+多 worker 負載測試：對「正在執行的伺服器」(gunicorn 多 worker + PostgreSQL + Redis) 模擬尖峰時段，
 並在結束後檢查資料一致性。不是 pytest 測試 (檔名不以 test_ 開頭)，請直接執行：
 
   1. 準備 (線上端的測試機，或本機 docker compose 環境；不要對正式資料庫執行)：

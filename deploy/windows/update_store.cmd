@@ -48,7 +48,7 @@ if errorlevel 8 ( echo 覆蓋程式檔失敗，還原 >> "%LOG%" & goto :rollbac
 rmdir /s /q "%TMPDIR%" >nul 2>&1
 
 REM 4. 套件與資料庫
-"%PY%" -m pip install -r requirements.txt >> "%LOG%" 2>&1
+"%PY%" -m pip install -r requirements-store.txt >> "%LOG%" 2>&1
 if errorlevel 1 ( echo pip install 失敗，還原 >> "%LOG%" & goto :rollback )
 "%PY%" -m flask --app run db upgrade >> "%LOG%" 2>&1
 if errorlevel 1 ( echo 資料庫升級失敗，還原程式檔與資料庫 >> "%LOG%" & goto :rollback )

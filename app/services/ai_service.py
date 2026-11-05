@@ -187,9 +187,6 @@ def run_local_slm(prompt_text, max_tokens=100, system=None, stop=None, temperatu
         _llm_lock.release()
 
 
-def local_available():
-    return _get_local_llm() is not None
-
 
 def ai_status():
     """系統健康頁：Gemini 與本機模型目前的狀態"""
@@ -354,7 +351,7 @@ def invalidate_ai_advice(tenant_id):
 
 
 # ---------------------------------------------------------------------------
-# 菜單翻譯 (第六輪)：Gemini 一次翻一批 → 規則字典 (常見分類 / 品項字眼) → 留白
+# 菜單翻譯：Gemini 一次翻一批 → 規則字典 (常見分類 / 品項字眼) → 留白
 # ---------------------------------------------------------------------------
 TRANSLATE_BATCH = 25
 TRANSLATE_LANGS = ('en', 'ja')

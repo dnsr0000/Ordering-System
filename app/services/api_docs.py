@@ -1,5 +1,5 @@
 """
-對外 API 說明文件 (第四輪)：/developers 頁面與 /developers/openapi.json (OpenAPI 3.0)。
+對外 API 說明文件：/developers 頁面與 /developers/openapi.json (OpenAPI 3.0)。
 端點清單在這裡宣告一次，頁面、OpenAPI 規格與「試打」表單都由此產生；新增 API 時請一併更新 ENDPOINTS
 (tests/test_expenses_pnl_cost_history.py 會比對 app/routes/api_v1.py 的實際路由，漏寫會失敗)。
 """

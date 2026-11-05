@@ -22,8 +22,7 @@ from app.services import payment_ecpay, settings_service
 logger = logging.getLogger(__name__)
 
 
-def enabled(tenant_id=None):
-    return bool(settings_service.get('table_pay', tenant_id).get('enabled'))
+enabled = settings_service.flag('table_pay')
 
 
 def bill(table):

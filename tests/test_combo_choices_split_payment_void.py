@@ -1,4 +1,4 @@
-"""第三輪 #1~#3：套餐任選 (群組單選、升級加價)、混合付款 (一筆訂單多種付款方式)、單品作廢 / 改單"""
+"""套餐任選 (群組單選、升級加價)、混合付款 (一筆訂單多種付款方式)、單品作廢 / 改單"""
 import pytest
 
 from app.extensions import db, limiter
@@ -7,8 +7,8 @@ from app.models.menu import ComboOption, MenuItem
 from app.models.order import Order, OrderItem
 from app.models.payment import PaymentRecord, Refund
 from app.models.user import User
-from tests.support import checkout, default_tenant_id, guest_client, line, login_staff, make_item, make_member, \
-    run_together
+from tests.support import (checkout, default_tenant_id, guest_client, item_stock, line, login_staff, make_item, make_member,
+                           run_together)
 
 POS = '/api/pos/checkout'
 
@@ -18,11 +18,6 @@ def no_rate_limit():
     limiter.enabled = False
     yield
     limiter.enabled = True
-
-
-def _stock(app, item_id):
-    with app.app_context():
-        return db.session.get(MenuItem, item_id).stock
 
 
 def _make_combo(admin_client, app, main, name, choices, price=50, side=None):
@@ -69,7 +64,7 @@ def test_combo_choice_groups_price_stock_and_validation(app, admin_client, staff
     with app.app_context():
         oi = OrderItem.query.filter_by(order_id=body['order_id']).one()
         assert oi.customization.startswith('[套餐: 任選A餐]、飲料:任選奶茶(+15)')
-    assert (_stock(app, fries), _stock(app, milk_tea), _stock(app, tea), _stock(app, coffee)) == (19, 19, 20, 20)
+    assert (item_stock(app, fries), item_stock(app, milk_tea), item_stock(app, tea), item_stock(app, coffee)) == (19, 19, 20, 20)
 
     # 沒選 / 選了不屬於這個套餐的選項
     assert '請在「飲料」中選擇一項' in checkout(staff_client, [line(burger, combo_option_id=combo)], url=POS,
@@ -86,7 +81,7 @@ def test_combo_choice_groups_price_stock_and_validation(app, admin_client, staff
     # 取消：回補當時選的奶茶
     assert staff_client.post(f"/api/orders/{body['order_id']}/status", json={'status': 'Cancelled'}).status_code in (200, 403)
     admin_client.post(f"/api/orders/{body['order_id']}/status", json={'status': 'Cancelled'})
-    assert (_stock(app, fries), _stock(app, milk_tea)) == (20, 20)
+    assert (item_stock(app, fries), item_stock(app, milk_tea)) == (20, 20)
 
 
 def test_combo_choice_admin_validation_and_edit(app, admin_client):
@@ -104,7 +99,7 @@ def test_combo_choice_admin_validation_and_edit(app, admin_client):
         c = db.session.get(ComboOption, combo)
         assert c.choices_text == '飲料: 任選驗證茶, 任選驗證汽水+5'
         assert c.to_dict()['choices'][0]['options'][1]['extra_price'] == 5
-    page = admin_client.get('/admin').get_data(as_text=True)
+    page = admin_client.get('/admin/menu').get_data(as_text=True)
     assert '飲料 2 選 1' in page and 'data-choices="飲料: 任選驗證茶, 任選驗證汽水+5"' in page
 
 
@@ -175,7 +170,7 @@ def test_split_payment_rejects_bad_tenders(app, store_settings):
     for tenders, msg in cases:
         r = checkout(pos, [line(item)], url=POS, payment_method='混合付款', payment_info={'tenders': tenders})
         assert r.status_code == 400 and msg in r.get_json()['message'], (tenders, r.get_json())
-    assert _stock(app, item) == 5
+    assert item_stock(app, item) == 5
 
 
 # ===========================================================================
@@ -199,7 +194,7 @@ def test_void_item_restocks_refunds_proportionally_and_cancel_does_not_double(ap
 
     r = admin_client.post(f'/api/pos/orders/{oid}/void_item', json={'item_id': fries_line, 'quantity': 1, 'reason': '做錯'})
     assert r.status_code == 200 and r.get_json()['amount'] == 45, r.get_json()
-    assert _stock(app, fries) == 20 and _order_items(app, oid)['作廢測試薯條'] == (0, 1)
+    assert item_stock(app, fries) == 20 and _order_items(app, oid)['作廢測試薯條'] == (0, 1)
     with app.app_context():
         o = db.session.get(Order, oid)
         assert (o.refunded_amount, o.total_price) == (45, 225)
@@ -214,7 +209,7 @@ def test_void_item_restocks_refunds_proportionally_and_cancel_does_not_double(ap
                              json={'item_id': burger_line, 'quantity': 1, 'reason': ''}).status_code == 400
     assert admin_client.post(f'/api/pos/orders/{oid}/void_item',
                              json={'item_id': burger_line, 'quantity': 1, 'reason': '客人不要'}).status_code == 200
-    assert _stock(app, burger) == 19
+    assert item_stock(app, burger) == 19
 
     # 廚房看板：顯示作廢份數，剩下的照常
     kds = admin_client.get('/api/kitchen_orders').get_json()['orders']
@@ -223,7 +218,7 @@ def test_void_item_restocks_refunds_proportionally_and_cancel_does_not_double(ap
 
     # 之後整單取消：只回補剩下的 1 份堡 (不重複回補已作廢的)
     assert admin_client.post(f'/api/orders/{oid}/status', json={'status': 'Cancelled'}).status_code == 200
-    assert (_stock(app, burger), _stock(app, fries)) == (20, 20)
+    assert (item_stock(app, burger), item_stock(app, fries)) == (20, 20)
     with app.app_context():
         assert db.session.get(Order, oid).refunded_amount == 225
 
@@ -261,7 +256,7 @@ def test_concurrent_voids_never_exceed_quantity(app, admin_client, no_rate_limit
 
     results = run_together(*[void] * 4)
     assert sorted(r.status_code for r in results) == [200, 200, 409, 409]
-    assert _order_items(app, oid)['同時作廢餐'] == (0, 2) and _stock(app, item) == 20
+    assert _order_items(app, oid)['同時作廢餐'] == (0, 2) and item_stock(app, item) == 20
     with app.app_context():
         assert db.session.get(Order, oid).refunded_amount == 120
 

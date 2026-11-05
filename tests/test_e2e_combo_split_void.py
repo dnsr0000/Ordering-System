@@ -1,4 +1,4 @@
-"""端對端 (第三輪)：點餐機 / POS 套餐任選、POS 混合付款、POS 作廢單一品項 (改單)"""
+"""端對端：點餐機 / POS 套餐任選、POS 混合付款、POS 作廢單一品項 (改單)"""
 import re
 import uuid
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ from app.extensions import db
 from app.models.menu import ComboOption, ComboOptionItem, MenuItem
 from app.models.order import Order, OrderItem
 from app.models.payment import PaymentRecord
-from tests.support import browser_staff_login, default_tenant_id, make_item, seed_demo
+from tests.support import browser_staff_login, default_tenant_id, item_stock, make_item, seed_demo
 
 pytestmark = pytest.mark.e2e
 
@@ -33,11 +33,6 @@ def combo_menu(app):
         db.session.commit()
         latte_choice = ComboOptionItem.query.filter_by(combo_option_id=combo.id, menu_item_id=latte).one().id
         return dict(burger=burger, tea=tea, latte=latte, combo=combo.id, latte_choice=latte_choice, tag=tag)
-
-
-def _stock(app, item_id):
-    with app.app_context():
-        return db.session.get(MenuItem, item_id).stock
 
 
 def test_kiosk_combo_choice(app, page, combo_menu):
@@ -63,7 +58,7 @@ def test_kiosk_combo_choice(app, page, combo_menu):
     with app.app_context():
         order = Order.query.filter_by(client_order_id=req.value.post_data_json['client_order_id']).one()
         assert order.total_price == 185
-    assert (_stock(app, m['latte']), _stock(app, m['tea'])) == (29, 30)
+    assert (item_stock(app, m['latte']), item_stock(app, m['tea'])) == (29, 30)
 
 
 def _open_pos(page, username='e2e_pos'):
@@ -134,7 +129,7 @@ def test_pos_void_single_item(app, page, combo_menu):
         oi = db.session.get(OrderItem, soup_line)
         assert (oi.quantity, oi.voided_qty) == (1, 1)
         assert db.session.get(Order, order_id).refunded_amount == 50
-    assert _stock(app, soup) == 29
+    assert item_stock(app, soup) == 29
 
 
 # ===========================================================================

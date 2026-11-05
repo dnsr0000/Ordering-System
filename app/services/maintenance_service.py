@@ -132,6 +132,8 @@ def health(tenant_id):
     info['print_failed'] = PrintJob.query.filter(PrintJob.status == 'failed').count()
     info['print_queued'] = PrintJob.query.filter(PrintJob.status == 'queued').count()
     info['refund_manual'] = Refund.query.filter(Refund.status.in_(('manual', 'failed'))).count()
+    from app.services.cv_service import face_status
+    info['face_ok'], info['face_reason'] = face_status()
     if sync_runtime.is_node():
         info['sync_last_ok'] = sync_runtime.get_state('last_success_at', '')
         info['sync_last_error'] = sync_runtime.get_state('last_error', '')

@@ -176,7 +176,7 @@ class Config:
     LOG_FILE = os.getenv("LOG_FILE", os.path.join(DATABASE_DIR, "logs", "app.log"))
     LOG_MAX_BYTES = max(1024 * 1024, _env_int("LOG_MAX_BYTES", 10 * 1024 * 1024))
     LOG_BACKUP_COUNT = max(1, _env_int("LOG_BACKUP_COUNT", 5))
-    # ---- 錯誤回報與指標 (第六輪，app/services/observability.py)：都是選用 ----
+    # ---- 錯誤回報與指標 (app/services/observability.py)：都是選用 ----
     SENTRY_DSN = _env("SENTRY_DSN")                      # 設定後 (並 pip install sentry-sdk) 未預期錯誤送到 Sentry，帶請求識別碼
     SENTRY_TRACES_SAMPLE_RATE = float(_env("SENTRY_TRACES_SAMPLE_RATE") or 0)
     METRICS_TOKEN = _env("METRICS_TOKEN")                # 設定後 GET /metrics?token=… (或 Bearer) 回 Prometheus 文字格式

@@ -1,4 +1,4 @@
-"""第四輪：營業費用 (expense)、原料成本 / 餐點售價變動歷史 (cost_history)
+"""營業費用 (expense)、原料成本 / 餐點售價變動歷史 (cost_history)
 
 Revision ID: 0021_expenses_cost_history
 Revises: 0020_integrations_devices

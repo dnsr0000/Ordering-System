@@ -45,6 +45,8 @@ class Section:
     fields: tuple
     enabled_field: str = ''      # 用來判斷「已啟用」的欄位
     docs: tuple = field(default_factory=tuple)   # ((說明, 網址), ...)
+    subgroup: str = ''           # 系統設定頁左欄：同一群組內的子群組標題 (只影響版面)
+    keywords: str = ''           # 系統設定頁搜尋用的額外關鍵字 (標題沒出現、但使用者會這樣找的字)
 
 
 ONLINE_PAYMENT_CHOICES = (('Credit', '信用卡'), ('ApplePay', 'Apple Pay'), ('ATM', 'ATM 轉帳 (虛擬帳號)'),
@@ -71,7 +73,8 @@ SECTIONS = {s.key: s for s in (
                 Field('fallback_email', '發票通知 Email (顧客未提供時)', 'email', help='開立、作廢、折讓通知會寄到這個信箱'),
                 Field('item_tax_type', '課稅別', 'select', '1', (('1', '應稅'), ('3', '免稅'))),
             ), enabled_field='enabled',
-            docs=(('綠界 B2C 電子發票 API', 'https://developers.ecpay.com.tw/?p=7809'),)),
+            docs=(('綠界 B2C 電子發票 API', 'https://developers.ecpay.com.tw/?p=7809'),),
+            subgroup='發票與退款', keywords='綠界 發票 統編 載具'),
     Section('linepay', 'LINE Pay (掃顧客付款碼)', 'A 金流與法規', 'bi-phone',
             '櫃檯以掃描器掃顧客 LINE Pay App 的付款條碼完成扣款；退款也會自動退回 LINE Pay。',
             (
@@ -83,14 +86,16 @@ SECTIONS = {s.key: s for s in (
                 Field('device_profile_id', '收銀機識別 (X-LINE-MerchantDeviceProfileId)', placeholder='選填'),
                 Field('product_name', '交易名稱', default='餐點'),
             ), enabled_field='enabled',
-            docs=(('LINE Pay Offline API', 'https://pay.line.me/tw/developers/apis/onlineApis?locale=zh_TW'),)),
+            docs=(('LINE Pay Offline API', 'https://pay.line.me/tw/developers/apis/onlineApis?locale=zh_TW'),),
+            subgroup='收款', keywords='LINE Pay 行動支付'),
     Section('card_terminal', '信用卡刷卡機', 'A 金流與法規', 'bi-credit-card',
             '使用銀行提供的刷卡機刷卡後，在 POS 輸入授權碼與卡號末四碼記帳 (方便對帳與退款)。',
             (
                 Field('require_auth_code', '必須輸入授權碼', 'bool', True),
                 Field('require_last4', '必須輸入卡號末四碼', 'bool', False),
                 Field('terminal_name', '刷卡機 / 收單銀行名稱', placeholder='例如：聯合信用卡中心 EDC'),
-            )),
+            ),
+            subgroup='收款', keywords='刷卡 信用卡'),
     Section('payments', '付款方式', 'A 金流與法規', 'bi-wallet2',
             '各點餐管道可選擇的付款方式。',
             (
@@ -103,7 +108,8 @@ SECTIONS = {s.key: s for s in (
                 Field('cvs_expire_minutes', '超商代碼繳費期限 (分鐘)', 'int', 120, min=30, max=43200),
                 Field('ecpay_auto_refund', '取消已付款的線上訂單時自動向綠界退刷', 'bool', False,
                       help='僅信用卡 / Apple Pay；綠界測試環境不支援退刷 API，正式環境才會成功。失敗時在「作廢與退款」頁重試或人工退款'),
-            )),
+            ),
+            subgroup='收款', keywords='付款 現金 支付'),
     Section('refund', '作廢與退款', 'A 金流與法規', 'bi-arrow-counterclockwise',
             '作廢 (整單取消) 與部分退款的規則；沒有「作廢 / 退款」權限的員工需主管輸入帳號密碼核准。',
             (
@@ -111,7 +117,8 @@ SECTIONS = {s.key: s for s in (
                 Field('require_reason', '部分退款必須填寫原因', 'bool', True),
                 Field('allow_partial', '允許部分退款', 'bool', True),
                 Field('restock_on_cancel', '作廢時回補庫存', 'bool', True),
-            )),
+            ),
+            subgroup='發票與退款', keywords='退款 作廢'),
     # ------------------------------------------------------------------ B 收銀營運
     Section('pos', '收銀規則', 'B 收銀營運', 'bi-calculator',
             '服務費、折扣與改價授權、開班與列印。',
@@ -134,7 +141,8 @@ SECTIONS = {s.key: s for s in (
                 Field('quick_tables', '桌號 / 顧客稱呼快捷鍵 (逗號分隔)', default='外帶客, 電話預訂',
                       help='POS「桌號或顧客稱呼」欄位上方的快速填入標籤；桌位管理裡啟用的桌號會自動排在前面，'
                            '這裡填的是桌號以外的稱呼 (例如 外帶客、電話預訂、外送平台)。按「外帶客」會同時切成外帶'),
-            )),
+            ),
+            keywords='收銀 服務費 折扣 開班 收據 桌號'),
     # ------------------------------------------------------------------ C 廚房出餐
     Section('kds', '廚房看板', 'C 廚房出餐', 'bi-fire',
             '出餐計時與逾時警示、工作站完成規則。',
@@ -147,7 +155,8 @@ SECTIONS = {s.key: s for s in (
                 Field('eta_base_minutes', '基本等候 (分鐘)', 'int', 3, min=0, max=60, help='沒有排隊時的最少等候時間 (裝盤、叫號)'),
                 Field('eta_default_prep', '餐點預設製作時間 (分鐘)', 'int', 5, min=1, max=120, help='餐點未設定製作時間時使用'),
                 Field('eta_parallel', '廚房同時製作幾張訂單', 'int', 3, min=1, max=50, help='排隊訂單的工作量會除以這個數'),
-            )),
+            ),
+            subgroup='廚房', keywords='廚房 看板 逾時'),
     Section('order_intake', '接單控制', 'C 廚房出餐', 'bi-pause-circle',
             '暫停接單 (POS 右上角可一鍵切換) 與每時段訂單上限：只擋點餐機、顧客手機 (桌邊 / 線上) 與團購送單，'
             'POS 櫃檯與外送平台訂單不受影響。分店的暫停狀態會隨同步回報線上端，線上點餐選到該分店時一併擋下。',
@@ -158,7 +167,8 @@ SECTIONS = {s.key: s for s in (
                 Field('window_minutes', '時段長度 (分鐘)', 'int', 15, min=5, max=120),
                 Field('max_orders_per_window', '每時段最多接幾張訂單 (0 = 不限)', 'int', 0, min=0, max=1000,
                       help='盡快取餐的訂單以下單時間計算；預約取餐以取餐時間所在的時段計算'),
-            )),
+            ),
+            subgroup='廚房', keywords='暫停接單 上限'),
     Section('notify', '取餐通知', 'C 廚房出餐', 'bi-megaphone',
             '叫號看板語音、顧客手機追蹤頁、LINE 推播。',
             (
@@ -167,7 +177,8 @@ SECTIONS = {s.key: s for s in (
                 Field('voice_repeat', '重複次數', 'int', 2, min=1, max=5),
                 Field('line_ready', '餐點完成時 LINE 通知綁定的會員', 'bool', False, help='需先設定 LINE Messaging API'),
                 Field('line_ready_template', 'LINE 通知內容', default='{shop}：您的餐點 (取餐號 {number}) 已完成，請至櫃檯取餐！'),
-            )),
+            ),
+            subgroup='顧客通知', keywords='叫號 語音 取餐'),
     Section('receipt', '電子收據寄送', 'C 廚房出餐', 'bi-envelope-paper',
             '結帳後顧客可在收據視窗把明細寄到 Email (需設定 SMTP) 或傳到已綁定的 LINE；也可結帳時自動傳給 LINE 綁定會員。',
             (
@@ -175,7 +186,8 @@ SECTIONS = {s.key: s for s in (
                 Field('line_enabled', 'LINE 電子收據', 'bool', False, help='需先設定 LINE Messaging API；只有綁定 LINE 的會員'),
                 Field('auto_line', '結帳時自動傳給 LINE 綁定會員', 'bool', False),
                 Field('footer', '收據結尾文字', default='感謝您的惠顧'),
-            )),
+            ),
+            subgroup='顧客通知', keywords='電子收據 email'),
     # ------------------------------------------------------------------ D 菜單
     Section('push', '手機推播通知 (Web Push)', 'C 廚房出餐', 'bi-phone-vibrate',
             '顧客在出餐進度頁 (收據 QR code) 按「開啟完成通知」後，餐點完成 / 外送出發時推播到手機，離開頁面也收得到。'
@@ -185,7 +197,8 @@ SECTIONS = {s.key: s for s in (
                 Field('contact_email', '聯絡 Email (VAPID sub，推播服務商聯絡用)', 'email', placeholder='admin@example.com'),
                 Field('vapid_public_key', 'VAPID 公鑰 (自動產生)', placeholder='留空 = 第一次訂閱時自動產生'),
                 Field('vapid_private_key', 'VAPID 私鑰 (自動產生)', 'secret'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='顧客通知', keywords='推播 web push'),
     Section('menu', '菜單顯示', 'D 菜單', 'bi-translate',
             '點餐頁的語言與標示。',
             (
@@ -204,7 +217,8 @@ SECTIONS = {s.key: s for s in (
                       help='顧客用說的點餐：瀏覽器語音辨識 (需 HTTPS 或本機網址) → 先以菜單規則解析，聽不懂再交給 AI '
                            '(Gemini → 本機模型)；一律先顯示確認畫面才加入購物車'),
                 Field('voice_llm', '規則解析不到時使用 AI 解析', 'bool', True),
-            )),
+            ),
+            subgroup='菜單與點餐頁', keywords='語言 過敏原 熱量 碳足跡 語音點餐'),
     Section('signage', '數位看板 (門市大螢幕)', 'D 菜單', 'bi-tv',
             '門市上方大螢幕的菜單看板 (網址 /signage，免登入)：與菜單售完狀態即時同步，輪播促銷標語與取餐叫號。'
             '以瀏覽器全螢幕 (F11) 開啟即可。',
@@ -221,7 +235,8 @@ SECTIONS = {s.key: s for s in (
                 Field('promo_lines', '輪播促銷標語 (一行一則)', 'textarea', '',
                       help='空白時自動輪播「促銷活動」中進行中的活動名稱'),
                 Field('promo_seconds', '標語輪播秒數', 'int', 8, min=3, max=120),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='菜單與點餐頁', keywords='看板 電視 大螢幕'),
     Section('inventory', '原物料庫存', 'D 菜單', 'bi-box-seam',
             '依配方 (每份餐點的原料用量) 自動扣料、低庫存警示。',
             (
@@ -230,7 +245,8 @@ SECTIONS = {s.key: s for s in (
                 Field('alert_notify', '低於安全量時通知 (LINE / Email / Webhook)', 'bool', True),
                 Field('expiry_warn_days', '原料批號到期前幾天提醒', 'int', 3, min=0, max=60),
                 Field('po_email_supplier', '送出採購單時 Email 給供應商', 'bool', False, help='需設定寄信伺服器 (SMTP)'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='庫存', keywords='原料 扣料 庫存 批號'),
     Section('chatbot', 'AI 客服機器人', 'D 菜單', 'bi-robot',
             '點餐頁與出餐進度頁右下角的對話窗：過敏原 / 素食 / 辣度只從菜單標示直接查 (不經 AI 改寫)，訂單進度直接讀訂單，'
             '營業資訊與常見問答用這裡填的文字；其他問題才交給 AI (Gemini → 本機模型)，AI 回答會標示「請以櫃檯為準」。',
@@ -245,7 +261,8 @@ SECTIONS = {s.key: s for s in (
                 Field('llm_enabled', '其他問題交給 AI 回答', 'bool', True,
                       help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫 Gemini (有費用) 或本機模型'),
                 Field('fallback', '答不出來時的回覆', default='這個問題我不太確定，請直接洽詢櫃檯人員，謝謝！'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='菜單與點餐頁', keywords='AI 客服 聊天 機器人'),
     # ------------------------------------------------------------------ E 會員行銷
     Section('line', 'LINE 登入與官方帳號', 'E 會員行銷', 'bi-chat-dots',
             'LINE Login 讓會員以 LINE 登入 / 綁定；Messaging API 用來推播取餐通知、生日禮與行銷訊息。',
@@ -258,7 +275,8 @@ SECTIONS = {s.key: s for s in (
                 Field('admin_user_ids', '接收系統警示的 LINE userId (每行一個)', 'textarea'),
             ), enabled_field='login_enabled',
             docs=(('LINE Login', 'https://developers.line.biz/en/docs/line-login/'),
-                  ('Messaging API', 'https://developers.line.biz/en/docs/messaging-api/'))),
+                  ('Messaging API', 'https://developers.line.biz/en/docs/messaging-api/')),
+            subgroup='通訊服務', keywords='LINE 登入 官方帳號 推播'),
     Section('member', '會員等級 / 生日禮 / 儲值金', 'E 會員行銷', 'bi-award',
             '等級依累積消費自動升級 (等級在「會員經營」頁設定)；生日當月自動贈送；儲值金可在 POS 加值與扣款。',
             (
@@ -282,7 +300,8 @@ SECTIONS = {s.key: s for s in (
                 Field('referrer_points', '推薦人得點', 'int', 100, min=0, max=100000),
                 Field('referee_points', '新會員得點', 'int', 50, min=0, max=100000),
                 Field('referral_min_spend', '第一筆消費至少 (元)', 'int', 0, min=0, max=100000),
-            )),
+            ),
+            subgroup='會員', keywords='會員 等級 生日 儲值'),
     Section('stamps', '集點卡', 'E 會員行銷', 'bi-postage',
             '會員消費集章，集滿自動兌換點數或優惠券 (例如買 10 杯送 1 杯)。',
             (
@@ -295,7 +314,8 @@ SECTIONS = {s.key: s for s in (
                 Field('reward_points', '集滿送點數', 'int', 0, min=0, max=100000),
                 Field('reward_coupon_code', '集滿送優惠券 (代碼)', help='需先在「回饋商城管理」建立 (可設為 0 點的會員券)'),
                 Field('card_title', '集點卡名稱', default='集點卡'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='會員', keywords='集點 寄杯'),
     Section('gift_card', '禮物卡', 'E 會員行銷', 'bi-gift',
             'POS 售出禮物卡 (商品禮券)，結帳時以卡號扣款；餘額跨分店通用。',
             (
@@ -305,7 +325,8 @@ SECTIONS = {s.key: s for s in (
                 Field('max_amount', '單張面額上限', 'int', 10000, min=100, max=100000),
                 Field('kiosk_enabled', '點餐機可用禮物卡付款', 'bool', False,
                       help='顧客在自助點餐機輸入 16 碼卡號查餘額並扣款 (餘額不足時請至櫃檯以混合付款補差額)'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='會員', keywords='禮物卡'),
     Section('feedback', '顧客評價', 'E 會員行銷', 'bi-star-half',
             '顧客在出餐追蹤頁 (收據 QR code) 為餐點評分；高分邀請到 Google 留下評論，低分通知店家。',
             (
@@ -315,7 +336,8 @@ SECTIONS = {s.key: s for s in (
                 Field('review_min_rating', '幾星以上邀請到 Google 評論', 'int', 4, min=1, max=5),
                 Field('alert_max_rating', '幾星以下通知店家 (0 = 不通知)', 'int', 2, min=0, max=5,
                       help='透過「監控與錯誤通知」設定的管道 (Webhook / Email / LINE) 通知'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='會員', keywords='評價 評分 google'),
     Section('sms', '簡訊驗證碼', 'E 會員行銷', 'bi-chat-square-text',
             '註冊與忘記 PIN 時以簡訊驗證手機。測試時可選「只記錄 (不發送)」，驗證碼會顯示在系統監控頁。',
             (
@@ -329,7 +351,8 @@ SECTIONS = {s.key: s for s in (
                 Field('tenant_hourly_limit', '全店每小時驗證碼上限', 'int', 60, min=1, max=100000,
                       help='每支手機另有每小時 5 次的限制；達到上限會暫停發送並通知，避免被惡意灌簡訊消耗點數'),
                 Field('tenant_daily_limit', '全店每天驗證碼上限', 'int', 300, min=1, max=1000000),
-            ), enabled_field='provider'),
+            ), enabled_field='provider',
+            subgroup='通訊服務', keywords='簡訊 驗證碼 OTP'),
     # ------------------------------------------------------------------ F 通路
     Section('delivery', '外送平台', 'F 通路', 'bi-bicycle',
             'Uber Eats / foodpanda 訂單自動匯入 (需向平台申請 POS 串接資格)；或在 POS 手動登錄外送單。'
@@ -344,7 +367,8 @@ SECTIONS = {s.key: s for s in (
                 Field('foodpanda_token', 'foodpanda Webhook 權杖 (Bearer)', 'secret'),
                 Field('foodpanda_vendor_code', 'foodpanda 店家代碼'),
                 Field('manual_platforms', 'POS 手動登錄的平台名稱 (逗號分隔)', default='Uber Eats, foodpanda'),
-            ), enabled_field='ubereats_enabled'),
+            ), enabled_field='ubereats_enabled',
+            subgroup='線上與外送', keywords='uber eats foodpanda 外送平台'),
     Section('own_delivery', '自有外送', 'F 通路', 'bi-scooter',
             '本店人員外送到府：線上點餐與 POS 電話訂餐可選「外送到府」，依配送區域收外送費，後台「外送派車」指派外送員與追蹤。',
             (
@@ -359,7 +383,8 @@ SECTIONS = {s.key: s for s in (
                       help='指派外送員後，派車頁出現外送員專用連結 / QR code；外送員用手機開啟並允許定位即可。'
                            '手機需能連到本店的公開網址 (總部 / 線上端網址，或系統設定的 QR code 網址)'),
                 Field('gps_interval', '位置回報間隔 (秒)', 'int', 15, min=5, max=120),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='線上與外送', keywords='外送 外送員 GPS 派車 配送'),
     Section('table_pay', '桌邊線上結帳', 'F 通路', 'bi-phone',
             '桌邊掃碼點餐的顧客可用手機線上付清這一桌未結帳的訂單 (綠界信用卡)，不用到櫃檯。',
             (
@@ -367,7 +392,8 @@ SECTIONS = {s.key: s for s in (
                       help='需設定綠界特店金鑰 (.env 的 ECPAY_*，未設定時為綠界測試環境)，且門市網址要能從外部連線 '
                            '(綠界會回傳付款結果到 /payment/ecpay/table_notify)'),
                 Field('note', '付款頁說明', default='付款完成後即完成結帳，可直接離開；需要發票載具請洽櫃檯。'),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='店內', keywords='桌邊 結帳 掃碼'),
     Section('online_order', '線上點餐', 'F 通路', 'bi-clock-history',
             '線上點餐 (線上端) 的預約取餐時間：顧客結帳時可選「盡快」或指定時段。',
             (
@@ -377,7 +403,8 @@ SECTIONS = {s.key: s for s in (
                 Field('slot_minutes', '時段間隔 (分鐘)', 'int', 15, min=5, max=120),
                 Field('lead_minutes', '至少提前幾分鐘', 'int', 20, min=0, max=480, help='顧客最快可選的時間 = 現在 + 此分鐘數'),
                 Field('days_ahead', '可預約天數 (0 = 只能今天)', 'int', 0, min=0, max=7),
-            ), enabled_field='scheduled_pickup'),
+            ), enabled_field='scheduled_pickup',
+            subgroup='線上與外送', keywords='線上點餐 預約 取餐時段'),
     Section('reservation', '訂位 / 候位', 'F 通路', 'bi-calendar-check',
             '線上訂位頁 /reserve 與現場取號候位 /waitlist。',
             (
@@ -398,7 +425,8 @@ SECTIONS = {s.key: s for s in (
                 Field('reminder_hours', '訂位前幾小時發提醒 (0 = 不提醒)', 'int', 0, min=0, max=72,
                       help='有設定簡訊服務時以簡訊，否則以 LINE (同手機的會員已綁定 LINE)'),
                 Field('no_show_limit', '近 180 天未到幾次後暫停線上訂位 (0 = 不限)', 'int', 0, min=0, max=20),
-            ), enabled_field='online_enabled'),
+            ), enabled_field='online_enabled',
+            subgroup='店內', keywords='訂位 候位 訂金'),
     # ------------------------------------------------------------------ G 報表
     Section('smtp', '寄信伺服器 (SMTP)', 'G 報表與總部', 'bi-envelope',
             '寄送定期報表與系統警示。Gmail 請使用「應用程式密碼」。',
@@ -409,7 +437,8 @@ SECTIONS = {s.key: s for s in (
                 Field('username', '帳號'),
                 Field('password', '密碼', 'secret'),
                 Field('sender', '寄件者', 'email'),
-            ), enabled_field='host'),
+            ), enabled_field='host',
+            subgroup='報表', keywords='寄信 email 伺服器'),
     Section('report_email', '定期寄送報表', 'G 報表與總部', 'bi-send',
             '每天 (或每週一) 把前一天 (或上週) 的營運報表 Excel 寄給指定信箱。',
             (
@@ -417,7 +446,8 @@ SECTIONS = {s.key: s for s in (
                 Field('recipients', '收件者 (逗號分隔)'),
                 Field('send_time', '寄送時間', 'time', '08:00'),
                 Field('frequency', '頻率', 'select', 'daily', (('daily', '每天 (前一天)'), ('weekly', '每週一 (上週)'))),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='報表', keywords='報表 寄送 排程'),
     Section('accounting', '會計匯出科目', 'G 報表與總部', 'bi-journal-text',
             '「會計匯出」產生每日傳票 (依收款紀錄) 與發票明細 CSV / Excel，匯入會計軟體。科目代號請依貴公司會計科目表修改。',
             (
@@ -434,7 +464,8 @@ SECTIONS = {s.key: s for s in (
                 Field('acct_tax', '銷項稅額', default='2204 銷項稅額'),
                 Field('acct_petty', '零用金', default='1112 零用金'),
                 Field('acct_misc', '雜項費用 (零用金支出)', default='6188 雜項費用'),
-            )),
+            ),
+            subgroup='財務', keywords='會計 科目 傳票'),
     Section('pnl', '損益表手續費', 'G 報表與總部', 'bi-percent',
             '損益表依收款方式估算金流 / 平台手續費 (百分比)；實際費率請依合約填寫。',
             (
@@ -442,7 +473,8 @@ SECTIONS = {s.key: s for s in (
                 Field('mobile_fee_percent', '行動支付 (LINE Pay、街口) %', 'float', 2.5, min=0, max=50),
                 Field('online_fee_percent', '線上金流 (綠界信用卡 / ATM / 超商) %', 'float', 2.75, min=0, max=50),
                 Field('platform_fee_percent', '外送平台抽成 %', 'float', 30.0, min=0, max=80),
-            )),
+            ),
+            subgroup='財務', keywords='損益 手續費'),
     Section('staffing', '排班建議', 'G 報表與總部', 'bi-people',
             '「排班建議」依備料預測的各時段來客數估算每小時需要的人力，與班表比較並建議班別。',
             (
@@ -454,7 +486,8 @@ SECTIONS = {s.key: s for s in (
                 Field('max_hours_week', '自動排班：每週工時上限 (小時)', 'int', 40, min=1, max=84,
                       help='勞基法 §30 每週 40 小時；員工可在「可排時段」另設較低的個人上限'),
                 Field('max_consecutive_days', '自動排班：最多連續工作天數', 'int', 6, min=1, max=12, help='勞基法 §36 每七天至少一天例假'),
-            )),
+            ),
+            subgroup='人力', keywords='排班 人力 工時 勞基法'),
     Section('group_order', '團體預購', 'F 通路', 'bi-people-fill',
             '主揪建立團購連結分享給同事，每個人自己點餐，截止時合併成一張預約取餐訂單 (到店付款)。'
             '門市 / 單機使用 (線上端不提供)。',
@@ -465,7 +498,8 @@ SECTIONS = {s.key: s for s in (
                 Field('max_people', '每團最多幾人', 'int', 50, min=2, max=300),
                 Field('max_qty_per_person', '每人最多幾份', 'int', 10, min=1, max=100),
                 Field('deadline_minutes', '預設在取餐前幾分鐘截止收單', 'int', 60, min=15, max=1440),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            subgroup='店內', keywords='團購 團體 預購'),
     Section('anomaly', '員工異常偵測', 'G 報表與總部', 'bi-shield-exclamation',
             '依收銀員比較作廢 / 退款、折扣 / 改價、交班帳差，明顯高於全店平均或超過門檻時標示 (後台「員工異常偵測」) 並每日通知。',
             (
@@ -476,7 +510,8 @@ SECTIONS = {s.key: s for s in (
                 Field('discount_rate_limit', '折扣 / 改價金額佔營業額超過 % 視為異常', 'int', 10, min=1, max=100),
                 Field('min_events', '至少發生幾次才判斷', 'int', 3, min=1, max=100),
                 Field('shift_diff_limit', '交班帳差超過多少元立即通知 (0 = 不通知)', 'int', 200, min=0, max=100000),
-            ), enabled_field='notify'),
+            ), enabled_field='notify',
+            subgroup='人力', keywords='異常 作廢 折扣'),
     # ------------------------------------------------------------------ H 維運
     Section('monitor', '監控與錯誤通知', 'H 維運', 'bi-activity',
             '系統發生錯誤、印表機或發票失敗、時鐘誤差過大時通知 (同一問題 10 分鐘內只通知一次)。',
@@ -486,14 +521,16 @@ SECTIONS = {s.key: s for s in (
                 Field('line_alerts', '以 LINE 通知 (LINE 設定中的管理者)', 'bool', False),
                 Field('clock_server', '校時伺服器 (NTP)', default='time.stdtime.gov.tw'),
                 Field('clock_warn_seconds', '時鐘誤差警告 (秒)', 'int', 60, min=5, max=3600),
-            ), enabled_field='webhook_url'),
+            ), enabled_field='webhook_url',
+            keywords='監控 錯誤 通知 webhook'),
     Section('archive', '舊資料封存', 'H 維運', 'bi-archive',
             '把超過指定月數的已結束訂單與日誌搬到封存檔 (database/archive)，主資料庫保持輕量；封存檔可下載與查詢。',
             (
                 Field('months', '封存幾個月以前的資料', 'int', 24, min=6, max=120,
                       help='帳簿憑證依法應保存 5 年以上：封存檔不會刪除，請一併備份'),
                 Field('auto', '每月 1 日自動封存', 'bool', False),
-            ), enabled_field='auto'),
+            ), enabled_field='auto',
+            keywords='封存 舊資料'),
     Section('backup', '自動備份 (本機資料庫)', 'H 維運', 'bi-hdd',
             '門市主機 (SQLite) 每天自動備份到 database/backups；線上端 (PostgreSQL) 由 docker-compose 的 backup 服務備份。',
             (
@@ -514,7 +551,8 @@ SECTIONS = {s.key: s for s in (
                 Field('offsite_command', '自訂上傳指令', placeholder='rclone copy {file} gdrive:kiosk-backups',
                       help='{file} 會換成備份檔完整路徑；在門市主機上必須能直接執行'),
                 Field('offsite_keep', '異地保留份數 (WebDAV / S3)', 'int', 30, min=1, max=365),
-            ), enabled_field='enabled'),
+            ), enabled_field='enabled',
+            keywords='備份'),
     Section('security', '帳號安全', 'H 維運', 'bi-shield-lock',
             '員工帳號的兩步驟驗證與閒置自動登出。每位員工在後台「帳號安全」頁自行設定驗證 App。',
             (
@@ -523,7 +561,8 @@ SECTIONS = {s.key: s for s in (
                       help='勾選後，該角色登入時若尚未啟用，只能進入「帳號安全」頁完成設定'),
                 Field('staff_idle_minutes', '閒置幾分鐘自動登出 (0 = 不限制)', 'int', 0, min=0, max=1440,
                       help='收銀台、廚房螢幕通常整天開著，建議只在後台電腦共用時設定'),
-            )),
+            ),
+            keywords='密碼 兩步驟 2FA 登入'),
 )}
 
 GROUPS = []
@@ -606,6 +645,24 @@ def get(key, tenant_id=None):
     if cache is not None:
         cache[(tid, key)] = dict(data)
     return data
+
+
+def reader(key):
+    """各服務模組的 config()：`config = settings_service.reader('chatbot')` 等同 def config(tenant_id=None): return get('chatbot', tenant_id)"""
+    def config(tenant_id=None):
+        return get(key, tenant_id)
+    config.__name__ = config.__qualname__ = 'config'
+    config.__doc__ = f'設定區塊 {key!r}'
+    return config
+
+
+def flag(key, field_name='enabled', default=False):
+    """各服務模組的 enabled()：`enabled = settings_service.flag('chatbot')` 讀該區塊的布林欄位"""
+    def enabled(tenant_id=None):
+        return bool(get(key, tenant_id).get(field_name, default))
+    enabled.__name__ = enabled.__qualname__ = 'enabled'
+    enabled.__doc__ = f'設定區塊 {key!r} 的 {field_name}'
+    return enabled
 
 
 def is_enabled(key, tenant_id=None):
@@ -733,7 +790,7 @@ def split_lines(value):
 
 
 # ---------------------------------------------------------------------------
-# 設定匯出 / 匯入 (第六輪)：開新店快速複製營運規則；金鑰 (secret 欄位) 與本機專屬區塊不匯出
+# 設定匯出 / 匯入：開新店快速複製營運規則；金鑰 (secret 欄位) 與本機專屬區塊不匯出
 # ---------------------------------------------------------------------------
 EXPORT_VERSION = 1
 

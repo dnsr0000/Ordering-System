@@ -23,11 +23,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# 先只複製 requirements.txt，程式碼變動時可沿用已安裝套件的快取層；測試用套件 (pytest、playwright) 不裝
+# 先只複製 requirements.txt，程式碼變動時可沿用已安裝套件的快取層。
+# 線上端只裝核心套件：人臉辨識 (requirements-store.txt) 與測試工具 (requirements-dev.txt) 都不裝
 COPY requirements.txt .
-RUN grep -v -E '^(pytest|playwright)([=<>~ ;]|$)' requirements.txt > /tmp/requirements.txt \
-    && pip install -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+RUN pip install -r requirements.txt
 
 COPY . .
 
@@ -38,7 +37,7 @@ RUN sed -i 's/\r$//' deploy/entrypoint.sh \
     && mkdir -p database uploads/member uploads/menu models \
     && chown -R kiosk:kiosk database uploads \
     && python -c "import time; assert time.strftime('%z') == '+0800', '時區設定錯誤: ' + time.strftime('%Z %z')" \
-    && python -c "import cv2, gunicorn, psycopg, redis"
+    && python -c "import gunicorn, psycopg, redis, openpyxl"
 
 USER kiosk
 

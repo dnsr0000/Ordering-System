@@ -1,4 +1,3 @@
-import os
 import re
 import secrets
 import time
@@ -7,7 +6,7 @@ from datetime import date, datetime
 from flask import (Blueprint, current_app, flash, g, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_login import current_user, login_user, logout_user
-from sqlalchemy import or_, update
+from sqlalchemy import update
 
 from app.errors import AppError
 from app.extensions import db, ip_key, limiter
@@ -16,12 +15,12 @@ from app.models.enums import CREATABLE_STAFF_ROLES, DiscountType, MANAGER_ROLES,
 from app.models.menu import ComboOption, MenuItem
 from app.models.order import Order
 from app.models.tenant import StaffAccount, Tenant
-from app.models.user import AdminLog, StaffAuditLog, User
+from app.models.user import AdminLog, User
 from app.routes.sync_admin import node_name_map
 from app.services import (ai_service, analytics_service, backup_service, coupon_service, excel_service, line_service,
                           menu_service, wallet_service)
 from app.services.approval_service import permission_required
-from app.services.audit import ACTION_LABELS, record_staff_audit
+from app.services.audit import record_staff_audit
 from app.services import auth_throttle
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.bootstrap import seed_tenant_defaults
@@ -29,16 +28,27 @@ from app.services.event_bus import order_event_bus
 from app.services.order_service import todays_range
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
-from app.services.upload_paths import remove_upload, upload_file_path
+from app.services.upload_paths import remove_upload
 from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, get_own, is_platform_admin, is_weak_pin,
                        platform_admin_required, role_required, safe_int, validate_phone, validate_pin)
 
-MEMBER_PAGE_SIZE = 50
 admin_bp = Blueprint('admin', __name__)
 
 
+# 舊分頁 → 各自的頁面 (菜單、會員、稽核已從後台首頁拆成獨立頁面；營運分析併入總覽)
+TAB_PAGES = {'menu': 'menu_pro.manage', 'users': 'members_pro.manage', 'audit': 'audit.index', 'analytics': 'admin.admin_dashboard'}
+
+
 def _dashboard(tab=None):
+    if tab in TAB_PAGES:
+        return url_for(TAB_PAGES[tab])
     return url_for('admin.admin_dashboard', tab=tab) if tab else url_for('admin.admin_dashboard')
+
+
+def data_modal_context():
+    """匯出 / 匯入對話框 (_data_modals.html) 需要的變數：整庫備份 / 還原只適用於 SQLite，其他資料庫隱藏並顯示說明"""
+    return dict(is_platform_admin=is_platform_admin(), backup_available=db.engine.dialect.name == 'sqlite',
+                db_dialect='PostgreSQL' if db.engine.dialect.name == 'postgresql' else db.engine.dialect.name)
 
 
 def _dashboard_summary():
@@ -70,23 +80,6 @@ def _ai_signature(orders):
     return ','.join(f'{o.id}:{o.status}' for o in sorted(orders, key=lambda o: o.id) if o.created_at >= start)
 
 
-def _menu_item_form_data(item):
-    """後台「編輯品項」視窗的預設值 (以 JSON 嵌入頁面，取代按鈕上的大量 data-* 屬性)"""
-    return {
-        'id': item.id, 'name': item.name, 'category': item.category or '', 'modifiers': item.modifiers or 'none',
-        'price': item.price or 0, 'stock': item.stock or 0, 'total_stock': item.total_stock or 0,
-        'is_sold_out': bool(item.is_sold_out), 'is_discount': bool(item.is_discount),
-        'discount_price': item.discount_price or 0, 'description': item.description or '',
-        'image_path': item.image_path or '', 'is_recommended': bool(item.is_manual_popular or item.is_recommended),
-        'is_new': bool(item.is_new), 'is_reward': bool(item.is_reward), 'reward_points': item.reward_points or 0,
-        'reward_discount_points': item.reward_discount_points or 0, 'can_be_add_on': bool(item.can_be_add_on),
-        'add_on_price': item.add_on_price or 0, 'addon_trigger_type': item.addon_trigger_type or 'any',
-        'addon_trigger_target': item.addon_trigger_target or '',
-    }
-
-
-
-
 def _analytics(orders, limit):
     data = analytics_service.build_order_analytics(orders, limit=limit)
     data['ai_advice'] = ai_service.generate_ai_business_advice(data, g.tenant_id, _ai_signature(orders))
@@ -104,64 +97,40 @@ def admin_dashboard():
 
     if not current_user.is_authenticated:
         return render_template('admin.html', is_admin=False)
+    tab = request.args.get('tab') or ''
+    if tab in TAB_PAGES and tab != 'analytics':
+        # 舊版的菜單 / 會員 / 稽核分頁：導到各自的頁面 (舊的會員搜尋參數 uq / up 一併帶過去)
+        args = {'q': request.args.get('uq'), 'page': request.args.get('up')} if tab == 'users' else {}
+        return redirect(url_for(TAB_PAGES[tab], **{k: v for k, v in args.items() if v}))
     from app.models.enums import PAGE_PERMISSIONS
     tabs = [p for p in PAGE_PERMISSIONS if current_user.has_permission(p)]
     if current_user.role not in MANAGER_ROLES and not tabs:
         # 後台含會員個資與稽核紀錄：櫃檯與廚房 (沒有被授權任何後台分頁時) 直接進入各自的工作畫面
         return redirect(url_for('kitchen.kitchen_display' if current_user.role == 'kitchen' else 'pos.pos_terminal'))
     if current_user.role in MANAGER_ROLES:
-        tabs = list(PAGE_PERMISSIONS) + ['audit']
+        tabs = list(PAGE_PERMISSIONS)
 
     limit = max(1, request.args.get('limit', 3, type=int))
     orders = analytics_service.load_dashboard_orders()
-    start, _end = todays_range()
-    # 套餐分頁逐筆列出每個品項的套餐與配餐：一次載入 (否則每個品項各查一次 combo_option，N+1)
-    from sqlalchemy.orm import selectinload
-    from app.models.menu import ComboOption
-    items = MenuItem.query.options(selectinload(MenuItem.combo_options).selectinload(ComboOption.sides)).all()
-    # 會員名冊分頁 + 搜尋 (會員數上千時不再一次載入全部；持券於開啟票券視窗時才載入)
-    member_q = (request.args.get('uq') or '').strip()[:50]
-    users_query = User.query
-    if member_q:
-        like = f'%{member_q}%'
-        users_query = users_query.filter(or_(User.name.like(like), User.phone.like(like)))
-    member_total = users_query.count()
-    member_pages = max(1, -(-member_total // MEMBER_PAGE_SIZE))
-    member_page = min(max(1, request.args.get('up', 1, type=int)), member_pages)
-    users = users_query.order_by(User.id.desc()).offset((member_page - 1) * MEMBER_PAGE_SIZE).limit(MEMBER_PAGE_SIZE).all()
-    member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
+    items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all() if 'coupons' in tabs else []
     return render_template(
         'admin.html',
         is_admin=True,
-        orders=[o for o in orders if o.created_at and o.created_at >= start],
         items=items,
         reward_items=[i for i in items if i.is_reward],
-        reward_coupons=Coupon.query.all(),
-        users=users,
-        # 只顯示實際存在的會員照片 (檔案遺失時改顯示預設圖，避免瀏覽器出現 404)
-        member_photo_ids={u.id for u in users if os.path.isfile(upload_file_path(member_dir, u.photo_path) or '')},
-        admin_menu_items=[_menu_item_form_data(i) for i in items],
-        coupon_counts={u.id: coupon_service.unused_count(u) for u in users},
-        member_q=member_q, member_page=member_page, member_pages=member_pages, member_total=member_total,
-        coupon_batches=coupon_service.recent_batches(g.tenant_id),
+        reward_coupons=Coupon.query.all() if 'coupons' in tabs else [],
+        coupon_batches=coupon_service.recent_batches(g.tenant_id) if 'coupons' in tabs else [],
         coupon_targets=coupon_service.TARGET_LABELS,
         member_tiers=wallet_service.tiers(g.tenant_id),
         line_push_ready=line_service.messaging_enabled(),
-        coupon_history_days=coupon_service.HISTORY_DAYS,
         today=date.today(),
         analytics=_analytics(orders, limit),
         current_limit=limit,
         reward_setting=get_or_create_reward_setting(g.tenant_id),
         tenant=g.tenant,
-        audit_logs=StaffAuditLog.query.order_by(StaffAuditLog.id.desc()).limit(200).all(),
-        audit_action_labels=ACTION_LABELS,
-        admin_logs=AdminLog.query.order_by(AdminLog.id.desc()).limit(100).all(),
-        is_platform_admin=is_platform_admin(),
         dashboard=_dashboard_summary(),
         tabs=tabs,   # 可見的分頁 (櫃檯 / 廚房依授權的頁面權限)
-        # 整庫備份/還原只適用於 SQLite (backup_service.require_sqlite)；其他資料庫隱藏並顯示說明
-        backup_available=db.engine.dialect.name == 'sqlite',
-        db_dialect='PostgreSQL' if db.engine.dialect.name == 'postgresql' else db.engine.dialect.name,
+        **data_modal_context(),
     )
 
 

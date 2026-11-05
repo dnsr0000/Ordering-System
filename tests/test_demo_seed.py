@@ -1,5 +1,4 @@
-"""第四輪：一鍵展示資料 (flask demo seed / remove)：獨立的示範店家、各報表都有內容、不影響其他店家"""
-from contextlib import contextmanager
+"""一鍵展示資料 (flask demo seed / remove)：獨立的示範店家、各報表都有內容、不影響其他店家"""
 from datetime import date, timedelta
 
 from app.extensions import db
@@ -10,16 +9,9 @@ from app.models.settings import StoreSetting
 from app.models.tenant import StaffAccount, Tenant
 from app.models.user import User
 from app.services import demo_service
+from tests.support import tenant_request
 
 PASSWORD = 'DemoSeed!2026'
-
-
-@contextmanager
-def _ctx(app, tenant_id):
-    from app.tenant_context import _use_tenant
-    with app.test_request_context('/'):
-        _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
-        yield
 
 
 def _counts_outside(app, tenant_id):
@@ -56,7 +48,7 @@ def test_demo_seed_reports_reset_and_remove(app):
     start = today - timedelta(days=4)
     from app.services import (accounting_service, marketing_service, menu_engineering_service, pnl_service,
                               report_service, staff_anomaly_service, staffing_service)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         orders = Order.query.filter_by(tenant_id=tid).all()
         assert len(orders) >= 30
         assert {o.order_source for o in orders} >= {'Kiosk', 'POS'} and any(o.user_id for o in orders)

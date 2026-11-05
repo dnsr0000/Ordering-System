@@ -1,5 +1,5 @@
 """
-記錄檔與請求識別碼 (第五輪)：
+記錄檔與請求識別碼：
 - 檔案記錄：LOG_FILE (預設 database/logs/app.log) 以 RotatingFileHandler 輪替 (LOG_MAX_BYTES × LOG_BACKUP_COUNT)，
   不會像 `>> server.log` 那樣無限成長；設 LOG_FILE= (空字串) 只輸出到主控台 (Docker 由 json-file 驅動程式輪替)。
   有檔案記錄時主控台只輸出 WARNING 以上 (門市的 start_store.cmd 仍把主控台導到 database/server.log，只留啟動訊息與錯誤)。

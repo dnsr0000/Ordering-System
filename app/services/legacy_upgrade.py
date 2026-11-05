@@ -12,7 +12,6 @@ import io
 import logging
 import pickle
 
-import numpy as np
 import sqlalchemy as sa
 
 from app.models.user import FEATURE_MAGIC_PREFIX, as_valid_feature, decode_feature_bytes, encode_feature_array
@@ -34,7 +33,11 @@ class _RestrictedUnpickler(pickle.Unpickler):
 
 
 def decode_legacy_feature(raw):
-    """舊版 Pickle 特徵 → numpy 向量；不合法或含惡意 payload 時回傳 None"""
+    """舊版 Pickle 特徵 → 128 維向量；不合法、含惡意 payload，或沒安裝 numpy (無法還原 Pickle) 時回傳 None"""
+    try:
+        import numpy as np
+    except ImportError:   # pragma: no cover - 沒有人臉套件的環境 (線上端) 不會有舊版特徵要轉
+        return None
     try:
         arr = _RestrictedUnpickler(io.BytesIO(bytes(raw))).load()
     except Exception:

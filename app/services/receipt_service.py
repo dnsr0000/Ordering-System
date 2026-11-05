@@ -1,5 +1,5 @@
 """
-電子收據 (第六輪)：純文字明細寄到 Email (mail_service) 或推到 LINE (line_service)。
+電子收據：純文字明細寄到 Email (mail_service) 或推到 LINE (line_service)。
 - 顧客在收據視窗自己操作 (/api/orders/<id>/receipt/email、/receipt/line)，會員可記住 Email。
 - 設定 receipt.auto_line：結帳時 (交易提交後) 自動傳給 LINE 綁定會員。
 寄送都在交易外 (deferred)，失敗只記錄不影響訂單。
@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 
-def config(tenant_id: int | None = None) -> dict[str, Any]:
-    return settings_service.get('receipt', tenant_id)
+config = settings_service.reader('receipt')
 
 
 def email_enabled(tenant_id: int | None = None) -> bool:

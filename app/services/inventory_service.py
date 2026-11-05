@@ -26,8 +26,7 @@ def _staff():
     return 'system'
 
 
-def enabled(tenant_id=None):
-    return bool(settings_service.get('inventory', tenant_id).get('enabled'))
+enabled = settings_service.flag('inventory')
 
 
 def needs_for(demands):

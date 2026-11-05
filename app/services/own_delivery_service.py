@@ -13,8 +13,7 @@ from app.services import settings_service
 PHONE_DIGITS = (8, 10)
 
 
-def config(tenant_id=None):
-    return settings_service.get('own_delivery', tenant_id)
+config = settings_service.reader('own_delivery')
 
 
 def enabled_for(channel, tenant_id=None):

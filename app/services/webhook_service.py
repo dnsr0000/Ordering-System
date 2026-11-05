@@ -1,5 +1,5 @@
 """
-Webhook (第三輪 #14)：訂單事件即時通知外部系統 (ERP、會計、自建 App…)。
+Webhook (#14)：訂單事件即時通知外部系統 (ERP、會計、自建 App…)。
 
 - 背景排程每 15 秒掃描近 2 天的訂單，與上次記下的狀態 (webhook_order_state) 比對，產生
   order.created / order.paid / order.status_changed / order.cancelled 事件 (不論訂單從點餐機、POS、桌邊、線上或同步而來)。

@@ -1,5 +1,5 @@
 """
-第五輪 (階段 4)：點餐頁菜單狀態輪詢 /api/menu/availability (ETag / 304)、對外 API /api/v1/menu 的 ETag、
+點餐頁菜單狀態輪詢 /api/menu/availability (ETag / 304)、對外 API /api/v1/menu 的 ETag、
 POS 條碼 (external_code) 與型別檢查設定。
 """
 import os

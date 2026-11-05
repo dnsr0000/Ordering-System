@@ -1,4 +1,4 @@
-"""端對端 (第六輪)：顧客頁無障礙檢查 (axe-core：嚴重 / 重大違規即失敗)、點餐機飲食篩選、會員價劃線價、
+"""端對端：顧客頁無障礙檢查 (axe-core：嚴重 / 重大違規即失敗)、點餐機飲食篩選、會員價劃線價、
 點餐機禮物卡付款、收據視窗電子收據、廚房製作卡、評價回覆與公開好評、後台頁面權限 (櫃檯授權後看到的分頁)"""
 import re
 
@@ -197,11 +197,12 @@ def test_staff_with_menu_permission_sees_only_granted_tabs(app, page, demo):
     try:
         browser_staff_login(page, 'e2e_pos')
         assert page.goto('/admin').ok
-        expect(page.locator('#menu-pane')).to_be_visible()
-        assert page.locator('#users-pane').count() == 0 and page.locator('#audit-pane').count() == 0
+        expect(page.locator('#home-pane')).to_be_visible()
+        assert page.locator('#orders-pane').count() == 0
         expect(page.locator('#nav-menu-pro')).to_be_visible()
-        assert page.goto('/admin/menu_pro').ok
-        resp = page.goto('/admin/members_pro')
+        assert page.goto('/admin/menu').ok
+        expect(page.locator('#menu-pane')).to_be_visible()
+        resp = page.goto('/admin/members')
         assert resp.status == 403
         page.problems[:] = [p for p in page.problems if '403 (FORBIDDEN)' not in p]
     finally:

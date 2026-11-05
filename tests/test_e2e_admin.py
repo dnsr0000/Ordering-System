@@ -31,7 +31,15 @@ def _login(page):
 
 
 def _open_tab(page, key):
-    page.click(f'#{key}-tab')
+    """首頁分頁 (home / orders / rewards) 用頁籤；菜單與會員各是獨立頁面"""
+    if key == 'menu':
+        assert page.goto('/admin/menu').ok
+    elif key == 'users':
+        assert page.goto('/admin/members').ok
+    else:
+        if not page.locator('#adminTab').count():
+            assert page.goto('/admin').ok
+        page.click(f'#{key}-tab')
     expect(page.locator(f'#{key}-pane')).to_be_visible()
 
 
@@ -231,8 +239,8 @@ def test_dashboard_analytics_and_order_status(page, app):
     expect(card).to_contain_text('備註：<b>少冰</b>')
     expect(card).to_contain_text(f'單號 #{order_id}')
 
-    # 營運分析：熱門排行 (stat-top-items) 有資料
-    _open_tab(page, 'analytics')
+    # 總覽：熱門排行 (stat-top-items) 有資料
+    _open_tab(page, 'home')
     top = page.locator('#stat-top-items')
     expect(top).to_be_visible()
     expect(top).to_contain_text(name)
@@ -243,7 +251,7 @@ def test_dashboard_analytics_and_order_status(page, app):
     page.fill('#rankingLimitInput', '5')
     page.press('#rankingLimitInput', 'Enter')
     page.wait_for_url(re.compile(r'limit=5'))
-    expect(page.locator('#analytics-pane')).to_be_visible()
+    expect(page.locator('#home-pane')).to_be_visible()
     expect(page.locator('#stat-top-items')).to_contain_text(name)
 
     # 在看板上把訂單改為「已出餐」

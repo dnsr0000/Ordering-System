@@ -1,4 +1,4 @@
-"""端對端 (第四輪)：費用登錄 → 損益表、API 說明文件的線上試打、點餐機斷線暫存補送、團體預購"""
+"""端對端：費用登錄 → 損益表、API 說明文件的線上試打、點餐機斷線暫存補送、團體預購"""
 import re
 import uuid
 from datetime import date

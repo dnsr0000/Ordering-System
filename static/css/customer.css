@@ -189,7 +189,7 @@ body.customer-page {
 .receipt-qr { width: 140px; height: 140px; }
 .menu-diet .badge { margin-right: .2rem; }
 
-/* ---- 淺色模式 (顧客頁右上角切換；第六輪) ---- */
+/* ---- 淺色模式 (顧客頁右上角切換；) ---- */
 [data-bs-theme="light"] body.customer-page { background: linear-gradient(150deg, #f4f5f7 0%, #e9ecef 100%); color: #212529; }
 [data-bs-theme="light"] .customer-page .header { background: rgba(255, 255, 255, 0.92); border-bottom-color: rgba(0, 0, 0, 0.08); }
 [data-bs-theme="light"] .customer-page .header .btn-outline-light { --bs-btn-color: #212529; --bs-btn-border-color: #adb5bd; --bs-btn-hover-bg: #e9ecef; --bs-btn-hover-color: #212529; }

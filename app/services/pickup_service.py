@@ -20,12 +20,8 @@ def _hm(text, fallback):
         return int(h), int(m)
 
 
-def config(tenant_id=None):
-    return settings_service.get('online_order', tenant_id)
-
-
-def enabled(tenant_id=None):
-    return bool(config(tenant_id).get('scheduled_pickup'))
+config = settings_service.reader('online_order')
+enabled = settings_service.flag('online_order', 'scheduled_pickup')
 
 
 def _windows(cfg, now):

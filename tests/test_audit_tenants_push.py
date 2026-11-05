@@ -1,5 +1,5 @@
 """
-第五輪 (階段 3)：稽核紀錄完整頁 (分頁 / 篩選 / 匯出)、平台端店家管理、Web Push 推播。
+稽核紀錄完整頁 (分頁 / 篩選 / 匯出)、平台端店家管理、Web Push 推播。
 """
 import io
 from datetime import datetime
@@ -63,8 +63,9 @@ def test_audit_page_requires_manager_and_dashboard_links(app):
     assert staff.get('/admin/audit').status_code in (302, 403)
     assert staff.get('/admin/audit/export').status_code in (302, 403)
     mgr = login_staff(app, 'audit_mgr2', 'manager')
-    html = mgr.get('/admin?tab=audit').get_data(as_text=True)
-    assert '/admin/audit' in html and '最近 200 筆' in html
+    r = mgr.get('/admin?tab=audit')
+    assert r.status_code == 302 and r.headers['Location'].endswith('/admin/audit'), '舊的稽核分頁導到完整頁'
+    assert 'auditLogTable' in mgr.get('/admin/audit').get_data(as_text=True)
     assert '稽核紀錄' in mgr.get('/admin/settings').get_data(as_text=True)
 
 

@@ -1,5 +1,5 @@
 """
-排班建議 (第四輪)：以備料預測的方式 (過去幾週同一個星期幾) 估算指定日期每小時的訂單數，
+排班建議：以備料預測的方式 (過去幾週同一個星期幾) 估算指定日期每小時的訂單數，
 換算需要的人力 = max(最少人數, ⌈訂單數 ÷ 每人每小時可處理張數⌉)，與該日班表 (work_schedule) 每小時在班人數比較，
 並以「從最早缺人的時段開一個 N 小時的班」貪婪地補足，產生建議班別；店長選人後可直接加入班表。
 同時估算建議人力的人事成本 (依員工時薪平均) 佔預估營業額的比例。
@@ -18,8 +18,7 @@ from app.services import settings_service
 WEEKDAYS = '一二三四五六日'
 
 
-def config(tenant_id=None):
-    return settings_service.get('staffing', tenant_id)
+config = settings_service.reader('staffing')
 
 
 def _history_days(target, weeks, today):

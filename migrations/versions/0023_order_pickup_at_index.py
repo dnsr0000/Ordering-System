@@ -1,4 +1,4 @@
-"""第四輪 (負載測試)：order.pickup_at 加索引 —— POS / 廚房 / 取餐看板的「今天的訂單」條件
+""" (負載測試)：order.pickup_at 加索引 —— POS / 廚房 / 取餐看板的「今天的訂單」條件
 (今天建立 OR 預約今天取餐) 才能用索引，不必掃描整個訂單表
 
 Revision ID: 0023_order_pickup_at_index

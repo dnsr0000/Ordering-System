@@ -1,7 +1,6 @@
-"""第四輪：團體預購、排班建議、點餐機斷線暫存補送"""
+"""團體預購、排班建議、點餐機斷線暫存補送"""
 import re
 import uuid
-from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from urllib.parse import urlsplit
 
@@ -13,28 +12,10 @@ from app.models.group_order import GroupOrder, GroupOrderEntry
 from app.models.menu import MenuItem
 from app.models.order import Order
 from app.models.staff import WorkSchedule
-from app.models.tenant import StaffAccount, Tenant
+from app.models.tenant import StaffAccount
 from app.models.user import StaffAuditLog
 from app.services import group_order_service, monitor_service, settings_service, staffing_service
-from tests.support import assert_flash, guest_client, login_staff, make_member, member_client, run_together
-
-
-def _tenant(app, slug):
-    with app.app_context():
-        t = Tenant.query.filter_by(slug=slug).first()
-        if t is None:
-            t = Tenant(name=f'測試 {slug}', slug=slug)
-            db.session.add(t)
-            db.session.commit()
-        return t.id
-
-
-@contextmanager
-def _ctx(app, tenant_id):
-    from app.tenant_context import _use_tenant
-    with app.test_request_context('/'):
-        _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
-        yield
+from tests.support import (assert_flash, get_or_create_tenant, guest_client, login_staff, make_member, member_client, run_together, tenant_request)
 
 
 @pytest.fixture
@@ -45,14 +26,14 @@ def alerts(monkeypatch):
 
 
 def _enable_groups(app, tid, **over):
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         cfg = dict(settings_service.get('group_order', tid), enabled=True, min_lead_minutes=60, **over)
         settings_service.put('group_order', cfg, tenant_id=tid)
         db.session.commit()
 
 
 def _items(app, tid, *specs):
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         ids = []
         for name, price, kw in specs:
             m = MenuItem(tenant_id=tid, name=name, price=price, stock=kw.pop('stock', 99), total_stock=99, category='便當', **kw)
@@ -71,16 +52,16 @@ def _slot(hours=3):
 # 團體預購
 # ===========================================================================
 def test_group_order_disabled_returns_404(app):
-    tid = _tenant(app, 'grp-off')
+    tid = get_or_create_tenant(app, 'grp-off')
     c = app.test_client()
     assert c.get('/shop/grp-off/group/new').status_code == 404
     assert c.get('/shop/grp-off/group/whatever').status_code == 404
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         assert settings_service.get('group_order', tid).get('enabled') is False
 
 
 def test_group_order_create_join_edit_manage_and_submit(app):
-    tid = _tenant(app, 'grp-shop')
+    tid = get_or_create_tenant(app, 'grp-shop')
     _enable_groups(app, tid, max_qty_per_person=5, max_people=3)
     chicken, tea, gone = _items(app, tid, ('團購雞腿飯', 120, {'takeout_price': 125}),
                                 ('團購紅茶', 30, {'size_options': '中杯:0,大杯:+10'}),
@@ -177,14 +158,14 @@ def test_group_order_create_join_edit_manage_and_submit(app):
 
 
 def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
-    tid = _tenant(app, 'grp-auto')
+    tid = get_or_create_tenant(app, 'grp-auto')
     _enable_groups(app, tid)
     rice, scarce = _items(app, tid, ('自動送單飯', 100, {}), ('限量湯', 50, {'stock': 1}))
     now = datetime.now()
     pickup = _slot(5)
 
     def make(title, lines, auto=True):
-        with _ctx(app, tid):
+        with tenant_request(app, tid):
             grp, _key = group_order_service.create(tid, {'title': title, 'organizer_name': '主揪', 'organizer_phone': '0911000111',
                                                           'pickup_at': pickup.strftime('%Y-%m-%dT%H:%M'),
                                                           'auto_submit': '1' if auto else '0'}, now=now)
@@ -199,7 +180,7 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
     manual = make('手動送單', [('丁', [{'menu_item_id': rice, 'quantity': 1}])], auto=False)
     empty = make('沒人點', [])
     deadline = pickup - timedelta(minutes=60)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         assert group_order_service.run_due(tid, now=deadline - timedelta(minutes=1)) == (0, 0)
         sent, cancelled = group_order_service.run_due(tid, now=deadline + timedelta(minutes=1))
         assert (sent, cancelled) == (3, 0)
@@ -230,12 +211,12 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
         raise RuntimeError('資料庫連線中斷')
     order_service.process_checkout = broken
     try:
-        with _ctx(app, tid):
+        with tenant_request(app, tid):
             grp, err = group_order_service.submit(boom)
             assert err == '送單時發生錯誤，請稍後再試' and grp.status == 'failed' and '資料庫連線中斷' in grp.error
     finally:
         order_service.process_checkout = real
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         assert group_order_service.submit(boom)[1] == ''
         # 行程在送單中途被中斷 (停在 submitting)：排程 5 分鐘後改為失敗
         stuck = make('卡住', [('庚', [{'menu_item_id': rice, 'quantity': 1}])])
@@ -258,17 +239,17 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
     race = make('同時送單', [('戊', [{'menu_item_id': rice, 'quantity': 1}])])
 
     def go():
-        with _ctx(app, tid):
+        with tenant_request(app, tid):
             return group_order_service.submit(race)[1]
     results = run_together(go, go)
     assert sorted(results) == ['', '這個團購已送單或已取消']
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         grp = db.session.get(GroupOrder, race)
         assert Order.query.filter_by(client_order_id=grp.uuid).count() == 1 and grp.status == 'submitted'
 
 
 def test_group_order_admin_page_staff_create_and_actions(app):
-    tid = _tenant(app, 'grp-admin')
+    tid = get_or_create_tenant(app, 'grp-admin')
     staff = login_staff(app, 'grp_staff', role='staff', tenant_id=tid)
     assert '尚未開放團體預購' in staff.get('/admin/group-orders').get_data(as_text=True)
     _enable_groups(app, tid)
@@ -294,7 +275,7 @@ def test_group_order_admin_page_staff_create_and_actions(app):
     staff.post('/admin/group-orders', data={'action': 'cancel', 'group_id': str(gid)})
     assert_flash(staff, '不能取消')
     # 其他店家的團購
-    other = login_staff(app, 'grp_other_owner', role='owner', tenant_id=_tenant(app, 'grp-other'))
+    other = login_staff(app, 'grp_other_owner', role='owner', tenant_id=get_or_create_tenant(app, 'grp-other'))
     assert other.post('/admin/group-orders', data={'action': 'cancel', 'group_id': str(gid)}).status_code == 404
     kitchen = login_staff(app, 'grp_kitchen', role='kitchen', tenant_id=tid)
     assert kitchen.get('/admin/group-orders').status_code in (302, 403)
@@ -315,10 +296,10 @@ def test_suggest_shifts_greedy():
 
 def test_staffing_plan_page_and_apply(app):
     from app.services.order_service import process_checkout
-    tid = _tenant(app, 'staff-shop')
+    tid = get_or_create_tenant(app, 'staff-shop')
     (item,) = _items(app, tid, ('排班測試餐', 100, {'stock': 9999}))
     target = date.today() + timedelta(days=1)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         for back in (6, 13):   # 過去兩個同一個星期幾：12 點 30 張、18 點 6 張
             day = target - timedelta(days=back + 1)
             for i in range(30):
@@ -358,7 +339,7 @@ def test_staffing_plan_page_and_apply(app):
                                         'start_0': '12:00', 'end_0': '16:00', 'staff_1': '', 'staff_2': str(a_id),
                                         'start_2': '15:00', 'end_2': '19:00'})
     assert_flash(owner, '已加入 2 筆班表')
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         assert WorkSchedule.query.filter_by(work_date=target).count() == 3
         assert staffing_service.plan(tid, target)['short_hours'] == 1   # 12 點仍缺 1 人
     owner.get('/admin/staffing?date=2026-99-01')

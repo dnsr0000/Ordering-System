@@ -23,8 +23,7 @@ DEFAULT_MESSAGE = '目前訂單較多，暫停接單中，請稍後再試或洽�
 COUNTED_SOURCES = (OrderSource.KIOSK, OrderSource.TABLE, OrderSource.ONLINE)
 
 
-def config(tenant_id: int | None = None) -> dict:
-    return settings_service.get('order_intake', tenant_id)
+config = settings_service.reader('order_intake')
 
 
 def _parse_resume(raw: Any) -> datetime | None:

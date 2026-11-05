@@ -1,6 +1,6 @@
 /*
- * 店家管理後台：菜單品項 (新增/編輯/防呆/加購條件/AI 文案/圖片裁切) 與套餐組合。
- * 依賴 admin.js 提供的 window.AdminPage。
+ * 菜單頁 (templates/admin_menu.html)：品項 (新增/編輯/防呆/加購條件/AI 文案/圖片裁切)、套餐組合、清單篩選。
+ * 依賴 admin.js 提供的 window.AdminPage (品項資料、庫存即時更新)。
  */
 (function () {
     'use strict';
@@ -168,7 +168,6 @@
         $('edit-is-reward').checked = !!d.is_reward;
         $('edit-reward-points').value = d.reward_points || 0;
         $('edit-reward-discount').value = d.reward_discount_points || 0;
-        $('edit-from-tab').value = window.AdminPage.activeTab() === 'rewards' ? 'rewards' : 'menu';
         $('edit-image-file').value = '';
         $('edit-image-preview').src = d.image_path ? data.staticMenuUrl + d.image_path : data.placeholderImg;
 
@@ -357,6 +356,17 @@
     });
     // 編輯視窗顯示後才能正確計算描述欄高度
     $('editItemModal')?.addEventListener('shown.bs.modal', () => autoExpand($('edit-description')));
+
+    // 清單篩選 (品名 / 分類 / 英文名)：隱藏不符的列與其「進階」展開列
+    $('menuFilterInput')?.addEventListener('input', (ev) => {
+        const q = ev.target.value.trim().toLowerCase();
+        document.querySelectorAll('#menuItemTable tbody tr.menu-row').forEach((row) => {
+            const hit = !q || (row.dataset.filter || '').includes(q);
+            row.hidden = !hit;
+            const pro = $(`edit-${row.dataset.itemId}`);
+            if (pro && !hit) pro.classList.remove('show');
+        });
+    });
 
     Kiosk.on(document, 'click', {
         'edit-item': (el) => openEditItem(el.dataset.id),

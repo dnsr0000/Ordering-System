@@ -1,7 +1,6 @@
-"""第四輪：營業費用登錄、損益表、原料成本 / 售價歷史、對外 API 說明文件"""
+"""營業費用登錄、損益表、原料成本 / 售價歷史、對外 API 說明文件"""
 import io
 import re
-from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -12,27 +11,9 @@ from app.models.expense import CostHistory, Expense
 from app.models.inventory import Ingredient, RecipeLine
 from app.models.menu import MenuItem
 from app.models.payment import PaymentRecord
-from app.models.tenant import StaffAccount, Tenant
+from app.models.tenant import StaffAccount
 from app.services import pnl_service
-from tests.support import assert_flash, login_staff
-
-
-def _tenant(app, slug):
-    with app.app_context():
-        t = Tenant.query.filter_by(slug=slug).first()
-        if t is None:
-            t = Tenant(name=f'測試 {slug}', slug=slug)
-            db.session.add(t)
-            db.session.commit()
-        return t.id
-
-
-@contextmanager
-def _ctx(app, tenant_id):
-    from app.tenant_context import _use_tenant
-    with app.test_request_context('/'):
-        _use_tenant(db.session.get(Tenant, tenant_id), remember=False)
-        yield
+from tests.support import assert_flash, get_or_create_tenant, login_staff, tenant_request
 
 
 def _expenses(app, tid, **filters):
@@ -45,7 +26,7 @@ def _expenses(app, tid, **filters):
 # 營業費用
 # ===========================================================================
 def test_expense_add_edit_delete_copy_fixed_and_permissions(app):
-    tid = _tenant(app, 'exp-shop')
+    tid = get_or_create_tenant(app, 'exp-shop')
     owner = login_staff(app, 'exp_owner', role='owner', tenant_id=tid)
     base = dict(action='add', spent_on='2026-08-05', category='rent', name='八月房租', amount='30000', vendor='房東',
                 invoice_no='ab12345678', is_fixed='1')
@@ -92,7 +73,7 @@ def test_expense_add_edit_delete_copy_fixed_and_permissions(app):
     assert ('月底清潔', 'other', 800, date(2027, 2, 28), True, False) in _expenses(app, tid)
 
     # 其他店家的費用：查無此費用；一般員工不可進入；未知操作
-    other = _tenant(app, 'exp-other')
+    other = get_or_create_tenant(app, 'exp-other')
     other_owner = login_staff(app, 'exp_other_owner', role='owner', tenant_id=other)
     assert other_owner.post('/admin/expenses', data={'action': 'delete', 'expense_id': str(rent_id)}).status_code == 404
     assert not _expenses(app, tid, id=rent_id, is_deleted=True)
@@ -108,12 +89,12 @@ def test_expense_add_edit_delete_copy_fixed_and_permissions(app):
 def test_pnl_statement_numbers_fees_tax_trend_and_excel(app):
     from app.services import report_service, settings_service
     from app.services.order_service import process_checkout
-    tid = _tenant(app, 'pnl-shop')
+    tid = get_or_create_tenant(app, 'pnl-shop')
     today = date.today()
     month = f'{today:%Y-%m}'
     start, end = pnl_service.month_range(month)
     now = datetime.now()
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         item = MenuItem(tenant_id=tid, name='損益牛排', price=1050, unit_cost=300, stock=99, total_stock=99)
         db.session.add(item)
         db.session.commit()
@@ -205,9 +186,9 @@ def test_pnl_excel_neutralizes_formula_text(app):
 def test_cost_history_from_purchase_edit_and_price_change(app):
     from flask_login import login_user
     from app.services import inventory_service
-    tid = _tenant(app, 'cost-shop')
+    tid = get_or_create_tenant(app, 'cost-shop')
     login_staff(app, 'cost_owner', role='owner', tenant_id=tid)
-    with _ctx(app, tid):
+    with tenant_request(app, tid):
         login_user(StaffAccount.query.filter_by(username='cost_owner').one())
         beef = Ingredient(tenant_id=tid, name='成本牛肉', unit='kg', stock=100, unit_cost=200)
         noodle = MenuItem(tenant_id=tid, name='成本牛肉麵', price=150, stock=10, total_stock=10)
@@ -255,7 +236,7 @@ def test_cost_history_from_purchase_edit_and_price_change(app):
     assert owner.get('/admin/cost-history?days=abc').status_code == 200
 
 
-def test_settings_page_lists_round4_pages(admin_client):
+def test_settings_page_lists_feature_pages(admin_client):
     html = admin_client.get('/admin/settings').get_data(as_text=True)
     for name in ('損益表', '營業費用', '成本 / 售價歷史'):
         assert name in html

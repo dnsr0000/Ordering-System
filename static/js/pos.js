@@ -1,7 +1,7 @@
 /*
  * 櫃檯 POS 收銀頁 (templates/pos.html) 的進入點 (ES module)：事件綁定與啟動。
  * 各功能拆在 static/js/pos/ (core 共用狀態與工具、menu 點餐與客製化、cart 購物車與加購、member 會員與寄杯、
- * totals 優惠與金額 / 付款方式、checkout 結帳與收據、live 掛單 / 當日訂單 / 桌位)。
+ * totals 優惠與金額 / 付款方式、checkout 結帳與收據、live 掛單 / 當日訂單 / 桌位、pro 主管核准 / 交班 / 退款 / 分桌等進階功能)。
  * - 菜單、加料、紅利設定與公開優惠券由 page-data 提供 (menu_service.storefront_payload)。
  * - 結帳送出結構化品項 {menu_item_id, quantity, modifier_ids, combo_option_id, is_add_on, is_reward, customization}，
  *   金額一律以後端計算為準，前端只做預覽。
@@ -14,22 +14,24 @@ import {
 } from './pos/menu.js';
 import { changeQty, clearCart, renderCart, triggerAddon } from './pos/cart.js';
 import {
-    bindMember, clearMember, lookupMember, openPassSell, openPinModal, selectMember, sellPass, submitPin,
-    syncPassMethod, usePass,
+    clearMember, lookupMember, openPassSell, openPinModal, selectMember, sellPass, submitPin, syncPassMethod, usePass,
 } from './pos/member.js';
 import {
     applyPromo, onInvoiceTypeChange, onOrderTypeChange, onPaymentChange, openCustomerDisplay, populateCouponSelect,
     quickCash, recalcTotals, setTable, togglePoints, updateCashChange,
 } from './pos/totals.js';
 import {
-    addTender, applyLinePrice, applyOrderDiscount, openPriceModal, readTenders, resetLinePrice, showReceipt,
-    submitOrder, syncTenderRows, toggleDeliveryMode,
+    addTender, applyLinePrice, applyOrderDiscount, openPriceModal, readTenders, resetLinePrice, submitOrder, syncTenderRows,
+    toggleDeliveryMode,
 } from './pos/checkout.js';
 import {
     drawFloor, filterLiveOrders, getHeld, holdOrder, openHoldModal, openLiveOrders, openTables, recallHold,
     removeHold, reprint, saveHeld, serviceCallDone, setTablesView, settleTable, startLiveSync, syncLiveState,
     tableCardChanged, updateOrderStatus,
 } from './pos/live.js';
+import { networkPrint } from './pos/pro.js';
+import './pos/shift.js';
+import './pos/split.js';
 
 // ======================================================================
 // 11. 事件綁定
@@ -79,7 +81,7 @@ Kiosk.on(document, 'click', {
     orderStatus: (el) => updateOrderStatus(el.dataset.id, el.dataset.status),
     reprint: (el) => reprint(el.dataset.id),
     printReceipt: () => window.print(),
-    printReceiptNetwork: () => window.PosPro.networkPrint(state.lastOrderId),
+    printReceiptNetwork: () => networkPrint(state.lastOrderId),
     priceLine: (el) => openPriceModal(Number(el.dataset.idx)),
     resetLinePrice: () => resetLinePrice(),
     openOrderDiscount: () => {
@@ -114,7 +116,6 @@ $('posTenderForm').addEventListener('submit', (ev) => {
 });
 if ($('posRush')) $('posRush').addEventListener('change', () => {});
 
-window.PosApp = { state, syncLiveState, bindMember, recalcTotals, renderCart, modalOf, showReceipt };
 
 $('posSearchInput').addEventListener('input', filterMenu);
 if ($('posTablesGrid')) {

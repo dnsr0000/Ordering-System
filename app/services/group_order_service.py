@@ -1,5 +1,5 @@
 """
-團體預購 (第四輪)：
+團體預購：
 
 1. 主揪 (或店員代建) 填寫名稱、取餐時間、截止時間 → 取得「分享連結」(/group/<token>) 與「管理連結」(只顯示一次)。
 2. 參加者打開分享連結，填名字並選餐點份數 (可選規格、備註)，送出後可用同一個瀏覽器 (或個人修改連結) 修改 / 刪除。
@@ -29,8 +29,7 @@ PHONE_DIGITS = 10
 ORDER_TYPES = (OrderType.TAKE_OUT, OrderType.DINE_IN)
 
 
-def config(tenant_id=None):
-    return settings_service.get('group_order', tenant_id)
+config = settings_service.reader('group_order')
 
 
 def ensure_enabled(tenant_id):

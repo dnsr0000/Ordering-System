@@ -16,8 +16,7 @@ RATEABLE = (OrderStatus.COMPLETED, OrderStatus.PICKED_UP)
 RATE_WINDOW_DAYS = 7
 
 
-def config(tenant_id):
-    return settings_service.get('feedback', tenant_id)
+config = settings_service.reader('feedback')
 
 
 def existing(order):
@@ -95,7 +94,7 @@ def order_label(fb):
 
 
 # ---------------------------------------------------------------------------
-# 店家回覆與公開精選 (第六輪)
+# 店家回覆與公開精選
 # ---------------------------------------------------------------------------
 def _mask_name(name):
     name = (name or '').strip()

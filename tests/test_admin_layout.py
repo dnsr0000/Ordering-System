@@ -1,4 +1,5 @@
-"""後台共用版面：側欄七個群組依角色 / 權限 / 主機角色過濾、所在頁面標示、總覽分頁、系統設定左欄與搜尋資料、舊按鈕 id 保留"""
+"""後台共用版面：側欄七個群組依角色 / 權限 / 主機角色過濾、所在頁面標示、總覽分頁 (含今日數字與熱門排行)、
+菜單 / 會員 / 稽核各自的頁面 (舊的 ?tab= 網址導向過去)、系統設定左欄與搜尋資料、舊按鈕 id 保留"""
 import re
 
 from app.extensions import db
@@ -41,7 +42,7 @@ def test_sidebar_groups_follow_role(app, admin_client, manager_client, staff_cli
         groups = _groups(html)
         labels = _nav_labels(html)
         assert 'reports' not in groups and 'system' in groups, '櫃檯沒有報表群組；系統群組只剩帳號安全'
-        assert labels.count('帳號安全') == 1 and '系統設定' not in labels and '會員名冊' not in labels
+        assert labels.count('帳號安全') == 1 and '系統設定' not in labels and '會員' not in labels
         assert '菜單與套餐' in labels and '外送派車' in labels and '交班與日結' in labels
         assert 'id="nav-back-work"' in html, '非店長有「回工作畫面」'
     finally:
@@ -56,8 +57,10 @@ def test_sidebar_marks_current_page_and_hides_for_login(app, admin_client):
     html = admin_client.get('/admin/inventory').get_data(as_text=True)
     active = re.findall(r'class="admin-nav-link active"[^>]*>\s*<i class="bi [^"]+"></i><span>([^<]+)</span>', html)
     assert active == ['原物料與配方']
-    html = admin_client.get('/admin?tab=menu').get_data(as_text=True)
+    html = admin_client.get('/admin/menu').get_data(as_text=True)
     assert re.findall(r'class="admin-nav-link active"[^>]*>\s*<i class="bi [^"]+"></i><span>([^<]+)</span>', html) == ['菜單與套餐']
+    html = admin_client.get('/admin/members').get_data(as_text=True)
+    assert re.findall(r'class="admin-nav-link active"[^>]*>\s*<i class="bi [^"]+"></i><span>([^<]+)</span>', html) == ['會員']
     html = admin_client.get('/admin/settings/pos').get_data(as_text=True)
     assert re.findall(r'class="admin-nav-link active"[^>]*>\s*<i class="bi [^"]+"></i><span>([^<]+)</span>', html) == ['系統設定']
     login = app.test_client().get('/admin').get_data(as_text=True)
@@ -70,11 +73,31 @@ def test_dashboard_home_tab_and_pending_items(app, admin_client, manager_client)
     html = admin_client.get('/admin').get_data(as_text=True)
     assert 'id="home-tab"' in html and 'id="home-pane"' in html and 'id="homeKpis"' in html
     assert html.index('id="home-pane"') < html.index('id="orders-pane"'), '總覽是第一個分頁'
-    assert 'id="homePending"' in html and 'id="homeQuickLinks"' in html
+    assert 'id="homePending"' in html and 'id="homeQuickLinks"' in html and 'id="homeTopItems"' in html
     assert '今日訂單' in html and '今日營收' in html and '常用功能' in html
-    assert all(f'id="{p}-pane"' in html for p in ('orders', 'analytics', 'menu', 'rewards', 'users', 'audit')), '原有分頁都保留'
+    assert all(f'id="stat-{k}"' in html for k in ('today-orders', 'today-revenue', 'pending-count', 'eta-minutes', 'top-items',
+                                                      'avg-order-time', 'ai-advice')), '營運分析的數字併入總覽並即時更新'
+    assert 'id="orders-pane"' in html and 'id="rewards-pane"' in html and 'reward-setting-card' in html, '實時訂單與回饋商城 (含紅利折抵設定) 留在首頁'
+    for gone in ('analytics', 'menu', 'users', 'audit'):
+        assert f'id="{gone}-pane"' not in html, f'{gone} 分頁已併入其他頁面'
     assert 'id="unifiedExportModal"' in html and 'id="unifiedImportModal"' in html, '匯入匯出保留'
     assert 'id="home-pane"' in manager_client.get('/admin').get_data(as_text=True)
+
+
+def test_old_tab_urls_redirect_to_pages(app, admin_client):
+    """舊的 /admin?tab=menu|users|audit 導到各自的頁面；會員搜尋參數 uq / up 轉成 q / page；analytics 留在總覽"""
+    for tab, target in (('menu', '/admin/menu'), ('audit', '/admin/audit'), ('users', '/admin/members')):
+        r = admin_client.get(f'/admin?tab={tab}')
+        assert r.status_code == 302 and r.headers['Location'].endswith(target), tab
+    r = admin_client.get('/admin?tab=users&uq=0912&up=2')
+    assert r.status_code == 302 and 'q=0912' in r.headers['Location'] and 'page=2' in r.headers['Location']
+    assert admin_client.get('/admin?tab=analytics').status_code == 200
+    menu = admin_client.get('/admin/menu').get_data(as_text=True)
+    assert 'id="menuItemTable"' in menu and 'id="comboTable"' in menu and 'id="addItemModal"' in menu and 'menuTranslateForm' in menu
+    assert 'id="unifiedImportModal"' in menu and 'name="avail_start"' in menu, '品項清單、套餐、匯入與進階設定同一頁'
+    assert admin_client.get('/admin/menu_pro').status_code == 200 and admin_client.get('/admin/members_pro').status_code == 200, '舊網址仍可用'
+    members = admin_client.get('/admin/members').get_data(as_text=True)
+    assert 'id="memberTable"' in members and 'id="memberTiersCard"' in members and 'id="editUserModal"' in members
 
 
 def test_settings_hub_two_columns_and_search_data(app, admin_client):

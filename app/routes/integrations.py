@@ -1,4 +1,4 @@
-"""後台：API 金鑰與 Webhook (第三輪 #14)、裝置管理 (#15) 與裝置端的配對 / 心跳"""
+"""後台：API 金鑰與 Webhook (#14)、裝置管理 (#15) 與裝置端的配對 / 心跳"""
 from datetime import datetime
 
 from flask import Blueprint, flash, g, jsonify, make_response, redirect, render_template, request, url_for

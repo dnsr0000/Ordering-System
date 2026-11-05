@@ -2,14 +2,9 @@
 {% block title %}店家管理後台 - 自助點餐系統{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}
-    {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
-    {% if is_admin %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/cropperjs/cropper.min.css') }}">
-    {% endif %}
 {% endblock %}
 
-{% set SIDE_CATEGORIES = ['飲料', '點心', '副餐', '配餐'] %}
 {% set PLACEHOLDER_IMG = url_for('static', filename='img/placeholder.svg') %}
 
 {% block content %}
@@ -57,20 +52,22 @@
     </div>
 
 {% else %}
-    <!-- 2. 管理員後台主畫面 (導覽在共用側欄 _admin_sidebar.html；這裡只有頁首與匯入匯出) -->
+    <!-- 2. 管理員後台主畫面 (導覽在共用側欄 _admin_sidebar.html)：總覽、實時訂單、回饋商城；菜單 / 會員 / 稽核各有自己的頁面 -->
     <div class="container-fluid px-4 pt-3">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3" id="adminPageHeader">
             <div>
                 <h1 class="h3 fw-bold mb-1"><i class="bi bi-speedometer2 text-warning me-2"></i>管理後台</h1>
-                <div class="text-white-50 small">今日營運總覽、實時訂單、營運分析、菜單、回饋商城、會員與稽核；其他功能請用左側選單</div>
+                <div class="text-white-50 small">今日營運總覽、實時訂單與回饋商城；菜單、會員、報表等其他功能請用左側選單</div>
             </div>
             <div class="d-flex flex-wrap gap-2">
+                {% if current_user.has_permission('menu') %}
                 <button type="button" class="btn btn-warning btn-sm fw-bold text-dark" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
                     <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
                 </button>
                 <button type="button" class="btn btn-outline-info btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
                     <i class="bi bi-box-arrow-in-down me-1"></i> 匯入資料
                 </button>
+                {% endif %}
                 {% if current_user.has_permission('settings') %}<a href="{{ url_for('settings_admin.index') }}" class="btn btn-outline-light btn-sm fw-bold"><i class="bi bi-sliders me-1"></i>系統設定</a>{% endif %}
             </div>
         </div>
@@ -78,11 +75,10 @@
 
     <div class="container-fluid px-4">
         <ul class="nav nav-pills mb-4" id="adminTab" role="tablist">
-            {% set tab_perm = {'home': '*', 'orders': 'reports', 'analytics': 'reports', 'menu': 'menu', 'rewards': 'coupons', 'users': 'members', 'audit': 'audit'} %}
+            {% set tab_perm = {'home': '*', 'orders': 'reports', 'rewards': 'coupons'} %}
             {% set visible_tabs = [] %}
-            {% for key, icon, label in [('home', 'bi-house-door-fill', '總覽'), ('orders', 'bi-receipt-cutoff', '實時訂單看板'), ('analytics', 'bi-graph-up-arrow', '營運分析'),
-                                         ('menu', 'bi-grid-fill', '菜單品項管理'), ('rewards', 'bi-gift-fill', '回饋商城管理'),
-                                         ('users', 'bi-people-fill', '會員名冊與紅利'), ('audit', 'bi-shield-check', '操作稽核日誌')]
+            {% for key, icon, label in [('home', 'bi-house-door-fill', '總覽'), ('orders', 'bi-receipt-cutoff', '實時訂單看板'),
+                                         ('rewards', 'bi-gift-fill', '回饋商城與優惠券')]
                if tab_perm[key] == '*' or tab_perm[key] in tabs %}
             {% set _ = visible_tabs.append(key) %}
             <li class="nav-item me-2" role="presentation">
@@ -95,22 +91,38 @@
         </ul>
 
         <div class="tab-content" id="adminTabContent">
-            <!-- 0. 總覽 (儀表板)：今日數字、待處理事項、常用功能 -->
+            <!-- 0. 總覽 (儀表板)：今日數字 (admin.js 每 10 秒與訂單變動時更新)、待處理事項、熱門排行、常用功能 -->
             <div class="tab-pane fade{% if visible_tabs[0] == 'home' %} show active{% endif %}" id="home-pane" role="tabpanel">
                 {% set d = dashboard %}
                 <div class="row g-3 mb-3" id="homeKpis">
-                    {% for label, value, icon, cls in [('今日訂單', analytics.today_orders, 'bi-receipt', 'text-warning'),
-                                                      ('今日營收', '$' ~ analytics.today_revenue, 'bi-cash-coin', 'text-success'),
-                                                      ('待製作', analytics.pending_count, 'bi-fire', 'text-danger' if analytics.pending_count >= 5 else ''),
-                                                      ('客單價', '$' ~ (analytics.avg_order_value|int), 'bi-graph-up-arrow', ''),
-                                                      ('預估等候', (analytics.eta_minutes ~ ' 分') if analytics.eta_minutes else '-', 'bi-hourglass-split', ''),
-                                                      ('今日已出餐', analytics.completed_today, 'bi-check2-circle', 'text-info')] %}
-                    <div class="col-6 col-md-4 col-xl-2"><div class="card card-custom p-3 h-100">
-                        <div class="text-white-50 small"><i class="bi {{ icon }} me-1"></i>{{ label }}</div>
-                        <div class="fs-3 fw-bold {{ cls }}">{{ value }}</div></div></div>
-                    {% endfor %}
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-receipt me-1"></i>今日訂單</div>
+                        <div class="fs-3 fw-bold text-warning" id="stat-today-orders">{{ analytics.today_orders }}</div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-cash-coin me-1"></i>今日營收</div>
+                        <div class="fs-3 fw-bold text-success" id="stat-today-revenue">${{ analytics.today_revenue }}</div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-fire me-1"></i>待製作</div>
+                        <div class="fs-3 fw-bold {{ 'text-danger' if analytics.pending_count >= 5 else '' }}" id="stat-pending-count">{{ analytics.pending_count }}</div>
+                        <div class="small text-warning" id="stat-stale-pending"{% if not analytics.stale_pending_count %} hidden{% endif %}>另有 <span id="stat-stale-pending-n">{{ analytics.stale_pending_count }}</span> 張前幾日未結案的訂單</div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-hourglass-split me-1"></i>預估等候</div>
+                        <div class="fs-3 fw-bold" id="stat-eta-minutes">{{ analytics.eta_minutes }} 分鐘</div>
+                        <div class="small text-white-50" id="stat-eta-basis">{% if analytics.eta_based_on_samples %}依今日實際平均 {{ analytics.eta_per_order_minutes }} 分鐘/單 (已排除極端值){% else %}今日尚無出餐紀錄，暫以 {{ analytics.eta_per_order_minutes }} 分鐘/單估算{% endif %}</div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-graph-up-arrow me-1"></i>客單價 (排除純點數訂單)</div>
+                        <div class="fs-3 fw-bold">$<span id="stat-avg-order-value">{{ analytics.avg_order_value | round(0) | int }}</span></div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-stopwatch me-1"></i>平均每單時間</div>
+                        <div class="fs-3 fw-bold text-info"><span id="stat-avg-order-time">{{ analytics.avg_order_time if analytics.avg_order_time else '-' }}</span> <span class="fs-6 text-white-50">分鐘</span></div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-check2-circle me-1"></i>今日已出餐</div>
+                        <div class="fs-3 fw-bold text-info" id="stat-completed-today">{{ analytics.completed_today }}</div></div></div>
+                    <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
+                        <div class="text-white-50 small"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI)</div>
+                        <div class="small text-white-50 ai-advice" id="stat-ai-advice">{{ analytics.ai_advice or '今日尚無足夠資料' }}</div></div></div>
                 </div>
-                <div class="row g-3">
+                <div class="row g-3 mb-3">
                     <div class="col-lg-5"><div class="card card-custom p-3 h-100" id="homePending">
                         <h2 class="h6 fw-bold mb-3"><i class="bi bi-exclamation-circle text-warning me-1"></i>待處理事項</h2>
                         {% set rows = [] %}
@@ -131,29 +143,57 @@
                             {% endfor %}
                         </ul>
                         {% else %}<div class="text-white-50"><i class="bi bi-check-circle text-success me-1"></i>目前沒有待處理事項</div>{% endif %}
-                        {% if analytics.ai_advice %}<div class="small text-info mt-3 border-top border-secondary pt-2"><i class="bi bi-stars me-1"></i>{{ analytics.ai_advice }}</div>{% endif %}
                     </div></div>
-                    <div class="col-lg-7"><div class="card card-custom p-3 h-100" id="homeQuickLinks">
-                        <h2 class="h6 fw-bold mb-3"><i class="bi bi-lightning-charge text-warning me-1"></i>常用功能</h2>
-                        <div class="row g-2">
-                            {% for label, url, icon, show in [
-                                ('實時訂單', url_for('admin.admin_dashboard', tab='orders'), 'bi-receipt-cutoff', 'reports' in tabs),
-                                ('菜單品項', url_for('admin.admin_dashboard', tab='menu'), 'bi-grid-fill', 'menu' in tabs),
-                                ('會員名冊', url_for('admin.admin_dashboard', tab='users'), 'bi-people-fill', 'members' in tabs),
-                                ('優惠券與回饋', url_for('admin.admin_dashboard', tab='rewards'), 'bi-gift-fill', 'coupons' in tabs),
-                                ('營運報表', url_for('reports.index'), 'bi-bar-chart-line', current_user.has_permission('reports')),
-                                ('原物料與配方', url_for('inventory.manage'), 'bi-box-seam', current_user.has_permission('inventory')),
-                                ('打卡與排班', url_for('timeclock.admin'), 'bi-person-badge', current_user.role in ('owner', 'manager')),
-                                ('交班與日結', url_for('shifts.list_shifts'), 'bi-cash-coin', current_user.has_permission('cash_drawer')),
-                                ('外送派車', url_for('dispatch.board'), 'bi-scooter', True),
-                                ('系統設定', url_for('settings_admin.index'), 'bi-sliders', current_user.has_permission('settings')),
-                                ('系統監控與備份', url_for('system.status'), 'bi-activity', current_user.role in ('owner', 'manager')),
-                                ('員工帳號', url_for('admin.staff_accounts'), 'bi-person-vcard', current_user.role == 'owner')] if show %}
-                            <div class="col-6 col-md-4"><a class="btn btn-outline-light w-100 text-start py-2" href="{{ url }}"><i class="bi {{ icon }} text-warning me-2"></i>{{ label }}</a></div>
+                    <div class="col-lg-7"><div class="card card-custom p-3 h-100" id="homeTopItems">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h2 class="h6 fw-bold mb-0"><i class="bi bi-bar-chart-fill text-warning me-1"></i>今日熱門餐點排行</h2>
+                            <div class="d-flex align-items-center gap-1 ranking-limit">
+                                <input type="number" id="rankingLimitInput" class="form-control form-control-sm bg-dark text-warning border-secondary text-center"
+                                       value="{{ current_limit }}" min="1" max="100" aria-label="排行筆數">
+                                <button class="btn btn-sm btn-outline-warning py-0 px-2 fw-bold text-nowrap flex-shrink-0" type="button" data-action="ranking-limit">查看</button>
+                            </div>
+                        </div>
+                        {% set top_max = (analytics.top_items | map(attribute='quantity') | max) if analytics.top_items else 0 %}
+                        <div class="list-group list-group-flush" id="stat-top-items">
+                            {% for item in analytics.top_items %}
+                            <div class="list-group-item bg-transparent border-secondary text-white px-0 py-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="fw-bold">{{ loop.index }}. {{ item.name }}</div>
+                                        <small class="text-white-50">已售 {{ item.quantity }} 份</small>
+                                    </div>
+                                    <span class="badge bg-warning text-dark">${{ item.revenue | default(0) }}</span>
+                                </div>
+                                <div class="top-item-bar mt-1" aria-hidden="true"><span style="width: {{ ((item.quantity / top_max * 100) if top_max else 0) | round(1) }}%"></span></div>
+                            </div>
+                            {% else %}
+                            <div class="text-white-50">目前尚無銷售資料。</div>
                             {% endfor %}
                         </div>
-                        <div class="small text-white-50 mt-3">提示：櫃檯 POS、廚房 KDS、叫號與數位看板在左側「今日營運」，會另開新視窗。</div>
                     </div></div>
+                </div>
+                <div class="card card-custom p-3" id="homeQuickLinks">
+                    <h2 class="h6 fw-bold mb-3"><i class="bi bi-lightning-charge text-warning me-1"></i>常用功能</h2>
+                    <div class="row g-2">
+                        {% for label, url, icon, show in [
+                            ('實時訂單', url_for('admin.admin_dashboard', tab='orders'), 'bi-receipt-cutoff', 'reports' in tabs),
+                            ('菜單與套餐', url_for('menu_pro.manage'), 'bi-grid-fill', 'menu' in tabs),
+                            ('會員', url_for('members_pro.manage'), 'bi-people-fill', 'members' in tabs),
+                            ('回饋商城與優惠券', url_for('admin.admin_dashboard', tab='rewards'), 'bi-gift-fill', 'coupons' in tabs),
+                            ('營運報表', url_for('reports.index'), 'bi-bar-chart-line', current_user.has_permission('reports')),
+                            ('即時看板', url_for('live.index'), 'bi-broadcast', current_user.role in ('owner', 'manager')),
+                            ('原物料與配方', url_for('inventory.manage'), 'bi-box-seam', current_user.has_permission('inventory')),
+                            ('打卡與排班', url_for('timeclock.admin'), 'bi-person-badge', current_user.role in ('owner', 'manager')),
+                            ('交班與日結', url_for('shifts.list_shifts'), 'bi-cash-coin', current_user.has_permission('cash_drawer')),
+                            ('外送派車', url_for('dispatch.board'), 'bi-scooter', True),
+                            ('稽核紀錄', url_for('audit.index'), 'bi-shield-check', current_user.role in ('owner', 'manager')),
+                            ('系統設定', url_for('settings_admin.index'), 'bi-sliders', current_user.has_permission('settings')),
+                            ('系統監控與備份', url_for('system.status'), 'bi-activity', current_user.role in ('owner', 'manager')),
+                            ('員工帳號', url_for('admin.staff_accounts'), 'bi-person-vcard', current_user.role == 'owner')] if show %}
+                        <div class="col-6 col-md-4 col-xl-3"><a class="btn btn-outline-light w-100 text-start py-2" href="{{ url }}"><i class="bi {{ icon }} text-warning me-2"></i>{{ label }}</a></div>
+                        {% endfor %}
+                    </div>
+                    <div class="small text-white-50 mt-3">提示：櫃檯 POS、廚房 KDS、叫號與數位看板在左側「今日營運」，會另開新視窗。</div>
                 </div>
             </div>
 
@@ -166,300 +206,53 @@
                 </div>
             </div>{% endif %}
 
-            <!-- 2. 營運分析 -->
-            {% if 'reports' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'analytics' %} show active{% endif %}" id="analytics-pane" role="tabpanel">
-                <div class="card card-custom p-4 mb-4">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold text-white mb-0"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運分析</h5>
-                        <span class="badge bg-warning text-dark">即時統計</span>
-                    </div>
-
-                    <!-- 4 欄即時統計指標 -->
-                    <div class="row g-3">
-                        <div class="col-md-3 col-sm-6">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <div class="text-white-50 small">今日訂單數</div>
-                                    <div class="display-6 fw-bold text-warning" id="stat-today-orders">{{ analytics.today_orders }}</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3 col-sm-6">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <div class="text-white-50 small">今日營收</div>
-                                    <div class="display-6 fw-bold text-success" id="stat-today-revenue">${{ analytics.today_revenue }}</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3 col-sm-6">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <div class="text-white-50 small">待製作</div>
-                                    <div class="display-6 fw-bold text-info" id="stat-pending-count">{{ analytics.pending_count }}</div>
-                                    <div class="small text-warning" id="stat-stale-pending"{% if not analytics.stale_pending_count %} hidden{% endif %}>另有 <span id="stat-stale-pending-n">{{ analytics.stale_pending_count }}</span> 張前幾日未結案的訂單</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-3 col-sm-6">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <div class="text-white-50 small">預估出餐</div>
-                                    <div class="display-6 fw-bold text-danger" id="stat-eta-minutes">{{ analytics.eta_minutes }} 分鐘</div>
-                                    <div class="small text-white-50" id="stat-eta-basis">{% if analytics.eta_based_on_samples %}依今日實際平均 {{ analytics.eta_per_order_minutes }} 分鐘/單 (已排除極端值){% else %}今日尚無出餐紀錄，暫以 {{ analytics.eta_per_order_minutes }} 分鐘/單估算{% endif %}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 排行榜與營運簡報 -->
-                    <div class="row g-3 mt-1">
-                        <!-- 左側：熱門餐點排行 (以純 CSS 長條呈現銷量比例) -->
-                        <div class="col-lg-7">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <div class="d-flex justify-content-between align-items-center mb-3">
-                                        <h6 class="fw-bold text-white mb-0"><i class="bi bi-bar-chart-fill text-warning me-2"></i>熱門餐點排行</h6>
-                                        <div class="d-flex align-items-center gap-1 ranking-limit">
-                                            <input type="number" id="rankingLimitInput" class="form-control form-control-sm bg-dark text-warning border-secondary text-center"
-                                                   value="{{ current_limit }}" min="1" max="100" aria-label="排行筆數">
-                                            <button class="btn btn-sm btn-outline-warning py-0 px-2 fw-bold text-nowrap flex-shrink-0" type="button" data-action="ranking-limit">查看</button>
-                                        </div>
-                                    </div>
-
-                                    {% set top_max = (analytics.top_items | map(attribute='quantity') | max) if analytics.top_items else 0 %}
-                                    <div class="list-group list-group-flush" id="stat-top-items">
-                                        {% for item in analytics.top_items %}
-                                        <div class="list-group-item bg-transparent border-secondary text-white px-0 py-2">
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <div>
-                                                    <div class="fw-bold">{{ loop.index }}. {{ item.name }}</div>
-                                                    <small class="text-white-50">已售 {{ item.quantity }} 份</small>
-                                                </div>
-                                                <span class="badge bg-warning text-dark">${{ item.revenue | default(0) }}</span>
-                                            </div>
-                                            <div class="top-item-bar mt-1" aria-hidden="true"><span style="width: {{ ((item.quantity / top_max * 100) if top_max else 0) | round(1) }}%"></span></div>
-                                        </div>
-                                        {% else %}
-                                        <div class="text-white-50">目前尚無銷售資料。</div>
-                                        {% endfor %}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 右側：營運簡報 -->
-                        <div class="col-lg-5">
-                            <div class="card bg-dark border-secondary h-100">
-                                <div class="card-body p-3">
-                                    <h6 class="fw-bold text-white mb-3"><i class="bi bi-graph-up-arrow text-warning me-2"></i>營運簡報</h6>
-                                    <div class="mb-3">
-                                        <div class="text-white-50 small">平均每單 (排除純點數訂單)</div>
-                                        <div class="fw-bold fs-4 text-warning">$<span id="stat-avg-order-value">{{ analytics.avg_order_value | round(0) | int }}</span></div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <div class="text-white-50 small">平均每單時間</div>
-                                        <div class="fw-bold fs-4 text-info"><span id="stat-avg-order-time">{{ analytics.avg_order_time if analytics.avg_order_time else '-' }}</span> <span class="fs-6 text-white-50">分鐘</span></div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <div class="text-white-50 small">已完成今日訂單</div>
-                                        <div class="fw-bold fs-4 text-success" id="stat-completed-today">{{ analytics.completed_today }}</div>
-                                    </div>
-                                    <div>
-                                        <div class="text-white-50 small mb-1"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI Insight)</div>
-                                        <div id="stat-ai-advice" class="p-3 bg-dark bg-opacity-50 rounded border border-secondary text-white-50 small ai-advice">{{ analytics.ai_advice }}</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>{% endif %}
-
-            <!-- 3. 菜單品項管理 -->
-            {% if 'menu' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'menu' %} show active{% endif %}" id="menu-pane" role="tabpanel">
-                <div class="card card-custom p-4 mb-4">
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-list-stars text-warning me-2"></i>菜單品項清單</h5>
-                        <div class="d-flex gap-2">
-                            <button class="btn btn-outline-info btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
-                                <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel 菜單
-                            </button>
-                            <button class="btn btn-warning btn-sm fw-bold text-dark" type="button" data-bs-toggle="modal" data-bs-target="#addItemModal">
-                                <i class="bi bi-plus-lg me-1"></i> 新增品項
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-dark-custom align-middle" id="menuItemTable">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>圖片</th>
-                                    <th>餐點名稱</th>
-                                    <th>分類</th>
-                                    <th>單價</th>
-                                    <th>標籤狀態</th>
-                                    <th>商城狀態</th>
-                                    <th>數量 (剩餘 / 總量)</th>
-                                    <th class="text-end col-actions">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for item in items %}
-                                {% set stock = item.stock or 0 %}
-                                <tr data-item-id="{{ item.id }}">
-                                    <td class="col-thumb">
-                                        <img src="{{ url_for('media.menu_image', filename=item.image_path) if item.image_path else PLACEHOLDER_IMG }}" class="rounded-3 object-fit-cover" width="55" height="55" alt="">
-                                    </td>
-                                    <td>
-                                        <div class="fw-bold text-white item-name">{{ item.name }}</div>
-                                        <small class="text-white-50">{{ item.description or '無描述' }}</small>
-                                    </td>
-                                    <td><span class="badge bg-secondary">{{ item.category }}</span></td>
-                                    <td class="fw-bold text-warning">${{ item.price }}</td>
-                                    <td id="item-tags-{{ item.id }}">
-                                        {% if item.is_sold_out or stock <= 0 %}<span class="badge bg-secondary me-1 sold-out-badge">已售完</span>{% endif %}
-                                        {% if item.is_manual_popular or item.is_recommended %}<span class="badge bg-danger me-1">熱門推薦</span>{% endif %}
-                                        {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
-                                        {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
-                                        {% if item.can_be_add_on %}
-                                        <span class="badge bg-info text-dark me-1" title="加購條件：{{ item.addon_trigger_type }} - {{ item.addon_trigger_target }}">
-                                            可加購 (${{ item.add_on_price }})
-                                            {% if item.addon_trigger_type == 'category' %}[限分類:{{ item.addon_trigger_target }}]{% elif item.addon_trigger_type == 'item' %}[限餐點:{{ item.addon_trigger_target }}]{% endif %}
-                                        </span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if item.is_reward %}
-                                        <div class="d-inline-flex flex-column align-items-start gap-1">
-                                            <span class="badge bg-warning text-dark"><i class="bi bi-gift-fill me-1"></i>{{ item.reward_points }}點</span>
-                                            {% if item.reward_discount_points and item.reward_discount_points > 0 %}
-                                            <span class="badge bg-danger">特價 {{ item.reward_discount_points }}點</span>
-                                            {% endif %}
-                                        </div>
-                                        {% else %}
-                                        <span class="badge bg-dark text-white-50 border border-secondary">未上架</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        <div class="d-inline-flex align-items-center bg-dark border border-secondary rounded px-2 py-1 shadow-sm">
-                                            <span id="item-stock-badge-{{ item.id }}" class="badge {% if stock <= 0 or item.is_sold_out %}bg-danger{% elif stock <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %} fw-bold px-2 py-1" title="剩餘數量">{{ stock }}</span>
-                                            <span class="text-white-50 mx-1 small">/</span>
-                                            <span class="badge bg-secondary text-white fw-bold px-2 py-1" title="總量">{{ item.total_stock or 0 }}</span>
-                                        </div>
-                                    </td>
-                                    <td class="text-end text-nowrap">
-                                        <div class="d-inline-flex justify-content-end align-items-center gap-2">
-                                            <button class="btn btn-outline-primary btn-sm" type="button" data-action="edit-item" data-id="{{ item.id }}">
-                                                <i class="bi bi-pencil-square"></i> 編輯
-                                            </button>
-                                            <form action="{{ url_for('admin.delete_item', id=item.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除品項【{{ item.name }}】嗎？">
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                                <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
-                                            </form>
-                                        </div>
-                                    </td>
-                                </tr>
-                                {% else %}
-                                <tr><td colspan="8" class="text-center py-4 text-white-50">目前尚無任何菜單品項</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <!-- 套餐組合清單 -->
-                <div class="card card-custom p-4 mb-4 border-success">
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-box-seam text-success me-2"></i>套餐組合清單</h5>
-                        <button class="btn btn-success btn-sm fw-bold text-white" type="button" data-bs-toggle="modal" data-bs-target="#addComboModal">
-                            <i class="bi bi-plus-lg me-1"></i> 新增套餐組合
-                        </button>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-dark-custom align-middle" id="comboTable">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>關聯主餐</th>
-                                    <th>套餐名稱</th>
-                                    <th>升級加購價</th>
-                                    <th>配餐內容清單 (Sides)</th>
-                                    <th>標籤狀態</th>
-                                    <th class="text-end">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% set combo_count = namespace(n=0) %}
-                                {% for item in items %}
-                                {% for combo in item.combo_options %}
-                                {% set combo_count.n = combo_count.n + 1 %}
-                                {% set sides = combo.fixed_sides | selectattr('menu_item') | list %}
-                                <tr>
-                                    <td><span class="badge bg-secondary">{{ item.name }}</span></td>
-                                    <td class="fw-bold text-white">{{ combo.name }}</td>
-                                    <td class="fw-bold text-danger">+${{ combo.additional_price }}</td>
-                                    <td>
-                                        <ul class="mb-0 list-unstyled small text-white-50">
-                                            {% for side in sides %}
-                                            <li>- {{ side.menu_item.name }} {% if side.customizable and side.menu_item.has_modifiers %}<span class="badge bg-info text-dark py-0 badge-xs">可客製</span>{% endif %}</li>
-                                            {% endfor %}
-                                        </ul>
-                                    </td>
-                                    <td>
-                                        {% if not item.is_available %}
-                                        <span class="badge bg-secondary me-1">主餐售完</span>
-                                        {% elif not combo.is_available %}
-                                        <span class="badge bg-warning text-dark me-1">配餐缺貨</span>
-                                        {% else %}
-                                        <span class="badge bg-success me-1">正常供應</span>
-                                        {% endif %}
-                                        {% if combo.can_addon %}
-                                        <span class="badge bg-info text-dark me-1">可加購</span>
-                                        {% else %}
-                                        <span class="badge bg-secondary text-white-50 me-1">不可加購</span>
-                                        {% endif %}
-                                        <span class="badge bg-dark text-white-50 border border-secondary">{{ sides | length }}樣附餐</span>
-                                        {% for group, options in combo.choice_groups %}
-                                        <span class="badge bg-dark text-warning border border-warning ms-1">{{ group }} {{ options | length }} 選 1</span>
-                                        {% endfor %}
-                                    </td>
-                                    <td class="text-end text-nowrap">
-                                        <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-combo"
-                                                data-id="{{ combo.id }}"
-                                                data-main-id="{{ combo.main_item_id }}"
-                                                data-name="{{ combo.name }}"
-                                                data-price="{{ combo.additional_price }}"
-                                                data-desc="{{ combo.description or '' }}"
-                                                {% for side in sides[:3] %}
-                                                data-item{{ loop.index }}="{{ side.menu_item_id }}"
-                                                data-item{{ loop.index }}-cust="{{ 1 if side.customizable else 0 }}"
-                                                {% endfor %}
-                                                data-choices="{{ combo.choices_text }}"
-                                                data-can-addon="{{ 1 if combo.can_addon else 0 }}">
-                                            <i class="bi bi-pencil-square"></i> 編輯
-                                        </button>
-                                        <form action="{{ url_for('admin.delete_combo', id=combo.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除套餐組合【{{ combo.name }}】嗎？">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                                {% endfor %}
-                                {% if combo_count.n == 0 %}
-                                <tr><td colspan="6" class="text-center py-4 text-white-50">目前尚無建立任何套餐組合</td></tr>
-                                {% endif %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>{% endif %}
-
-            <!-- 4. 回饋商城管理 (優惠券 + 兌換餐點) -->
+            <!-- 2. 回饋商城與優惠券 (紅利折抵設定 + 優惠券 + 兌換餐點) -->
             {% if 'coupons' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'rewards' %} show active{% endif %}" id="rewards-pane" role="tabpanel">
-                <!-- 區塊 A：點數兌換優惠券管理 -->
+                <!-- 區塊 A：紅利折抵設定 -->
+                <div class="card card-custom p-4 mb-4 reward-setting-card">
+                    <form action="{{ url_for('admin.update_reward_setting') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-sliders text-warning fs-5"></i>
+                                <h5 class="fw-bold text-white mb-0">紅利折抵設定</h5>
+                            </div>
+                            <div class="text-white-50 small">目前設定：{{ reward_setting.points_per_dollar }} 點折抵 $1</div>
+                        </div>
+
+                        <div class="row g-3 align-items-end mb-3">
+                            <div class="col-12 col-md-2 d-flex align-items-center mb-2 mb-md-0">
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input switch-lg" type="checkbox" name="is_enabled" id="enablePointsSwitch" value="1" {% if reward_setting.is_enabled %}checked{% endif %}>
+                                    <label class="form-check-label text-white fw-bold ms-2 cursor-pointer" for="enablePointsSwitch">啟用點數折抵</label>
+                                </div>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-white-50 small mb-1" for="rs-points-per-dollar">每 $1 需要幾點</label>
+                                <input type="number" class="form-control" id="rs-points-per-dollar" name="points_per_dollar" min="1" value="{{ reward_setting.points_per_dollar }}" required>
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label text-white-50 small mb-1" for="rs-max-discount">單筆最多折抵金額</label>
+                                <input type="number" class="form-control" id="rs-max-discount" name="max_discount_per_order" min="0" value="{{ reward_setting.max_discount_per_order }}" placeholder="0 = 不限">
+                            </div>
+                            <div class="col-6 col-md-2">
+                                <label class="form-label text-white-50 small mb-1" for="rs-spend-per-point">消費滿幾元送 1 點</label>
+                                <input type="number" class="form-control" id="rs-spend-per-point" name="spend_per_point" min="1" value="{{ reward_setting.spend_per_point }}" required>
+                            </div>
+                            <div class="col-6 col-md-2">
+                                <button type="submit" class="btn btn-warning w-100 fw-bold text-dark py-2 shadow-sm">
+                                    <i class="bi bi-check-circle me-1"></i> 儲存點數設定
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="text-white-50 small">
+                            例如設定為 2，代表 2 點折抵 $1；折抵上限 50 代表單筆最多折 $50。停用後會員仍可累積點數，但結帳不能使用點數折抵。
+                        </div>
+                    </form>
+                </div>
+
+                <!-- 區塊 B：點數兌換優惠券管理 -->
                 <div class="card card-custom p-4 mb-4 border-warning">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
                         <div>
@@ -584,14 +377,14 @@
                     </div>
                 </div>
 
-                <!-- 區塊 B：點數兌換餐點管理 -->
+                <!-- 區塊 C：點數兌換餐點管理 -->
                 <div class="card card-custom p-4 mb-4">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
                         <div>
                             <h5 class="fw-bold mb-1 text-white"><i class="bi bi-gift-fill text-warning me-2"></i>點數兌換餐點管理</h5>
-                            <small class="text-white-50">自現有菜單挑選開放兌換之品項與點數</small>
+                            <small class="text-white-50">自現有菜單挑選開放兌換之品項與點數；餐點本身在「菜單與套餐」頁編輯</small>
                         </div>
-                        <button class="btn btn-outline-warning btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#addRewardModal">
+                        <button class="btn btn-outline-warning btn-sm fw-bold" type="button" data-action="add-reward">
                             <i class="bi bi-plus-lg me-1"></i> 上架餐點至商城
                         </button>
                     </div>
@@ -630,7 +423,8 @@
                                         {% endif %}
                                     </td>
                                     <td class="text-end text-nowrap">
-                                        <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-item" data-id="{{ item.id }}">
+                                        <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-reward"
+                                                data-id="{{ item.id }}" data-points="{{ item.reward_points or 0 }}" data-discount="{{ item.reward_discount_points or 0 }}">
                                             <i class="bi bi-gear-fill"></i> 修改點數
                                         </button>
                                         <form action="{{ url_for('admin.remove_reward_item', id=item.id) }}" method="POST" class="d-inline" data-confirm="確定要將【{{ item.name }}】從回饋商城下架嗎？">
@@ -647,243 +441,11 @@
                     </div>
                 </div>
             </div>{% endif %}
-
-            <!-- 5. 會員名冊與紅利 -->
-            {% if 'members' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'users' %} show active{% endif %}" id="users-pane" role="tabpanel">
-                <div class="card card-custom p-4 mb-4 reward-setting-card">
-                    <form action="{{ url_for('admin.update_reward_setting') }}" method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <div class="d-flex align-items-center gap-2">
-                                <i class="bi bi-sliders text-warning fs-5"></i>
-                                <h5 class="fw-bold text-white mb-0">紅利折抵設定</h5>
-                            </div>
-                            <div class="text-white-50 small">目前設定：{{ reward_setting.points_per_dollar }} 點折抵 $1</div>
-                        </div>
-
-                        <div class="row g-3 align-items-end mb-3">
-                            <div class="col-12 col-md-2 d-flex align-items-center mb-2 mb-md-0">
-                                <div class="form-check form-switch mb-0">
-                                    <input class="form-check-input switch-lg" type="checkbox" name="is_enabled" id="enablePointsSwitch" value="1" {% if reward_setting.is_enabled %}checked{% endif %}>
-                                    <label class="form-check-label text-white fw-bold ms-2 cursor-pointer" for="enablePointsSwitch">啟用點數折抵</label>
-                                </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-white-50 small mb-1" for="rs-points-per-dollar">每 $1 需要幾點</label>
-                                <input type="number" class="form-control" id="rs-points-per-dollar" name="points_per_dollar" min="1" value="{{ reward_setting.points_per_dollar }}" required>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <label class="form-label text-white-50 small mb-1" for="rs-max-discount">單筆最多折抵金額</label>
-                                <input type="number" class="form-control" id="rs-max-discount" name="max_discount_per_order" min="0" value="{{ reward_setting.max_discount_per_order }}" placeholder="0 = 不限">
-                            </div>
-                            <div class="col-6 col-md-2">
-                                <label class="form-label text-white-50 small mb-1" for="rs-spend-per-point">消費滿幾元送 1 點</label>
-                                <input type="number" class="form-control" id="rs-spend-per-point" name="spend_per_point" min="1" value="{{ reward_setting.spend_per_point }}" required>
-                            </div>
-                            <div class="col-6 col-md-2">
-                                <button type="submit" class="btn btn-warning w-100 fw-bold text-dark py-2 shadow-sm">
-                                    <i class="bi bi-check-circle me-1"></i> 儲存點數設定
-                                </button>
-                            </div>
-                        </div>
-
-                        <div class="text-white-50 small">
-                            例如設定為 2，代表 2 點折抵 $1；折抵上限 50 代表單筆最多折 $50。停用後會員仍可累積點數，但結帳不能使用點數折抵。
-                        </div>
-                    </form>
-                </div>
-
-                <div class="card card-custom p-4">
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                        <h5 class="fw-bold mb-0 text-white"><i class="bi bi-people text-warning me-2"></i>會員清單、紅利與持有票券
-                            <span class="small text-white-50 fw-normal ms-1">共 {{ member_total }} 位</span></h5>
-                        <form method="GET" action="{{ url_for('admin.admin_dashboard') }}" class="d-flex gap-2" id="memberSearchForm" role="search">
-                            <input type="hidden" name="tab" value="users">
-                            <input type="search" class="form-control form-control-sm" name="uq" value="{{ member_q }}" placeholder="搜尋姓名或手機" aria-label="搜尋會員">
-                            <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap"><i class="bi bi-search"></i> 搜尋</button>
-                            {% if member_q %}<a class="btn btn-sm btn-outline-secondary text-nowrap" href="{{ url_for('admin.admin_dashboard', tab='users') }}">清除</a>{% endif %}
-                        </form>
-                    </div>
-                    <div class="table-responsive">
-                        <table class="table table-dark-custom align-middle" id="memberTable">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>頭像</th>
-                                    <th>會員姓名</th>
-                                    <th>手機號碼</th>
-                                    <th>目前紅利點數</th>
-                                    <th>持有專屬優惠券狀態</th>
-                                    <th>人臉特徵</th>
-                                    <th>最後登入時間</th>
-                                    <th class="text-end">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for u in users %}
-                                <tr data-user-id="{{ u.id }}">
-                                    <td class="col-avatar">
-                                        <img src="{{ url_for('media.member_photo', filename=u.photo_path) if u.id in member_photo_ids else PLACEHOLDER_IMG }}" class="rounded-circle object-fit-cover border border-secondary" width="45" height="45" alt="">
-                                    </td>
-                                    <td class="fw-bold text-white member-name">{{ u.name }}</td>
-                                    <td>{{ u.phone }}</td>
-                                    <td><span class="badge bg-warning text-dark fs-6"><i class="bi bi-star-fill text-danger me-1"></i>{{ u.points }} 點</span></td>
-                                    <td>
-                                        <button class="btn btn-outline-warning btn-sm fw-bold" type="button" data-action="user-coupons"
-                                                data-user-id="{{ u.id }}" data-user-name="{{ u.name }}">
-                                            <i class="bi bi-ticket-perforated"></i> 管理票券 ({{ coupon_counts.get(u.id, 0) }})
-                                        </button>
-                                    </td>
-                                    <td>
-                                        {% if u.feature is not none %}
-                                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>已建檔</span>
-                                        {% else %}
-                                        <span class="badge bg-secondary">未建檔</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if u.last_login_at %}
-                                        <span class="text-info small fw-bold"><i class="bi bi-clock-history me-1"></i>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') }}</span>
-                                        {% else %}
-                                        <span class="text-white-50 small">尚未記錄</span>
-                                        {% endif %}
-                                    </td>
-                                    <td class="text-end text-nowrap">
-                                        <button class="btn btn-outline-primary btn-sm me-1" type="button" data-action="edit-user"
-                                                data-id="{{ u.id }}" data-name="{{ u.name }}" data-phone="{{ u.phone }}" data-points="{{ u.points }}">
-                                            <i class="bi bi-pencil-square"></i> 編輯
-                                        </button>
-                                        <form action="{{ url_for('admin.delete_user', id=u.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？">
-                                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                            <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
-                                        </form>
-                                    </td>
-                                </tr>
-                                {% else %}
-                                <tr><td colspan="8" class="text-center py-4 text-white-50">{{ '找不到符合的會員' if member_q else '目前尚無會員' }}</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                    {% if member_pages > 1 %}
-                    <nav aria-label="會員分頁" id="memberPager">
-                        <ul class="pagination pagination-sm justify-content-center mb-0 mt-2">
-                            {% set first = [1, member_page - 3]|max %}{% set last = [member_pages, member_page + 3]|min %}
-                            <li class="page-item {{ 'disabled' if member_page == 1 }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=member_page - 1) }}">上一頁</a></li>
-                            {% for p in range(first, last + 1) %}
-                            <li class="page-item {{ 'active' if p == member_page }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=p) }}">{{ p }}</a></li>
-                            {% endfor %}
-                            <li class="page-item {{ 'disabled' if member_page == member_pages }}"><a class="page-link" href="{{ url_for('admin.admin_dashboard', tab='users', uq=member_q or None, up=member_page + 1) }}">下一頁</a></li>
-                        </ul>
-                        <div class="text-center small text-white-50 mt-1">第 {{ member_page }} / {{ member_pages }} 頁 (最新加入的會員在前)</div>
-                    </nav>
-                    {% endif %}
-                </div>
-            </div>{% endif %}
-
-            <!-- 6. 操作稽核日誌 (StaffAuditLog & AdminLog) -->
-            {% set action_labels = audit_action_labels %}
-            {% if 'audit' in tabs %}<div class="tab-pane fade{% if visible_tabs[0] == 'audit' %} show active{% endif %}" id="audit-pane" role="tabpanel">
-                <div class="card card-custom p-4 mb-4">
-                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                        <div>
-                            <h5 class="fw-bold mb-1 text-warning"><i class="bi bi-shield-check me-2"></i>員工關鍵操作與點數異動稽核日誌 (最近 200 筆)</h5>
-                            <small class="text-white-50">自動記錄 POS 收銀建單、會員點數代扣/補發、取消訂單回滾、重設 PIN 碼與刪除資料等操作；
-                                <a class="text-info" href="{{ url_for('audit.index') }}">完整紀錄 (分頁、依員工 / 動作 / 日期篩選、匯出 Excel)</a></small>
-                        </div>
-                        <div class="d-flex gap-2">
-                            <input type="search" id="auditSearchInput" class="form-control form-control-sm audit-search" placeholder="搜尋員工、單號或內容..." aria-label="搜尋稽核日誌">
-                            <select id="auditActionFilter" class="form-select form-select-sm audit-filter" aria-label="操作類型">
-                                <option value="all">所有操作類型</option>
-                                {% for key, meta in action_labels.items() %}
-                                <option value="{{ key }}">{{ meta[0] }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="table-responsive scroll-55">
-                        <table class="table table-dark-custom align-middle mb-0" id="staffAuditTable">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>時間</th>
-                                    <th>操作員工 (角色)</th>
-                                    <th>動作類型</th>
-                                    <th>關聯單號 / 會員ID</th>
-                                    <th>點數異動</th>
-                                    <th>詳細稽核說明</th>
-                                    <th>IP 位址</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for au in audit_logs %}
-                                {% set label = action_labels.get(au.action_type, (au.action_type, 'bg-secondary')) %}
-                                <tr class="audit-row" data-audit-action="{{ au.action_type }}">
-                                    <td class="text-white-50 small text-nowrap">{{ au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else '' }}</td>
-                                    <td>
-                                        <span class="fw-bold text-white">{{ au.staff_username }}</span>
-                                        <span class="badge bg-secondary ms-1">{{ au.staff_role }}</span>
-                                    </td>
-                                    <td><span class="badge {{ label[1] }}">{{ label[0] }}</span></td>
-                                    <td class="small">
-                                        {% if au.target_order_id %}<span class="badge bg-dark border border-secondary me-1">單號 #{{ au.target_order_id }}</span>{% endif %}
-                                        {% if au.target_user_id %}<span class="badge bg-dark border border-warning text-warning">會員 #{{ au.target_user_id }}</span>{% endif %}
-                                        {% if not au.target_order_id and not au.target_user_id %}<span class="text-white-50">-</span>{% endif %}
-                                    </td>
-                                    <td class="fw-bold">
-                                        {% if au.points_delta and au.points_delta > 0 %}
-                                        <span class="text-success">+{{ au.points_delta }} 點</span>
-                                        {% elif au.points_delta and au.points_delta < 0 %}
-                                        <span class="text-danger">{{ au.points_delta }} 點</span>
-                                        {% else %}
-                                        <span class="text-white-50">0</span>
-                                        {% endif %}
-                                    </td>
-                                    <td class="small text-white">{{ au.details }}</td>
-                                    <td class="small text-white-50">{{ au.ip_address or '-' }}</td>
-                                </tr>
-                                {% else %}
-                                <tr><td colspan="7" class="text-center text-white-50 py-4">目前尚無操作稽核紀錄</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-
-                <div class="card card-custom p-4">
-                    <h6 class="fw-bold text-white mb-3"><i class="bi bi-door-open text-info me-2"></i>後台登入 / 登出日誌 (最近 100 筆)
-                        <a class="small text-info ms-2" href="{{ url_for('audit.index', tab='logins') }}">完整紀錄</a></h6>
-                    <div class="table-responsive scroll-35">
-                        <table class="table table-dark-custom table-sm align-middle mb-0">
-                            <thead>
-                                <tr class="text-white-50 small">
-                                    <th>ID</th>
-                                    <th>員工帳號</th>
-                                    <th>登入時間</th>
-                                    <th>登出時間</th>
-                                    <th>IP 位址</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for lg in admin_logs %}
-                                <tr>
-                                    <td class="text-white-50">#{{ lg.id }}</td>
-                                    <td class="fw-bold text-white">{{ lg.username }}</td>
-                                    <td class="small text-info">{{ lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '' }}</td>
-                                    <td class="small text-white-50">{{ lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '尚未登出' }}</td>
-                                    <td class="small text-white-50">{{ lg.ip_address or '-' }}</td>
-                                </tr>
-                                {% else %}
-                                <tr><td colspan="5" class="text-center text-white-50 py-3">尚無登入紀錄</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>{% endif %}
         </div>
     </div>
 
-    {% include "_admin_modals.html" %}
+    {% if 'coupons' in tabs %}{% include "_coupon_modals.html" %}{% endif %}
+    {% if current_user.has_permission('menu') %}{% include "_data_modals.html" %}{% endif %}
 {% endif %}
 {% endblock %}
 
@@ -891,20 +453,15 @@
 {% if is_admin %}
 <script type="application/json" id="page-data">{{ {
     'rankingLimit': current_limit,
-    'staticMenuUrl': request.script_root + '/media/menu/',
-    'placeholderImg': PLACEHOLDER_IMG,
     'loginUrl': url_for('admin.admin_dashboard'),
-    'menuItems': admin_menu_items,
-    'couponHistoryDays': coupon_history_days,
+    'liveSync': 'reports' in tabs,
 } | tojson }}</script>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 {% if is_admin %}
-<script src="{{ url_for('static', filename='vendor/cropperjs/cropper.min.js') }}"></script>
 <script src="{{ url_for('static', filename='js/admin.js') }}"></script>
-<script src="{{ url_for('static', filename='js/admin-menu.js') }}"></script>
-<script src="{{ url_for('static', filename='js/admin-members.js') }}"></script>
+{% if 'coupons' in tabs %}<script src="{{ url_for('static', filename='js/admin-coupons.js') }}"></script>{% endif %}
 {% endif %}
 {% endblock %}
