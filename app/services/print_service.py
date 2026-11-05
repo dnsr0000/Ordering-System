@@ -26,18 +26,18 @@ def build_receipt(order, printer, title='交易明細'):
     """熱感機收據：內容來自 receipt_service.receipt_rows (與電子收據同一份)，頁尾讀 POS 設定的 receipt_footer"""
     t = escpos.Ticket(printer.paper_width, printer.encoding)
     for row in receipt_service.receipt_rows(order, detailed=True, title=title):
-        kind = row[0]
+        kind = row['kind']
         if kind == 'text':
-            t.text(row[1], **row[2])
+            t.text(row['text'], **{k: row[k] for k in ('bold', 'size', 'align') if k in row})
         elif kind == 'row':
-            t.row(row[1], row[2], bold=row[3].get('bold', False))
+            t.row(row['label'], row['value'], bold=row.get('bold', False))
         elif kind == 'item':
-            t.row(row[1], row[2])
+            t.row(row['label'], row['value'])
         elif kind == 'rule':
-            t.rule(row[1])
+            t.rule(row['char'])
         elif kind == 'track':
             t.text('掃描 QR code 查看出餐進度', align='center')
-            t.qr(row[1], size=5)
+            t.qr(row['url'], size=5)
     t.text(settings_service.get('pos', order.tenant_id).get('receipt_footer') or '謝謝光臨', align='center')
     t.cut()
     return t.bytes()

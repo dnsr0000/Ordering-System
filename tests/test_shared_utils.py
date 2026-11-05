@@ -7,7 +7,7 @@ from openpyxl import Workbook, load_workbook
 from app.errors import AppError
 from app.models.tenant import Tenant
 from app.sync import runtime as sync_runtime
-from app.utils import (day_bounds, hub_only, json_etag_response, paginate, parse_date, parse_date_range, parse_hm,
+from app.utils import (day_bounds, hub_only, json_etag_response, paginate, parse_date, parse_date_range, hm_minutes, parse_hm,
                        parse_local_dt, sha256_hex, store_only, workbook_bytes)
 
 
@@ -32,6 +32,11 @@ def test_parse_date_range_defaults_and_swap(app):
     with app.test_request_context('/?start=bad&end=2026-02-01'):   # 格式錯誤：預設 (不嚴格)
         start, end = parse_date_range()
         assert (start, end) == tuple(sorted((today - timedelta(days=6), date(2026, 2, 1))))
+    with app.test_request_context('/?start=2024-01-01&end=bad'):   # together：任一端錯就整組預設 (報表頁不會查到超長區間)
+        assert parse_date_range(together=True, max_days=400) == (today - timedelta(days=6), today)
+        assert parse_date_range()[0] == date(2024, 1, 1), '非 together：各自套預設'
+    with app.test_request_context('/?start=bad&end=2026-02-01'):
+        assert parse_date_range(together=True) == (today - timedelta(days=6), today)
 
 
 def test_parse_date_range_week(app):
@@ -84,7 +89,17 @@ def test_parse_hm():
     assert parse_hm('09:30') == (9, 30)
     assert parse_hm('bad', '10:00') == (10, 0)
     assert parse_hm('25:00', '10:00') == (10, 0)   # 超出範圍視為格式錯誤
+    assert parse_hm('24:00') == (24, 0) and parse_hm('24:01') is None, '24:00 是合法的結束時間 (班表 18:00~24:00)'
     assert parse_hm(None) is None and parse_hm('x', 'y') is None
+    assert hm_minutes('24:00') == 1440 and hm_minutes('09:30') == 570 and hm_minutes('x', '08:00') == 480 and hm_minutes('x') is None
+
+
+def test_end_of_day_shift_and_availability(app):
+    """班表 / 可排時段的結束時間 24:00：排班建議算到 23 點，可排時段不會被當成格式錯誤丟掉"""
+    from app.services import scheduling_service, staffing_service
+    assert staffing_service._hours_of('18:00', '24:00') == [18, 19, 20, 21, 22, 23]
+    assert staffing_service._hours_of('22:00', '02:00') == [22, 23], '跨午夜只算到 24 點'
+    assert scheduling_service._minutes('24:00') == 1440 and scheduling_service._minutes('9:5') == 545
 
 
 # ---------------------------------------------------------------- 分頁 / 雜湊

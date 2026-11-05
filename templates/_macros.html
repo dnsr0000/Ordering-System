@@ -79,5 +79,5 @@
 {% macro stock_badge(item, style='success', id=None, extra_class='', sold_out=None, title=None) -%}
 {%- set stock = item.stock or 0 -%}
 {%- set sold_out = (item.is_sold_out or stock <= 0) if sold_out is none else sold_out -%}
-<span{% if id %} id="{{ id }}"{% endif %} class="badge{% if extra_class %} {{ extra_class }}{% endif %} {% if sold_out or stock <= 0 %}bg-danger{% elif stock <= 5 %}bg-warning text-dark{% elif style == 'dark' %}bg-dark border border-secondary text-white-50{% else %}bg-success{% endif %}"{% if title %} title="{{ title }}"{% endif %}>{{ caller()|trim if caller is defined else stock }}</span>
+<span{% if id %} id="{{ id }}"{% endif %} class="badge{% if extra_class %} {{ extra_class }}{% endif %} {% if sold_out or stock <= 0 %}bg-danger{% elif stock <= LOW_STOCK %}bg-warning text-dark{% elif style == 'dark' %}bg-dark border border-secondary text-white-50{% else %}bg-success{% endif %}"{% if title %} title="{{ title }}"{% endif %}>{{ caller()|trim if caller is defined else stock }}</span>
 {%- endmacro %}

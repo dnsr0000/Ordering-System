@@ -15,7 +15,7 @@ from app.models.order import Order
 from app.models.staff import WorkSchedule
 from app.models.tenant import StaffAccount
 from app.services import settings_service
-from app.utils import day_bounds, parse_hm
+from app.utils import day_bounds, hm_minutes
 
 config = settings_service.reader('staffing')
 
@@ -70,10 +70,9 @@ def scheduled_by_hour(tenant_id, target):
 
 def _hours_of(start, end):
     """'09:00'~'13:30' → [9, 10, 11, 12, 13] (跨午夜只算到 24 點)"""
-    st, en = parse_hm(start), parse_hm(end)
-    if st is None or en is None:
+    s, e = hm_minutes(start), hm_minutes(end)
+    if s is None or e is None:
         return []
-    s, e = st[0] * 60 + st[1], en[0] * 60 + en[1]
     if e <= s:
         e = 24 * 60
     return [h for h in range(24) if h * 60 < e and (h + 1) * 60 > s]

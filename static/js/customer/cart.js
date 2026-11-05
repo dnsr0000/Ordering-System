@@ -107,17 +107,20 @@ export function addLine(line) {
 }
 
 // ================================================================ 加購配額 (shared/addons.js；規則與後端一致)
-const addonDef = (id) => availableAddons().find((a) => Number(a.id) === Number(id));
-const addonRules = { categoryOf: lineCategory, addonDef };
+/** 配額計算用的查表 (可加購且有供應的品項 id → 定義)；每次計算只建一次，不在迴圈裡重複過濾整份菜單 */
+function addonRules() {
+    const defs = new Map(availableAddons().map((a) => [Number(a.id), a]));
+    return { categoryOf: lineCategory, addonDef: (id) => defs.get(Number(id)) };
+}
 
 /** 在不破壞既有加購配對的前提下，該加購品還能再加幾份 */
 export function remainingAddonQuota(addon) {
-    return addons.remainingAddonQuota(state.cart, addon, addonRules);
+    return addons.remainingAddonQuota(state.cart, addon, addonRules());
 }
 
 /** 依購物車順序逐份保留加購品，無法配對到合格餐點的部分自動減量；有調整時回傳 true */
 export function enforceAddonQuota() {
-    const result = addons.enforceAddonQuota(state.cart, addonRules);
+    const result = addons.enforceAddonQuota(state.cart, addonRules());
     state.cart = result.lines;
     return result.changed;
 }

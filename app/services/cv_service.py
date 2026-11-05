@@ -1,6 +1,8 @@
+import contextlib
 import logging
 import os
 import threading
+import time
 import warnings
 
 from PIL import Image, ImageOps
@@ -39,6 +41,33 @@ def missing_models():
     return [path for path in MODEL_FILES if not os.path.exists(path)]
 
 
+@contextlib.contextmanager
+def _process_lock(stale_seconds=600):
+    """
+    models/ 下的鎖檔 (O_EXCL 建立)：多個 gunicorn worker 同時啟動時只有一個會下載，其他略過 (下次啟動或 CLI 再補)。
+    上一次異常結束留下的鎖檔超過 stale_seconds 視為失效。
+    """
+    folder = os.path.dirname(next(iter(MODEL_FILES)))
+    os.makedirs(folder, exist_ok=True)
+    lock_path = os.path.join(folder, '.download.lock')
+    try:
+        if os.path.exists(lock_path) and time.time() - os.path.getmtime(lock_path) > stale_seconds:
+            os.remove(lock_path)
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        yield False
+        return
+    except OSError:   # 唯讀的檔案系統等：不用鎖，照常下載
+        yield True
+        return
+    os.close(fd)
+    try:
+        yield True
+    finally:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+
+
 def download_models(force=False, log=None):
     """下載缺少 (force=True 則全部) 的人臉模型檔；回傳下載的檔名清單。校驗碼不符時不保留檔案並拋出 RuntimeError"""
     import hashlib
@@ -47,7 +76,10 @@ def download_models(force=False, log=None):
     import requests
     say = log or (lambda msg: logger.info(msg))
     done = []
-    with _download_lock:
+    with _download_lock, _process_lock() as acquired:
+        if not acquired:
+            say('另一個行程正在下載人臉模型，略過')
+            return done
         for path, (url, sha256) in MODEL_FILES.items():
             if os.path.exists(path) and not force:
                 continue

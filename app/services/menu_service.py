@@ -13,6 +13,7 @@ from app.services.cv_service import save_and_fix_image
 from app.utils import safe_float, safe_int, safe_round
 
 ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+LOW_STOCK = 5   # 庫存 ≤ 此值的徽章顯示黃色 (樣板的 stock_badge 與前端 Kiosk.stockClass 都讀這個值)
 
 
 # ---------------------------------------------------------------------------

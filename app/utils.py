@@ -174,10 +174,11 @@ def parse_date(value, label='日期', required=False):
         raise AppError(f'{label}格式不正確：{value}')
 
 
-def parse_date_range(default_days=7, week=False, presets=False, max_days=None, strict=False):
+def parse_date_range(default_days=7, week=False, presets=False, max_days=None, strict=False, together=False):
     """
     request.args 的 start / end (YYYY-MM-DD) → (start, end)，end 早於 start 時對調。
-    缺少或格式錯誤時的預設：最近 default_days 天 (含今天)；week=True 改為本週一起 7 天。
+    缺少或格式錯誤時的預設：最近 default_days 天 (含今天)；week=True 改為本週一起 7 天 (只給 start 時為 start 起 7 天)。
+    together=True：任一個缺少或格式錯誤就整組套預設 (報表頁，避免只剩一端時查到超長區間)。
     presets=True 另外支援 ?preset=today|yesterday|month|last_month；strict=True 時格式錯誤直接 400 (不套預設)。
     max_days 為區間上限 (超過 400)。
     """
@@ -192,18 +193,19 @@ def parse_date_range(default_days=7, week=False, presets=False, max_days=None, s
     if preset == 'last_month':
         end = today.replace(day=1) - timedelta(days=1)
         return end.replace(day=1), end
-    raw_start, raw_end = request.args.get('start') or '', request.args.get('end') or ''
-    try:
-        start = date.fromisoformat(raw_start)
-    except ValueError:
-        if strict and raw_start:
-            raise AppError('日期格式錯誤')
+    def parse(raw):
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            if strict and raw:
+                raise AppError('日期格式錯誤')
+            return None
+    start, end = parse(request.args.get('start') or ''), parse(request.args.get('end') or '')
+    if together and (start is None or end is None):
+        start = end = None
+    if start is None:
         start = today - timedelta(days=today.weekday()) if week else today - timedelta(days=default_days - 1)
-    try:
-        end = date.fromisoformat(raw_end)
-    except ValueError:
-        if strict and raw_end:
-            raise AppError('日期格式錯誤')
+    if end is None:
         end = start + timedelta(days=6) if week else today
     if end < start:
         start, end = end, start
@@ -230,16 +232,25 @@ def parse_local_dt(raw, label=None):
 
 
 def parse_hm(text, default=None):
-    """'HH:MM' → (時, 分)；格式錯誤時改解析 default，也沒有時回 None"""
+    """
+    'HH:MM' → (時, 分)；格式錯誤時改解析 default，也沒有時回 None。
+    結束時間可以是 24:00 (當天結束，例如班表 18:00~24:00)；要當 time 物件用時請自行處理 24。
+    """
     for candidate in (text, default):
         try:
             h, m = str(candidate or '').split(':')
             h, m = int(h), int(m)
         except ValueError:
             continue
-        if 0 <= h <= 23 and 0 <= m <= 59:
+        if (0 <= h <= 23 and 0 <= m <= 59) or (h, m) == (24, 0):
             return h, m
     return None
+
+
+def hm_minutes(text, default=None):
+    """'HH:MM' → 自 0 點起的分鐘數 (24:00 = 1440)；格式錯誤時改用 default，也沒有時回 None"""
+    hm = parse_hm(text, default)
+    return None if hm is None else hm[0] * 60 + hm[1]
 
 
 # ---------------------------------------------------------------- 回應

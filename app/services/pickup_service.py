@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from app.errors import AppError
 from app.models.menu import WEEKDAY_LABELS
 from app.services import settings_service
-from app.utils import parse_hm, parse_local_dt
+from app.utils import hm_minutes, parse_local_dt
 
 MAX_SLOTS = 300
 
@@ -17,12 +17,10 @@ enabled = settings_service.flag('online_order', 'scheduled_pickup')
 
 
 def _windows(cfg, now):
-    oh, om = parse_hm(cfg.get('open_time'), '10:00')
-    ch, cm = parse_hm(cfg.get('close_time'), '21:00')
+    open_min, close_min = hm_minutes(cfg.get('open_time'), '10:00'), hm_minutes(cfg.get('close_time'), '21:00')
     for d in range(int(cfg.get('days_ahead') or 0) + 1):
-        day = (now + timedelta(days=d)).date()
-        start = datetime(day.year, day.month, day.day, oh, om)
-        end = datetime(day.year, day.month, day.day, ch, cm)
+        day = datetime.combine((now + timedelta(days=d)).date(), datetime.min.time())
+        start, end = day + timedelta(minutes=open_min), day + timedelta(minutes=close_min)   # close 24:00 = 隔天 0 點
         if end >= start:
             yield start, end
 

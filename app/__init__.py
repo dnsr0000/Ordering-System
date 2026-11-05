@@ -135,6 +135,8 @@ def create_app(config_class=Config):
 
     from app.routes import register_blueprints
     register_blueprints(app)
+    from app.services.menu_service import LOW_STOCK
+    app.jinja_env.globals['LOW_STOCK'] = LOW_STOCK   # 樣板的 stock_badge；base.html 再以 <meta> 交給前端 Kiosk.stockClass
 
     from app.cli import register_cli
     register_cli(app)

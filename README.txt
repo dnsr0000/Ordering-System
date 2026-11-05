@@ -697,10 +697,12 @@ Project Root/
     重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。POS 進階功能在 pos/pro.js (主管核准 / 會員驗證 / LINE Pay / 補印 /
     開錢櫃 / 接單控制)、pos/shift.js (交班 / 儲值 / 禮物卡)、pos/split.js (作廢退款 / 分桌換桌)；對話框在 templates/_pos_pro_modals.html。
   - 點餐機與 POS 都要遵守的規則 (單價、加購配額、購物車行合併鍵、客製化視窗、金額順序、送後端的品項格式、優惠碼驗證、發票欄位、
-    套餐可售判斷) 只寫在 js/shared/ 的純函式，兩邊的模組只負責讀寫 DOM；改規則時兩邊會一起變 (有測試檢查匯入與 500 行限制)。
+    套餐可售判斷) 只寫在 js/shared/ 的純函式，兩邊的模組只負責讀寫 DOM；改規則時兩邊會一起變 (有測試檢查匯入與 500 行限制，
+    tests/test_shared_js_logic.py 以 node 跑 tests/js/shared_spec.mjs 固定這些規則；改了規則請一併補案例)。
     各頁共用的小工具在 common.js 的 Kiosk：$ / modal / setText / toggleRow、store (localStorage JSON)、money、pad3 / pickupNo、
     ORDER_STATUS / PAYMENT_STATUS / statusBadge / paymentBadge、stockClass、takeoutBlock、setOrderStatus、
-    onOrdersChanged (含備援輪詢)、pollJson (ETag)、beep；不要在各頁再寫一份。
+    onOrdersChanged (含備援輪詢)、pollJson (ETag)、beep；不要在各頁再寫一份。庫存徽章的黃色門檻只定義在
+    menu_service.LOW_STOCK (樣板的 stock_badge 直接用，base.html 以 <meta name="low-stock"> 交給 Kiosk.stockClass)。
   - 模板共用巨集在 templates/_macros.html：modal_head (title_id 可指定標題 id)、stat_tile (KPI 卡)、screen_header (廚房 / 取餐 /
     櫃台看板頂欄)、pagination、stock_badge (庫存徽章，門檻與 Kiosk.stockClass 相同)。
   - 後台對話框與表單巨集依頁面拆在 templates/_menu_modals.html (菜單 / 套餐)、_member_modals.html (會員)、_coupon_modals.html
@@ -727,7 +729,8 @@ Project Root/
   - 系統設定：新區塊加在 settings_service.py (填 subgroup / keywords)，服務模組用 settings_service.reader('key') /
     flag('key', field) 取得 config() / enabled()，不要自己寫包裝函式。
   - 路由常用的輸入與回應都在 app/utils.py：parse_date (選填日期)、parse_date_range (?start / ?end / ?preset)、day_bounds
-    (日期 → 半開 datetime 區間)、parse_local_dt、parse_hm、paginate、json_etag_response、workbook_bytes / send_xlsx、sha256_hex、
+    (日期 → 半開 datetime 區間)、parse_local_dt、parse_hm / hm_minutes (結束時間可以是 24:00)、paginate、json_etag_response、
+    workbook_bytes / send_xlsx、sha256_hex、
     current_staff_name、@store_only / @hub_only (門市 / 線上端限定)。會員頁用 @member_required。營收訂單條件用
     report_service.revenue_orders / is_revenue；點數與儲值金的原子加減共用 points_service.atomic_change。
   - 修改資料表：改 app/models/ → flask --app run db migrate → 檢查遷移檔 → 測試。遷移代號 (revision) 不可超過 32 個字

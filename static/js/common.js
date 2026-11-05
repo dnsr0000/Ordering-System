@@ -380,8 +380,9 @@
         return st ? html`<span class="badge order-payment ${st.cls}">${text || st.text}</span>` : '';
     }
 
-    /** 庫存徽章的色系：售完紅、≤ LOW_STOCK 黃，其餘依 style (success 後台 / dark POS 卡片) */
-    const LOW_STOCK = 5;
+    /** 庫存徽章的色系：售完紅、≤ LOW_STOCK 黃，其餘依 style (success 後台 / dark POS 卡片)；門檻由後端 menu_service.LOW_STOCK 經 <meta> 提供 */
+    const lowStockMeta = document.querySelector('meta[name="low-stock"]');
+    const LOW_STOCK = Number(lowStockMeta && lowStockMeta.getAttribute('content')) || 5;
     function stockClass(stock, soldOut, style = 'success') {
         if (soldOut || Number(stock) <= 0) return 'bg-danger';
         if (Number(stock) <= LOW_STOCK) return 'bg-warning text-dark';

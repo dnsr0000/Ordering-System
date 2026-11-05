@@ -13,8 +13,11 @@ from app.utils import parse_hm, validate_phone
 
 
 def _parse_hm(value, default):
-    """'HH:MM' → time；格式錯誤用 default"""
-    return time(*parse_hm(value, default))
+    """'HH:MM' → time；格式錯誤 (或 24:00，time 不接受) 用 default"""
+    hm = parse_hm(value, default)
+    if hm is None or hm[0] == 24:
+        hm = parse_hm(default)
+    return time(*hm)
 
 
 def slots_for(day, tenant_id=None):

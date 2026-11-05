@@ -20,7 +20,7 @@ from app.models.staff import StaffAvailability, WorkSchedule
 from app.models.tenant import StaffAccount
 from app.models.menu import WEEKDAY_LABELS
 from app.services import settings_service, staffing_service
-from app.utils import parse_hm
+from app.utils import hm_minutes
 
 DEFAULTS = {'max_hours_day': 8, 'max_hours_week': 40, 'max_consecutive_days': 6}
 
@@ -31,10 +31,7 @@ def config(tenant_id=None):
 
 
 # ---------------------------------------------------------------- 可排時段
-def _minutes(hm):
-    """'HH:MM' → 自 0 點起的分鐘數；格式錯誤回 None"""
-    hm = parse_hm(hm)
-    return None if hm is None else hm[0] * 60 + hm[1]
+_minutes = hm_minutes   # 'HH:MM' → 自 0 點起的分鐘數 (24:00 = 1440)；格式錯誤回 None
 
 
 def availability_map(tenant_id):

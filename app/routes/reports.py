@@ -14,7 +14,7 @@ reports_bp = Blueprint('reports', __name__)
 
 def _range():
     """報表共用：最近 7 天，支援 ?preset=，最長 400 天"""
-    return parse_date_range(default_days=7, presets=True, max_days=400)
+    return parse_date_range(default_days=7, presets=True, max_days=400, together=True)
 
 
 @reports_bp.route('/admin/reports', endpoint='index')

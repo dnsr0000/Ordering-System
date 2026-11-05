@@ -16,13 +16,17 @@ export function availableAddons() {
     return addons.filterAddons(itemMap.values());
 }
 
-// 加購品的定義一律從「可加購且有供應」的清單找 (售完或關閉加購的品項視為不存在，數量會被自動調整)
+// 加購品的定義一律從「可加購且有供應」的清單找 (售完或關閉加購的品項視為不存在，數量會被自動調整)；
+// 查表每次配額計算只建一次，不在迴圈裡重複過濾整份菜單
 const addonDef = (id) => availableAddons().find((a) => Number(a.id) === Number(id));
-const addonRules = { categoryOf: (line) => line.category || '未分類', addonDef };
+function addonRules() {
+    const defs = new Map(availableAddons().map((a) => [Number(a.id), a]));
+    return { categoryOf: (line) => line.category || '未分類', addonDef: (id) => defs.get(Number(id)) };
+}
 
 /** 此加購品目前還能再加幾份 (不破壞既有加購配對) */
 export function remainingAddonQuota(addon) {
-    return addons.remainingAddonQuota(state.cart, addon, addonRules);
+    return addons.remainingAddonQuota(state.cart, addon, addonRules());
 }
 
 export function triggerAddon(btn) {
@@ -70,7 +74,7 @@ export function clearCart() {
 
 /** 依購物車順序逐份保留加購，配不到合格餐點的加購自動減量 */
 export function enforceAddonQuota() {
-    state.cart = addons.enforceAddonQuota(state.cart, addonRules).lines;
+    state.cart = addons.enforceAddonQuota(state.cart, addonRules()).lines;
 }
 
 export function renderCart({ revalidate = true } = {}) {
