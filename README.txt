@@ -697,6 +697,8 @@ Project Root/
 - 前端 (CSP 強制，tests/test_frontend_static_files.py 自動檢查)：
   - 不寫行內 <script> 或 onclick；事件用 data-action="名稱" 搭配 Kiosk.on(root, 'click', {名稱: fn})。頁面資料以
     <script type="application/json" id="page-data"> 嵌入，用 Kiosk.pageData() 讀取。不引用外部網址，第三方套件放 static/vendor/。
+    模組載入完成前顧客就按下的 data-action 按鈕，common.js 會先記下、等 Kiosk.on 綁定後補跑一次 (點擊不會不見)；
+    點餐機與 POS 的 <link rel="modulepreload"> 清單要涵蓋入口、頁面模組與 shared/ 的每個檔案 (新增模組時一併加入，有測試檢查)。
   - 動態 HTML 一律用 Kiosk.html`...` (自動跳脫) 或 textContent。API 用 Kiosk.api(url, {json})：自動帶 CSRF Token，失敗時丟出
     含後端訊息的錯誤。刪除確認用 <form data-confirm="…">；圖片備援用 <img data-fallback="預設圖網址">。
   - POS 與點餐機前端全部是 ES module (templates/pos.html、customer.html 以 type="module" 載入 js/pos.js、js/customer.js)：

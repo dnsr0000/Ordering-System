@@ -4,7 +4,11 @@
 {% block title %}{{ ui.site_title }} (Kiosk){% endblock %}
 {% block body_class %}customer-page{% endblock %}
 
-{% block head %}{% if chat %}<link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot.css') }}">{% endif %}
+{% block head %}
+{# 預載整個 ES module 圖 (入口 → 頁面模組 → shared/)：瀏覽器一次抓齊，不必逐層發現；清單與 static/js 的檔案一致 (有測試檢查) #}
+{% for m in ['customer.js', 'customer/core.js', 'customer/cart.js', 'customer/totals.js', 'customer/menu.js', 'customer/checkout.js', 'customer/live.js', 'customer/voice.js', 'shared/addons.js', 'shared/pricing.js', 'shared/cartline.js', 'shared/modifiers.js', 'shared/totals.js', 'shared/orderpayload.js', 'shared/promo.js', 'shared/invoice.js', 'shared/combos.js'] %}<link rel="modulepreload" href="{{ url_for('static', filename='js/' ~ m) }}">
+{% endfor %}
+{% if chat %}<link rel="stylesheet" href="{{ url_for('static', filename='css/chatbot.css') }}">{% endif %}
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/customer.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">

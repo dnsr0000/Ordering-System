@@ -4,6 +4,10 @@
 {% block title %}櫃檯 POS 收銀系統 - {{ tenant.name }}{% endblock %}
 
 {% block head %}
+{# 預載整個 ES module 圖 (入口 → 頁面模組 → shared/)：瀏覽器一次抓齊，不必逐層發現；清單與 static/js 的檔案一致 (有測試檢查) #}
+{% for m in ['pos.js', 'pos/core.js', 'pos/menu.js', 'pos/cart.js', 'pos/member.js', 'pos/totals.js', 'pos/checkout.js', 'pos/live.js', 'pos/pro.js', 'pos/shift.js', 'pos/split.js', 'shared/addons.js', 'shared/pricing.js', 'shared/cartline.js', 'shared/modifiers.js', 'shared/totals.js', 'shared/orderpayload.js', 'shared/promo.js', 'shared/invoice.js', 'shared/combos.js'] %}<link rel="modulepreload" href="{{ url_for('static', filename='js/' ~ m) }}">
+{% endfor %}
+
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pos.css') }}">
 {% endblock %}

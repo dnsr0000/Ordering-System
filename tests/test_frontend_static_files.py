@@ -125,3 +125,15 @@ def test_shared_modules_are_pure_and_small():
             assert re.fullmatch(r'\./[a-z]+\.js', target), f'shared/{name} 只能匯入 shared/ 內的模組：{target}'
             for n in (n.strip().split(' as ')[0].strip() for n in names.replace('\n', ' ').split(',') if n.strip()):
                 assert n in shared[os.path.basename(target)], f'shared/{name} 匯入的 {n} 不在 {target}'
+
+
+@pytest.mark.parametrize('template, folder', [('customer.html', 'customer'), ('pos.html', 'pos')])
+def test_module_pages_preload_every_module(template, folder):
+    """點餐機 / POS 的 <link rel=modulepreload> 清單要涵蓋入口、頁面模組與 shared/ 的每一個檔案 (新增模組時一併加入)"""
+    src = _read(os.path.join(ROOT, 'templates', template))
+    block = re.search(r"\{% for m in \[([^\]]*)\] %\}<link rel=\"modulepreload\"", src)
+    assert block, f'{template} 沒有 modulepreload 清單'
+    listed = {m.strip().strip("'") for m in block.group(1).split(',')}
+    expected = {f'{folder}.js'} | {f'{folder}/{os.path.basename(p)}' for p in glob.glob(os.path.join(ROOT, 'static', 'js', folder, '*.js'))} \
+        | {f'shared/{os.path.basename(p)}' for p in SHARED_MODULES}
+    assert listed == expected, f'{template} 的 modulepreload 清單與檔案不一致：多 {listed - expected}，少 {expected - listed}'

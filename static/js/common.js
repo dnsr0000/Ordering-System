@@ -122,15 +122,39 @@
 
     // ---------------------------------------------------------------- 事件委派
     /**
+     * 頁面的 ES module (customer.js / pos.js 與它們匯入的模組) 載入完成前，顧客就按了 data-action 按鈕時
+     * (手機網路慢、剛開頁面就點)：先記下來，等 Kiosk.on 綁定該動作後補跑一次，點擊不會不見。
+     * 綁定前的點擊只保留幾秒；綁定後走一般流程。
+     */
+    const earlyClicks = [];
+    let clickBound = false;
+    document.addEventListener('click', (ev) => {
+        if (clickBound) return;
+        const el = ev.target instanceof Element ? ev.target.closest('[data-action]') : null;
+        if (el && earlyClicks.length < 20) earlyClicks.push({ el, ev });
+    }, true);
+
+    /**
      * 以 data-action 取代 onclick：<button data-action="complete" data-id="5">
      *   Kiosk.on(document, 'click', { complete: (el, ev) => completeOrder(el.dataset.id) });
      */
     function on(root, eventName, handlers) {
-        (root || document).addEventListener(eventName, (ev) => {
+        const target = root || document;
+        target.addEventListener(eventName, (ev) => {
             const el = ev.target.closest('[data-action]');
             if (!el || !(el.dataset.action in handlers)) return;
             handlers[el.dataset.action](el, ev);
         });
+        if (eventName !== 'click') return;
+        if (!clickBound) {
+            clickBound = true;
+            setTimeout(() => { earlyClicks.length = 0; }, 5000);
+        }
+        // 綁定前被按下的按鈕：等呼叫端的初始化 (載入購物車等) 做完再補跑
+        const mine = earlyClicks.filter(({ el }) => el.dataset.action in handlers && target.contains(el));
+        if (!mine.length) return;
+        mine.forEach((entry) => earlyClicks.splice(earlyClicks.indexOf(entry), 1));
+        setTimeout(() => mine.forEach(({ el, ev }) => { if (document.contains(el)) handlers[el.dataset.action](el, ev); }), 0);
     }
 
     // 表單送出前確認：<form data-confirm="確定刪除？"> (取代 onsubmit="return confirm(...)"，訊息不會被當成程式碼)
