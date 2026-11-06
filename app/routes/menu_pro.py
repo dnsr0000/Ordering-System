@@ -118,9 +118,21 @@ def manage():
         elif action == 'translate':
             filled, source = translate_menu(overwrite=request.form.get('overwrite') == '1')
             record_staff_audit('MENU_TRANSLATE', details=f'AI 翻譯菜單：填入 {filled} 個欄位 ({source})')
+            # 有金鑰但這次 Gemini 沒成功 (過載 / 限流 / 回應不完整) 要照實說，不可顯示成「未設定金鑰」
+            if source == 'gemini':
+                via, hint = 'Gemini', ''
+            elif ai_service.has_api_key():
+                reason = ai_service.last_gemini_error() or '回應格式不完整'
+                via = '規則字典，只翻常見分類 / 品名'
+                hint = f'Gemini 這次沒有成功 ({reason})，請稍後再按一次；'
+            else:
+                via, hint = '規則字典，未設定 GEMINI_API_KEY，只翻常見分類 / 品名', ''
             if filled:
-                flash(f'已填入 {filled} 個翻譯欄位 ({"Gemini" if source == "gemini" else "規則字典 (未設定 GEMINI_API_KEY，只翻常見分類 / 品名)"})；'
-                      '請逐一檢查後再儲存修改', 'success')
+                flash(f'{hint}已填入 {filled} 個翻譯欄位 ({via})；請逐一檢查後再儲存修改', 'success' if not hint else 'warning')
+            elif hint:
+                flash(f'{hint}規則字典沒有可填的欄位', 'warning')
+            elif source == 'gemini':
+                flash('沒有可填的欄位 (都已有翻譯；要重翻請勾「連已填的也重新翻譯」)', 'info')
             else:
                 flash('沒有可填的欄位 (都已有翻譯，或規則字典沒有對應；設定 GEMINI_API_KEY 後可翻譯任意品名)', 'warning')
         else:

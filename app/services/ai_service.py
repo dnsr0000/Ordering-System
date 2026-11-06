@@ -46,6 +46,13 @@ def has_api_key() -> bool:
     return _api_key() is not None
 
 
+def last_gemini_error() -> str:
+    """最近一次 Gemini 呼叫失敗的原因 (之後已成功過就回空字串)；給「AI 翻譯」等功能告訴使用者為什麼改用備援"""
+    if time.time() < _gemini_cooldown_until and not _gemini_last['error']:
+        return '暫停呼叫中 (剛才失敗，冷卻後會再試)'
+    return _gemini_last['error'] if _gemini_last['error_at'] > _gemini_last['ok_at'] else ''
+
+
 def gemini_models():
     """依序嘗試的模型：主要模型、備援模型 (去除重複 / 空白)"""
     out = []
@@ -387,7 +394,9 @@ def invalidate_ai_advice(tenant_id):
 # ---------------------------------------------------------------------------
 # 菜單翻譯：Gemini 一次翻一批 → 規則字典 (常見分類 / 品項字眼) → 留白
 # ---------------------------------------------------------------------------
-TRANSLATE_BATCH = 25
+# 每批品項數：英 + 日文 JSON 每項約 150~200 token，25 項會超過輸出上限被截斷 (整批解析失敗)；10 項加上 8192 上限留足空間
+TRANSLATE_BATCH = 10
+TRANSLATE_MAX_TOKENS = 8192
 TRANSLATE_LANGS = ('en', 'ja')
 # 常見分類與餐飲字眼 (沒有 API 金鑰時至少把分類翻好；品名只在整個字串命中時翻)
 _RULE_WORDS: dict[str, tuple[str, str]] = {
@@ -422,17 +431,25 @@ def _translate_prompt(entries: list[dict]) -> str:
 
 
 def _parse_translations(text: str | None, count: int) -> dict[int, dict[str, str]]:
-    """Gemini 回應 → {編號(0 起): {name_en, ...}}；格式不對就當作失敗 (空 dict)"""
+    """Gemini 回應 → {編號(0 起): {name_en, ...}}；格式不對就當作失敗 (空 dict)。
+    回應被截斷 (超過輸出上限) 時整個陣列無法解析，改逐一解析完整的 {...}，已翻好的不浪費。"""
     import json
     if not text:
         return {}
+    rows = None
     m = re.search(r'\[.*\]', text, re.S)
-    if not m:
-        return {}
-    try:
-        rows = json.loads(m.group(0))
-    except ValueError:
-        return {}
+    if m:
+        try:
+            rows = json.loads(m.group(0))
+        except ValueError:
+            rows = None
+    if not isinstance(rows, list):
+        rows = []
+        for obj in re.findall(r'\{[^{}]*\}', text):
+            try:
+                rows.append(json.loads(obj))
+            except ValueError:
+                continue
     out: dict[int, dict[str, str]] = {}
     for row in rows if isinstance(rows, list) else []:
         try:
@@ -451,7 +468,8 @@ def translate_entries(entries: list[dict]) -> tuple[list[dict[str, str]], str]:
     source = 'rules'
     for start in range(0, len(entries), TRANSLATE_BATCH):
         batch = entries[start:start + TRANSLATE_BATCH]
-        parsed = _parse_translations(gemini_generate(_translate_prompt(batch), max_tokens=4000, temperature=0.1), len(batch))
+        parsed = _parse_translations(gemini_generate(_translate_prompt(batch), max_tokens=TRANSLATE_MAX_TOKENS, temperature=0.1,
+                                                     json_mode=True), len(batch))
         if parsed:
             source = 'gemini'
         for i, entry in enumerate(batch):

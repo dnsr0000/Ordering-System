@@ -40,6 +40,39 @@ def test_translate_entries_parses_gemini_json_and_falls_back_to_rules(app, monke
     assert ai_service._parse_translations('[{"i": "x"}, {"i": 99, "name_en": "no"}]', 1) == {}
 
 
+def test_translate_salvages_truncated_reply_and_batches_small(app, monkeypatch):
+    """回應超過輸出上限被截斷時，已完整的項目仍要採用 (原本整批解析失敗 → 全部變成規則字典)；每批不超過 TRANSLATE_BATCH 項"""
+    from app.services import ai_service
+    truncated = ('[\n {"i": 1, "name_en": "Beef Burger", "name_ja": "ビーフバーガー", "description_en": "", "description_ja": ""},\n'
+                 ' {"i": 2, "name_en": "Black Tea", "name_ja": "紅茶", "description_en": "", "description_ja": ""},\n'
+                 ' {"i": 3, "name_en": "Tofu Pud')
+    assert set(ai_service._parse_translations(truncated, 3)) == {0, 1}
+    sizes = []
+
+    def fake_gemini(prompt, **kw):
+        sizes.append(prompt.count('\n'))
+        assert kw.get('max_tokens', 0) >= 8000 and kw.get('json_mode') is True
+        return truncated
+    monkeypatch.setattr(ai_service, 'gemini_generate', fake_gemini)
+    with app.app_context():
+        results, source = ai_service.translate_entries([{'name': f'品項{i}'} for i in range(23)])
+    assert source == 'gemini' and len(sizes) == 3 and max(sizes) <= ai_service.TRANSLATE_BATCH
+    assert results[0]['name_en'] == 'Beef Burger' and results[10]['name_en'] == 'Beef Burger'
+
+
+def test_menu_translate_with_key_but_gemini_failing_says_why(app, admin_client, monkeypatch):
+    """有設定金鑰但 Gemini 這次失敗 (例如 503)：訊息要說明原因，不可寫成「未設定 GEMINI_API_KEY」"""
+    from app.services import ai_service
+    make_item(app, '翻譯失敗測試主餐', price=100, category='主餐')
+    monkeypatch.setattr(ai_service, 'has_api_key', lambda: True)
+    monkeypatch.setattr(ai_service, 'gemini_generate', lambda *a, **k: None)
+    monkeypatch.setattr(ai_service, 'last_gemini_error', lambda: '503 The model is overloaded.')
+    r = admin_client.post('/admin/menu', data={'action': 'translate', 'overwrite': '1'}, follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert 'Gemini 這次沒有成功 (503 The model is overloaded.)' in html
+    assert '未設定 GEMINI_API_KEY，只翻' not in html
+
+
 def test_menu_translate_action_fills_only_blank_fields(app, admin_client, monkeypatch):
     from app.services import ai_service
     item = make_item(app, '翻譯測試雞腿飯', price=120, category='翻譯測試分類', name_en='Hand typed')
