@@ -114,8 +114,14 @@ Project Root/
     tests/test_shared_js_logic.py 以 node 跑 tests/js/shared_spec.mjs 固定這些規則；改了規則請一併補案例)。
     各頁共用的小工具在 common.js 的 Kiosk：$ / modal / setText / toggleRow、store (localStorage JSON)、money、pad3 / pickupNo、
     ORDER_STATUS / PAYMENT_STATUS / statusBadge / paymentBadge、stockClass、takeoutBlock、setOrderStatus、
-    onOrdersChanged (含備援輪詢)、pollJson (ETag)、beep；不要在各頁再寫一份。庫存徽章的黃色門檻只定義在
+    onOrdersChanged、poll、handleAuthLost、pollJson (ETag)、beep；不要在各頁再寫一份。庫存徽章的黃色門檻只定義在
     menu_service.LOW_STOCK (樣板的 stock_badge 直接用，base.html 以 <meta name="low-stock"> 交給 Kiosk.stockClass)。
+  - 即時更新只有兩種寫法：
+    員工畫面與店內看板的訂單資料用 Kiosk.onOrdersChanged (SSE；斷線或不支援時自動輪詢，預設 5 秒)，不另寫定時器重抓訂單；
+    資料請求的 catch 先呼叫 Kiosk.handleAuthLost(err) (登入逾時時重新載入導到登入頁)。
+    顧客頁 (我的訂單、出餐進度、候位、售完狀態) 與 SSE 不會通知、依時間變化的資料 (供應時段、AI 建議、暫停接單自動恢復)
+    用 Kiosk.poll (不重疊、背景暫停；要在背景等通知的頁面用 keepInBackground)。顧客頁不用 SSE：每條連線占用伺服器一條
+    執行緒 (公開連線每店上限 25 條)，且 SSE 是整店廣播。
   - 模板共用巨集在 templates/_macros.html：modal_head (title_id 可指定標題 id)、stat_tile (KPI 卡)、screen_header (廚房 / 取餐 /
     櫃台看板頂欄)、pagination、stock_badge (庫存徽章，門檻與 Kiosk.stockClass 相同)。
   - 後台對話框與表單巨集依頁面拆在 templates/_menu_modals.html (菜單 / 套餐)、_member_modals.html (會員)、_coupon_modals.html

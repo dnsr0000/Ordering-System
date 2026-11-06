@@ -40,9 +40,11 @@ export function holdOrder() {
         orderType: $('posTypeTakeout').checked ? '外帶' : '內用',
         note: ($('posOrderNote').value || '').trim(),
         promoCode: state.promoCode,   // 取回時一律重新驗證，不沿用舊折抵金額
+        orderDiscount: state.orderDiscount,   // 整單折扣跟著掛單保存，取回時還原
     });
     saveHeld(list);
     state.cart = [];
+    state.orderDiscount = null;
     resetPromo();
     clearMember();
     $('posTableInput').value = '';
@@ -78,6 +80,7 @@ export function recallHold(idx) {
     }
     resetPromo();
     state.cart = Array.isArray(target.cart) ? target.cart : [];
+    state.orderDiscount = target.orderDiscount || null;
     if (target.member) bindMember(target.member);
     else clearMember();
     $('posTableInput').value = target.table || '';
@@ -134,7 +137,8 @@ export async function syncLiveState() {
     try {
         res = await api('/api/pos/today_orders');
     } catch (err) {
-        return;   // 同步失敗略過，下一次通知會再抓
+        Kiosk.handleAuthLost(err);   // 登入逾時：重新載入導到登入頁；其他錯誤略過，下一次通知會再抓
+        return;
     }
     if (Array.isArray(res.menu_items)) {
         applyStock(res.menu_items);
@@ -424,12 +428,12 @@ export function reprint(orderId) {
     }, '補印收據 • 收據預覽');
 }
 
-/** SSE 即時通知；斷線期間 (或瀏覽器不支援 EventSource) 每 5 秒輪詢一次，連線恢復後停止 (Kiosk.onOrdersChanged) */
+/** SSE 即時通知；斷線期間 (或瀏覽器不支援 EventSource) 自動改為輪詢，連線恢復後停止 (Kiosk.onOrdersChanged) */
 export function startLiveSync() {
     const dot = $('sse-status-dot');
     const setDot = (ok) => {
         dot.className = ok ? 'text-success' : 'text-warning';
         dot.textContent = ok ? '● 即時連線中' : '● 輪詢同步中';
     };
-    Kiosk.onOrdersChanged(syncLiveState, { fallbackMs: 5000, onStatus: setDot });
+    Kiosk.onOrdersChanged(syncLiveState, { onStatus: setDot });
 }

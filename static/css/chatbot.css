@@ -35,11 +35,14 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 0.5rem;
     padding: 0.75rem 1rem;
     background: var(--kiosk-card);
     border-bottom: 1px solid var(--kiosk-border);
 }
 .chatbot-sub { font-size: 0.75rem; color: var(--kiosk-muted); }
+.chatbot-head-title { flex: 1 1 auto; min-width: 0; }
+.chatbot-head-btn { flex: 0 0 auto; font-size: 0.75rem; padding: 0.15rem 0.5rem; white-space: nowrap; }
 .chatbot-messages {
     flex: 1 1 auto;
     overflow-y: auto;
@@ -50,7 +53,10 @@
 }
 .chatbot-msg { max-width: 88%; }
 .chatbot-user { align-self: flex-end; }
-.chatbot-bot { align-self: flex-start; }
+.chatbot-bot, .chatbot-staff { align-self: flex-start; }
+.chatbot-notice { align-self: center; max-width: 95%; }
+.chatbot-notice .chatbot-text { background: transparent; color: var(--kiosk-muted); font-size: 0.78rem; text-align: center; padding: 0.2rem 0.5rem; }
+.chatbot-who { font-size: 0.72rem; color: var(--kiosk-muted); margin: 0 0 0.15rem 0.5rem; }
 .chatbot-text {
     white-space: pre-wrap;
     word-break: break-word;
@@ -61,15 +67,28 @@
 }
 .chatbot-user .chatbot-text { background: var(--kiosk-accent); color: #111; border-bottom-right-radius: 0.25rem; }
 .chatbot-bot .chatbot-text { background: var(--kiosk-card); color: var(--kiosk-text); border-bottom-left-radius: 0.25rem; }
+.chatbot-staff .chatbot-text { background: #1f6f5c; color: #fff; border-bottom-left-radius: 0.25rem; }
+/* 「你是否要問」與轉接按鈕放在回答下方，選項自動換行 */
+.chatbot-dym { margin: 0.35rem 0 0 0.25rem; display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.chatbot-dym-title { width: 100%; font-size: 0.72rem; color: var(--kiosk-muted); }
+.chatbot-chip-handoff { margin: 0.35rem 0 0 0.25rem; border-color: var(--kiosk-accent) !important; color: var(--kiosk-accent) !important; }
 .chatbot-note { font-size: 0.72rem; color: var(--kiosk-muted); margin: 0.2rem 0 0 0.5rem; }
 .chatbot-suggest {
     display: flex;
+    flex-wrap: wrap;
     gap: 0.4rem;
-    overflow-x: auto;
-    padding: 0.25rem 0.75rem;
+    max-height: 6.5rem;
+    overflow-y: auto;
+    padding: 0.35rem 0.75rem;
+    border-top: 1px solid var(--kiosk-border);
 }
+.chatbot-suggest:empty { display: none; }
 .chatbot-chip {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    max-width: 100%;
+    text-align: left;
+    white-space: normal;
+    line-height: 1.3;
     border: 1px solid var(--kiosk-border);
     background: transparent;
     color: var(--kiosk-text);

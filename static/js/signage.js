@@ -12,7 +12,7 @@
     const columns = Math.max(1, Number(config.columns) || 3);
     const pageMs = Math.max(3, Number(config.pageSeconds) || 10) * 1000;
     const promoMs = Math.max(3, Number(config.promoSeconds) || 8) * 1000;
-    const FALLBACK_POLL_MS = 60000;
+    const TIME_REFRESH_MS = 60000;   // 供應時段 / 特價期間等依時間變化的內容 (不會觸發 SSE)
 
     const root = document.getElementById('signage');
     const main = document.getElementById('sgMain');
@@ -215,7 +215,7 @@
     showPromo();
     load();
     Kiosk.onOrdersChanged(load);
-    setInterval(load, FALLBACK_POLL_MS);
+    Kiosk.poll(load, TIME_REFRESH_MS);
     setInterval(nextPage, pageMs);
     setInterval(nextPromo, promoMs);
 })();

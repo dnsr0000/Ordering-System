@@ -7,6 +7,7 @@ import {
     $, cartRewardPoints, cartSubtotal, channel, html, num, posCfg, publicCoupons, rewardConfig, setHtml, state,
 } from './core.js';
 import { repriceCart } from './menu.js';
+import { payloadLine } from '../shared/orderpayload.js';
 import { computeTotals, deliveryFee, maxPointsCash } from '../shared/totals.js';
 import { createPromoVerifier, renderPromoMessage } from '../shared/promo.js';
 import { INVOICE_PLACEHOLDERS, invoicePayload as sharedInvoicePayload } from '../shared/invoice.js';
@@ -193,9 +194,21 @@ export function invoicePayload() {
     return sel ? sharedInvoicePayload(sel.value, $('posInvoiceValue').value) : null;
 }
 
+/** 目前購物車的內容識別 (伺服器回報新金額後，同一份內容再送出時以新金額為準) */
+export function cartKey() {
+    return JSON.stringify([state.cart.map(payloadLine), state.member && state.member.id, state.promoCode,
+        state.orderDiscount, $('posPointsInput') && $('posPointsInput').value, $('posPaymentMethod').value,
+        $('posTypeTakeout').checked, isHomeDelivery() && $('posHomeZone').value]);
+}
+
+/** 應收金額：收銀已確認伺服器回報的新金額時用新金額 (找零、「剛好」、送出都用同一個) */
+export function payableTotal() {
+    return state.acceptedTotal && state.acceptedTotal.key === cartKey() ? state.acceptedTotal.total : state.finalTotal;
+}
+
 export function quickCash(mode) {
     const input = $('posCashReceived');
-    if (mode === 'exact') input.value = state.finalTotal;
+    if (mode === 'exact') input.value = payableTotal();
     else if (mode === '+100') input.value = num(input.value) + 100;
     else input.value = num(mode);
     updateCashChange();
@@ -239,11 +252,11 @@ export function updateCashChange() {
     if (received <= 0) {
         badge.className = `${base} text-white-50`;
         badge.textContent = '找零 $0';
-    } else if (received < state.finalTotal) {
+    } else if (received < payableTotal()) {
         badge.className = `${base} text-danger`;
-        badge.textContent = `差 $${state.finalTotal - received}`;
+        badge.textContent = `差 $${payableTotal() - received}`;
     } else {
         badge.className = `${base} text-success`;
-        badge.textContent = `找零 $${received - state.finalTotal}`;
+        badge.textContent = `找零 $${received - payableTotal()}`;
     }
 }

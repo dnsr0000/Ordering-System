@@ -401,3 +401,21 @@ def test_sidebar_keeps_scroll_position_between_pages(page):
     after = page.locator('#adminSidebar .admin-sidebar-body').evaluate('el => el.scrollTop')
     assert abs(after - before) <= 2, (before, after)
     expect(page.locator('#adminSidebar a.admin-nav-link.active')).to_be_in_viewport()
+
+
+def test_settings_nav_keeps_scroll_position_between_pages(page):
+    """系統設定左欄 (區塊清單) 點選後換頁，左欄停在原本捲到的位置"""
+    page.set_viewport_size({'width': 1280, 'height': 560})
+    _login(page)
+    assert page.goto('/admin/settings').ok
+    nav = page.locator('#settingsNav')
+    nav.evaluate('el => { el.scrollTop = el.scrollHeight; }')
+    before = nav.evaluate('el => el.scrollTop')
+    assert before > 100, '左欄應該可以捲動'
+    last = nav.locator('a.settings-nav-link').last
+    key = last.get_attribute('data-setting-key')
+    last.click()
+    page.wait_for_url(f'**/{key}')
+    after = page.locator('#settingsNav').evaluate('el => el.scrollTop')
+    assert abs(after - before) <= 2, (before, after)
+    expect(page.locator('#settingsNav a.settings-nav-link.active')).to_be_in_viewport()

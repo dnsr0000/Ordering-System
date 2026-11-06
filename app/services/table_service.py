@@ -19,7 +19,7 @@ from sqlalchemy import select, update
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.enums import OrderStatus, normalize_payment_method
+from app.models.enums import OrderStatus, PaymentMethod, normalize_payment_method
 from app.models.order import Order
 from app.models.table import DiningTable, new_table_token
 from app.services import settings_service
@@ -260,7 +260,9 @@ def _parse_payments(payments, total, legacy_method, legacy_received, legacy_info
         method = normalize_payment_method(p.get('method'))
         if method is None:
             raise AppError(f"不支援的付款方式：{p.get('method')}")
-        if method not in allowed or method in ('平台代收', '儲值金'):
+        # 禮物卡 / 混合付款在桌位結帳不會真的扣卡或拆帳 (只有 POS 單筆結帳支援)，接受就等於沒收款也記成已結帳
+        if method not in allowed or method in (PaymentMethod.PLATFORM, PaymentMethod.STORED_VALUE, PaymentMethod.GIFT_CARD,
+                                               PaymentMethod.SPLIT):
             raise AppError(f'桌位結帳不可使用「{method}」')
         amount = safe_int(p.get('amount'), 0)
         if amount <= 0:
@@ -289,7 +291,7 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
     payments 可分成多筆不同付款方式 (均分或自訂金額)。回傳 {orders, total, cash_received, change, ...}
     """
     from app.models.payment import PaymentKind, Settlement
-    from app.services import einvoice_ecpay, linepay, payment_service, wallet_service
+    from app.services import einvoice_ecpay, linepay, payment_service
     table = db.session.get(DiningTable, safe_int(table_id, 0))
     if table is None or table.tenant_id != tenant_id:
         raise AppError('查無此桌位', 404)
@@ -327,6 +329,8 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
                 p['auth_code'] = linepay.pay(tenant_id, ref, p['amount'], key)
             except linepay.LinePayError as exc:
                 db.session.rollback()
+                if exc.code == linepay.UNKNOWN:
+                    charged.append((ref, p['amount']))   # 可能已扣款：一併退回 (沒扣到時退款會失敗，不影響)
                 _refund_charged(tenant_id, charged)
                 raise AppError(exc.message, 402, payment_failed=True)
             charged.append((ref, p['amount']))
@@ -348,12 +352,10 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
                                        change=p['change'], reference=p['auth_code'], card_last4=p['card_last4'],
                                        note=f'{table.label}結帳', staff=staff.username, settlement_id=settlement.id,
                                        tenant_id=tenant_id)
+    from app.services.member_rewards import grant_paid_rewards
     for o in orders:
         db.session.refresh(o)
-        if o.user_id:
-            user = o.user
-            user.total_spent = (user.total_spent or 0) + (o.total_price or 0)
-            wallet_service.refresh_tier(user)
+        grant_paid_rewards(o)   # 結清才給贈點、累積消費、集點與推薦 (掃碼點餐時未付款)
     if einvoice_enabled(tenant_id) and total > 0:
         inv = einvoice_ecpay.create_invoice(orders[0], invoice_info or {}, settlement=settlement, amount=total)
         db.session.flush()

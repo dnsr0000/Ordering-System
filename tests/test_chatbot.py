@@ -52,7 +52,7 @@ def test_allergen_and_menu_answers_are_retrieval_only(app, store_settings, monke
     with app.test_request_context('/'):
         _use_tenant(Tenant.query.filter_by(slug='default').first(), remember=False)
         r = chatbot_service.answer('牛肉哪裡來')
-        assert r == {'answer': '請打電話問我們', 'source': 'fallback', 'suggestions': r['suggestions']}
+        assert (r['answer'], r['source']) == ('請打電話問我們', 'fallback') and r['handoff'] is True and r['did_you_mean']
 
 
 def test_chat_api_order_status_and_page_embed(app, store_settings, staff_client, monkeypatch):

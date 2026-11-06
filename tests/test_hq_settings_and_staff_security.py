@@ -199,6 +199,23 @@ def test_2fa_pending_expires_and_locks(app):
     assert c2.get('/admin/2fa').status_code == 302
 
 
+def test_password_relogin_does_not_reset_2fa_failures(app):
+    """知道密碼的人：輸錯驗證碼 4 次後重新輸入密碼，錯誤次數不會歸零 (帳號累計 10 次就鎖定)"""
+    login_staff(app, 'tfa_reset', 'manager')
+    with app.app_context():
+        acc = StaffAccount.query.filter_by(username='tfa_reset').first()
+        acc.totp_secret, acc.totp_enabled = security_service.new_secret(), True
+        db.session.commit()
+    for round_ in range(3):
+        ip = f'10.88.2.{round_}'
+        c, r = _login(app, 'tfa_reset', ip)   # 每輪換 IP、重新輸入正確密碼 (每個 IP 只錯 4 次，躲過同 IP 的鎖定)
+        assert r.status_code in (302, 429)
+        for _ in range(4):
+            c.post('/admin/2fa', data={'code': '000000'}, headers={'X-Forwarded-For': ip})
+    c, r = _login(app, 'tfa_reset', '10.88.2.99')
+    assert r.status_code == 429, '累計 12 次錯誤驗證碼後帳號鎖定，重新輸入密碼不會把次數歸零'
+
+
 def test_required_2fa_redirects_until_enabled(app, store_settings):
     store_settings('security', require_2fa_roles=['manager'])
     mgr = login_staff(app, 'tfa_required', 'manager')

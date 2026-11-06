@@ -165,14 +165,22 @@
         }
     }, true);
 
-    // ---------------------------------------------------------------- 即時通知 (SSE)
+    // ---------------------------------------------------------------- 即時更新的統一做法
+    // 員工畫面與店內看板 (後台、POS、KDS、取餐、叫號、數位看板…)：訂單資料一律用 onOrdersChanged (SSE)，
+    //   斷線期間自動改為輪詢 (預設 SSE_FALLBACK_MS)；不另外寫定時器重抓訂單。
+    // 「依時間變化」、SSE 不會通知的資料 (供應時段、AI 建議、暫停接單自動恢復…) 與顧客頁 (我的訂單、出餐進度、候位、
+    //   售完狀態)：一律用 poll()。顧客頁不用 SSE：每條 SSE 連線占用伺服器一條執行緒 (公開連線每店上限 25 條)，
+    //   且 SSE 是整店的廣播，不適合給個別顧客。
+    const SSE_FALLBACK_MS = 5000;
+
     /**
      * 訂單有變動時呼叫 callback (建立、狀態變更、取消)。
      * EventSource 斷線會自動重連；切回分頁時也會重新整理一次，避免背景期間漏掉更新。
-     * fallbackMs：斷線期間 (或瀏覽器不支援 EventSource 時) 每隔這麼久輪詢一次，連線恢復後停止；
+     * fallbackMs：斷線期間 (或瀏覽器不支援 EventSource、伺服器拒絕連線而不再重連時) 每隔這麼久輪詢一次，連線恢復後停止；
+     *   預設 SSE_FALLBACK_MS，重新整理代價高的頁面 (例如整頁 reload) 可傳較長的值。
      * onStatus(ok)：連線 / 斷線時回呼 (畫面上的狀態點)。
      */
-    function onOrdersChanged(callback, { minIntervalMs = 1000, fallbackMs = 0, onStatus = null } = {}) {
+    function onOrdersChanged(callback, { minIntervalMs = 1000, fallbackMs = SSE_FALLBACK_MS, onStatus = null } = {}) {
         // 短時間內多個事件合併成一次重新整理；尖峰時段連續有訂單時每個畫面最多每秒重新抓一次
         // (舊做法每來一個事件就重新計時，事件不斷時會一直不更新，畫面多時也會放大伺服器負載)
         let pending = null;
@@ -201,6 +209,44 @@
         const close = source.close.bind(source);
         source.close = () => { stopFallback(); close(); };
         return source;
+    }
+
+    /**
+     * 定時輪詢 (顧客頁、與 SSE 不會通知的「依時間變化」資料)。回傳 { stop() }。
+     * - 上一次還沒完成時不重疊執行；callback 的錯誤不會中斷輪詢 (由 callback 自行處理顯示)
+     * - 頁面在背景時暫停、切回來立即補一次；keepInBackground: true 則背景照常 (出餐進度、候位：等著被通知)
+     * - immediate: true 時開始就先執行一次
+     */
+    function poll(callback, intervalMs, { immediate = false, keepInBackground = false } = {}) {
+        let running = false;
+        let stopped = false;
+        const run = async () => {
+            if (stopped || running || (!keepInBackground && document.hidden)) return;
+            running = true;
+            try { await callback(); } catch (err) { /* 下一輪再試 */ } finally { running = false; }
+        };
+        const timer = setInterval(run, intervalMs);
+        const onVisible = () => { if (!document.hidden) run(); };
+        if (!keepInBackground) document.addEventListener('visibilitychange', onVisible);
+        if (immediate) run();
+        return {
+            stop() {
+                stopped = true;
+                clearInterval(timer);
+                document.removeEventListener('visibilitychange', onVisible);
+            },
+        };
+    }
+
+    /** 員工畫面的資料請求回 401 (登入逾時 / 被登出)：重新載入一次讓伺服器導到登入頁，畫面不會停在舊資料。回傳是否已處理 */
+    let authLost = false;
+    function handleAuthLost(err) {
+        if (!err || err.status !== 401) return false;
+        if (!authLost) {
+            authLost = true;
+            global.location.reload();
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------- 時鐘 / 閒置登出
@@ -325,7 +371,7 @@
             banner.id = 'kiosk-offline-banner';
             banner.className = 'offline-banner';
             banner.setAttribute('role', 'alert');
-            banner.textContent = '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳';
+            banner.textContent = t('offline_banner', '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳');
             document.body.appendChild(banner);
         }
     }
@@ -466,7 +512,8 @@
     }
 
     global.Kiosk = {
-        html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, t, on, onOrdersChanged, startClock, idleLogout,
+        html, setHtml, hideModalThen, escapeHtml, api, ApiError, csrfToken, pageData, t, on, onOrdersChanged, poll, handleAuthLost,
+        startClock, idleLogout,
         newOrderId, money, $, modal, setText, toggleRow, store, CART_KEY, pad3, pickupNo, ORDER_STATUS, PAYMENT_STATUS, statusBadge,
         paymentBadge, LOW_STOCK, stockClass, takeoutBlock, setOrderStatus, pollJson, beep,
     };

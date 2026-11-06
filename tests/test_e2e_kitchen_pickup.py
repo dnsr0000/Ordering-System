@@ -154,3 +154,19 @@ def test_kitchen_and_pickup_have_no_inline_handlers(page, app):
         page.wait_for_load_state('networkidle')
         assert page.locator(f'{grid} [onclick]').count() == 0
         assert page.locator('script:not([src]):not([type="application/json"])').count() == 0
+
+
+def test_kitchen_display_falls_back_to_polling_without_sse(page, app, demo):
+    """SSE 連不上 (被代理擋掉、連線配額已滿…) 時 KDS 自動改為輪詢；登入失效時導到登入頁，不會停在舊資料"""
+    page.route('**/api/orders_stream', lambda route: route.abort())
+    staff_login(page, 'e2e_kitchen')
+    page.goto('/kitchen')
+    expect(page.locator('#pendingCountBadge')).to_be_visible()
+
+    order_id, _ = create_order(app, demo['示範薯條'])
+    expect(page.locator(f'#ordersGrid [data-order-id="{order_id}"]')).to_be_visible(timeout=15000)
+
+    page.context.clear_cookies()   # 登入失效 → 下一次輪詢 401 → 重新載入 → 伺服器導到登入頁
+    expect(page.locator('input[name="password"]')).to_be_visible(timeout=15000)
+    # 刻意擋掉的 SSE 與登入失效的 401 在主控台留下的載入錯誤是預期的，其他錯誤仍要讓測試失敗
+    page.problems[:] = [p for p in page.problems if 'ERR_FAILED' not in p and 'status of 401' not in p]

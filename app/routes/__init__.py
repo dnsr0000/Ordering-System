@@ -29,6 +29,7 @@ def register_blueprints(app):
     from app.routes.timeclock import timeclock_bp
     from app.routes.system import system_bp
     from app.routes.feedback import feedback_bp
+    from app.routes.support import support_bp
     from app.routes.gift_cards import gift_cards_bp
     from app.routes.purchasing import purchasing_bp
     from app.routes.live_dashboard import live_bp
@@ -51,7 +52,7 @@ def register_blueprints(app):
                health_bp, sync_admin_bp, sync_api, payment_bp,
                privacy_bp, tables_bp, settings_bp, public_bp, invoices_bp, refunds_bp, shifts_bp, printing_bp,
                menu_pro_bp, inventory_bp, members_pro_bp, promotions_bp, delivery_bp, reservations_bp,
-               member_auth_bp, reports_bp, timeclock_bp, system_bp, security_bp, feedback_bp,
+               member_auth_bp, reports_bp, timeclock_bp, system_bp, security_bp, feedback_bp, support_bp,
                gift_cards_bp, purchasing_bp, live_bp, dispatch_bp, passes_bp, table_pay_bp,
                branches_bp, marketing_bp, integrations_bp, devices_bp, api_v1,
                archive_bp, pnl_bp, group_bp, audit_bp, tenants_bp, signage_bp, driver_bp):

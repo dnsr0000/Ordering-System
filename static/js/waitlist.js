@@ -17,5 +17,5 @@
             last = d.status;
         } catch (err) { /* 暫時斷線 */ }
     }
-    setInterval(refresh, 15000);
+    Kiosk.poll(refresh, 15000, { keepInBackground: true });   // 背景照常：等著被叫號
 })();

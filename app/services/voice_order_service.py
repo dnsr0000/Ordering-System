@@ -225,7 +225,7 @@ def _llm_prompt(text, items, addons):
 def llm_parse(text, items, addons):
     """LLM 解析 (Gemini → 本機)；回 (lines, 沒對到菜單的名稱, 來源)"""
     data, source = ai_service.generate_json(_llm_prompt(_norm(text), items, addons), max_tokens=500,
-                                            system='你是餐廳點餐助理，只輸出 JSON。', local_max_tokens=300)
+                                            system='你是餐廳點餐助理，只輸出 JSON。', local_max_tokens=300, interactive=True)
     if not isinstance(data, list):
         return [], [], source
     by_name = {i.name: i for i in items}

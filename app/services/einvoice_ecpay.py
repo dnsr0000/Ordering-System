@@ -288,11 +288,13 @@ def void_or_allowance(invoice_id, reason='訂單取消'):
         inv.status, inv.last_error = InvoiceStatus.VOID, '開立前已取消'
         db.session.commit()
         return inv.status
-    if inv.status != InvoiceStatus.ISSUED:
+    if inv.status not in (InvoiceStatus.ISSUED, InvoiceStatus.ALLOWANCE):
         return inv.status
-    if inv.invoice_date and same_period(inv.invoice_date, datetime.now()):
+    # 已開過折讓 (先部分退款) 的發票不能作廢，改為剩餘金額開折讓；沒有折讓過的同期作廢、跨期全額折讓
+    if inv.status == InvoiceStatus.ISSUED and inv.invoice_date and same_period(inv.invoice_date, datetime.now()):
         return void_invoice(inv.id, reason)
-    return allowance(inv.id, inv.amount - (inv.allowance_amount or 0), reason)
+    remaining = (inv.amount or 0) - (inv.allowance_amount or 0)
+    return allowance(inv.id, remaining, reason) if remaining > 0 else inv.status
 
 
 def void_invoice(invoice_id, reason='訂單取消'):

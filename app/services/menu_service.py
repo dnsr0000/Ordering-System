@@ -238,9 +238,12 @@ def upsert_menu_items_from_rows(rows, columns=None):
     """
     以餐點名稱為鍵新增或更新菜單 (由呼叫端 commit，多工作表匯入時整批同一交易)。
     rows 是 list[dict] (檔案標題 → 儲存格值)；columns 是檔案的標題清單 (沒有資料列時仍可檢查必要欄位)。
+    - 既有餐點只更新檔案裡「有附上的欄位」：只匯入「名稱、分類、單價」改價時，客製化、說明、特價、紅利等設定都保留。
+      單價、分類、客製化、庫存的儲存格空白時也保留原值 (空白的單價不會變成 $0)。
+    - 新餐點的單價不可空白；沒附上的欄位用預設值。
     - 檔案沒有庫存欄位時不覆蓋既有庫存；總量永遠不小於庫存。
     - 紅利防呆：兌換點數為 0 或高於單價時關閉紅利；特惠點數不小於兌換點數時歸 0。
-    回傳處理筆數；缺少必要欄位時拋出 AppError。
+    回傳處理筆數；缺少必要欄位或新餐點單價空白時拋出 AppError。
     """
     if columns is None:
         columns = set().union(*rows) if rows else set()
@@ -253,24 +256,21 @@ def upsert_menu_items_from_rows(rows, columns=None):
         name = str(_cell(row, 'name', '')).strip()
         if not name or name == '目前無資料':
             continue
-        price = max(0, safe_round(_cell(row, 'price'), 0))
-        points = max(0, safe_int(_cell(row, 'reward_points'), 0))
-        disc_points = max(0, safe_int(_cell(row, 'reward_discount_points'), 0))
-        is_reward = parse_bool(_cell(row, 'is_reward'))
-        if is_reward and (points <= 0 or (price > 0 and points > price)):
-            is_reward, points, disc_points = False, 0, 0
-        elif disc_points >= points:
-            disc_points = 0
-        stock = _cell(row, 'stock')
-        total = _cell(row, 'total_stock')
-        stock = None if stock is None else max(0, safe_int(stock, 50))
-        total = None if total is None else max(0, safe_int(total, 0))
-        modifiers = str(_cell(row, 'modifiers', 'none')).strip()
+
+        def filled(key):
+            return key in columns and not is_blank(row.get(key))
 
         item = MenuItem.query.filter_by(name=name).first()
-        if item is None:
-            item = MenuItem(name=name, image_path='', stock=50 if stock is None else stock,
-                            total_stock=50, can_be_add_on=False, add_on_price=0, addon_trigger_type='any')
+        is_new = item is None
+        if is_new and not filled('price'):
+            raise AppError(f'新餐點「{name}」的單價空白，請填寫後再匯入')
+        stock = max(0, safe_int(_cell(row, 'stock'), 50)) if filled('stock') else None
+        total = max(0, safe_int(_cell(row, 'total_stock'), 0)) if filled('total_stock') else None
+        if is_new:
+            item = MenuItem(name=name, image_path='', stock=50 if stock is None else stock, total_stock=50,
+                            can_be_add_on=False, add_on_price=0, addon_trigger_type='any', category='主餐', price=0,
+                            discount_price=0, modifiers='none', description='', is_manual_popular=False, is_new=False,
+                            is_discount=False, is_reward=False, reward_points=0, reward_discount_points=0)
             db.session.add(item)
         elif stock is not None:
             item.stock = stock
@@ -279,15 +279,33 @@ def upsert_menu_items_from_rows(rows, columns=None):
         if total is not None:
             item.total_stock = total
         item.total_stock = max(item.total_stock or 0, item.stock or 0)
-        item.category = str(_cell(row, 'category', '主餐')).strip()
-        item.price = price
-        item.discount_price = max(0, safe_round(_cell(row, 'discount_price'), 0))
-        item.modifiers = modifiers if modifiers in MODIFIER_GROUPS else 'none'
-        item.description = str(_cell(row, 'description', '')).strip()
-        item.is_manual_popular = parse_bool(_cell(row, 'is_recommended'))
-        item.is_new = parse_bool(_cell(row, 'is_new'))
-        item.is_discount = parse_bool(_cell(row, 'is_discount'))
-        item.is_reward, item.reward_points, item.reward_discount_points = is_reward, points, disc_points
+        if filled('price'):
+            item.price = max(0, safe_round(_cell(row, 'price'), 0))
+        if filled('category'):
+            item.category = str(_cell(row, 'category')).strip()
+        if filled('modifiers'):
+            modifiers = str(_cell(row, 'modifiers')).strip()
+            item.modifiers = modifiers if modifiers in MODIFIER_GROUPS else 'none'
+        # 有附上的欄位才更新 (儲存格空白 = 清空說明 / 特價金額 0 / 勾選取消)
+        if 'description' in columns:
+            item.description = str(_cell(row, 'description', '')).strip()
+        if 'discount_price' in columns:
+            item.discount_price = max(0, safe_round(_cell(row, 'discount_price'), 0))
+        for key, attr in (('is_recommended', 'is_manual_popular'), ('is_new', 'is_new'), ('is_discount', 'is_discount')):
+            if key in columns:
+                setattr(item, attr, parse_bool(_cell(row, key)))
+        if columns & {'is_reward', 'reward_points', 'reward_discount_points'}:
+            is_reward = parse_bool(_cell(row, 'is_reward')) if 'is_reward' in columns else bool(item.is_reward)
+            points = max(0, safe_int(_cell(row, 'reward_points'), 0)) if 'reward_points' in columns \
+                else (item.reward_points or 0)
+            disc_points = max(0, safe_int(_cell(row, 'reward_discount_points'), 0)) \
+                if 'reward_discount_points' in columns else (item.reward_discount_points or 0)
+            price = item.price or 0
+            if is_reward and (points <= 0 or (price > 0 and points > price)):
+                is_reward, points, disc_points = False, 0, 0
+            elif disc_points >= points:
+                disc_points = 0
+            item.is_reward, item.reward_points, item.reward_discount_points = is_reward, points, disc_points
         count += 1
     return count
 

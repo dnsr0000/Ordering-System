@@ -351,13 +351,12 @@ def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None):
 def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
     """線上付款完成：收款紀錄、會員累積消費 / 等級、電子發票 (等待付款 → 待開立)"""
     from app.models.payment import Invoice, InvoiceStatus, PaymentKind
-    from app.services import deferred, einvoice_ecpay, payment_service, settings_service, wallet_service
+    from app.services import deferred, einvoice_ecpay, payment_service, settings_service
     db.session.refresh(order)
     payment_service.record_payment(order, PaymentKind.SALE, method, order.total_price,
                                    reference=trade_no or '', staff='ecpay')
-    if order.user is not None:
-        order.user.total_spent = (order.user.total_spent or 0) + (order.total_price or 0)
-        wallet_service.refresh_tier(order.user)
+    from app.services.member_rewards import grant_paid_rewards
+    grant_paid_rewards(order)   # 付款完成才給贈點、累積消費、集點與推薦
     cfg = settings_service.get('einvoice', order.tenant_id)
     for inv in Invoice.query.filter_by(order_id=order.id, status=InvoiceStatus.WAITING) \
             .execution_options(skip_tenant_filter=True).all():

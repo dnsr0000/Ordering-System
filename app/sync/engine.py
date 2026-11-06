@@ -419,6 +419,23 @@ class Applier:
             self.result.transfer_alerts.append(
                 (obj, f'叫貨單 {obj.number} 已被{obj.to_name}取消，但{obj.from_name}在同步前已出貨；請收貨方收貨入庫或安排退回'))
 
+    def _tombstone_denied(self, spec, target):
+        """
+        線上端：分店上傳的刪除紀錄是否不可套用 (回傳衝突原因；True = 靜默略過)。刪除與修改適用相同規則，
+        否則分店可用刪除紀錄繞過「總部設定只能在線上端修改」、訂單 / 調撥單的擁有權檢查。
+        """
+        if spec.direction == 'down':
+            return '總部設定只能在線上端刪除，分店上傳的刪除已忽略'
+        if spec.direction == 'up':
+            return True   # 只上傳的資料 (日誌、收款、退款、費用…) 在線上端彙整保存，分店本機清除 (封存) 不影響線上端
+        if target is None:
+            return None
+        if spec.name == 'stock_transfer':
+            return '叫貨 / 調撥單不可刪除 (請改為取消或拒絕)'
+        if spec.name == 'order_item' and not self._order_owned(target.get('order_id')):
+            return '不可刪除其他分店的訂單明細'
+        return None
+
     def _order_owned(self, order_id):
         if order_id is None:
             return False
@@ -553,6 +570,12 @@ class Applier:
         if self.side == 'hub' and spec.name == 'staff_account' and target is not None and target['role'] == 'owner':
             self.conflict(spec, row_uuid, '負責人帳號只能在線上端刪除')
             return
+        if self.side == 'hub':
+            reason = self._tombstone_denied(spec, target)
+            if reason:
+                if reason is not True:
+                    self.conflict(spec, row_uuid, reason)
+                return
         exists = db.session.execute(sa.select(SyncTombstone.id).where(SyncTombstone.uuid == uuid)).first()
         if exists is None:
             db.session.add(SyncTombstone(uuid=uuid, tenant_id=self.tenant_id, table_name=table_name, row_uuid=row_uuid,

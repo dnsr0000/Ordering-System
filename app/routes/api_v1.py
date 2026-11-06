@@ -36,14 +36,19 @@ csrf.exempt(api_v1)
 MAX_LIMIT = 500
 
 
+def _bearer_secret():
+    auth = request.headers.get('Authorization', '')
+    return auth[7:].strip() if auth.lower().startswith('bearer ') else ''
+
+
 def _key_bucket():
-    return 'api:' + hashlib.sha256(request.headers.get('Authorization', '').encode()).hexdigest()[:24]
+    # 以金鑰本身 (去掉 Bearer 的大小寫與空白差異) 計數：同一把金鑰換寫法也共用同一份額度
+    return 'api:' + hashlib.sha256(_bearer_secret().encode()).hexdigest()[:24]
 
 
 @api_v1.before_request
 def authenticate():
-    auth = request.headers.get('Authorization', '')
-    raw = auth[7:].strip() if auth.lower().startswith('bearer ') else ''
+    raw = _bearer_secret()
     if not raw:
         raise AppError('缺少 API 金鑰 (Authorization: Bearer ...)', 401)
     with tenant_bypass():

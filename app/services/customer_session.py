@@ -11,7 +11,9 @@ from app.services.voucher_service import refund_open_vouchers
 
 # line_pending：LINE 授權後尚未綁定的帳號，登出時一併清除 (共用點餐機上不可留給下一位顧客)
 # auth_factor：這次登入用的方式 (pin / face / line)；人臉不是秘密因子，敏感操作 (個資下載、會員條碼、解除 LINE) 要再輸入 PIN
-CUSTOMER_SESSION_KEYS = ('user_id', 'user_name', 'is_guest', 'customer_log_id', 'line_pending', 'auth_factor')
+# support_chats：這位顧客轉接過的真人客服對話憑證 (登出時一併清除，下一位顧客接續不了)
+CUSTOMER_SESSION_KEYS = ('user_id', 'user_name', 'is_guest', 'customer_log_id', 'line_pending', 'auth_factor',
+                         'support_chats')
 WEAK_FACTORS = ('face',)
 
 

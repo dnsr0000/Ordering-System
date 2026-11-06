@@ -90,10 +90,21 @@ def test_cancel_rolls_back_everything(app, admin_client, ctx):
 
 
 def test_kitchen_complete_all(app, kitchen_client):
-    r = kitchen_client.post('/api/kitchen_complete_all')
+    """一鍵出餐只完成 KDS 畫面上的訂單 (未付款的線上單等不在畫面上，不可被一起完成)"""
+    shown = [o['id'] for o in kitchen_client.get('/api/kitchen_orders').get_json()['orders']]
+    with app.app_context():
+        hidden = Order.query.filter_by(status='Pending').first()
+        hidden.payment_status = 'pending'   # 未付款的線上單：KDS 不顯示
+        db.session.commit()
+        hidden_id = hidden.id
+    assert kitchen_client.post('/api/kitchen_complete_all', json={}).status_code == 400, '必須指定訂單'
+    r = kitchen_client.post('/api/kitchen_complete_all', json={'order_ids': shown + [hidden_id]})
     assert r.status_code == 200 and r.get_json()['success'] is True
     with app.app_context():
-        assert Order.query.filter_by(status='Pending').count() == 0
+        assert db.session.get(Order, hidden_id).status == 'Pending', '畫面上沒有的訂單不會被完成'
+        assert all(db.session.get(Order, i).status != 'Pending' for i in shown if i != hidden_id)
+        db.session.get(Order, hidden_id).payment_status = ''
+        db.session.commit()
 
 
 def test_guest_order_cancel_once(app, admin_client, ctx):

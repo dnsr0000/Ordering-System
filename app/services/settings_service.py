@@ -261,6 +261,10 @@ SECTIONS = {s.key: s for s in (
                 Field('llm_enabled', '其他問題交給 AI 回答', 'bool', True,
                       help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫 Gemini (有費用) 或本機模型'),
                 Field('fallback', '答不出來時的回覆', default='這個問題我不太確定，請直接洽詢櫃檯人員，謝謝！'),
+                Field('off_topic', '與本店無關的問題的回覆', default='',
+                      help='空白時使用「我是本店的點餐小幫手，只能回答餐點、點餐、付款、會員點數、營業資訊與訂單相關的問題喔！」'),
+                Field('handoff_enabled', '允許轉接真人客服', 'bool', True,
+                      help='顧客可在對話窗按「轉接真人客服」，店員在後台「顧客與行銷 → 客服對話」回覆'),
             ), enabled_field='enabled',
             subgroup='菜單與點餐頁', keywords='AI 客服 聊天 機器人'),
     # ------------------------------------------------------------------ E 會員行銷
@@ -850,6 +854,19 @@ def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, all
                     clean[f.name] = v
                 else:
                     skipped.append(f'{key}.{f.name}')
+            elif f.type == 'time':
+                # 與設定頁相同的檢查：9:00 這種格式會讓每日排程的字串比較永遠不成立 (備份、定期報表不再執行)
+                t = str(v or '').strip()
+                if t and not TIME_RE.match(t):
+                    skipped.append(f'{key}.{f.name}')
+                    continue
+                clean[f.name] = t or f.default
+            elif f.type == 'url':
+                u = str(v or '').strip()
+                if u and not re.match(r'^https?://', u):
+                    skipped.append(f'{key}.{f.name}')
+                    continue
+                clean[f.name] = u[:500]
             else:
                 clean[f.name] = str(v if v is not None else '')[:2000]
         if clean:

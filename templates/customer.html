@@ -79,46 +79,52 @@
 {% block content %}
 {% if session.get('user_name') %}
 
-<header class="header fixed-top py-2">
-    <div class="container d-flex justify-content-between align-items-center">
-        <div class="d-flex align-items-center gap-2">
-            <i class="bi bi-shop-window text-warning fs-3"></i>
-            <div>
-                <div class="h5 mb-0 text-white">{{ tenant.name if tenant else ui.site_title }}</div>
-                <small class="text-white-50">
+<header class="header sticky-top py-2">
+    {# < 1200px：我的訂單 / 購物車 / 登出只留圖示 (文字仍給螢幕閱讀器)；< 768px (手機) 再把語言 / 大字 / 深淺色 / 安裝 / 綁定 LINE 收進「⋯」，頂欄維持一列 #}
+    <div class="container hdr-bar d-flex justify-content-between align-items-center gap-2">
+        <div class="hdr-brand d-flex align-items-center gap-2">
+            <i class="bi bi-shop-window text-warning fs-3 hdr-logo" aria-hidden="true"></i>
+            <div class="hdr-brand-text">
+                <div class="h5 mb-0 text-white hdr-title" title="{{ tenant.name if tenant else ui.site_title }}">{{ tenant.name if tenant else ui.site_title }}</div>
+                <small class="text-white-50 hdr-welcome">
                     {% if is_guest %}
-                        {{ ui.welcome_guest_a }}<strong>{{ ui.guest }}</strong>{{ ui.welcome_guest_b }}
+                        <span class="hdr-greet">{{ ui.welcome_guest_a }}</span><strong>{{ ui.guest }}</strong><span class="hdr-greet">{{ ui.welcome_guest_b }}</span>
                     {% else %}
-                        {{ ui.welcome_back }}<strong id="member-name">{{ session['user_name'] }}</strong>{{ ui.welcome_back_b }}
+                        <span class="hdr-greet">{{ ui.welcome_back }}</span><strong id="member-name" class="hdr-name" title="{{ session['user_name'] }}">{{ session['user_name'] }}</strong><span class="hdr-greet">{{ ui.welcome_back_b }}</span>
                         <a href="{{ url_for('rewards.rewards_store') }}" class="badge bg-warning text-dark ms-1 text-decoration-none shadow-sm py-1 px-2" title="{{ ui.rewards_store_title }}">
-                            <i class="bi bi-star-fill text-danger"></i> {{ ui.points_label }}: <strong id="nav-user-points">{{ user_points }}</strong> {{ ui.points_unit }} <i class="bi bi-arrow-right-circle-fill text-dark ms-1"></i>
+                            <i class="bi bi-star-fill text-danger" aria-hidden="true"></i> <span class="hdr-greet">{{ ui.points_label }}: </span><strong id="nav-user-points">{{ user_points }}</strong> <span class="hdr-greet">{{ ui.points_unit }}</span> <i class="bi bi-arrow-right-circle-fill text-dark ms-1 hdr-greet" aria-hidden="true"></i>
                         </a>
                     {% endif %}
                 </small>
             </div>
         </div>
-        <div class="d-flex flex-wrap align-items-center justify-content-end gap-1">
+        <div class="hdr-more collapse" id="hdrMore">
             {% if langs|length > 1 %}
-            <div class="btn-group btn-group-sm lang-switch me-1" role="group" aria-label="Language" id="langSwitch">
+            <div class="btn-group btn-group-sm lang-switch" role="group" aria-label="Language" id="langSwitch">
                 {% for l in langs %}<a class="btn {{ 'btn-warning text-dark' if l == lang else 'btn-outline-light' }}" href="{{ url_for('customer.customer_index', lang=l) }}">{{ lang_labels[l] }}</a>{% endfor %}
             </div>
             {% endif %}
-            {% if pro.a11yButton %}<button type="button" class="btn btn-outline-light a11y-toggle me-1" data-action="toggle-a11y" aria-pressed="false" id="a11yToggle" title="{{ ui.a11y }}"><i class="bi bi-type"></i> {{ ui.a11y_short }}</button>{% endif %}
-            <button type="button" class="btn btn-outline-light me-1" data-action="toggle-theme" aria-pressed="false" id="themeToggle" title="{{ ui.theme_toggle }}" aria-label="{{ ui.theme_toggle }}"><i class="bi bi-sun"></i></button>
-            <button type="button" class="btn btn-outline-info me-1 d-none" data-action="pwa-install" id="pwaInstallBtn"><i class="bi bi-phone"></i> {{ ui.pwa_install }}</button>
+            {% if pro.a11yButton %}<button type="button" class="btn btn-outline-light a11y-toggle" data-action="toggle-a11y" aria-pressed="false" id="a11yToggle" title="{{ ui.a11y }}"><i class="bi bi-type"></i> {{ ui.a11y_short }}</button>{% endif %}
+            <button type="button" class="btn btn-outline-light" data-action="toggle-theme" aria-pressed="false" id="themeToggle" title="{{ ui.theme_toggle }}" aria-label="{{ ui.theme_toggle }}"><i class="bi bi-sun"></i></button>
+            <button type="button" class="btn btn-outline-info d-none" data-action="pwa-install" id="pwaInstallBtn"><i class="bi bi-phone"></i> {{ ui.pwa_install }}</button>
             {% if not is_guest and pro.lineLogin and not pro.lineBound %}
-            <a class="btn btn-success btn-sm me-1" href="{{ url_for('member_auth.line_start') }}" id="lineBindBtn"><i class="bi bi-line"></i> {{ ui.bind_line }}</a>
+            <a class="btn btn-success btn-sm" href="{{ url_for('member_auth.line_start') }}" id="lineBindBtn"><i class="bi bi-line"></i> {{ ui.bind_line }}</a>
             {% endif %}
-            <button class="btn btn-outline-warning me-1" type="button" data-action="my-orders">
-                <i class="bi bi-receipt"></i> {{ ui.my_orders }}
+        </div>
+        <div class="hdr-actions d-flex align-items-center gap-1">
+            <button class="btn btn-outline-warning" type="button" data-action="my-orders" title="{{ ui.my_orders }}">
+                <i class="bi bi-receipt" aria-hidden="true"></i><span class="hdr-label"> {{ ui.my_orders }}</span>
             </button>
-            <button class="btn btn-outline-light me-1" type="button" data-bs-toggle="offcanvas" data-bs-target="#cart-sidebar">
-                <i class="bi bi-cart3"></i> {{ ui.cart }} <span id="cart-count" class="badge bg-danger">0</span>
+            <button class="btn btn-outline-light text-nowrap" type="button" data-bs-toggle="offcanvas" data-bs-target="#cart-sidebar" title="{{ ui.cart }}">
+                <i class="bi bi-cart3" aria-hidden="true"></i><span class="hdr-label"> {{ ui.cart }}</span> <span id="cart-count" class="badge bg-danger">0</span>
             </button>
             <form method="post" action="{{ url_for('auth.logout') }}" class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-danger" data-action="logout">{{ ui.logout }}</button>
+                <button type="submit" class="btn btn-danger" data-action="logout" title="{{ ui.logout }}"><i class="bi bi-box-arrow-right hdr-icon-only" aria-hidden="true"></i><span class="hdr-label">{{ ui.logout }}</span></button>
             </form>
+            <button class="btn btn-outline-light hdr-more-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#hdrMore" aria-controls="hdrMore" aria-expanded="false" title="{{ ui.more_settings }}" aria-label="{{ ui.more_settings }}">
+                <i class="bi bi-three-dots" aria-hidden="true"></i>
+            </button>
         </div>
     </div>
 </header>
@@ -558,7 +564,7 @@
 </div>
 
 <!-- 套餐組合選擇彈窗 -->
-{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}"></div>{% endif %}
+{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}" data-handoff="{{ chat.handoff }}"></div>{% endif %}
 {% if pro and pro.voiceOrdering %}
 <div class="modal fade" id="voiceModal" tabindex="-1" aria-hidden="true" aria-labelledby="voiceModalTitle">
     <div class="modal-dialog modal-dialog-centered modal-lg">

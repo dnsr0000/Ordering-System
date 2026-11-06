@@ -13,6 +13,7 @@ from app.models.order import Order
 from app.models.sync import PointLedger
 from app.models.tenant import Tenant
 from app.models.user import PrivacySetting, User
+from app.services import support_service
 from app.services.upload_paths import remove_upload
 
 # 告知內容有實質修改時更新版本：會員下次登入會再次請他確認
@@ -101,6 +102,7 @@ def purge_inactive_members(tenant_id, months, dry_run=True):
                            .execution_options(synchronize_session=False))
         record_staff_audit('PRIVACY_PURGE', target_user_id=user.id, tenant_id=tenant_id, as_system=True,
                            details=f'會員停止使用超過 {months} 個月，依隱私權告知刪除 (會員 #{user.id})')
+        support_service.forget_member(user.id)
         db.session.delete(user)
     db.session.commit()
     return stale
@@ -159,4 +161,5 @@ def delete_member_account(user, reason='會員自行刪除帳號'):
                        .execution_options(synchronize_session=False))
     record_staff_audit('MEMBER_SELF_DELETE', target_user_id=user.id, tenant_id=user.tenant_id, as_system=True,
                        details=f'{reason} (會員 #{user.id})')
+    support_service.forget_member(user.id)   # 客服對話含姓名與對話內容，一併刪除
     db.session.delete(user)

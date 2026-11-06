@@ -172,3 +172,29 @@ def test_not_available_on_hub(app, admin_client, monkeypatch):
     assert app.test_client().get(f"/t/{_table(app, 'T1')['token']}").status_code == 404
     monkeypatch.setitem(app.config, 'SYNC_ROLE', 'standalone')
     assert login_staff(app, 'table_staff_x', 'staff').get('/pos').status_code == 200
+
+
+def test_table_points_only_after_settlement_and_no_gift_card(app, admin_client, staff_client, store_settings):
+    """桌邊點餐未結帳前不給贈點 (取消也不會扣到原本的點數)；桌位結帳不可用禮物卡 (不會真的扣卡)"""
+    from app.models.sync import PointLedger
+    from app.models.user import User
+    store_settings('gift_card', enabled=True)
+    admin_client.post('/admin/tables', data={'action': 'create', 'names': 'T9'})
+    item = make_item(app, '桌邊贈點餐', price=250, stock=20)
+    uid = make_member(app, '桌邊贈點會員', '0933880009', points=5, pin='2580')
+    c = member_client(app, '0933880009', '2580')
+    _scan(app, _table(app, 'T9')['token'], client=c)
+    oid = checkout(c, [line(item, 2)]).get_json()['order_id']
+    with app.app_context():
+        assert db.session.get(User, uid).points == 5, '未結帳不先贈點'
+        assert db.session.get(Order, oid).points_earned > 0
+    tid = _table(app, 'T9')['id']
+    r = staff_client.post(f'/api/pos/tables/{tid}/settle', json={'payment_method': '禮物卡'})
+    assert r.status_code == 400 and '不可使用' in r.get_json()['message']
+    r = staff_client.post(f'/api/pos/tables/{tid}/settle', json={'payments': [{'method': '禮物卡', 'amount': 500}]})
+    assert r.status_code == 400
+    assert staff_client.post(f'/api/pos/tables/{tid}/settle', json={'payment_method': 'Cash', 'cash_received': 500}).status_code == 200
+    with app.app_context():
+        user = db.session.get(User, uid)
+        earned = db.session.get(Order, oid).points_earned
+        assert user.points == 5 + earned and PointLedger.query.filter_by(order_id=oid, reason='earn').count() == 1

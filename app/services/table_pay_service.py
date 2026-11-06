@@ -12,6 +12,8 @@ import logging
 from datetime import datetime
 from types import SimpleNamespace
 
+from sqlalchemy import update
+
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import PaymentMethod
@@ -80,6 +82,14 @@ def mark_paid(trade_no, provider_trade_no, amount, payment_type=None):
     if tp is None:
         return 'missing'
     if tp.status != 'pending':
+        return 'already'
+    # 綠界的伺服器通知與瀏覽器帶回幾乎同時到：只讓搶到的那一個去結帳，另一個回 'already'
+    # (原本兩個都會結帳，後到的結帳失敗後把已付款的這筆改成「衝突」並通知店員退款)
+    claimed = db.session.execute(update(TablePayment).where(TablePayment.id == tp.id, TablePayment.status == 'pending')
+                                 .values(status='processing')
+                                 .execution_options(synchronize_session=False, skip_tenant_filter=True)).rowcount
+    db.session.commit()
+    if not claimed:
         return 'already'
     tenant = db.session.get(Tenant, tp.tenant_id)
     _use_tenant(tenant, remember=False)

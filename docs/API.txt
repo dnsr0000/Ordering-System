@@ -42,6 +42,9 @@ POS / 店員
 顧客
   GET /api/eta、/api/menu/availability (ETag)、POST /api/reorder/<id>、/api/voice/parse、/api/chat、/api/gift_cards/balance、
   /api/member/marketing {opt_in}
+  POST /api/chat {message, history, order_uuid?} → {answer, source, suggestions, did_you_mean, handoff}
+  POST /api/chat/handoff {history, order_uuid?, message?} → {token, status, messages}   轉接真人客服
+  GET /api/chat/handoff/<token>?after=<id>、POST …/<token>/message {text}、…/<token>/close   (對話憑證存取)
   GET /track/<uuid>、/api/track/<uuid>、POST /api/track/<uuid>/push、GET /api/push/vapid     GET /api/table/bill、POST /api/table/pay
   POST /api/my_orders/<id>/receipt/email | line      POST /api/kiosk/offline_order {shop, code, queued_at, order} 斷線暫存補送
   (一律訪客 / 現金；重送回原訂單 replayed: true；店家不符 409、超過 3 小時 410)
@@ -57,6 +60,8 @@ POS / 店員
   /admin/menu、/admin/members?q=&page=、/admin/audit、/admin/tenants、/admin/expenses?month=YYYY-MM (POST action=add | edit |
   delete | copy_fixed)、/admin/pnl?month= | start=&end= [&node=分店 uuid] [&format=xlsx]、/admin/cost-history?days=30&kind=ingredient|menu、
   /admin/group-orders、/admin/staffing?date=YYYY-MM-DD、/admin/staffing/auto
+  /admin/support 客服對話；GET /api/admin/support/chats[?closed=1]、/api/admin/support/chats/<id>?after=、
+  POST …/<id>/reply {text}、…/<id>/close
 對外 API  /api/v1/... (Authorization: Bearer kk_...)
   GET orders?since=&after_id=&limit= (依建立時間；next 為下一頁參數)、GET orders?cursor=0 (異動追蹤，回傳 next_cursor；建議在
   線上端呼叫)、GET orders/<uuid>、GET menu (ETag)、POST menu/<id>/availability {sold_out, stock}、GET members/<手機>、

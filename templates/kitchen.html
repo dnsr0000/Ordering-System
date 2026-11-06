@@ -12,9 +12,11 @@
 {% set kds_title %}廚房出單即時看板 (KDS){% if station %} • <span class="text-warning" id="kdsStationName">{{ station.name }}</span>{% endif %}{% endset %}
 {% set kds_subtitle %}待製作訂單：<span id="pendingCountBadge" class="badge bg-danger fs-6">0</span> 筆{% endset %}
 {% call screen_header('bi-fire text-danger fs-2', kds_title, kds_subtitle, cls='py-2 px-4 mb-3 sticky-top') %}
+            {% if not station %}{# 工作站分頁只完成自己的品項 (各站完成)，不提供整張訂單一鍵出餐 #}
             <button type="button" id="completeAllBtn" class="btn btn-success btn-sm fw-bold shadow-sm" data-action="complete-all" disabled>
                 <i class="bi bi-check-all fs-6 me-1"></i> 全部完成
             </button>
+            {% endif %}
             <button type="button" id="soundToggleBtn" class="btn btn-outline-warning btn-sm fw-bold" data-action="toggle-sound">
                 <i class="bi bi-volume-up-fill me-1"></i> 音效提示：<span id="soundStatusText">已開啟</span>
             </button>

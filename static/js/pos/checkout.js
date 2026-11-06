@@ -8,8 +8,8 @@ import { renderCart } from './cart.js';
 import { applyServerPrices, clearMember, refreshBoundMember } from './member.js';
 import { askLinePayKey, withApproval, withMemberVerify } from './pro.js';
 import {
-    broadcastPaid, invoicePayload, isHomeDelivery, onInvoiceTypeChange, onOrderTypeChange, recalcTotals, resetPromo,
-    updateCashChange,
+    broadcastPaid, cartKey, invoicePayload, isHomeDelivery, onInvoiceTypeChange, onOrderTypeChange, payableTotal,
+    recalcTotals, resetPromo, updateCashChange,
 } from './totals.js';
 import { syncLiveState } from './live.js';
 import { payloadLine } from '../shared/orderpayload.js';
@@ -52,10 +52,8 @@ export async function submitOrder() {
     }
     const payMethod = $('posPaymentMethod').value;
     // 上一次送出時伺服器回報金額不同、收銀已看過新金額：同一份內容再送出時以新金額為準
-    const cartKey = JSON.stringify([state.cart.map(payloadLine), state.member && state.member.id, state.promoCode,
-        state.orderDiscount, $('posPointsInput') && $('posPointsInput').value, payMethod,
-        $('posTypeTakeout').checked, isHomeDelivery() && $('posHomeZone').value]);
-    const finalTotal = state.acceptedTotal && state.acceptedTotal.key === cartKey ? state.acceptedTotal.total : state.finalTotal;
+    const key = cartKey();
+    const finalTotal = payableTotal();
     if (payMethod === '混合付款' && !state.tenders) {   // 先分配各種付款方式的金額，確認後再送出
         openTenders(finalTotal);
         return;
@@ -136,7 +134,7 @@ export async function submitOrder() {
         if (err.data && (err.data.coupon_unavailable || err.data.points_changed)) {
             await refreshBoundMember(Boolean(err.data.coupon_unavailable));
         }
-        if (err.data && err.data.price_changed) applyServerPrices(err.data, cartKey);
+        if (err.data && err.data.price_changed) applyServerPrices(err.data, key);
     } finally {
         state.tenders = null;   // 混合付款每次結帳重新分配
         setSubmitting(false);

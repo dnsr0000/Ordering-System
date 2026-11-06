@@ -159,7 +159,7 @@ def test_unpaid_orders_expire_and_restore_stock_and_points(env):
     with env.hub.app_context():
         node_id = SyncNode.query.filter_by(uuid=env.node_b_uuid).first().id
         stock_after_order = db.session.get(NodeStock, (node_id, _hub_burger(env))).stock
-    assert _member(env.hub, '0966000001')['points'] > user_before, '下單時已贈點'
+    assert _member(env.hub, '0966000001')['points'] == user_before, '未付款不先贈點 (付款完成才給，避免先用掉再逾時取消)'
 
     assert _expire(env, query=lambda ref: {'TradeStatus': '0'}) == 0, '未逾時不取消'
     _age(env, order)
@@ -170,7 +170,7 @@ def test_unpaid_orders_expire_and_restore_stock_and_points(env):
         assert o.status == 'Cancelled' and o.payment_status == 'expired'
         stock = db.session.get(NodeStock, (node_id, _hub_burger(env))).stock
         assert stock == stock_after_order + 1, '回補分店庫存快照'
-    assert _member(env.hub, '0966000001')['points'] == user_before, '追回贈點'
+    assert _member(env.hub, '0966000001')['points'] == user_before, '逾時取消不會扣到會員原本的點數'
 
     # 取消後才收到付款：標記需退款
     r = env.hub.test_client().post('/payment/ecpay/notify', data=_signed(env.hub, _notify_params(order)))

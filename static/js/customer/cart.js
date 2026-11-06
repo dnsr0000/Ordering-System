@@ -3,7 +3,7 @@
  * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，加購配額 / 單價 / 合併規則在 static/js/shared/。
  */
 import {
-    $, REWARD_LABEL, api, availableAddons, html, menuItems, modifierById, priceChannel, isGuest, setText, state, storeCart, ui,
+    $, REWARD_LABEL, REWARD_TAG, api, availableAddons, html, menuItems, modifierById, priceChannel, isGuest, setText, state, storeCart, ui,
 } from './core.js';
 import { calculateTotal, schedulePromotionPreview, setUserPoints } from './totals.js';
 import * as addons from '../shared/addons.js';
@@ -48,8 +48,8 @@ export function normalizeLine(raw) {
 /** 購物車品項的顯示說明：[套餐: X]、客製化文字、加料(+N) (與後端產生的明細相同) */
 export function lineDescription(line) {
     const parts = [];
-    if (line.pass_id) parts.push('[寄杯]');
-    if (line.combo_name) parts.push(`[套餐: ${line.combo_name}]`);
+    if (line.pass_id) parts.push(`[${ui.cart_pass_tag || '寄杯'}]`);
+    if (line.combo_name) parts.push(`[${ui.cart_combo_tag || '套餐'}: ${line.combo_name}]`);
     parts.push(...(line.choice_labels || []));
     if (line.size) parts.push(line.size);
     if (line.customization) parts.push(line.customization);
@@ -161,7 +161,7 @@ export function cartLineHtml(line, idx) {
         <div class="cart-line d-flex justify-content-between align-items-center mb-2 border-bottom border-secondary pb-2 ${soldOut ? 'bg-danger bg-opacity-10 p-2 rounded' : ''}">
             <div>
                 <div class="fw-bold ${soldOut ? 'text-decoration-line-through text-danger' : 'text-warning'}">
-                    ${line.is_reward ? `${REWARD_LABEL} ` : ''}<span class="cart-line-name">${line.name}</span>
+                    ${line.is_reward ? `${REWARD_TAG} ` : ''}<span class="cart-line-name">${line.name}</span>
                     ${line.is_add_on ? html`<span class="badge bg-info text-dark ms-1">${ui.addon_badge || '加購'}</span>` : ''}
                     ${soldOut ? html`<span class="badge bg-danger ms-1">${ui.sold_out || '已售完'}</span>` : ''}
                 </div>
@@ -221,7 +221,7 @@ export function changeQty(index, delta) {
         return;
     }
     if (delta > 0 && line.is_add_on) {
-        const def = addonDef(line.menu_item_id);
+        const def = addonRules().addonDef(line.menu_item_id);
         if (!def || remainingAddonQuota(def) <= 0) {
             alert(`⚠️ ${ui.addon_max || '加購品數量已達上限！'}`);
             return;

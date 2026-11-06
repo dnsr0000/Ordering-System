@@ -3,7 +3,7 @@
  * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，品項結構 / 發票 / 合併規則在 static/js/shared/。
  */
 import {
-    $, REWARD_LABEL, api, html, isGuest, isOnline, menuItems, modal, modifierById, pageData, pro, setText, state, toggleRow, ui,
+    $, REWARD_TAG, api, html, isGuest, isOnline, menuItems, modal, modifierById, pageData, pro, setText, state, toggleRow, ui,
 } from './core.js';
 import { lineDescription, makeLine, saveCart, updateCartUI } from './cart.js';
 import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo, toggleCarbon } from './totals.js';
@@ -17,7 +17,7 @@ export async function openTableBill() {
         Kiosk.setHtml($('tableBillBody'), res.orders.length ? html`
             ${res.orders.map((o) => html`<div class="border-bottom py-1"><div class="fw-bold small">${ui.pickup_hash || '取餐 #'}${o.pickup_number} • $${o.total_price}</div>
                 ${o.items.map((i) => html`<div class="small text-secondary">${i.name} x${i.quantity}</div>`)}</div>`)}
-            <div class="fs-5 fw-bold text-end mt-2">${ui.total || '合計'} <span id="tableBillTotal">$${res.total}</span></div>` : html`<div class="text-secondary">目前沒有需要結帳的訂單</div>`);
+            <div class="fs-5 fw-bold text-end mt-2">${ui.total || '合計'} <span id="tableBillTotal">$${res.total}</span></div>` : html`<div class="text-secondary">${ui.table_bill_empty || '目前沒有需要結帳的訂單'}</div>`);
         $('tablePayBtn').disabled = !res.orders.length || !res.online_pay;
         modal('tableBillModal').show();
     } catch (err) {
@@ -109,7 +109,7 @@ export async function openPreview() {
                 return html`
                 <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
                     <div>
-                        <div>${l.is_reward ? `${REWARD_LABEL} ` : ''}${l.name} x${l.quantity}</div>
+                        <div>${l.is_reward ? `${REWARD_TAG} ` : ''}${l.name} x${l.quantity}</div>
                         ${desc ? html`<small class="text-info">${desc}</small>` : ''}
                     </div>
                     <span class="fw-bold">${Kiosk.money(l.price * l.quantity)}</span>

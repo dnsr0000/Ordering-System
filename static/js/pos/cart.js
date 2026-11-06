@@ -68,6 +68,7 @@ export function changeQty(idx, delta) {
 export function clearCart() {
     if (state.cart.length === 0) return;
     state.cart = [];
+    state.orderDiscount = null;   // 整單折扣跟著這張單走，不可帶到下一位顧客
     resetPromo();
     renderCart();
 }

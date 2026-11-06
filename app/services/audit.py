@@ -37,6 +37,7 @@ ACTION_LABELS = {
     'MENU_PRO_CHANGE': ('菜單進階設定', 'bg-secondary'),
     'MENU_TRANSLATE': ('AI 翻譯菜單', 'bg-secondary'),
     'FEEDBACK_REPLY': ('回覆顧客評價', 'bg-info'),
+    'SUPPORT_CLOSE': ('結束客服對話', 'bg-secondary'),
     'SYSTEM_UPDATE': ('版本更新', 'bg-warning text-dark'),
     'SETTINGS_EXPORT': ('匯出系統設定', 'bg-secondary'),
     'SETTINGS_IMPORT': ('匯入系統設定', 'bg-warning text-dark'),

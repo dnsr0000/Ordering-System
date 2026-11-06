@@ -5,6 +5,8 @@
 import math
 from datetime import date, datetime, timedelta
 
+from sqlalchemy import update
+
 from app.errors import AppError
 from app.extensions import db
 from app.models.inventory import Ingredient, PurchaseOrder, PurchaseOrderLine, Supplier
@@ -13,6 +15,16 @@ from app.services import inventory_service, settings_service
 OPEN_STATUSES = ('draft', 'sent')
 STATUS_LABELS = {'draft': ('草稿', 'secondary'), 'sent': ('已送出', 'info'), 'received': ('已收貨', 'success'),
                  'cancelled': ('已取消', 'dark')}
+
+
+def _claim(po, allowed, message, **values):
+    """條件式更新狀態 (目前狀態在 allowed 才改)：連按兩下 / 兩個分頁同時送出時只有一個會成功 (由呼叫端 commit)"""
+    claimed = db.session.execute(update(PurchaseOrder).where(PurchaseOrder.id == po.id, PurchaseOrder.status.in_(allowed))
+                                 .values(**values).execution_options(synchronize_session=False)).rowcount
+    if not claimed:
+        db.session.rollback()
+        raise AppError(message, 409)
+    db.session.refresh(po)
 
 
 def suggest_qty(ing):
@@ -110,7 +122,7 @@ def send(po, staff):
         raise AppError('只有草稿可以送出')
     if not po.lines:
         raise AppError('採購單沒有任何品項')
-    po.status, po.sent_at = 'sent', datetime.now()
+    _claim(po, ('draft',), '此採購單已送出', status='sent', sent_at=datetime.now())
     emailed = False
     if settings_service.get('inventory', po.tenant_id).get('po_email_supplier') and po.supplier and po.supplier.email \
             and mail_service.is_configured(po.tenant_id):
@@ -125,6 +137,8 @@ def receive(po, received, staff):
     """收貨：{line_id: (實收數量, 有效期限或 None)} → 入庫 (建立批號)；採購單改為已收貨"""
     if po.status not in OPEN_STATUSES:
         raise AppError('此採購單已收貨或已取消')
+    # 先搶到這張採購單才入庫：連按兩下收貨原本會入庫兩次 (庫存、批號、平均成本都加倍)
+    _claim(po, OPEN_STATUSES, '此採購單已收貨或已取消', status='received', received_at=datetime.now(), received_by=staff)
     any_in = False
     for line in po.lines:
         qty, expires_on = received.get(line.id, (line.quantity, None))
@@ -135,11 +149,11 @@ def receive(po, received, staff):
                                      unit_cost=line.unit_cost if line.unit_cost else None, expires_on=expires_on)
             any_in = True
     if not any_in:
+        db.session.rollback()   # 退回上面搶到的「已收貨」
         raise AppError('請輸入實收數量')
-    po.status, po.received_at, po.received_by = 'received', datetime.now(), staff
 
 
 def cancel(po):
     if po.status not in OPEN_STATUSES:
         raise AppError('此採購單已收貨或已取消')
-    po.status = 'cancelled'
+    _claim(po, OPEN_STATUSES, '此採購單已收貨或已取消', status='cancelled')

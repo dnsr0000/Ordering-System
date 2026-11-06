@@ -167,9 +167,12 @@ def refund_action(refund_id):
         db.session.commit()
         flash('已標記完成退款', 'success')
     elif action == 'retry':
-        refund.status = 'failed'
-        db.session.commit()
+        if refund.status != 'failed':
+            # 只有失敗的才重試：已完成 / 處理中的再退一次會重複退款 (連按兩下、重新送出表單)
+            raise AppError(f'這筆退款目前是「{refund.status}」，不需要重試', 409)
         status = payment_service.process_refund(refund.id)
+        if status is None:
+            raise AppError('這筆退款正在處理中或已完成，請重新整理頁面', 409)
         flash('線上退款成功' if status == 'done' else f'退款失敗：{refund.provider_result}',
               'success' if status == 'done' else 'danger')
     else:

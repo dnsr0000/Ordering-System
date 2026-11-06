@@ -38,7 +38,8 @@ def punch():
             auth_throttle.record_staff_failure(keys)
             db.session.commit()
             raise AppError('帳號或密碼錯誤', 401)
-        auth_throttle.clear_keys(keys['device'], keys['account'])
+        if not staff.totp_enabled:   # 兩步驟驗證的帳號：打卡只驗密碼，不可藉此把驗證碼的錯誤次數歸零
+            auth_throttle.clear_keys(keys['device'], keys['account'])
         open_rec = _open_record(staff.id)
         now = datetime.now()
         if request.form.get('action') == 'out':

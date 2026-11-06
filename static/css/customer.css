@@ -9,7 +9,41 @@ body.customer-page {
     backdrop-filter: blur(3px);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
-.customer-page main { padding-top: 90px; }
+/* 頂欄為 sticky (依實際高度推開內容)，不再以固定 90px 預留：手機上頂欄換成多列時原本會蓋住內容 */
+.customer-page main { padding-top: 1.25rem; }
+
+/* 頂欄排成一列：店名 / 問候語太長時截斷 (…)，按鈕不被擠到第二列。
+   < 1200px：我的訂單 / 購物車 / 登出只留圖示、問候語只留名字與點數；< 768px (手機)：語言 / 大字 / 深淺色等收進「⋯」(#hdrMore，Bootstrap collapse)，展開時在下一列 */
+.customer-page .hdr-brand { min-width: 0; flex: 1 1 0; }
+.customer-page .hdr-brand-text { min-width: 0; overflow: hidden; }
+.customer-page .hdr-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.customer-page .hdr-welcome { display: flex; align-items: center; min-width: 0; white-space: nowrap; }
+.customer-page .hdr-welcome > * { flex-shrink: 0; }
+.customer-page .hdr-welcome .hdr-name { flex-shrink: 1; min-width: 2em; overflow: hidden; text-overflow: ellipsis; }
+.customer-page .hdr-actions, .customer-page .hdr-more { flex-shrink: 0; }
+.customer-page .hdr-more { align-items: center; gap: .25rem; }
+.customer-page .hdr-icon-only { display: none; }
+/* 文字改為只給螢幕閱讀器 (同 Bootstrap .visually-hidden)；按鈕仍有 title 提示 */
+@media (max-width: 1199.98px) {
+    .customer-page .hdr-label { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important;
+        margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+    .customer-page .hdr-icon-only { display: inline; }
+    .customer-page .hdr-greet { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important;
+        margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
+}
+@media (min-width: 768px) {
+    .customer-page .hdr-more { display: flex !important; height: auto !important; }
+    .customer-page .hdr-more-toggle { display: none; }
+}
+@media (max-width: 767.98px) {
+    .customer-page .hdr-bar { flex-wrap: wrap; row-gap: 0 !important; }
+    .customer-page .hdr-logo { font-size: 1.4rem !important; }
+    .customer-page .hdr-title { font-size: 1.05rem; }
+    .customer-page .hdr-actions .btn { padding: .375rem .6rem; }
+    .customer-page .hdr-more { order: 3; width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+    .customer-page .hdr-more.show, .customer-page .hdr-more.collapsing { display: flex; }
+    .customer-page .hdr-more.show { padding-top: .4rem; }
+}
 
 /* 主視覺 (原本使用外部圖片，改為純 CSS 漸層以支援離線) */
 .customer-page .hero {

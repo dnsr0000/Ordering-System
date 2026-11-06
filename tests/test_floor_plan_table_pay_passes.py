@@ -103,7 +103,7 @@ def _ecpay_post(app, client, path, trade_no, amount, rtn='1', trade='2410240001'
     return client.post(path, data=params)
 
 
-def test_table_online_payment_settles_the_table(app, admin_client, store_settings):
+def test_table_online_payment_settles_the_table(app, admin_client, store_settings, monkeypatch):
     item = make_item(app, '線上結帳餐', price=120, stock=20)
     table_id, token = _make_table(app, admin_client, 'PAY1')
     phone = _phone(app, token)
@@ -140,6 +140,22 @@ def test_table_online_payment_settles_the_table(app, admin_client, store_setting
         assert [(p.method, p.amount) for p in recs] == [('Credit Card', 360)], '重複通知只結帳一次'
     assert phone.get(f'/table/pay/status/{trade_no}').get_data(as_text=True).count('結帳完成') == 1
     assert phone.get('/api/table/bill').get_json()['total'] == 0
+
+    # 綠界的伺服器通知與瀏覽器帶回幾乎同時到：後到的那個讀到的仍是「待付款」(舊資料)，也不可把已付款改成衝突
+    from app.services import table_pay_service
+    real_find = table_pay_service.find
+
+    def stale_find(no):
+        from types import SimpleNamespace
+        tp = real_find(no)   # 模擬同時讀取時尚未看到對方的結果 (讀到的仍是待付款)
+        return SimpleNamespace(id=tp.id, tenant_id=tp.tenant_id, status='pending')
+    monkeypatch.setattr(table_pay_service, 'find', stale_find)
+    with app.test_request_context('/'):
+        assert table_pay_service.mark_paid(trade_no, '2410240001', 360) == 'already'
+        db.session.rollback()
+    monkeypatch.setattr(table_pay_service, 'find', real_find)
+    with app.app_context():
+        assert TablePayment.query.filter_by(trade_no=trade_no).one().status == 'paid', '不會被改成衝突'
 
 
 def test_table_online_payment_conflicts_are_flagged(app, admin_client, store_settings, monkeypatch):

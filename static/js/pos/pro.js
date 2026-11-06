@@ -270,7 +270,7 @@ async function refreshIntake() {
 }
 if ($('posIntakeBtn')) {
     renderIntake(cfg.intake || { paused: false });
-    setInterval(refreshIntake, 60000);
+    Kiosk.poll(refreshIntake, 60000);   // 暫停接單到時間自動恢復 (不會觸發 SSE)
 }
 
 Kiosk.on(document, 'click', {

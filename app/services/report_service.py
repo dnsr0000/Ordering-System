@@ -2,6 +2,7 @@
 進階營運報表：營業額、毛利 (配方成本或餐點單位成本)、時段熱度、付款方式、管道、分類與品項排行、
 分店比較 (線上端)、收銀員、促銷成效；可匯出 Excel 並定期寄送。
 """
+import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -57,6 +58,17 @@ def revenue_orders(tenant_id, start, end, node_uuid=None):
     return [o for o in orders_between(tenant_id, start, end, node_uuid) if is_revenue(o)]
 
 
+def _sides_cost(item, by_uuid, costs):
+    """套餐配餐 (OrderItem.combo_sides 的 uuid 清單) 的單位成本合計"""
+    if not item.combo_sides:
+        return 0.0
+    try:
+        sides = json.loads(item.combo_sides)
+    except ValueError:
+        return 0.0
+    return sum(costs.get(by_uuid.get(u), 0.0) for u in sides if isinstance(u, str))
+
+
 def build_report(tenant_id, start, end, node_uuid=None):
     """start / end 為 date (含兩端)"""
     t0, t1 = day_bounds(start, end)
@@ -67,16 +79,21 @@ def build_report(tenant_id, start, end, node_uuid=None):
 
     gross = sum(o.subtotal for o in orders)
     net = sum(o.total_price or 0 for o in orders)
-    refunds_q = Refund.query.filter(Refund.tenant_id == tenant_id, Refund.created_at >= t0, Refund.created_at < t1)
+    # 部分退款只扣「仍計入營業額」的訂單：之後整張取消的訂單已整筆不算營業額，再扣它的部分退款會重複扣
+    refunds_q = Refund.query.join(Order, Order.id == Refund.order_id).filter(
+        Refund.tenant_id == tenant_id, Refund.created_at >= t0, Refund.created_at < t1, Refund.kind == 'partial',
+        Order.status != OrderStatus.CANCELLED)
     if node_uuid:   # 依分店：只算該分店訂單的退款
-        refunds_q = refunds_q.join(Order, Order.id == Refund.order_id).filter(Order.node_uuid == node_uuid)
-    partial_refunds = sum(r.amount for r in refunds_q.all() if r.kind == 'partial')
+        refunds_q = refunds_q.filter(Order.node_uuid == node_uuid)
+    partial_refunds = sum(r.amount for r in refunds_q.all())
+    by_uuid = {m.uuid: m.id for m in menu.values()}
     cogs = 0.0
     items = {}
     categories = defaultdict(lambda: {'qty': 0, 'revenue': 0, 'cost': 0.0})
     for o in orders:
         for it in o.items:
-            cost = costs.get(it.menu_item_id, 0.0) * (it.quantity or 0)
+            # 套餐的配餐不是獨立的明細，只記在主餐的 combo_sides (uuid)：成本要一起算 (與菜單工程、扣庫存相同)
+            cost = (costs.get(it.menu_item_id, 0.0) + _sides_cost(it, by_uuid, costs)) * (it.quantity or 0)
             cogs += cost
             key = it.item_name
             row = items.setdefault(key, {'name': key, 'qty': 0, 'revenue': 0, 'cost': 0.0})

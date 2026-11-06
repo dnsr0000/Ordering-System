@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}客服對話 - 後台{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/support.css') }}">{% endblock %}
+{% block content %}
+<main class="container-fluid py-4" id="supportPage">
+    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+        <h1 class="h4 fw-bold mb-0"><i class="bi bi-headset me-2 text-warning"></i>客服對話
+            <span class="badge bg-danger ms-2 d-none" id="supportWaiting"></span></h1>
+        <div class="d-flex align-items-center gap-3">
+            <div class="form-check form-switch mb-0">
+                <input class="form-check-input" type="checkbox" id="supportShowClosed">
+                <label class="form-check-label small" for="supportShowClosed">顯示已結束</label>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('settings_admin.edit', key='chatbot') }}">客服機器人設定</a>
+        </div>
+    </div>
+    <p class="small text-white-50 mb-3">顧客在點餐頁或出餐進度頁的客服對話窗按「轉接真人客服」後會出現在這裡 (含與 AI 的對話紀錄)；
+        回覆會即時顯示在顧客的對話窗。新的對話會發出提示音，本頁每幾秒自動更新。</p>
+    <div class="row g-3">
+        <aside class="col-lg-4 col-xl-3">
+            <div class="card rounded-4 p-2 support-list" id="supportList" aria-label="客服對話清單">
+                <div class="text-white-50 small p-2">載入中…</div>
+            </div>
+        </aside>
+        <section class="col-lg-8 col-xl-9">
+            <div class="card rounded-4 support-pane" id="supportPane">
+                <div class="support-empty text-white-50" id="supportEmpty"><i class="bi bi-chat-square-text display-5 d-block mb-2"></i>請從左側選一個對話</div>
+                <div class="d-none h-100 d-flex flex-column" id="supportConversation">
+                    <header class="support-head">
+                        <div><strong id="supportCustomer"></strong> <span class="badge ms-1" id="supportStatus"></span>
+                            <div class="small text-white-50" id="supportMeta"></div></div>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-action="support-close" id="supportCloseBtn">
+                            <i class="bi bi-x-circle me-1"></i>結束對話</button>
+                    </header>
+                    <div class="support-messages" id="supportMessages" aria-live="polite"></div>
+                    <form class="support-form" id="supportForm" autocomplete="off">
+                        <textarea class="form-control" id="supportInput" rows="2" maxlength="500" placeholder="輸入回覆，Enter 送出 (Shift+Enter 換行)" aria-label="回覆內容"></textarea>
+                        <button type="submit" class="btn btn-warning fw-bold text-dark" id="supportSend"><i class="bi bi-send-fill me-1"></i>回覆</button>
+                    </form>
+                </div>
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/admin-support.js') }}"></script>{% endblock %}

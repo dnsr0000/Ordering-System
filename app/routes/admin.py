@@ -145,7 +145,9 @@ def _staff_login():
         auth_throttle.record_staff_failure(keys)  # 帳號不存在也同樣計數，無法藉此列舉帳號
         flash('帳號或密碼錯誤！', 'danger')
         return render_template('admin.html', is_admin=False), 401
-    auth_throttle.clear_keys(keys['device'], keys['account'])
+    if not staff.totp_enabled:
+        # 啟用兩步驟驗證的帳號在驗證碼通過後才清除 (security.two_factor)：否則重新輸入一次密碼就能把驗證碼的錯誤次數歸零
+        auth_throttle.clear_keys(keys['device'], keys['account'])
     if staff.totp_enabled:   # 兩步驟驗證：密碼正確後再輸入驗證 App 的 6 位數
         from app.services import security_service
         tenant_id = session.get('tenant_id')

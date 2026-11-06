@@ -232,10 +232,9 @@
     function startLiveSync() {
         if (!data.liveSync || !(grid || $('menuItemTable') || $('stat-top-items'))) return;
         syncLive();
-        // SSE 斷線期間 (或不支援 EventSource 時) 每 3 秒輪詢一次
-        eventSource = Kiosk.onOrdersChanged(syncLive, { fallbackMs: 3000 });
-        // AI 營運建議在背景產生，定期刷新一次避免需要手動重新整理
-        setInterval(syncLive, 10000);
+        // 訂單變動走 SSE (斷線期間自動輪詢)；AI 營運建議在背景產生、不會觸發 SSE，另外定期刷新
+        eventSource = Kiosk.onOrdersChanged(syncLive);
+        Kiosk.poll(syncLive, 10000);
         // 按登出時先停止即時同步 (close 一併停止備援輪詢)：避免登出途中的同步請求拿到 401 而跳出「登入已過期」
         document.querySelectorAll('form[action$="/admin/logout"]').forEach((form) => {
             form.addEventListener('submit', () => {

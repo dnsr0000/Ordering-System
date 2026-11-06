@@ -56,6 +56,7 @@ def _browser_language(allowed):
 STAFF_BLUEPRINTS = frozenset({
     'admin', 'pos', 'kitchen', 'pickup', 'orders', 'sync_admin', 'settings', 'settings_admin', 'invoices', 'refunds', 'shifts',
     'printing', 'menu_pro', 'inventory', 'members_pro', 'promotions', 'reports', 'timeclock', 'system', 'security', 'feedback',
+    'support',
     'gift_cards', 'purchasing', 'live', 'dispatch', 'passes', 'branches', 'marketing', 'integrations', 'devices', 'archive',
     'pnl', 'audit', 'tenants', 'api_v1', 'sync_api', 'delivery', 'health',
 })

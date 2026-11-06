@@ -62,7 +62,7 @@
             currentOrders = (data.orders || []).filter((o) => !processingIds.has(o.id));
             render();
         } catch (err) {
-            console.warn('獲取訂單失敗:', err.message);
+            if (!Kiosk.handleAuthLost(err)) console.warn('獲取訂單失敗:', err.message);
         }
     }
 

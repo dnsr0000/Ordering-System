@@ -257,3 +257,100 @@ def test_wallet_topup_by_card_requires_auth(app, staff_client, store_settings):
     r = staff_client.post('/api/pos/wallet/topup', json={'user_id': uid, 'amount': 500, 'payment_method': 'Credit Card',
                                                          'payment_info': {'auth_code': 'ZX9876'}})
     assert r.status_code == 200 and r.get_json()['member']['wallet_balance'] == 500
+
+
+# ---------------------------------------------------------------------------
+# 全面檢查修正：重試退款不重複、LINE Pay 結果不明 / 付款中被取消、付款完成才給會員回饋
+# ---------------------------------------------------------------------------
+def test_refund_retry_never_refunds_twice(app, admin_client, linepay_api):
+    calls, _ = linepay_api
+    iid = make_item(app, '重試退款餐', price=200, stock=10)
+    oid = checkout(admin_client, [line(iid)], url=POS, payment_method='Line Pay',
+                   payment_info={'one_time_key': OTK}).get_json()['order_id']
+    assert admin_client.post(f'/api/pos/orders/{oid}/refund', json={'amount': 50, 'reason': '少一樣'}).status_code == 200
+    assert _refunds(app, oid) == [('partial', 50, 'Line Pay', 'done')]
+    with app.app_context():
+        rid = Refund.query.filter_by(order_id=oid).first().id
+    refund_calls = sum(1 for c in calls if c[1].endswith('/refund'))
+    # 已完成的退款再按「重試」(連按兩下 / 重新送出表單)：拒絕，不會再退一次
+    r = admin_client.post(f'/admin/refunds/{rid}/action', data={'action': 'retry'})
+    assert r.status_code == 302
+    assert_flash(admin_client, '不需要重試')
+    assert sum(1 for c in calls if c[1].endswith('/refund')) == refund_calls
+    assert _refunds(app, oid) == [('partial', 50, 'Line Pay', 'done')]
+    # 另一個請求正在處理 (processing)：不會再呼叫金流
+    from app.services import payment_service
+    with app.app_context():
+        db.session.get(Refund, rid).status = 'processing'
+        db.session.commit()
+        assert payment_service.process_refund(rid) is None
+    assert sum(1 for c in calls if c[1].endswith('/refund')) == refund_calls
+
+
+def test_linepay_unknown_result_refunds_instead_of_cancelling_silently(app, staff_client, linepay_api):
+    calls, responses = linepay_api
+
+    def timeout(_body):
+        raise TimeoutError('read timeout')
+    responses['/oneTimeKeys/pay'] = timeout
+    responses['/check'] = timeout   # 查詢也失敗：結果不明
+    iid = make_item(app, 'LINE Pay 不明餐', price=120, stock=5)
+    r = checkout(staff_client, [line(iid)], url=POS, payment_method='Line Pay', payment_info={'one_time_key': OTK})
+    assert r.status_code == 402 and '自動退回' in r.get_json()['message']
+    assert calls[-1][1].endswith('/refund'), '可能已扣款：先退回'
+    with app.app_context():
+        order = Order.query.filter(Order.items.any(menu_item_id=iid)).order_by(Order.id.desc()).first()
+        assert order.status == 'Cancelled'
+    # 連退款也失敗：保留「授權中」等店員確認，不取消 (顧客可能已被扣款)
+    responses['/refund'] = timeout
+    r = checkout(staff_client, [line(iid)], url=POS, payment_method='Line Pay', payment_info={'one_time_key': OTK})
+    assert r.status_code == 504 and '商家後台確認' in r.get_json()['message']
+    with app.app_context():
+        order = Order.query.filter(Order.items.any(menu_item_id=iid)).order_by(Order.id.desc()).first()
+        assert order.status == 'Pending' and order.payment_status == 'authorizing'
+
+
+def test_linepay_order_cancelled_during_charge_is_refunded(app, staff_client, linepay_api, monkeypatch):
+    calls, _ = linepay_api
+    iid = make_item(app, 'LINE Pay 同時取消餐', price=80, stock=5)
+    real_pay = linepay.pay
+
+    def pay_then_cancelled(tenant_id, order_uuid, amount, key):
+        tx = real_pay(tenant_id, order_uuid, amount, key)
+        db.session.execute(db.update(Order).where(Order.uuid == order_uuid).values(status='Cancelled'))
+        db.session.commit()   # 另一位店員在扣款期間取消
+        return tx
+    monkeypatch.setattr(linepay, 'pay', pay_then_cancelled)
+    r = checkout(staff_client, [line(iid)], url=POS, payment_method='Line Pay', payment_info={'one_time_key': OTK})
+    assert r.status_code == 409 and '自動退回' in r.get_json()['message']
+    assert calls[-1][1].endswith('/refund') and calls[-1][2] == {'refundAmount': 80}
+    with app.app_context():
+        order = Order.query.filter(Order.items.any(menu_item_id=iid)).order_by(Order.id.desc()).first()
+        assert PaymentRecord.query.filter_by(order_id=order.id).count() == 0, '不留下已取消卻已收款的紀錄'
+
+
+def test_linepay_at_pos_grants_member_rewards_once_paid(app, staff_client, linepay_api, store_settings):
+    from app.models.sync import PointLedger
+    from app.models.user import RewardSetting
+    uid = make_member(app, 'LINE Pay 會員', '0977400001', points=0)
+    iid = make_item(app, 'LINE Pay 會員餐', price=300, stock=5)
+    with app.app_context():   # 其他測試可能改過「每消費多少元得 1 點」：這裡固定為 100 元 1 點，結束後還原
+        rs = RewardSetting.query.filter_by(tenant_id=db.session.get(User, uid).tenant_id).first()
+        saved = (rs.spend_per_point, rs.is_enabled)
+        rs.spend_per_point, rs.is_enabled = 100, True
+        db.session.commit()
+    try:
+        r = checkout(staff_client, [line(iid)], url=POS, payment_method='Line Pay', payment_info={'one_time_key': OTK},
+                     user_id=uid)
+    finally:
+        with app.app_context():
+            rs = RewardSetting.query.filter_by(tenant_id=db.session.get(User, uid).tenant_id).first()
+            rs.spend_per_point, rs.is_enabled = saved
+            db.session.commit()
+    assert r.status_code == 200, r.get_json()
+    oid = r.get_json()['order_id']
+    with app.app_context():
+        user = db.session.get(User, uid)
+        earned = db.session.get(Order, oid).points_earned
+        assert earned > 0 and user.points == earned and user.total_spent == 300
+        assert PointLedger.query.filter_by(order_id=oid, reason='earn').count() == 1

@@ -303,7 +303,7 @@ def run_simulate(args):
         rep.step('5. 逾時未付款')
         stock1, points1 = env.node_stock(), env.member_points()
         order3 = env.checkout()
-        rep.check(env.member_points() > points1, '下單時已贈點', f'{points1} -> {env.member_points()}')
+        rep.check(env.member_points() == points1, '未付款不先贈點 (付款完成才給)', f'{points1} -> {env.member_points()}')
         rep.check(env.expire(lambda ref: {'TradeStatus': '0'}) == 0, '未超過付款期限不會取消')
         env.make_overdue(order3['uuid'])
         rep.check(env.expire(lambda ref: None) == 0 and env.order(order3['uuid'])['payment_status'] == 'pending',
@@ -312,7 +312,7 @@ def run_simulate(args):
         o3 = env.order(order3['uuid'])
         rep.check(o3['status'] == 'Cancelled' and o3['payment_status'] == 'expired', '訂單為「已取消 / 付款逾時」')
         rep.check(env.node_stock() == stock1, '回補分店庫存快照', f'{stock1} vs {env.node_stock()}')
-        rep.check(env.member_points() == points1, '追回贈點', f'{points1} vs {env.member_points()}')
+        rep.check(env.member_points() == points1, '逾時取消不會扣到會員原本的點數', f'{points1} vs {env.member_points()}')
         rep.check(notify(env.signed_notification(order3)) == '1|OK'
                   and env.order(order3['uuid'])['payment_status'] == 'refund_required', '取消後才收到付款 → 標記「需退款」')
 

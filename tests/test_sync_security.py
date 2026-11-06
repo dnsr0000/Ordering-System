@@ -156,3 +156,26 @@ def test_face_withdrawal_removes_photo_at_branch(env):
         db.session.commit()
     env.sync(env.a)
     assert not os.path.exists(path)
+
+
+def _tomb(table_name, row_uuid):
+    return dict(uuid=str(uuidlib.uuid4()), table_name=table_name, row_uuid=row_uuid, deleted_at=datetime.now().isoformat())
+
+
+def test_branch_tombstones_follow_direction_rules(env):
+    """分店上傳的刪除紀錄也要遵守方向規則：不可刪總部設定 (只能線上端改)、不可刪線上端彙整的上傳資料"""
+    from app.extensions import db
+    from app.models.expense import Expense
+    from app.models.settings import HqSetting
+    from tests.test_sync_hub_node import tenant_ctx
+    with tenant_ctx(env.hub):
+        hq = HqSetting(key='pos', value='{"service_charge_percent": 5}')
+        exp = Expense(name='線上端彙整的費用', amount=500, node_uuid=env.b_uuid if hasattr(env, 'b_uuid') else None)
+        db.session.add_all([hq, exp])
+        db.session.commit()
+        hq_uuid, exp_uuid = hq.uuid, exp.uuid
+    reasons = _reasons(_push(env.transports[env.a], {'sync_tombstone': [_tomb('hq_setting', hq_uuid),
+                                                                         _tomb('expense', exp_uuid)]}))
+    assert any('總部設定' in r for r in reasons)
+    assert _q(env.hub, lambda: HqSetting.query.filter_by(uuid=hq_uuid).count()) == 1, '總部設定沒有被分店刪掉'
+    assert _q(env.hub, lambda: Expense.query.filter_by(uuid=exp_uuid).count()) == 1, '上傳資料不因分店刪除而消失'

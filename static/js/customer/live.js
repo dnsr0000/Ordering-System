@@ -79,7 +79,6 @@ export function applyAvailability(payload) {
 }
 
 export async function pollAvailability() {
-    if (document.hidden) return;
     try {
         const payload = await Kiosk.pollJson('/api/menu/availability', pollState);   // 304 (沒變化) 時回傳 null
         if (payload) applyAvailability(payload);
@@ -88,6 +87,5 @@ export async function pollAvailability() {
 
 export function startAvailabilityPolling() {
     if (!pageData.loggedIn || !$('menuList')) return;
-    setInterval(pollAvailability, POLL_MS);
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollAvailability(); });
+    Kiosk.poll(pollAvailability, POLL_MS);   // 背景時暫停、切回來立即更新一次
 }

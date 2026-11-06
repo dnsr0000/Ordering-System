@@ -1,0 +1,34 @@
+/* 後台「客服對話」：左側對話清單 + 右側對話內容與回覆 */
+.support-list { max-height: calc(100vh - 14rem); overflow-y: auto; }
+.support-item {
+    display: block; width: 100%; text-align: left; border: 0; background: transparent; color: #e2e8f0;
+    padding: 0.55rem 0.6rem; border-radius: 0.6rem;
+}
+.support-item:hover { background: rgba(255, 255, 255, 0.06); }
+.support-item.active { background: var(--admin-accent, #f59e0b); color: #111; }
+.support-item.active .text-white-50 { color: rgba(0, 0, 0, 0.6) !important; }
+.support-item-last { font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.support-pane { height: calc(100vh - 14rem); min-height: 22rem; overflow: hidden; }
+.support-empty { margin: auto; text-align: center; padding: 3rem 1rem; }
+.support-head {
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem;
+    padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.support-messages { flex: 1 1 auto; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.support-msg { max-width: 75%; }
+.support-msg .support-text { white-space: pre-wrap; word-break: break-word; padding: 0.5rem 0.75rem; border-radius: 0.9rem; }
+.support-msg .support-meta { font-size: 0.72rem; color: #94a3b8; margin: 0.1rem 0.4rem; }
+.support-customer { align-self: flex-start; }
+.support-customer .support-text { background: #1e293b; color: #f8fafc; }
+.support-bot { align-self: flex-start; opacity: 0.75; }
+.support-bot .support-text { background: transparent; border: 1px dashed #475569; color: #cbd5e1; }
+.support-staff { align-self: flex-end; }
+.support-staff .support-text { background: #f59e0b; color: #111; }
+.support-system { align-self: center; max-width: 90%; font-size: 0.78rem; color: #94a3b8; }
+.support-form { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.support-form textarea { resize: none; }
+.support-form .btn { white-space: nowrap; align-self: stretch; }
+@media (max-width: 991.98px) {
+    .support-list { max-height: 14rem; }
+    .support-pane { height: 70vh; }
+}

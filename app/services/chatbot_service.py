@@ -6,10 +6,13 @@ AI 客服機器人 (顧客端：點餐頁與出餐進度頁的對話窗)。
 2. 訂單狀態 (出餐進度頁帶訂單)：直接讀訂單。
 3. 營業資訊 / 自訂 FAQ：店家在後台填的文字，關鍵字命中就回。
 4. 菜單查詢 (價格 / 分類 / 推薦)：檢索菜單資料。
-5. 其他：LLM (Gemini → 本機 Qwen)，只給菜單摘要 + 店家資訊當上下文，並要求不確定就請顧客洽櫃檯；
-   LLM 不可用時回固定的「請洽櫃檯」。
-每次回答都附來源 (retrieval / faq / llm / fallback)，前端標示 AI 回答需再確認。
+5. 其他：LLM (Gemini → 本機 Qwen；Gemini 503 / 逾時時立刻改用本機模型，顧客感覺不到)，只給菜單摘要 + 店家資訊當上下文；
+   只回答與本店相關的問題 (餐點、點餐、付款、會員點數、營業資訊、訂單)，無關的問題由模型回 OFF_TOPIC 標記，
+   改回固定的婉拒說明。LLM 不可用時回固定的「請洽櫃檯」。
+答不出來 / 無關的問題附「你是否要問」(依問句挑出最接近的可回答問題) 與「轉接真人客服」(support_service)。
+每次回答都附來源 (retrieval / faq / llm / off_topic / fallback)，前端標示 AI 回答需再確認。
 """
+import difflib
 import re
 
 from app.models.enums import OrderStatus
@@ -24,6 +27,13 @@ STATUS_WORDS = ('訂單', '進度', '好了嗎', '做好', '多久', '等多久'
 HOURS_WORDS = ('營業', '幾點', '開到', '開門', '關門', '打烊', '休息', '公休', '時間', '地址', '在哪', '電話', '停車', '位置')
 MENU_WORDS = ('多少錢', '價格', '價錢', '幾元', '有什麼', '有哪些', '推薦', '招牌', '菜單', '人氣', '熱門', '新品', '最便宜', '最貴')
 GREETINGS = ('你好', '哈囉', 'hi', 'hello', '嗨', '您好')
+# 要求真人客服的說法：只用明確的片語 (「找人」「人工」會誤判「幫我找人氣餐點」「有人工色素嗎」)
+HANDOFF_WORDS = ('真人', '客服人員', '轉接客服', '轉人工', '人工客服', '找店員', '找服務人員', '跟店員說')
+OFF_TOPIC_MARK = 'OFF_TOPIC'
+DEFAULT_OFF_TOPIC = '我是本店的點餐小幫手，只能回答餐點、點餐、付款、會員點數、營業資訊與訂單相關的問題喔！'
+# 「你是否要問」的候選問題 (都是上面規則能直接回答的)
+STOCK_QUESTIONS = ('營業時間是幾點？', '有哪些素食餐點？', '人氣推薦有哪些？', '有什麼新品？', '哪些餐點不含花生？',
+                   '有哪些會辣的餐點？', '價格最便宜的餐點有哪些？', '菜單有哪些分類？')
 ALLERGEN_KEYWORDS = {
     'shellfish': ('甲殼', '蝦', '蟹', '海鮮'), 'mango': ('芒果',), 'peanut': ('花生',), 'milk': ('牛奶', '奶製品', '乳製品', '乳糖'),
     'egg': ('蛋',), 'nuts': ('堅果', '核桃', '杏仁', '腰果'), 'sesame': ('芝麻',), 'gluten': ('麩質', '小麥', '麵粉'),
@@ -203,23 +213,68 @@ def _llm_answer(question, history, cfg, items, shop_name):
                       for h in (history or [])[-MAX_HISTORY:] if isinstance(h, dict))
     prompt = (f'你是「{shop_name}」的客服助理「{name}」，用台灣繁體中文、2~3 句內友善回答顧客。'
               '只能依據下面的店家資訊與菜單回答；資料裡沒有的事 (例如食材細節、過敏原) 不要猜，請顧客洽櫃檯或撥打店家電話。'
-              '不要承諾折扣或訂位，不要輸出 Markdown。\n'
+              f'如果問題和本店的餐點、點餐、付款、會員點數、營業資訊或訂單無關 (例如閒聊、天氣、新聞、寫作業、程式)，只輸出 {OFF_TOPIC_MARK}。'
+              '不要承諾折扣或訂位，不要輸出 Markdown、星號、井號或條列符號。\n'
               f'店家資訊：{(cfg.get("store_info") or "").strip() or "未提供"}\n'
               f'常見問答：{" / ".join(f"{q}：{a}" for q, a in _faq_entries(cfg)) or "無"}\n'
               f'菜單 (分類|品名|價格|標示)：\n{_menu_summary(items)}\n'
               + (f'之前的對話：\n{convo}\n' if convo else '') + f'顧客問：{question}\n回答：')
-    text, source = ai_service.generate_text(prompt, max_tokens=300, local_max_tokens=160,
-                                            system=f'你是餐廳「{shop_name}」的客服助理，用繁體中文簡短回答，不確定就請顧客洽櫃檯。')
-    return (text.strip()[:600] if text else None), source
+    text, source = ai_service.generate_text(prompt, max_tokens=300, local_max_tokens=160, interactive=True,
+                                            system=f'你是餐廳「{shop_name}」的客服助理，用繁體中文簡短回答，'
+                                                   f'不確定就請顧客洽櫃檯；與本店無關的問題只輸出 {OFF_TOPIC_MARK}。')
+    return clean_llm_text(text), source
+
+
+def clean_llm_text(text):
+    """模型回應整理成對話窗的純文字：去掉 Markdown (粗體、標題、條列、程式碼)、多餘空白與「回答：」前綴"""
+    if not text:
+        return None
+    text = str(text).strip()
+    if OFF_TOPIC_MARK in text.upper().replace(' ', '_'):
+        return OFF_TOPIC_MARK
+    text = re.sub(r'```.*?```', '', text, flags=re.S)
+    text = re.sub(r'^\s*(?:#+|[-*•]|\d+[.)、])\s+', '', text, flags=re.M)   # 標題 / 條列 / 編號
+    text = re.sub(r'[*_`#]+', '', text)
+    text = re.sub(r'^\s*(?:回答|答)\s*[:：]\s*', '', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{2,}', '\n', text).strip()
+    return text[:600] if len(text) >= 2 else None
+
+
+def did_you_mean(question, items, cfg, order=None, limit=3):
+    """「你是否要問」：從能直接回答的問題裡挑出和問句最接近的幾個 (提到的餐點 / 分類優先)"""
+    picked = []
+    for item in _mentioned_items(question, items)[:2]:
+        picked += [f'{item.name}多少錢？', f'{item.name}有什麼過敏原？']
+    for cat in sorted({(i.category or '').strip() for i in items if i.category}, key=len, reverse=True):
+        if cat in question:
+            picked.append(f'{cat}有哪些？')
+            break
+    pool = list(STOCK_QUESTIONS) + [f'{q.split()[0]}？' for q, _a in _faq_entries(cfg) if q.split()]
+    if order is not None:
+        pool.insert(0, '我的餐點好了嗎？')
+    scored = sorted(pool, key=lambda c: difflib.SequenceMatcher(None, question, c).ratio(), reverse=True)
+    out = []
+    for q in picked + scored:
+        if q not in out:
+            out.append(q)
+    return out[:limit]
 
 
 def answer(question, order=None, history=None, tenant_id=None, shop_name=''):
     """回 {'answer', 'source', 'suggestions'}"""
     cfg = config(tenant_id)
     question = str(question or '').strip()[:MAX_QUESTION]
+    handoff_ok = bool(cfg.get('handoff_enabled', True))
+    extra = {'did_you_mean': [], 'handoff': False}
     if not question:
-        return {'answer': '請輸入您想問的問題。', 'source': 'fallback', 'suggestions': _suggestions(order)}
+        return {'answer': '請輸入您想問的問題。', 'source': 'fallback', 'suggestions': _suggestions(order), **extra}
     q = question.lower()
+    if cfg.get('llm_enabled', True):
+        ai_service.warm_local_llm_async()   # 先在背景載入本機模型：Gemini 503 時可立即接手
+    if handoff_ok and any(w in q for w in HANDOFF_WORDS):
+        return {'answer': '好的，請按下方「轉接真人客服」，店員會直接在這個對話窗回覆您。', 'source': 'faq',
+                'suggestions': _suggestions(order), 'did_you_mean': [], 'handoff': True}
     items = _items()
     text, source = None, 'retrieval'
     if any(w in q for w in ALLERGY_WORDS):
@@ -240,12 +295,16 @@ def answer(question, order=None, history=None, tenant_id=None, shop_name=''):
         text = f'您好！我是{cfg.get("bot_name") or "小幫手"}，可以問我餐點、過敏原、營業時間或訂單進度。'
         source = 'faq'
     if text is None and cfg.get('llm_enabled', True):
-        text, llm_source = _llm_answer(question, history, cfg, items, shop_name)
+        text, _engine = _llm_answer(question, history, cfg, items, shop_name)
         source = 'llm' if text else source
+        if text == OFF_TOPIC_MARK:
+            text, source = (cfg.get('off_topic') or '').strip() or DEFAULT_OFF_TOPIC, 'off_topic'
     if text is None:
         text = (cfg.get('fallback') or '').strip() or '這個問題我不太確定，請直接洽詢櫃檯人員，謝謝！'
         source = 'fallback'
-    return {'answer': text, 'source': source, 'suggestions': _suggestions(order)}
+    if source in ('fallback', 'off_topic'):
+        extra = {'did_you_mean': did_you_mean(question, items, cfg, order), 'handoff': handoff_ok}
+    return {'answer': text, 'source': source, 'suggestions': _suggestions(order), **extra}
 
 
 def _suggestions(order):

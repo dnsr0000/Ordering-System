@@ -24,6 +24,7 @@ from app.models.marketing import CampaignSend, MarketingCampaign
 from app.models.integration import ApiKey, Device, PushSubscription, WebhookDelivery, WebhookEndpoint, WebhookOrderState
 from app.models.expense import CostHistory, Expense
 from app.models.group_order import GroupOrder, GroupOrderEntry
+from app.models.support import SupportChat, SupportMessage
 from app.models.sync import (
     SyncClock, SyncTombstone, PointLedger, SyncNode, NodeStock, SyncAlias, SyncState, SyncConflict,
 )
@@ -37,7 +38,7 @@ __all__ = [
     'KitchenStation', 'Printer', 'PrintJob', 'Ingredient', 'RecipeLine', 'StockMovement', 'MemberTier', 'WalletLedger',
     'OtpCode', 'Promotion', 'Reservation', 'WaitlistEntry', 'TimeClock', 'WorkSchedule', 'OrderFeedback', 'ServiceCall',
     'StampLedger', 'GiftCard', 'GiftCardLedger', 'Supplier', 'PurchaseOrder', 'PurchaseOrderLine', 'IngredientLot',
-    'PassProduct', 'MemberPass', 'PassLedger', 'TablePayment', 'BranchMenuOverride', 'StockTransfer',
+    'PassProduct', 'MemberPass', 'PassLedger', 'TablePayment', 'BranchMenuOverride', 'StockTransfer', 'SupportChat', 'SupportMessage',
     'MarketingCampaign', 'CampaignSend', 'ApiKey', 'WebhookEndpoint', 'WebhookDelivery', 'WebhookOrderState', 'Device', 'PushSubscription',
     'Expense', 'CostHistory', 'GroupOrder', 'GroupOrderEntry', 'DeliveryPosition', 'StaffAvailability',
 ]

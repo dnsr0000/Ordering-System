@@ -32,6 +32,7 @@ from app.services.order_pricing import (
 from app.services.order_stock import _deduct_stock, next_pickup_number, online_pickup_node
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
+from app.services.member_rewards import PAID_STATUSES, grant_paid_rewards
 from app.services.voucher_service import claim_vouchers_for_item
 from app.sync import runtime as sync_runtime
 from app.utils import safe_int
@@ -405,10 +406,9 @@ def _price(c):
                        line_prices=[ln.unit_price for ln in c.lines if not ln.is_gift])
     c.total_discount = max(0, c.subtotal + c.service_charge + c.delivery_fee - c.final_price)
     multiplier = c.tier.points_multiplier if c.tier is not None and (c.tier.points_multiplier or 0) > 0 else 1
+    # 本單可得的贈點先記在訂單上；實際入帳在付款完成時 (grant_paid_rewards)
     c.points_earned = int((c.final_price - c.delivery_fee) // max(1, c.setting.spend_per_point or 100) * multiplier) \
         if c.user and not c.is_delivery else 0
-    if c.points_earned:
-        change_points(c.tenant_id, c.user.id, c.points_earned, 'earn')
 
     c.cash_in = max(0, safe_int(c.cash_received, 0))
     c.pays_cash_at_pos = c.is_pos and c.payment == PaymentMethod.CASH
@@ -563,18 +563,10 @@ def _persist(c):
         from app.services import deferred, print_service
         deferred.defer(print_service.print_order, c.order.id, c.tenant_id, False)   # 桌邊點餐：只印廚房單
 
-    if c.user is not None and c.payment_status in ('', 'paid', 'settled'):
-        c.user.total_spent = (c.user.total_spent or 0) + c.final_price
-        wallet_service.refresh_tier(c.user)
-
-    # 集點卡、推薦好友 (會員訂單)
-    if c.user is not None and c.payment_status != 'authorizing':
-        from app.services import loyalty_service
-        loyalty_service.on_checkout(c.tenant_id, c.user, c.order, c.lines, c.final_price)
-    # 電子收據：結帳時自動傳給 LINE 綁定會員 (系統設定 → 電子收據寄送)
-    if c.user is not None and c.payment_status in ('', 'paid', 'settled'):
-        from app.services import receipt_service
-        receipt_service.auto_on_checkout(c.order)
+    # 會員回饋 (贈點、累積消費 / 等級、集點卡與推薦、電子收據)：結帳當下已付款才給；
+    # 線上待付款 / 桌邊未結帳 / LINE Pay 授權中的訂單在付款完成時才給 (grant_paid_rewards)
+    if c.user is not None and c.payment_status in PAID_STATUSES:
+        grant_paid_rewards(c.order, c.lines)
 
     if c.is_pos:
         record_staff_audit(

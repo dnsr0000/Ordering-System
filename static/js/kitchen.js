@@ -129,7 +129,7 @@
 
     function render() {
         countBadge.textContent = currentOrders.length;
-        completeAllBtn.disabled = currentOrders.length === 0;
+        if (completeAllBtn) completeAllBtn.disabled = currentOrders.length === 0;
         noOrdersMessage.classList.toggle('d-none', currentOrders.length > 0);
         const nowSeconds = Date.now() / 1000;
         Kiosk.setHtml(grid, currentOrders.map((o) => orderCard(o, nowSeconds)));
@@ -157,7 +157,7 @@
             const data = await Kiosk.api(stationId ? `/api/kitchen_orders?station=${stationId}` : '/api/kitchen_orders');
             applyOrders(data.orders || []);
         } catch (err) {
-            console.warn('KDS 載入失敗:', err.message);
+            if (!Kiosk.handleAuthLost(err)) console.warn('KDS 載入失敗:', err.message);
         }
     }
 
@@ -192,7 +192,8 @@
         completeAllBtn.disabled = true;
         Kiosk.setHtml(completeAllBtn, html`<span class="spinner-border spinner-border-sm me-1"></span> 處理中...`);
         try {
-            await Kiosk.api('/api/kitchen_complete_all', { method: 'POST' });
+            // 只完成畫面上這幾張 (工作站分頁沒有這個按鈕；未付款的線上單、晚一點的預約單不在畫面上)
+            await Kiosk.api('/api/kitchen_complete_all', { json: { order_ids: currentOrders.map((o) => o.id) } });
             knownOrderIds.clear();
         } catch (err) {
             alert(`❌ ${err.message}`);

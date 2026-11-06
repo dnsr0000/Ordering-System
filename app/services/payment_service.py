@@ -160,16 +160,44 @@ def charge_linepay(order_id, one_time_key):
     """
     from app.services import linepay
     from app.services.order_service import system_cancel
+    from app.services import monitor_service
+    from app.services.member_rewards import grant_paid_rewards
     order = db.session.get(Order, order_id)
     try:
         tx = linepay.pay(order.tenant_id, order.uuid, order.total_price, one_time_key)
     except linepay.LinePayError as exc:
+        if exc.code == linepay.UNKNOWN:
+            # 結果不明 (可能已扣款)：先試著退回；退回成功才取消訂單，否則保留「授權中」請店員確認
+            try:
+                linepay.refund(order.tenant_id, order.uuid, order.total_price)
+            except linepay.LinePayError:
+                monitor_service.alert(f'POS 訂單 #{order.id} LINE Pay 付款結果不明 (${order.total_price})，'
+                                      '請到 LINE Pay 商家後台確認是否已扣款', key=f'linepay-unknown-{order.id}',
+                                      tenant_id=order.tenant_id, level='warning', source='payment')
+                raise AppError('LINE Pay 回應逾時且無法確認付款結果：訂單保留為「授權中」，'
+                               '請到 LINE Pay 商家後台確認是否已扣款後再處理', 504, payment_failed=True)
+            system_cancel(order.id, order.tenant_id, 'LINE Pay 回應逾時，已自動退回款項')
+            raise AppError('LINE Pay 回應逾時，已自動退回款項並取消訂單，請重新結帳', 402, payment_failed=True)
         system_cancel(order.id, order.tenant_id, f'LINE Pay 付款失敗：{exc.message}')
         raise AppError(exc.message, 402, payment_failed=True)
-    db.session.execute(update(Order).where(Order.id == order.id, Order.payment_status == 'authorizing')
-                       .values(payment_status='', payment_reference=tx).execution_options(synchronize_session=False))
+    claimed = db.session.execute(update(Order).where(Order.id == order.id, Order.payment_status == 'authorizing',
+                                                     Order.status != OrderStatus.CANCELLED)
+                                 .values(payment_status='', payment_reference=tx)
+                                 .execution_options(synchronize_session=False)).rowcount
+    if not claimed:
+        # 扣款期間訂單被其他人取消：退回剛扣的款，不留下「已取消卻已收款」的訂單
+        db.session.rollback()
+        try:
+            linepay.refund(order.tenant_id, order.uuid, order.total_price)
+        except linepay.LinePayError as exc:
+            monitor_service.alert(f'POS 訂單 #{order.id} 已取消但 LINE Pay 已扣款 ${order.total_price}，自動退款失敗：{exc.message}',
+                                  key=f'linepay-cancelled-{order.id}', tenant_id=order.tenant_id, level='warning',
+                                  source='payment')
+            raise AppError('訂單已被取消，但 LINE Pay 已扣款且自動退款失敗，請到 LINE Pay 商家後台退款', 409)
+        raise AppError('訂單在付款期間已被取消，剛扣的款項已自動退回', 409)
     db.session.refresh(order)
     record_payment(order, PaymentKind.SALE, PaymentMethod.LINE_PAY, order.total_price, reference=tx)
+    grant_paid_rewards(order)   # 授權中時沒給的會員回饋 (贈點、累積消費、集點、電子收據)
     after_paid(order)
     db.session.commit()
     return order
@@ -240,7 +268,7 @@ def on_order_cancelled(order, reason='', approved_by=''):
     refund = None
     if amount > 0 and order.payment_method == PaymentMethod.SPLIT:
         refund = _refund_split(order, amount, 'cancel', reason or '訂單取消', approved_by)
-        _void_invoices(order)
+        _void_invoices(order, amount)
         return refund
     if amount > 0 and (order.payment_status or '') != 'authorizing':
         integrated = order.payment_method == PaymentMethod.LINE_PAY and bool(order.payment_reference) \
@@ -267,7 +295,7 @@ def on_order_cancelled(order, reason='', approved_by=''):
             giftcard_service.refund(order, amount, _staff_name())
         if status == 'pending':
             deferred.defer(process_refund, refund.id)
-    _void_invoices(order)
+    _void_invoices(order, amount)
     if order.payment_status == 'refund_required' and ecpay_integrated(order) \
             and settings_service.get('payments', order.tenant_id).get('ecpay_auto_refund'):
         deferred.defer(auto_refund_online_order, order.id)
@@ -310,10 +338,29 @@ def _refund_split(order, amount, kind, reason, approved_by):
     return first
 
 
-def _void_invoices(order):
+def _settlement_invoice_refund(order, amount, reason):
+    """
+    桌位合併結帳的發票 (一張發票含整桌多張訂單，order_id 為空、以 settlement_id 對應)：其中一張訂單取消或部分退款時，
+    就退的金額調整 — 尚未開立時直接減少發票金額 (減到 0 作廢)，已開立時開折讓。
+    """
+    from app.services import einvoice_ecpay
+    amount = int(amount or 0)
+    if not order.settlement_id or amount <= 0:
+        return
+    for inv in Invoice.query.filter(Invoice.settlement_id == order.settlement_id, Invoice.order_id.is_(None)).all():
+        if inv.status in (InvoiceStatus.PENDING, InvoiceStatus.WAITING, InvoiceStatus.FAILED):
+            inv.amount = max(0, (inv.amount or 0) - amount)
+            if inv.amount == 0:
+                inv.status, inv.last_error = InvoiceStatus.VOID, '開立前整桌訂單已取消'
+        elif inv.status in (InvoiceStatus.ISSUED, InvoiceStatus.ALLOWANCE):
+            deferred.defer(einvoice_ecpay.allowance, inv.id, amount, (reason or '退款')[:30])
+
+
+def _void_invoices(order, amount=0):
     from app.services import einvoice_ecpay
     if not settings_service.get('einvoice', order.tenant_id).get('void_on_cancel', True):
         return
+    _settlement_invoice_refund(order, amount, '訂單取消')
     for inv in Invoice.query.filter_by(order_id=order.id).all():
         if inv.status in (InvoiceStatus.PENDING, InvoiceStatus.WAITING):
             inv.status, inv.last_error = InvoiceStatus.VOID, '開立前訂單已取消'
@@ -365,6 +412,7 @@ def partial_refund(order_id, amount, reason, method=None, approved_by='', tenant
         for inv in Invoice.query.filter(Invoice.order_id == order.id,
                                         Invoice.status.in_((InvoiceStatus.ISSUED, InvoiceStatus.ALLOWANCE))).all():
             deferred.defer(einvoice_ecpay.allowance, inv.id, amount, reason or '部分退款')
+        _settlement_invoice_refund(order, amount, reason or '部分退款')
         return refund
     method = method or order.payment_method
     integrated = method == PaymentMethod.LINE_PAY and bool(order.payment_reference) and linepay.is_enabled(order.tenant_id)
@@ -389,6 +437,7 @@ def partial_refund(order_id, amount, reason, method=None, approved_by='', tenant
     for inv in Invoice.query.filter(Invoice.order_id == order.id,
                                     Invoice.status.in_((InvoiceStatus.ISSUED, InvoiceStatus.ALLOWANCE))).all():
         deferred.defer(einvoice_ecpay.allowance, inv.id, amount, reason or '部分退款')
+    _settlement_invoice_refund(order, amount, reason or '部分退款')   # 桌位合併結帳的發票
     return refund
 
 
@@ -401,6 +450,14 @@ def process_refund(refund_id, ecpay_post=None):
     refund = db.session.get(Refund, refund_id)
     if refund is None or refund.status not in ('pending', 'failed'):
         return None
+    # 先搶到這筆退款 (pending / failed → processing) 才呼叫金流：同時兩個請求只有一個會真的退款
+    claimed = db.session.execute(update(Refund).where(Refund.id == refund.id, Refund.status.in_(('pending', 'failed')))
+                                 .values(status='processing')
+                                 .execution_options(synchronize_session=False, skip_tenant_filter=True)).rowcount
+    db.session.commit()
+    if not claimed:
+        return None
+    db.session.refresh(refund)
     order = refund.order
     provider = 'LINE Pay' if refund.method == PaymentMethod.LINE_PAY else '綠界'
     try:

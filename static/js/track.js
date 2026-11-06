@@ -207,5 +207,5 @@
         },
     });
     apply(data);
-    setInterval(refresh, 10000);
+    Kiosk.poll(refresh, 10000, { keepInBackground: true });   // 背景照常：顧客開著頁面等出餐通知
 })();

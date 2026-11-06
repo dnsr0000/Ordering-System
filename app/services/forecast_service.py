@@ -17,6 +17,19 @@ from app.services.staffing_service import history_days, orders_by_hour
 from app.utils import day_bounds
 
 
+def _side_ids(sides_json):
+    """combo_sides (配餐 uuid 的 JSON 清單) → 本店菜單 id"""
+    import json
+    try:
+        uuids = [u for u in json.loads(sides_json or '[]') if isinstance(u, str)]
+    except ValueError:
+        return []
+    if not uuids:
+        return []
+    found = dict(db.session.query(MenuItem.uuid, MenuItem.id).filter(MenuItem.uuid.in_(uuids)).all())
+    return [found[u] for u in uuids if u in found]
+
+
 def forecast(target=None, weeks=4, today=None):
     today = today or date.today()
     target = target or today + timedelta(days=1)
@@ -33,6 +46,14 @@ def forecast(target=None, weeks=4, today=None):
         for item_id, qty in rows:
             per_day[item_id][d] += int(qty or 0)
             active_days.add(d)
+        # 套餐裡的配餐 (只記在主餐的 combo_sides) 也要算進該配餐的需求份數
+        for sides_json, qty in db.session.query(OrderItem.combo_sides, OrderItem.quantity) \
+                .join(Order, Order.id == OrderItem.order_id) \
+                .filter(Order.created_at >= t0, Order.created_at < t1, Order.status != OrderStatus.CANCELLED,
+                        OrderItem.combo_sides != '').all():
+            for side_id in _side_ids(sides_json):
+                per_day[side_id][d] += int(qty or 0)
+                active_days.add(d)
         for h, c in orders_by_hour(d)[0].items():
             hours[h] += c
     used = sorted(active_days)

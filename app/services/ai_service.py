@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_TIMEOUT = (5, 30)        # (連線, 讀取) 秒
+# 即時對話 (客服機器人、語音點餐)：顧客在等，不重試也不換模型；503 / 5xx / 限流 / 逾時直接改用本機模型，
+# 並進入冷卻，接下來的問題在冷卻期間直接由本機模型回答 (顧客看不到中斷)
+INTERACTIVE_TIMEOUT = (3, 12)
 RETRY_DELAY = 1.0               # 503 / 5xx / 逾時後重試前等待 (測試可改為 0)
 COOLDOWN = {'auth': 60, 'rate': 30, 'overload': 20}
 LLAMA_INSTALL_HINT = ('pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu '
@@ -62,11 +65,12 @@ def _extract_text(payload):
     return (parts[0].get('text') or '').strip() if parts else ''
 
 
-def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_mode=False):
+def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_mode=False, interactive=False):
     """
     呼叫 Gemini；失敗回傳 None。
     每個模型最多試 2 次 (503 / 5xx / 逾時後等 RETRY_DELAY 秒重試)，主要模型失敗改用備援模型；
     金鑰錯誤 (401/403) 立刻冷卻 60 秒，限流 (429) 換模型再試、都不行冷卻 30 秒，過載 / 連線問題冷卻 20 秒。
+    interactive=True (即時對話)：只試主要模型一次、讀取逾時較短，失敗立刻回 None 並冷卻，呼叫端馬上改用本機模型。
     """
     global _gemini_cooldown_until
     api_key = api_key or _api_key()
@@ -77,15 +81,17 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
     reason = 'overload'
-    for model in gemini_models():
-        for attempt in (1, 2):
+    models = gemini_models()[:1] if interactive else gemini_models()
+    attempts = (1,) if interactive else (1, 2)
+    for model in models:
+        for attempt in attempts:
             try:
-                resp = requests.post(GEMINI_URL.format(model=model), timeout=GEMINI_TIMEOUT,
+                resp = requests.post(GEMINI_URL.format(model=model), timeout=INTERACTIVE_TIMEOUT if interactive else GEMINI_TIMEOUT,
                                      headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=body)
             except requests.RequestException as e:
                 _note_error('', f'連線異常 {e.__class__.__name__}', model)
                 logger.warning('Gemini (%s) 連線異常 (%s)，第 %d 次', model, e, attempt)
-                if attempt == 1:
+                if attempt == 1 and len(attempts) > 1:
                     time.sleep(RETRY_DELAY)
                 continue
             status = resp.status_code
@@ -114,8 +120,9 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
                 logger.warning('Gemini (%s) 被限流 (429)，改用下一個模型', model)
                 break
             if status in (500, 502, 503, 504):
-                logger.warning('Gemini (%s) 回應 %s (過載)，第 %d 次', model, status, attempt)
-                if attempt == 1:
+                logger.warning('Gemini (%s) 回應 %s (過載)，第 %d 次%s', model, status, attempt,
+                               '，即時對話直接改用本機模型' if interactive else '')
+                if attempt == 1 and len(attempts) > 1:
                     time.sleep(RETRY_DELAY)
                 continue
             logger.warning('Gemini (%s) 回應 %s %s，改用下一個模型', model, status, detail)
@@ -125,11 +132,21 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
     return None
 
 
+_load_lock = threading.Lock()
+
+
 def _get_local_llm():
-    """第一次需要時才載入本機模型 (llama-cpp-python 為選用套件)；失敗原因記在 _local_llm_error，不重複嘗試"""
+    """第一次需要時才載入本機模型 (llama-cpp-python 為選用套件)；失敗原因記在 _local_llm_error，不重複嘗試。
+    多個執行緒同時要求時只載入一次 (其他人等它載完)。"""
+    if _local_llm_loaded:
+        return _local_llm
+    with _load_lock:
+        return _load_local_llm()
+
+
+def _load_local_llm():
     global _local_llm, _local_llm_loaded, _local_llm_error
     if not _local_llm_loaded:
-        _local_llm_loaded = True
         path = current_app.config.get('LOCAL_MODEL_PATH')
         if not path:
             _local_llm_error = '未設定本機模型路徑 (LOCAL_MODEL_PATH)'
@@ -149,7 +166,23 @@ def _get_local_llm():
                     _local_llm_error = f'模型載入失敗：{e}'
         if _local_llm_error:
             logger.warning('本機 SLM 無法使用：%s (改用規則引擎)', _local_llm_error)
+        _local_llm_loaded = True   # 載入完成 (或確定無法載入) 後才標記，其他執行緒不會拿到載入到一半的狀態
     return _local_llm
+
+
+def warm_local_llm_async():
+    """在背景先載入本機模型 (客服對話開始時呼叫)：Gemini 503 時改用本機模型不必等載入，顧客感覺不到切換。
+    沒設定模型路徑或已經載入 / 試過時不做事。"""
+    if _local_llm_loaded or not current_app.config.get('LOCAL_MODEL_PATH'):
+        return None
+    app = current_app._get_current_object()
+
+    def run():
+        with app.app_context():
+            _get_local_llm()
+    t = threading.Thread(target=run, name='local-llm-warmup', daemon=True)
+    t.start()
+    return t
 
 
 def _close_local_llm():
@@ -240,9 +273,9 @@ def extract_json(text):
     return None
 
 
-def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None):
-    """結構化輸出：Gemini (JSON 模式) → 本機 SLM；回 (解析後的物件, 來源) 或 (None, '')"""
-    data = extract_json(gemini_generate(prompt, max_tokens=max_tokens, temperature=0.1, json_mode=True))
+def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None, interactive=False):
+    """結構化輸出：Gemini (JSON 模式) → 本機 SLM；回 (解析後的物件, 來源) 或 (None, '')。interactive 見 gemini_generate"""
+    data = extract_json(gemini_generate(prompt, max_tokens=max_tokens, temperature=0.1, json_mode=True, interactive=interactive))
     if data is not None:
         return data, 'gemini'
     data = extract_json(run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system,
@@ -252,12 +285,13 @@ def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None):
     return None, ''
 
 
-def generate_text(prompt, max_tokens=400, system=None, local_max_tokens=None, temperature=0.3):
-    """自由文字：Gemini → 本機 SLM；回 (文字, 來源) 或 (None, '')"""
-    text = gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature)
+def generate_text(prompt, max_tokens=400, system=None, local_max_tokens=None, temperature=0.3, interactive=False):
+    """自由文字：Gemini → 本機 SLM；回 (文字, 來源) 或 (None, '')。interactive 見 gemini_generate"""
+    text = gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature, interactive=interactive)
     if text:
         return text, 'gemini'
-    text = run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system, temperature=temperature)
+    text = run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system, temperature=temperature,
+                         lock_timeout=10.0 if interactive else 3.0)
     if text:
         return text, 'local'
     return None, ''

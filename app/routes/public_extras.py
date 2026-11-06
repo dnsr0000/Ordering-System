@@ -136,6 +136,84 @@ def chat():
     return jsonify(dict(result, success=True))
 
 
+# ---------------------------------------------------------------- 轉接真人客服 (顧客端；以對話憑證存取，店員在後台「客服對話」回覆)
+def _handoff_allowed(tenant_id):
+    from app.services import chatbot_service
+    return chatbot_service.enabled(tenant_id) and bool(chatbot_service.config(tenant_id).get('handoff_enabled', True))
+
+
+@public_bp.route('/api/chat/handoff', methods=['POST'], endpoint='chat_handoff')
+@limiter.limit('5/minute')
+def chat_handoff():
+    """{history: [{role, text}], order_uuid?, message?} → 建立對話，回 {token, status, messages}"""
+    from app.services import customer_session, support_service
+    data = get_json_dict()
+    order = None
+    order_uuid = str(data.get('order_uuid') or '')[:36]
+    with tenant_bypass():
+        if len(order_uuid) >= 30:
+            order = Order.query.filter_by(uuid=order_uuid).first()
+        tenant_id = order.tenant_id if order is not None else g.tenant_id
+        if not _handoff_allowed(tenant_id):
+            raise AppError('本店未開放真人客服', 404)
+        member = customer_session.current_member() if tenant_id == g.tenant_id else None
+        chat = support_service.start(tenant_id, data.get('history'), user=member, order=order,
+                                     page='track' if order is not None else 'menu', first_message=data.get('message'))
+        db.session.commit()
+        from flask import session
+        session['support_chats'] = (session.get('support_chats') or [])[-4:] + [chat.token]
+        return jsonify({'success': True, 'token': chat.token, 'status': chat.status,
+                        'messages': support_service.messages_after(chat, 0, for_customer=True)})
+
+
+def _customer_chat(token):
+    """只有建立這個對話的瀏覽器 (同一個顧客工作階段) 能存取；登出後失效"""
+    from flask import session
+
+    from app.services import support_service
+    if str(token or '') not in (session.get('support_chats') or []):
+        raise AppError('找不到這個客服對話', 404)
+    chat = support_service.by_token(token)
+    if not _handoff_allowed(chat.tenant_id):
+        raise AppError('本店未開放真人客服', 404)
+    return chat
+
+
+@public_bp.route('/api/chat/handoff/<token>', endpoint='chat_handoff_poll')
+@limiter.limit('60/minute')
+def chat_handoff_poll(token):
+    """?after=<最後一則訊息 id> → {status, messages} (只回較新的訊息)"""
+    from flask import request
+
+    from app.services import support_service
+    with tenant_bypass():
+        chat = _customer_chat(token)
+        return jsonify({'success': True, 'status': chat.status,
+                        'messages': support_service.messages_after(chat, request.args.get('after'), for_customer=True)})
+
+
+@public_bp.route('/api/chat/handoff/<token>/message', methods=['POST'], endpoint='chat_handoff_message')
+@limiter.limit('20/minute')
+def chat_handoff_message(token):
+    from app.services import support_service
+    with tenant_bypass():
+        chat = _customer_chat(token)
+        msg = support_service.customer_message(chat, get_json_dict().get('text'))
+        db.session.commit()
+        return jsonify({'success': True, 'status': chat.status, 'message': support_service.message_dict(msg, for_customer=True)})
+
+
+@public_bp.route('/api/chat/handoff/<token>/close', methods=['POST'], endpoint='chat_handoff_close')
+@limiter.limit('20/minute')
+def chat_handoff_close(token):
+    from app.services import support_service
+    with tenant_bypass():
+        chat = _customer_chat(token)
+        support_service.close(chat, support_service.CLOSED_BY_CUSTOMER)
+        db.session.commit()
+        return jsonify({'success': True, 'status': chat.status})
+
+
 def chat_widget_config(order=None):
     """樣板用：對話窗的設定 (未啟用時回 None)"""
     from app.services import chatbot_service, i18n_service
@@ -151,6 +229,7 @@ def chat_widget_config(order=None):
         'placeholder': ui.get('chat_placeholder', ''), 'send': ui.get('chat_send', ''), 'aiNote': ui.get('chat_ai_note', ''),
         'failed': ui.get('chat_failed', ''), 'orderUuid': order.uuid if order is not None else '',
         'suggestions': '|'.join(chatbot_service._suggestions(order)),
+        'handoff': '1' if cfg.get('handoff_enabled', True) else '',
     }
 
 

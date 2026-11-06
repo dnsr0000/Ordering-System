@@ -12,6 +12,7 @@
     }
 
     Kiosk.on(document, 'click', { 'select-all': (el) => { el.select(); } });
-    try { Kiosk.onOrdersChanged(reloadIfIdle); } catch (err) { /* 不支援 SSE */ }
-    setInterval(reloadIfIdle, 60000);
+    // 整頁重新載入的代價高：斷線期間改為每分鐘一次；外送員回報位置不會觸發 SSE，另外每分鐘刷新
+    Kiosk.onOrdersChanged(reloadIfIdle, { fallbackMs: 60000 });
+    Kiosk.poll(reloadIfIdle, 60000);
 })();

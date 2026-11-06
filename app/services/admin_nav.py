@@ -44,6 +44,7 @@ NAV_GROUPS: tuple = (
         ('禮物卡', 'gift_cards.index', 'bi-gift', 'role:manager', {}),
         ('分群與自動行銷', 'marketing.index', 'bi-send', 'role:manager', {}),
         ('顧客評價', 'feedback.index', 'bi-star-half', 'perm:feedback', {}),
+        ('客服對話', 'support.index', 'bi-headset', 'perm:feedback', {}),
     )),
     ('channels', '通路', 'bi-signpost-split', (
         ('桌位管理', 'tables.manage', 'bi-qr-code', 'role:manager', {'sync': 'store'}),

@@ -138,8 +138,20 @@ def test_malicious_backups_rejected(app, admin_client):
     assert {f for f in os.listdir(db_dir) if '.bak-' in f} == before
 
 
+def _schema(conn):
+    """資料表與欄位清單 (比對還原升級後的結構是否與目前一致)"""
+    tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+    return {t: sorted(r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')) for t in tables}
+
+
 def older_revision_backup_zip(folder):
-    """把目前的資料庫複製一份並退回上一版結構 (移除最新遷移加的資料表與欄位)，當作「舊版本的備份」"""
+    """把目前的資料庫複製一份，執行最新遷移的 downgrade() 退回上一版結構，當作「舊版本的備份」(新增遷移後不必改這裡)"""
+    import sqlalchemy as sa
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.config import Config as AlembicConfig
+    from alembic.script import ScriptDirectory
+
     src = sqlite3.connect(os.path.join(folder, 'menu.db'))
     path = os.path.join(folder, 'older_make.db')
     if os.path.exists(path):
@@ -147,11 +159,16 @@ def older_revision_backup_zip(folder):
     dst = sqlite3.connect(path)
     src.backup(dst)
     src.close()
-    dst.execute('DROP TABLE staff_availability')
-    dst.execute('ALTER TABLE staff_account DROP COLUMN max_hours_week')
-    dst.execute("UPDATE alembic_version SET version_num = '0027_gps_carbon'")
-    dst.commit()
     dst.close()
+    cfg = AlembicConfig()
+    cfg.set_main_option('script_location', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations'))
+    head = ScriptDirectory.from_config(cfg).get_revision(head_revision())
+    engine = sa.create_engine(f'sqlite:///{path}')
+    with engine.begin() as conn:
+        with Operations.context(MigrationContext.configure(conn)):
+            head.module.downgrade()
+        conn.execute(sa.text('UPDATE alembic_version SET version_num = :v'), {'v': head.down_revision})
+    engine.dispose()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as zf:
         zf.write(path, 'menu.db')
@@ -163,7 +180,18 @@ def older_revision_backup_zip(folder):
 @pytest.mark.skipif(not IS_SQLITE, reason='整庫還原只支援本機 SQLite')
 def test_restore_older_backup_upgrades_immediately(app, monkeypatch, file_locked):
     db_dir = app.config['DATABASE_DIR']
+    with sqlite3.connect(os.path.join(db_dir, 'menu.db')) as live:
+        expected_schema = _schema(live)
     backup = older_revision_backup_zip(db_dir)
+    probe_path = os.path.join(db_dir, 'older_probe.db')
+    with zipfile.ZipFile(io.BytesIO(backup)) as zf, open(probe_path, 'wb') as fh:
+        fh.write(zf.read('menu.db'))
+    probe = sqlite3.connect(probe_path)
+    try:
+        assert _schema(probe) != expected_schema, '備份確實是較舊的結構'
+    finally:
+        probe.close()
+        os.remove(probe_path)
     if file_locked:  # 模擬 Windows：資料庫仍被其他連線開啟，無法以換檔方式替換
         real_replace = os.replace
 
@@ -181,9 +209,7 @@ def test_restore_older_backup_upgrades_immediately(app, monkeypatch, file_locked
 
     conn = sqlite3.connect(os.path.join(db_dir, 'menu.db'))
     try:
-        cols = {row[1] for row in conn.execute('PRAGMA table_info(staff_account)')}
-        assert 'max_hours_week' in cols
-        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'staff_availability'").fetchone()[0] == 1
+        assert _schema(conn) == expected_schema, '還原後已升級成與目前相同的結構'
         assert conn.execute('SELECT version_num FROM alembic_version').fetchone()[0] == head_revision()
     finally:
         conn.close()

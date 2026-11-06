@@ -42,10 +42,10 @@
     async function refresh() {
         try {
             render(await api('/api/admin/live'));
-        } catch (err) { /* 暫時斷線：下一次再試 */ }
+        } catch (err) { Kiosk.handleAuthLost(err); /* 其他暫時性錯誤：下一次再試 */ }
     }
 
     render(Kiosk.pageData());
-    setInterval(refresh, 30000);
-    try { Kiosk.onOrdersChanged(refresh); } catch (err) { /* 不支援 SSE 時只用定時更新 */ }
+    Kiosk.onOrdersChanged(refresh);
+    Kiosk.poll(refresh, 30000);   // 與昨日同時段比較、每小時營業額會隨時間變化 (不會觸發 SSE)
 })();

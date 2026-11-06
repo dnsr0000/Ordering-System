@@ -321,3 +321,33 @@ def test_pos_points_require_member_pin_modal(app, page, store_settings):
     assert order['user_id'] == member_id and order['points_used'] == 10
     close_receipt(page)
     page.problems[:] = [p for p in page.problems if 'status of 403' not in p]   # need_member_pin 的 403 是預期的
+
+
+def test_pos_order_discount_does_not_leak_to_next_order(app, page, demo_data):
+    """整單折扣：清空或掛單後不帶到下一位顧客；掛單取回時還原"""
+    browser_staff_login(page, 'e2e_pos')
+    assert page.goto('/pos').ok
+    page.wait_for_load_state('networkidle')
+    nugget = page.locator('#posMenuGrid').get_by_text('示範雞塊', exact=True)
+
+    def set_discount():
+        page.locator('[data-action="openOrderDiscount"]').click()
+        expect(page.locator('#posDiscountModal')).to_be_visible()
+        page.locator('[data-action="discountPreset"][data-type="percent"][data-value="10"]').click()
+        page.locator('#posDiscountForm button[type="submit"]').click()
+        expect(page.locator('#posManualRow')).to_be_visible()
+
+    nugget.click()
+    set_discount()
+    page.locator('[data-action="clearCart"]').click()
+    nugget.click()
+    expect(page.locator('#posManualRow')).to_be_hidden()   # 清空後的下一位：沒有整單折扣
+
+    set_discount()
+    page.locator('[data-action="holdOrder"]').click()
+    nugget.click()
+    expect(page.locator('#posManualRow')).to_be_hidden()   # 掛單後的下一位：沒有整單折扣
+    page.locator('[data-action="clearCart"]').click()
+    page.locator('[data-action="openHold"]').click()
+    page.locator('[data-action="recallHold"]').first.click()
+    expect(page.locator('#posManualRow')).to_be_visible()   # 取回掛單：折扣還原

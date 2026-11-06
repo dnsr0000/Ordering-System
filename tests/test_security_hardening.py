@@ -511,3 +511,36 @@ def test_face_login_session_requires_pin_for_sensitive_actions(app):
     # 以 PIN 登入的工作階段不受影響
     m = member_client(app, phone, '6471', ip='10.77.1.1')
     assert m.get('/privacy/my_data').status_code == 200 and m.get('/api/member_qr').status_code == 200
+
+
+def test_device_from_another_store_gives_no_exemption(app):
+    """別家店註冊的裝置：在本店不算已註冊裝置 (不可躲過帳號鎖定、打卡頁仍遮罩帳號)"""
+    from app.extensions import db
+    from app.models.tenant import StaffAccount
+    from tests.support import get_or_create_tenant
+    with app.app_context():
+        s = StaffAccount(tenant_id=default_tenant_id(app), username='cross_device_staff', role='staff', is_active=True)
+        s.set_password('CrossPass!2026')
+        db.session.add(s)
+        db.session.commit()
+    other_raw = _register_device(app, get_or_create_tenant(app, 'device-other-shop'))
+    outsider = app.test_client()
+    outsider.set_cookie('kiosk_device', other_raw)
+    outsider.get('/?shop=default')
+    page = outsider.get('/timeclock').get_data(as_text=True)
+    assert 'cross_device_staff' not in page, '別店裝置看不到本店員工的完整帳號'
+    for i in range(10):   # 換 IP 猜密碼 → 帳號層級鎖定照樣生效
+        outsider.post('/admin', data={'username': 'cross_device_staff', 'password': 'wrong'},
+                      headers={'X-Forwarded-For': f'203.0.113.{100 + i}'})
+    r = outsider.post('/admin', data={'username': 'cross_device_staff', 'password': 'CrossPass!2026'},
+                      headers={'X-Forwarded-For': '198.51.100.99'})
+    assert r.status_code == 429
+
+
+def test_api_rate_limit_counts_the_key_not_the_header_spelling(app):
+    from app.routes.api_v1 import _key_bucket
+    buckets = set()
+    for header in ('Bearer kk_same_key', 'bearer kk_same_key', 'BEARER   kk_same_key  '):
+        with app.test_request_context('/api/v1/orders', headers={'Authorization': header}):
+            buckets.add(_key_bucket())
+    assert len(buckets) == 1

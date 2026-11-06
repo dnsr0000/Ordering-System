@@ -219,7 +219,13 @@ def test_dashboard_scope_and_audits(app, admin_client, kitchen_client):
     assert 'M15舊單甲' not in names and 'M15舊單乙' not in names
     assert data['analytics']['stale_pending_count'] >= 1
     admin_client.post('/admin/add_coupon', data={'code': 'M15AUD', 'title': '稽核測試', 'discount_type': 'fixed', 'discount_value': '5'})
-    kitchen_client.post('/api/kitchen_complete_all')
+    with app.app_context():   # 今天一張製作中的訂單 (KDS 畫面上看得到)，一鍵出餐會完成它並留下稽核
+        today_order = Order(tenant_id=tid, table_number='M15今日單', total_price=33, status='Pending', pickup_number=3,
+                            created_at=datetime.now())
+        db.session.add(today_order)
+        db.session.commit()
+    shown = [o['id'] for o in kitchen_client.get('/api/kitchen_orders').get_json()['orders']]
+    kitchen_client.post('/api/kitchen_complete_all', json={'order_ids': shown})
     with app.app_context():
         kinds = {a.action_type for a in StaffAuditLog.query.filter_by(tenant_id=tid)}
     assert {'COUPON_CHANGE', 'KITCHEN_COMPLETE_ALL'} <= kinds

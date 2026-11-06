@@ -15,7 +15,7 @@ from app.models.coupon import UserCoupon
 from app.models.enums import OrderStatus, VoucherStatus
 from app.models.menu import ComboOption, MenuItem
 from app.models.order import Order, OrderItem
-from app.models.sync import SyncNode
+from app.models.sync import PointLedger, SyncNode
 from app.models.user import RewardRedemption, User
 from app.services import inventory_service, payment_service, settings_service, wallet_service
 from app.services.ai_service import invalidate_ai_advice
@@ -251,7 +251,10 @@ def _rollback_cancelled_order(order, tenant_id, reason='', approved_by=''):
 
     points_delta, note = 0, ''
     if order.user_id:
-        net = (order.points_used or 0) + redeemed_points - (order.points_earned or 0)
+        # 贈點只追回已入帳的部分 (付款完成才入帳；未付款就取消的訂單沒有給過)
+        earned = db.session.query(func.coalesce(func.sum(PointLedger.delta), 0)).filter(
+            PointLedger.order_id == order.id, PointLedger.reason == 'earn').scalar() or 0
+        net = (order.points_used or 0) + redeemed_points - earned
         if net:
             points_delta = change_points(tenant_id, order.user_id, net, 'cancel', order_id=order.id, clamp=True) or 0
             if points_delta != net:
@@ -278,11 +281,18 @@ def _rollback_cancelled_order(order, tenant_id, reason='', approved_by=''):
     )
 
 
-def complete_all_pending_orders(tenant_id):
-    """廚房一鍵出餐：所有製作中訂單改為已出餐，回傳張數"""
+def complete_all_pending_orders(tenant_id, order_ids):
+    """
+    廚房一鍵出餐：KDS 畫面上的這幾張製作中訂單改為已出餐，回傳張數。
+    只完成指定的訂單 (畫面上看得到的)：原本會連未付款的線上單、晚一點的預約單一起完成並發出取餐通知。
+    """
     from app.services import notify_service
-    pending_ids = [o.id for o in Order.query.filter(Order.tenant_id == tenant_id, Order.status == OrderStatus.PENDING,
-                                                    Order.payment_status.notin_(('authorizing',))).all()]
+    ids = sorted({int(i) for i in order_ids or () if str(i).isdigit()})[:500]
+    if not ids:
+        return 0
+    pending_ids = [o.id for o in Order.query.filter(Order.tenant_id == tenant_id, Order.id.in_(ids),
+                                                    Order.status == OrderStatus.PENDING,
+                                                    Order.payment_status.notin_(('pending', 'authorizing', 'expired'))).all()]
     count = db.session.execute(
         update(Order).where(Order.id.in_(pending_ids), Order.status == OrderStatus.PENDING)
         .values(status=OrderStatus.COMPLETED, completed_at=datetime.now())

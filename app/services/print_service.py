@@ -3,7 +3,7 @@
 列印工作先寫入 print_job，再由背景送出 (印表機離線時保留在佇列中重試，後台可看到失敗紀錄並重印)。
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import update
 
@@ -153,8 +153,27 @@ def test_print(printer):
     escpos.send_raw(printer.host, printer.port, t.bytes())
 
 
+STUCK_AFTER = timedelta(minutes=2)   # 送出一張單只要幾秒；「送出中」超過這麼久 = 行程在送出途中中止
+
+
+def recover_stuck_jobs(tenant_id=None):
+    """
+    送出途中伺服器重啟 / 當掉而卡在「送出中」的工作改為失敗 (後台可按「重印」)：原本會永遠卡住，廚房單就此遺失。
+    不直接改回待送，避免與真的還在送的工作重複列印 (那一筆送完時會自己改成已完成)。
+    """
+    q = update(PrintJob).where(PrintJob.status == 'sending', PrintJob.updated_at < datetime.now() - STUCK_AFTER)
+    if tenant_id is not None:
+        q = q.where(PrintJob.tenant_id == tenant_id)
+    n = db.session.execute(q.values(status='failed', last_error='送出途中中斷 (伺服器重啟？)，請確認後重印')
+                           .execution_options(synchronize_session=False, skip_tenant_filter=True)).rowcount
+    if n:
+        db.session.commit()
+    return n
+
+
 def process_queue(tenant_id=None, limit=50):
     """送出佇列中的列印工作 (依建立順序)；回傳成功張數"""
+    recover_stuck_jobs(tenant_id)
     q = PrintJob.query.filter(PrintJob.status == 'queued')
     if tenant_id is not None:
         q = q.filter(PrintJob.tenant_id == tenant_id)

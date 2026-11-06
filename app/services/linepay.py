@@ -19,6 +19,9 @@ SANDBOX_URL = 'https://sandbox-api-pay.line.me'
 PROD_URL = 'https://api-pay.line.me'
 
 
+UNKNOWN = 'UNKNOWN'   # 扣款逾時且查詢也失敗：可能已付款
+
+
 class LinePayError(Exception):
     def __init__(self, message, code=''):
         super().__init__(message)
@@ -73,6 +76,9 @@ def pay(tenant_id, order_id, amount, one_time_key):
         status = check(tenant_id, order_id)
         if status.get('paid'):
             return status.get('transaction_id', '')
+        if status.get('error'):
+            # 查詢本身也失敗：不能當成「沒付款」(顧客可能已被扣款)，由呼叫端退款或保留待確認
+            raise LinePayError('LINE Pay 回應逾時且無法確認付款結果', UNKNOWN)
         raise LinePayError('LINE Pay 回應逾時且查無付款紀錄，請請顧客確認 App 是否已扣款後重試')
     code = str(result.get('returnCode'))
     if code == '0000':

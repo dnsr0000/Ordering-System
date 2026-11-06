@@ -87,6 +87,12 @@ def test_kiosk_diet_filter_chips_hide_items_and_persist(app, page, demo):
     expect(fries).not_to_have_class(re.compile('d-none'))
     page.locator('#dietFilterBar [data-kind="allergen"][data-code="gluten"]').click()
     expect(fries).to_have_class(re.compile('d-none'))
+    # 共用點餐機：登出後下一位顧客不沿用上一位的過敏原篩選
+    page.locator('[data-action="logout"]').first.click()
+    page.wait_for_load_state('networkidle')
+    _guest(page)
+    expect(page.locator('#menuList .menu-row[data-id="%s"]' % demo['示範薯條'])).not_to_have_class(re.compile('d-none'))
+    expect(page.locator('#dietFilterBar [data-kind="allergen"][data-code="gluten"]')).not_to_have_attribute('aria-pressed', 'true')
 
 
 def test_member_price_shown_only_for_member(app, page, demo):

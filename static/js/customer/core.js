@@ -13,6 +13,8 @@ export const REWARD_LABEL = '[點數兌換]';
 export const pageData = Kiosk.pageData();
 export const pro = pageData.pro || {};
 export const ui = pageData.ui || {};
+// REWARD_LABEL 是存在品名裡的固定標記 (讀取舊購物車時去掉)；畫面上顯示 REWARD_TAG (依語言翻譯)
+export const REWARD_TAG = ui.cart_reward_tag || REWARD_LABEL;
 // ---------------------------------------------------------------- localStorage 'kiosk_cart' (Kiosk.store：隱私模式時不會拋錯)
 export function loadCart() {
     return Kiosk.store.get(Kiosk.CART_KEY, []) || [];

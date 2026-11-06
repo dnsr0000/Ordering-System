@@ -81,6 +81,8 @@ def current():
         d = None
         if raw:
             d = Device.query.filter_by(token_hash=hash_secret(raw)).execution_options(skip_tenant_filter=True).first()
+        if d is not None and d.tenant_id != getattr(g, 'tenant_id', None):
+            d = None   # 其他店家註冊的裝置：在本店視為未註冊 (不可藉此躲過帳號鎖定或看到員工帳號)
         g._device = d
     return g._device
 

@@ -47,7 +47,7 @@
         <a class="btn btn-success btn-sm mt-2 d-none" id="feedbackReview" target="_blank" rel="noopener"><i class="bi bi-google me-1"></i>{{ ui.fb_google }}</a>
     </section>
 </main>
-{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}"></div>{% endif %}
+{% if chat %}<div id="chatbot" data-title="{{ chat.title }}" data-bot-name="{{ chat.botName }}" data-subtitle="{{ chat.subtitle }}" data-welcome="{{ chat.welcome }}" data-placeholder="{{ chat.placeholder }}" data-send="{{ chat.send }}" data-ai-note="{{ chat.aiNote }}" data-failed="{{ chat.failed }}" data-order-uuid="{{ chat.orderUuid }}" data-suggestions="{{ chat.suggestions }}" data-handoff="{{ chat.handoff }}"></div>{% endif %}
 {% endblock %}
 {% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}
 {% block scripts %}<script src="{{ url_for('static', filename='js/track.js') }}"></script>

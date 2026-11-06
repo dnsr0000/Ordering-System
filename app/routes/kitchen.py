@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy.orm import selectinload
 
+from app.errors import AppError
 from app.extensions import db
 from app.models.enums import ALL_STAFF_ROLES, KITCHEN_ROLES, OrderStatus
 from app.models.menu import MenuItem
@@ -113,7 +114,11 @@ def api_prep_card(item_id):
 @kitchen_bp.route('/api/kitchen_complete_all', methods=['POST'])
 @role_required(*KITCHEN_ROLES)
 def api_kitchen_complete_all():
-    return jsonify({'success': True, 'count': complete_all_pending_orders(g.tenant_id)})
+    """{order_ids: [KDS 畫面上的訂單]} → 只完成這幾張"""
+    ids = get_json_dict().get('order_ids')
+    if not isinstance(ids, list) or not ids:
+        raise AppError('請指定要完成的訂單')
+    return jsonify({'success': True, 'count': complete_all_pending_orders(g.tenant_id, ids)})
 
 
 @kitchen_bp.route('/api/kitchen/orders/<int:order_id>/station_done', methods=['POST'])

@@ -232,3 +232,45 @@ def test_settings_test_button_uses_ecpay(app, admin_client, ecpay_api):
     fail['/B2CInvoice/CheckLoveCode'] = {'RtnCode': 9000001, 'RtnMsg': '驗證失敗'}
     admin_client.post('/admin/settings/einvoice/test')
     assert_flash(admin_client, '驗證失敗')
+
+
+def test_cancel_after_partial_allowance_allows_the_rest(app, admin_client, ecpay_api):
+    """先部分退款 (發票已折讓) 再整張取消：剩餘金額也要折讓，不能留著發票 $200 的銷售額"""
+    calls, _ = ecpay_api
+    iid = make_item(app, '折讓後取消餐', price=300, stock=20)
+    oid = checkout(admin_client, [line(iid)], url=POS, cash_received=300).get_json()['order_id']
+    assert admin_client.post(f'/api/pos/orders/{oid}/refund', json={'amount': 100, 'reason': '少一樣'}).status_code == 200
+    assert _invoices(app, oid)[0]['allowance_amount'] == 100
+    assert admin_client.post(f'/api/orders/{oid}/status', json={'status': 'Cancelled'}).status_code == 200
+    inv = _invoices(app, oid)[0]
+    assert inv['status'] == 'allowance' and inv['allowance_amount'] == 300
+    assert calls[-1][0] == '/B2CInvoice/Allowance' and calls[-1][1]['AllowanceAmount'] == 200
+
+
+def test_table_settlement_invoice_follows_refunds(app, admin_client, staff_client, ecpay_api, store_settings):
+    """桌位合併結帳的發票：其中一張訂單部分退款或取消時，就退的金額開折讓 (原本完全不會調整)"""
+    from app.models.payment import InvoiceStatus
+    from app.models.table import DiningTable
+    calls, _ = ecpay_api
+    admin_client.post('/admin/tables', data={'action': 'create', 'names': '發票桌'})
+    with app.app_context():
+        table = DiningTable.query.filter_by(name='發票桌').one()
+        tid, token = table.id, table.token
+    iid = make_item(app, '桌位發票餐', price=200, stock=20)
+    phone = app.test_client()
+    phone.get(f'/t/{token}')
+    phone.post('/guest_login')
+    first = checkout(phone, [line(iid)]).get_json()['order_id']
+    checkout(phone, [line(iid, 2)])
+    r = staff_client.post(f'/api/pos/tables/{tid}/settle', json={'payment_method': 'Cash', 'cash_received': 600})
+    assert r.status_code == 200, r.get_json()
+    with app.app_context():
+        inv = Invoice.query.filter(Invoice.settlement_id.isnot(None), Invoice.amount == 600).order_by(Invoice.id.desc()).first()
+        inv_id = inv.id
+        assert inv.status == InvoiceStatus.ISSUED
+    assert admin_client.post(f'/api/pos/orders/{first}/refund', json={'amount': 50, 'reason': '少一樣'}).status_code == 200
+    assert calls[-1][0] == '/B2CInvoice/Allowance' and calls[-1][1]['AllowanceAmount'] == 50
+    assert admin_client.post(f'/api/orders/{first}/status', json={'status': 'Cancelled'}).status_code == 200
+    assert calls[-1][0] == '/B2CInvoice/Allowance' and calls[-1][1]['AllowanceAmount'] == 150
+    with app.app_context():
+        assert db.session.get(Invoice, inv_id).allowance_amount == 200
