@@ -153,8 +153,12 @@
                            pattern="[0-9]{4,6}" inputmode="numeric" maxlength="6" autocomplete="new-password" required>
                 </div>
                 <div class="mb-3 text-start">
-                    <label class="form-label fw-bold small text-white" for="regBirthday">{{ ui.reg_birthday }}</label>
-                    <input type="date" class="form-control form-input" id="regBirthday" name="birthday">
+                    <label class="form-label fw-bold small text-white" for="regBirthdayYear">{{ ui.reg_birthday }}</label>
+                    <div class="d-flex gap-2" data-birthday-select>
+                        <select class="form-select form-input" id="regBirthdayYear" name="birthday_year" data-part="year" aria-label="{{ ui.reg_birthday_year }}"><option value="">{{ ui.reg_birthday_year }}</option></select>
+                        <select class="form-select form-input" id="regBirthdayMonth" name="birthday_month" data-part="month" aria-label="{{ ui.reg_birthday_month }}"><option value="">{{ ui.reg_birthday_month }}</option></select>
+                        <select class="form-select form-input" id="regBirthdayDay" name="birthday_day" data-part="day" aria-label="{{ ui.reg_birthday_day }}"><option value="">{{ ui.reg_birthday_day }}</option></select>
+                    </div>
                 </div>
                 {% if referral_enabled %}
                 <div class="mb-3 text-start">
@@ -243,6 +247,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/birthday-select.js') }}"></script>
 <script src="{{ url_for('static', filename='js/register.js') }}"></script>
 <script src="{{ url_for('static', filename='js/member-extras.js') }}"></script>
 {% endblock %}

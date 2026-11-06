@@ -215,3 +215,38 @@ def test_register_without_face(page, app):
     page.wait_for_url('**/')
     member = member_by_phone(app, phone)
     assert member is not None and not member['has_feature'] and member['photo_path'] == ''
+
+
+def test_register_birthday_dropdowns_in_browser(page, app):
+    """生日下拉選單：選項由 birthday-select.js 填入；今年未到的月份、2 月 30 日等不存在或未來的日期不能選；選好後註冊成功"""
+    from datetime import date
+    today = date.today()
+    page.goto('/register')
+    year, month, day = page.locator('#regBirthdayYear'), page.locator('#regBirthdayMonth'), page.locator('#regBirthdayDay')
+    expect(year.locator(f'option[value="{today.year}"]')).to_have_count(1)
+    expect(year.locator(f'option[value="{today.year + 1}"]')).to_have_count(0)
+
+    year.select_option(str(today.year))
+    if today.month < 12:
+        expect(month.locator(f'option[value="{today.month + 1}"]')).to_be_disabled()
+    month.select_option(str(today.month))
+    if today.day < 28:
+        expect(day.locator(f'option[value="{today.day + 1}"]')).to_be_disabled()
+
+    year.select_option('2001')
+    month.select_option('2')
+    expect(day.locator('option[value="29"]')).to_be_disabled()
+    expect(day.locator('option[value="28"]')).to_be_enabled()
+    year.select_option('2000')   # 閏年
+    expect(day.locator('option[value="29"]')).to_be_enabled()
+    day.select_option('29')
+
+    phone = unique_phone()
+    page.fill('#regName', f'生日會員{uuid.uuid4().hex[:4]}')
+    page.fill('#regPhone', phone)
+    page.fill('#regPin', '1357')
+    page.check('#agreePrivacy')
+    page.click('#registerSubmitBtn')
+    page.wait_for_url(lambda url: '/register' not in url)
+    with app.app_context():
+        assert User.query.filter_by(phone=phone).one().birthday == date(2000, 2, 29)

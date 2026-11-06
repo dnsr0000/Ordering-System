@@ -174,6 +174,29 @@ def parse_date(value, label='日期', required=False):
         raise AppError(f'{label}格式不正確：{value}')
 
 
+def parse_birthday(form):
+    """
+    生日 (選填)：表單的 birthday_year / birthday_month / birthday_day 三個下拉選單 (註冊與後台編輯會員共用)。
+    三個都空 = 未填；只選一部分、日期不存在 (2/30) 或晚於今天一律 400。
+    下拉選單只是介面限制，送來的值仍可能被竄改，所以這裡一律重新檢查。
+    """
+    parts = [str(form.get(f'birthday_{part}') or '').strip() for part in ('year', 'month', 'day')]
+    if not any(parts):
+        return None
+    if not all(parts):
+        raise AppError('請完整選擇生日的年、月、日')
+    try:
+        year, month, day = (int(p) for p in parts)
+        birthday = date(year, month, day)
+    except ValueError:
+        raise AppError('生日日期不存在，請重新選擇')
+    if birthday > date.today():
+        raise AppError('生日不能是未來的日期')
+    if birthday.year < date.today().year - 120:
+        raise AppError('生日日期不存在，請重新選擇')
+    return birthday
+
+
 def parse_date_range(default_days=7, week=False, presets=False, max_days=None, strict=False, together=False):
     """
     request.args 的 start / end (YYYY-MM-DD) → (start, end)，end 早於 start 時對調。

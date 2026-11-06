@@ -15,7 +15,7 @@ from app.services.customer_session import close_customer_session, login_guest, l
 from app.services.cv_service import extract_feature, find_best_match_vectorized, save_and_fix_image
 from app.services.menu_service import remove_file_quietly
 from app.sync import runtime as sync_runtime
-from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, parse_date, validate_phone, validate_pin
+from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, parse_birthday, validate_phone, validate_pin
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -95,7 +95,7 @@ def register():
     if sms_cfg.get('provider', 'none') != 'none' and sms_cfg.get('otp_on_register'):
         sms_service.consume_verified(phone, 'register', request.form.get('otp_code'))
         phone_verified = True
-    birthday = parse_date(request.form.get('birthday'), '生日')
+    birthday = parse_birthday(request.form)
 
     filename, filepath, feature = '', None, None
     if use_face:

@@ -15,7 +15,7 @@ from app.services import coupon_service, line_service, settings_service, wallet_
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
 from app.services.upload_paths import upload_file_path
-from app.utils import get_own, paginate, parse_date, safe_float, safe_int
+from app.utils import get_own, paginate, parse_birthday, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
@@ -60,7 +60,7 @@ def manage():
             flash(f'已重新計算累積消費，{upgraded} 位會員升級', 'success')
         elif action == 'member':
             user = _user(f.get('user_id'))
-            user.birthday = parse_date(f.get('birthday'), '生日')
+            user.birthday = parse_birthday(f)
             tier_id = safe_int(f.get('tier_id'), 0)
             if tier_id:
                 tier = get_own(MemberTier, tier_id, '等級')

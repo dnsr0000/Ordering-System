@@ -1,6 +1,6 @@
 """會員經營：等級後台管理與重算、生日禮、儲值金調整、LINE 登入 / 綁定 / 推播 (模擬 LINE API)、簡訊驗證註冊與忘記 PIN"""
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -100,9 +100,24 @@ def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api
         assert wallet_service.grant_birthday_gifts(default_tenant_id(app)) == 0, '同一年只送一次'
     assert _user(app, '0966100002')['points'] == 60
     # 後台修改生日
-    admin_client.post('/admin/members', data={'action': 'member', 'user_id': uid, 'birthday': '1991-02-03', 'tier_id': ''})
+    def set_birthday(d):
+        parts = {'birthday_year': d.year, 'birthday_month': d.month, 'birthday_day': d.day} if d else {}
+        admin_client.post('/admin/members', data={'action': 'member', 'user_id': uid, 'tier_id': '', **parts})
+
+    set_birthday(date(1991, 2, 3))
     with app.app_context():
         assert db.session.get(User, uid).birthday == date(1991, 2, 3)
+    page = admin_client.get('/admin/members?q=0966100002').get_data(as_text=True)
+    assert 'data-value="1991"' in page and 'data-value="2"' in page and 'data-value="3"' in page, '下拉選單帶入目前生日'
+    # 生日不能是未來的日期 (今天可以)；三個都不選 = 清除生日
+    set_birthday(date.today() + timedelta(days=1))
+    assert_flash(admin_client, '生日不能是未來的日期')
+    set_birthday(date.today())
+    with app.app_context():
+        assert db.session.get(User, uid).birthday == date.today()
+    set_birthday(None)
+    with app.app_context():
+        assert db.session.get(User, uid).birthday is None
 
 
 def test_wallet_adjust_owner_only(app, admin_client, store_settings):
@@ -192,7 +207,8 @@ def test_register_with_sms_otp(app, store_settings):
     c = app.test_client()
     c.get('/?shop=default')
     assert 'otp' in c.get('/register').get_data(as_text=True).lower()
-    form = {'name': '簡訊會員', 'phone': '0966100007', 'pin': '2580', 'agree_privacy': '1', 'birthday': '1995-05-05'}
+    form = {'name': '簡訊會員', 'phone': '0966100007', 'pin': '2580', 'agree_privacy': '1',
+            'birthday_year': '1995', 'birthday_month': '5', 'birthday_day': '5'}
     r = c.post('/register', data=form)
     assert r.status_code in (302, 400)
     assert _user(app, '0966100007') is None, '未驗證手機不可註冊'

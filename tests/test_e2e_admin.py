@@ -370,3 +370,18 @@ def test_dashboard_tabs_follow_sidebar_and_url(page):
     page.click('#rewards-tab')
     page.reload()
     expect(page.locator('#rewards-pane')).to_be_visible()   # 重新整理停在網址上的分頁
+
+
+def test_member_birthday_dropdowns_preselect(page, app):
+    """後台會員頁的生日下拉選單帶入目前生日 (birthday-select.js 依 data-value 選取)"""
+    from datetime import date
+
+    from tests.support import make_member
+    phone = f'0977{uuid.uuid4().int % 10 ** 6:06d}'
+    uid = make_member(app, f'生日下拉{_suffix()}', phone, birthday=date(1988, 7, 9))
+    _login(page)
+    assert page.goto(f'/admin/members?q={phone}').ok
+    expect(page.locator(f'#bd-{uid}')).to_have_value('1988')
+    group = page.locator(f'#bd-{uid}').locator('xpath=..')
+    expect(group.locator('select[data-part="month"]')).to_have_value('7')
+    expect(group.locator('select[data-part="day"]')).to_have_value('9')

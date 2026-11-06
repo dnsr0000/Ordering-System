@@ -155,7 +155,7 @@
                                 <div class="d-flex flex-wrap gap-3 p-2 border border-secondary rounded">
                                     <form method="POST" class="d-flex flex-wrap gap-1 align-items-center member-pro-form">{{ csrf() }}<input type="hidden" name="action" value="member"><input type="hidden" name="user_id" value="{{ u.id }}">
                                         <label class="small text-white-50 mb-0" for="bd-{{ u.id }}">生日</label>
-                                        <input class="form-control form-control-sm" type="date" name="birthday" id="bd-{{ u.id }}" value="{{ u.birthday or '' }}" style="width: 9rem">
+                                        <span class="d-inline-flex gap-1" data-birthday-select><select class="form-select form-select-sm" name="birthday_year" id="bd-{{ u.id }}" data-part="year" data-value="{{ u.birthday.year if u.birthday }}" aria-label="生日 年" style="width: 5.5rem"><option value="">年</option></select><select class="form-select form-select-sm" name="birthday_month" data-part="month" data-value="{{ u.birthday.month if u.birthday }}" aria-label="生日 月" style="width: 4.5rem"><option value="">月</option></select><select class="form-select form-select-sm" name="birthday_day" data-part="day" data-value="{{ u.birthday.day if u.birthday }}" aria-label="生日 日" style="width: 4.5rem"><option value="">日</option></select></span>
                                         <label class="small text-white-50 mb-0 ms-2" for="tier-{{ u.id }}">等級</label>
                                         <select class="form-select form-select-sm" name="tier_id" id="tier-{{ u.id }}" style="width: 7rem"><option value="">無等級</option>{% for t in tiers %}<option value="{{ t.id }}" {{ 'selected' if u.tier_id == t.id }}>{{ t.name }}</option>{% endfor %}</select>
                                         {% if u.line_user_id %}<div class="form-check ms-2"><input class="form-check-input" type="checkbox" name="unbind_line" value="1" id="ul-{{ u.id }}"><label class="form-check-label small" for="ul-{{ u.id }}">解除 LINE 綁定</label></div>{% endif %}
@@ -191,4 +191,4 @@
 {% block page_data %}
 <script type="application/json" id="page-data">{{ {'couponHistoryDays': coupon_history_days} | tojson }}</script>
 {% endblock %}
-{% block scripts %}<script src="{{ url_for('static', filename='js/admin-members.js') }}"></script>{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/birthday-select.js') }}"></script><script src="{{ url_for('static', filename='js/admin-members.js') }}"></script>{% endblock %}

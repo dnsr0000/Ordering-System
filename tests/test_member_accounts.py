@@ -114,6 +114,32 @@ def test_register_validation(app, photo_member):
         assert User.query.filter(User.phone.in_(['0933130201', '0933130202'])).count() == 0
 
 
+def test_register_birthday_dropdowns(app):
+    """生日是年 / 月 / 日三個下拉選單；後端仍檢查：未來日期、不存在的日期、只選一部分、被竄改的值都擋下 (不建立會員)"""
+    from datetime import date, timedelta
+    c = app.test_client()
+    c.environ_base['REMOTE_ADDR'] = '10.9.8.7'   # 註冊有每分鐘 10 次的頻率限制，與上一個測試分開計數
+    c.get('/?shop=default')
+    html = c.get('/register').get_data(as_text=True)
+    assert all(f'name="birthday_{p}"' in html for p in ('year', 'month', 'day')) and 'js/birthday-select.js' in html
+    assert 'type="date"' not in html
+
+    tomorrow = date.today() + timedelta(days=1)
+    base = {'name': 'A', 'phone': '0933130204', 'pin': '2580', 'agree_privacy': '1'}
+    cases = [
+        (dict(birthday_year=tomorrow.year, birthday_month=tomorrow.month, birthday_day=tomorrow.day), '生日不能是未來的日期'),
+        (dict(birthday_year='2001', birthday_month='2', birthday_day='30'), '生日日期不存在'),
+        (dict(birthday_year='2001', birthday_month='2'), '請完整選擇生日'),
+        (dict(birthday_year="1990' OR 1=1", birthday_month='1', birthday_day='1'), '生日日期不存在'),
+        (dict(birthday_year='1800', birthday_month='1', birthday_day='1'), '生日日期不存在'),
+    ]
+    for fields, message in cases:
+        assert c.post('/register', data={**base, **fields}).status_code == 302
+        assert_flash(c, message)
+    with app.app_context():
+        assert User.query.filter_by(phone='0933130204').count() == 0
+
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
