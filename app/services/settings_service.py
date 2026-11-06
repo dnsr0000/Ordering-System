@@ -249,7 +249,8 @@ SECTIONS = {s.key: s for s in (
             subgroup='庫存', keywords='原料 扣料 庫存 批號'),
     Section('ai', 'AI 服務 (金鑰自動辨識)', 'D 菜單', 'bi-stars',
             '客服小助手、AI 翻譯菜單、語音點餐、菜單文案與營運建議用的雲端 AI。貼上金鑰即可，系統依金鑰開頭與各家的模型清單'
-            '自動辨識廠商並挑最新的模型；金鑰 1 失敗 (過載 / 限流) 時自動改用金鑰 2、3，都不行才用本機模型。'
+            '自動辨識廠商並挑最新的模型 (客服、語音點餐等即時回應用快速便宜的一檔，翻譯菜單用主力模型)；'
+            '金鑰 1 失敗 (過載 / 限流) 時自動改用金鑰 2、3，都不行才用本機模型。'
             '.env 的 GEMINI_API_KEY / AI_API_KEYS 排在這些之後。送出的內容 (菜單、顧客的提問) 會傳到該 AI 廠商。',
             (
                 Field('key1', '金鑰 1 (優先使用)', 'secret',
@@ -259,6 +260,9 @@ SECTIONS = {s.key: s for s in (
                 Field('model2', '金鑰 2 指定模型 (留空 = 自動)'),
                 Field('key3', '金鑰 3', 'secret'),
                 Field('model3', '金鑰 3 指定模型 (留空 = 自動)'),
+                Field('monthly_budget_usd', '每月預算上限 (美元，0 = 不限)', 'int', 0, min=0, max=100000,
+                      help='依各家公開牌價估算本月費用 (系統監控頁可看)，達上限後本月改用本機模型 / 規則字典，下個月自動恢復；'
+                           '估計值僅供參考，實際以各家帳單為準'),
             ), enabled_field='key1',
             docs=(('Google AI Studio 金鑰', 'https://aistudio.google.com/apikey'),
                   ('Anthropic Console 金鑰', 'https://console.anthropic.com/settings/keys'),

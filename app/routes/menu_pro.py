@@ -62,17 +62,19 @@ def _translate_message(filled, stats):
         return '每個品項與分類都已有英 / 日文翻譯 (要重翻請勾「連已填的也重新翻譯」)', 'info'
     check = '請逐一檢查後再儲存修改'
     who = stats.get('provider') or 'AI'
+    reused = f"沿用店家既有譯名 {stats['store']} 項；" if stats.get('store') else ''
     if not ai_service.has_api_key():
         if filled:
-            return f'已填入 {filled} 個翻譯欄位 (規則字典，未設定 GEMINI_API_KEY，只翻常見分類 / 品名)；{check}', 'success'
-        return '沒有可填的欄位 (規則字典沒有對應；設定 GEMINI_API_KEY 後可翻譯任意品名)', 'warning'
+            return (f'已填入 {filled} 個翻譯欄位 ({reused}規則字典，未設定 AI 金鑰，只翻常見分類 / 品名)；{check}', 'success')
+        return '沒有可填的欄位 (規則字典沒有對應；到系統設定「AI 服務」填金鑰後可翻譯任意品名)', 'warning'
     if not stats['fallback']:
-        return f"{who} 已翻譯 {stats['ai']} 項，填入 {filled} 個欄位；{check}", 'success'
+        done = f"{who} 已翻譯 {stats['ai']} 項，" if stats['ai'] else ''
+        return f"{reused}{done}填入 {filled} 個欄位；{check}", 'success'
     reason = ai_service.last_ai_error() or '回應格式不完整'
     busy = f'AI 服務目前忙碌或失敗 ({reason})，已自動重試數次'
     retry = '系統會在背景每隔幾分鐘自動補翻還沒翻好的項目，不用再按 (也可以稍後自己再按一次)'
-    if stats['ai']:
-        return (f"{who} 已翻譯 {stats['ai']} 項；另外 {stats['fallback']} 項沒翻成 ({busy})，先以規則字典填常見分類 / 品名。"
+    if stats['ai'] or stats.get('store'):
+        return (f"{reused}{who} 已翻譯 {stats['ai']} 項；另外 {stats['fallback']} 項沒翻成 ({busy})，先以規則字典填常見分類 / 品名。"
                 f'共填入 {filled} 個欄位；{retry}', 'warning')
     return f"這次 {stats['fallback']} 項都沒翻成：{busy}。規則字典填入 {filled} 個欄位 (只有常見分類 / 品名)；{retry}", 'warning'
 

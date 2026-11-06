@@ -84,11 +84,11 @@ def test_cloud_generate_falls_back_to_next_provider(app, monkeypatch):
     monkeypatch.setattr(lp, 'resolve', lambda cred, force=False: table[cred.id])
     tried = []
 
-    def busy(key, model, prompt, max_tokens, interactive):
+    def busy(key, model, prompt, max_tokens, interactive, prefix=''):
         tried.append(model)
         raise lp.ProviderError('overload', '529 overloaded_error')
     monkeypatch.setattr(lp, 'call_anthropic', busy)
-    monkeypatch.setattr(lp, 'call_openai_compatible', lambda provider, key, model, *a: f'{provider}:{model} 回答')
+    monkeypatch.setattr(lp, 'call_openai_compatible', lambda provider, key, model, *a, **k: f'{provider}:{model} 回答')
     with app.app_context():
         text, source = ai_service.cloud_generate('hi', creds=[claude, gpt])
         assert (text, source) == ('openai:gpt-5.2-mini 回答', 'openai')
@@ -109,7 +109,7 @@ def test_cloud_generate_falls_back_to_next_provider(app, monkeypatch):
 def test_auth_error_forgets_detection(app, monkeypatch):
     cred = lp.Credential(key='sk-ant-1', source='settings:1')
     lp._cache[cred.id] = _resolved('anthropic', 'claude-opus-5-5')
-    monkeypatch.setattr(lp, 'call_anthropic', lambda *a: (_ for _ in ()).throw(lp.ProviderError('auth', 'invalid x-api-key')))
+    monkeypatch.setattr(lp, 'call_anthropic', lambda *a, **k: (_ for _ in ()).throw(lp.ProviderError('auth', 'invalid x-api-key')))
     with app.app_context():
         assert ai_service.cloud_generate('hi', creds=[cred]) == (None, '')
         assert cred.id not in lp._cache, '金鑰錯誤：下次重新辨識'
@@ -147,7 +147,7 @@ def test_settings_page_and_tester(app, store_settings, monkeypatch):
         return _resolved('anthropic', 'claude-opus-5-5', 'claude-sonnet-5-5') if cred.key.startswith('sk-ant') \
             else lp.Resolved(error='Google Gemini：HTTP 400 API key not valid', at=1)
     monkeypatch.setattr(lp, 'resolve', fake_resolve)
-    monkeypatch.setattr(lp, 'call_anthropic', lambda *a: '正常')
+    monkeypatch.setattr(lp, 'call_anthropic', lambda *a, **k: '正常')
     r = owner.post('/admin/settings/ai/test', follow_redirects=True).get_data(as_text=True)
     assert '測試成功' in r and '金鑰 1：Anthropic Claude，模型 claude-opus-5-5 → claude-sonnet-5-5 (自動挑選)，回應正常' in r
     assert '金鑰 2：Google Gemini：HTTP 400 API key not valid' in r

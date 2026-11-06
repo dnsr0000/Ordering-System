@@ -1,5 +1,4 @@
 """AI 服務：Gemini 503 重試與備援模型、冷卻、本機模型狀態診斷、JSON 擷取、系統健康頁顯示"""
-import time
 
 import pytest
 
@@ -26,7 +25,6 @@ def gemini(app, monkeypatch):
     """假的 requests.post：依序回傳 responses 裡的回應，並記錄打到哪個模型"""
     calls = []
     monkeypatch.setattr(ai_service, 'RETRY_DELAY', 0)
-    monkeypatch.setattr(ai_service, '_gemini_cooldown_until', 0.0)
     monkeypatch.setitem(app.config, 'GEMINI_API_KEY', 'test-key-123')
     monkeypatch.setitem(app.config, 'GEMINI_MODEL', 'gemini-main')
     monkeypatch.setitem(app.config, 'GEMINI_FALLBACK_MODEL', 'gemini-backup')
@@ -50,7 +48,7 @@ def test_gemini_retries_503_then_uses_fallback_model(app, gemini):
     with app.app_context():
         assert ai_service.gemini_generate('hi') == '備援回答'
     assert calls == ['gemini-main', 'gemini-main', 'gemini-backup'], '主要模型重試一次後換備援'
-    assert ai_service._gemini_cooldown_until == 0.0, '成功就不冷卻'
+    assert ai_service.cooldown_left(ai_service.key_id('test-key-123')) == 0, '成功就不冷卻'
     assert ai_service._gemini_last['model'] == 'gemini-backup' and ai_service._gemini_last['error'] == ''
 
 
@@ -60,7 +58,7 @@ def test_gemini_retries_on_timeout_and_cools_down_when_all_fail(app, gemini, mon
     with app.app_context():
         assert ai_service.gemini_generate('hi') is None
         assert calls == ['gemini-main', 'gemini-main', 'gemini-backup', 'gemini-backup']
-        remaining = ai_service._gemini_cooldown_until - time.time()
+        remaining = ai_service.cooldown_left(ai_service.key_id('test-key-123'))
         assert 15 < remaining <= ai_service.COOLDOWN['overload'], '過載冷卻 20 秒'
         assert '503' in ai_service._gemini_last['error']
         # 冷卻期間不再打 API
@@ -73,8 +71,8 @@ def test_gemini_auth_error_cools_down_immediately_and_429_switches_model(app, ge
     calls = gemini([_Resp(403, {'error': {'message': 'bad key'}})])
     with app.app_context():
         assert ai_service.gemini_generate('hi') is None
-        assert calls == ['gemini-main'] and ai_service._gemini_cooldown_until - time.time() > 50
-    ai_service._gemini_cooldown_until = 0.0
+        assert calls == ['gemini-main'] and ai_service.cooldown_left(ai_service.key_id('test-key-123')) > 50
+    ai_service._cooldowns.clear()
     calls = gemini([_Resp(429), _ok('ok')])
     with app.app_context():
         assert ai_service.gemini_generate('hi') == 'ok'
@@ -129,7 +127,7 @@ def test_system_health_page_shows_ai_status(app, admin_client, monkeypatch):
 def test_patient_mode_ignores_cooldown_and_retries_three_times(app, gemini, monkeypatch):
     """AI 翻譯菜單等店家願意等的工作：冷卻中也照樣呼叫，每個模型試 3 次 (尖峰 503 通常幾秒後恢復)"""
     calls = gemini([_Resp(503), _Resp(503), _ok('第三次成功')])
-    monkeypatch.setattr(ai_service, '_gemini_cooldown_until', time.time() + 60)
+    ai_service._set_cooldown(ai_service.key_id('test-key-123'), 60)
     with app.app_context():
         assert ai_service.gemini_generate('hi') is None, '一般呼叫在冷卻中直接略過'
         assert calls == []

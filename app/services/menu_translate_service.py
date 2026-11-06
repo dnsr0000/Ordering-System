@@ -41,10 +41,12 @@ def translate_menu(overwrite=False):
     items = [i for i in all_items if item_needs(i)]
     categories = [c for c in all_categories if cat_needs(c)]
     entries = [{'name': i.name, 'description': i.description or ''} for i in items] + [{'name': c, 'description': ''} for c in categories]
-    stats = {'ai': 0, 'provider': '', 'fallback': 0, 'pending': len(entries), 'remaining': 0}
+    stats = {'ai': 0, 'store': 0, 'provider': '', 'fallback': 0, 'pending': len(entries), 'remaining': 0}
     if not entries:
         return 0, 'ai' if ai_service.has_api_key() else 'rules', stats
-    results, source = ai_service.translate_entries(entries, stats)
+    # 店家既有 (含手動修改過) 的譯名：同名的直接沿用、其他的請 AI 沿用用詞；「全部重翻」時不用 (店家想要新的翻法)
+    glossary = {} if overwrite else store_glossary(all_items, translations.values())
+    results, source = ai_service.translate_entries(entries, stats, glossary)
     filled = 0
 
     def put(obj, field, value, limit):
@@ -69,6 +71,18 @@ def translate_menu(overwrite=False):
             put(row, 'name_ja', got['name_ja'], 60)
     stats['remaining'] = sum(1 for i in all_items if item_needs(i, False)) + sum(1 for c in all_categories if cat_needs(c, False))
     return filled, source, stats
+
+
+def store_glossary(items, category_rows):
+    """店家目前菜單上已有英日文的品名 / 分類 → {中文: {'en', 'ja'}} (店家檢查過或親手改過的譯名)"""
+    out = {}
+    for row in category_rows:
+        if row.category and row.name_en and row.name_ja:
+            out[row.category.strip()] = {'en': row.name_en, 'ja': row.name_ja}
+    for item in items:
+        if item.name and item.name_en and item.name_ja:
+            out[item.name.strip()] = {'en': item.name_en, 'ja': item.name_ja}
+    return out
 
 
 # ---------------------------------------------------------------------------

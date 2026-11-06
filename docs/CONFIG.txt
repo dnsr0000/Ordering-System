@@ -43,7 +43,7 @@
     SESSION_COOKIE_SECURE             全站 HTTPS 時 1 (門市以 http://區網IP 使用時維持 0)
     CSP_MODE                          enforce / report-only / off
     RATELIMIT_ENABLED                 1 = 啟用 IP 頻率限制
-    REDIS_URL                         選用：多行程部署時共用頻率限制計數與 SSE 通知
+    REDIS_URL                         選用：多行程部署時共用頻率限制計數、SSE 通知與雲端 AI 狀態 (金鑰辨識、冷卻、模型健康)
     ALLOW_TENANT_REGISTER             1 = 開放公開的「建立新店家」頁 (/tenant/register)。線上端預設 1；門市主機預設 0
                                       (任何連得到主機的人都能建店並取得負責人權限)，平台管理者登入後仍可建立新店
   同步 (說明見 docs/SYNC.txt)

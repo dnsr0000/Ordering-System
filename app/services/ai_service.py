@@ -4,19 +4,25 @@ AI 文案與營運建議，三層降級：Google Gemini → 本機 Qwen2.5 SLM (
   都失敗時依原因冷卻 (金鑰錯誤 60 秒、限流 30 秒、過載 20 秒)，期間直接使用下一層。最近一次錯誤可在系統健康頁看到。
 - 本機 SLM：需要 llama-cpp-python 與模型檔；沒裝套件 / 找不到檔案時記錄原因 (ai_status) 並降到規則引擎，不會一直重試載入。
 - 營運建議以「今日訂單狀態」為快取鍵，只有訂單變動才重新產生，且在背景執行緒呼叫 API，不拖慢頁面。
+- 依用途分兩檔模型 (tier)：fast (客服、語音點餐、短文案、營運建議) 用各家快速便宜的模型，strong (翻譯菜單) 用主力模型。
+- 每次呼叫記下用量與成敗 (app/services/ai_usage.py)：最近常失敗的模型排到後面、本月估計費用達預算上限就停用雲端 AI。
+- 冷卻以「金鑰」為單位 (多組 Gemini 金鑰互不影響)；設定 REDIS_URL 時各行程共用冷卻與辨識結果。
 """
 import atexit
+import contextvars
+import hashlib
 import logging
 import os
 import random
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from flask import current_app
 
-from app.services import llm_providers  # 載入時也註冊系統設定「AI 服務」的測試連線
+from app.services import ai_usage, llm_providers  # 載入 llm_providers 時也註冊系統設定「AI 服務」的測試連線
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +36,6 @@ COOLDOWN = {'auth': 60, 'rate': 30, 'overload': 20}
 LLAMA_INSTALL_HINT = ('pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu '
                       '(預編譯 CPU 版，不需要 C++ 編譯環境)')
 _PLACEHOLDER_KEYS = {"", "YOUR_API_KEY", "1234", "none"}
-_gemini_cooldown_until = 0.0
 _gemini_last: dict = {'ok_at': 0.0, 'error_at': 0.0, 'error': '', 'model': ''}   # 系統健康頁顯示
 _local_llm = None
 _local_llm_loaded = False
@@ -83,15 +88,40 @@ def has_api_key() -> bool:
 
 
 _last_error: dict = {'at': 0.0, 'ok_at': 0.0, 'text': ''}   # 最近一次雲端 AI 失敗 (系統監控頁 / 翻譯訊息)
-_cooldowns: dict[str, float] = {}   # 金鑰 id -> 冷卻到何時 (Gemini 以外；Gemini 用 _gemini_cooldown_until)
+_cooldowns: dict[str, float] = {}   # 金鑰 id -> 冷卻到何時 (本行程；有 Redis 時另存一份給其他行程)
+_tenant_var: contextvars.ContextVar = contextvars.ContextVar('ai_tenant', default=None)   # 用量記在哪家店
+
+
+def key_id(key):
+    """金鑰的代號 (與 llm_providers.Credential.id 相同)"""
+    return hashlib.sha256((key or '').encode()).hexdigest()[:12]
+
+
+def cooldown_left(cid) -> float:
+    """這組金鑰還要冷卻幾秒 (0 = 可以呼叫)"""
+    until = max(_cooldowns.get(cid, 0.0), float(llm_providers.shared_get(f'cool:{cid}') or 0))
+    return max(0.0, until - time.time())
+
+
+def _set_cooldown(cid, seconds):
+    until = time.time() + seconds
+    _cooldowns[cid] = until
+    llm_providers.shared_set(f'cool:{cid}', until, seconds)
+
+
+def _current_tenant(tenant_id=None):
+    if tenant_id is not None:
+        return tenant_id
+    if _tenant_var.get() is not None:
+        return _tenant_var.get()
+    from flask import g, has_request_context
+    return getattr(g, 'tenant_id', None) if has_request_context() else None
 
 
 def last_ai_error() -> str:
     """最近一次雲端 AI 呼叫失敗的原因 (之後已成功過就回空字串)；給「AI 翻譯」等功能告訴使用者為什麼改用備援"""
     if _last_error['at'] > _last_error['ok_at']:
         return _last_error['text']
-    if time.time() < _gemini_cooldown_until and not _gemini_last['error']:
-        return '暫停呼叫中 (剛才失敗，冷卻後會再試)'
     return _gemini_last['error'] if _gemini_last['error_at'] > _gemini_last['ok_at'] else ''
 
 
@@ -105,31 +135,47 @@ def gemini_models():
     return out or ['gemini-flash-latest', 'gemini-flash-lite-latest']
 
 
-def cloud_generate(prompt, max_tokens=800, temperature=0.3, json_mode=False, interactive=False, patient=False, creds=None):
+def cloud_generate(prompt, max_tokens=800, temperature=0.3, json_mode=False, interactive=False, patient=False, creds=None,
+                   tier=None, prefix='', tenant_id=None):
     """
     依序試每一組金鑰 (自動辨識廠商與模型)，第一個成功的回 (文字, 廠商名稱 gemini / anthropic / openai…)；全部失敗回 (None, '')。
     同一家：Gemini 走 gemini_generate (重試 + 備援模型)；其他廠商依 interactive / patient 重試、過載換下一組金鑰。
     interactive (即時對話)：每組只試一次、逾時短，失敗的金鑰進冷卻；patient (店家願意等)：不理會冷卻、多試幾次。
+    tier：'fast' (快速便宜) / 'strong' (主力)；省略時即時對話用 fast、其他用 strong。
+    prefix：每次都一樣的前段 (店家資訊、菜單…)，放在最前面讓各家的提示快取生效 (Claude 明確標記快取)。
+    tenant_id：用量記在哪家店 (省略 = 目前請求的店家)；本月估計費用達預算上限時直接回 (None, '')。
     """
+    tid = _current_tenant(tenant_id)
+    over = ai_usage.budget_exceeded(tid)
+    if over:
+        _note_ai_error(over)
+        return None, ''
+    tier = tier or ('fast' if interactive else 'strong')
     creds = credentials() if creds is None else creds
-    for cred in creds:
-        resolved = llm_providers.resolve(cred)
-        if not resolved.ok:
-            _note_ai_error(f'{cred.masked}：{resolved.error}')
-            continue
-        if resolved.provider == 'gemini':
-            text = gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature, api_key=cred.key, json_mode=json_mode,
-                                   interactive=interactive, patient=patient, models=resolved.models)
+    token = _tenant_var.set(tid)
+    try:
+        for cred in creds:
+            resolved = llm_providers.resolve(cred)
+            if not resolved.ok:
+                _note_ai_error(f'{cred.masked}：{resolved.error}')
+                continue
+            models = ai_usage.order_models(cred.id, resolved.for_tier(tier))   # 最近常失敗的排後面
+            if resolved.provider == 'gemini':
+                text = gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature, api_key=cred.key,
+                                       json_mode=json_mode, interactive=interactive, patient=patient, models=models,
+                                       prefix=prefix)
+                if text:
+                    _last_error['ok_at'] = time.time()
+                    return text, 'gemini'
+                _note_ai_error(f"{resolved.label}：{_gemini_last['error'] or '暫停呼叫中'}")
+                continue
+            text = _call_other(cred, resolved, models, prompt, max_tokens, temperature, interactive, patient, prefix)
             if text:
                 _last_error['ok_at'] = time.time()
-                return text, 'gemini'
-            _note_ai_error(f"{resolved.label}：{_gemini_last['error'] or '暫停呼叫中'}")
-            continue
-        text = _call_other(cred, resolved, prompt, max_tokens, temperature, interactive, patient)
-        if text:
-            _last_error['ok_at'] = time.time()
-            return text, resolved.provider
-    return None, ''
+                return text, resolved.provider
+        return None, ''
+    finally:
+        _tenant_var.reset(token)
 
 
 def provider_names(providers):
@@ -142,25 +188,31 @@ def _note_ai_error(text):
     _last_error.update(at=time.time(), text=str(text)[:200])
 
 
-def _call_other(cred, resolved, prompt, max_tokens, temperature, interactive, patient):
+def _call_other(cred, resolved, models, prompt, max_tokens, temperature, interactive, patient, prefix=''):
     """Gemini 以外的廠商：每個模型試 1 / 2 / 3 次 (即時 / 一般 / 耐心)，過載間隔拉長；金鑰錯誤或全部失敗則冷卻"""
-    if not patient and time.time() < _cooldowns.get(cred.id, 0):
+    if not patient and cooldown_left(cred.id):
         return None
     attempts = 1 if interactive else 3 if patient else 2
     reason = 'overload'
-    for model in resolved.models[:1] if interactive else resolved.models:
+    tid = _current_tenant()
+    for model in models[:1] if interactive else models:
         for attempt in range(1, attempts + 1):
+            started = time.time()
             try:
                 if llm_providers.PROVIDERS[resolved.provider][1] == 'anthropic':
-                    return llm_providers.call_anthropic(cred.key, model, prompt, max_tokens, interactive)
-                return llm_providers.call_openai_compatible(resolved.provider, cred.key, model, prompt, max_tokens,
-                                                            temperature, interactive)
+                    text = llm_providers.call_anthropic(cred.key, model, prompt, max_tokens, interactive, prefix=prefix)
+                else:
+                    text = llm_providers.call_openai_compatible(resolved.provider, cred.key, model, prompt, max_tokens,
+                                                                temperature, interactive, prefix=prefix)
+                ai_usage.record(tid, resolved.provider, model, True, getattr(text, 'usage', None), time.time() - started, cred.id)
+                return text
             except llm_providers.ProviderError as exc:
+                ai_usage.record(tid, resolved.provider, model, False, None, time.time() - started, cred.id)
                 _note_ai_error(f'{resolved.label} {model}：{exc.detail or exc.reason}')
                 logger.warning('%s (%s) 失敗：%s，第 %d 次', resolved.label, model, exc, attempt)
                 reason = exc.reason
                 if exc.reason == 'auth':
-                    _cooldowns[cred.id] = time.time() + COOLDOWN['auth']
+                    _set_cooldown(cred.id, COOLDOWN['auth'])
                     llm_providers.forget(cred)   # 金鑰可能被換掉：下次重新辨識
                     return None
                 if exc.reason == 'notfound':
@@ -170,7 +222,7 @@ def _call_other(cred, resolved, prompt, max_tokens, temperature, interactive, pa
                     break   # 換下一個模型
                 if attempt < attempts:
                     time.sleep(RETRY_DELAY * ((2, 5)[attempt - 1] if patient else 1))
-    _cooldowns[cred.id] = time.time() + COOLDOWN['rate' if reason == 'rate' else 'overload']
+    _set_cooldown(cred.id, COOLDOWN['rate' if reason == 'rate' else 'overload'])
     return None
 
 
@@ -180,11 +232,20 @@ def _note_error(status, detail, model):
 
 def _extract_text(payload):
     parts = (payload.get('candidates') or [{}])[0].get('content', {}).get('parts') or []
-    return (parts[0].get('text') or '').strip() if parts else ''
+    # 思考摘要 (thought) 不是回答
+    texts = [p.get('text') or '' for p in parts if isinstance(p, dict) and not p.get('thought')]
+    return ''.join(texts).strip()
+
+
+def _gemini_usage(payload):
+    u = payload.get('usageMetadata') or {}
+    cached = int(u.get('cachedContentTokenCount') or 0)
+    return {'input': max(0, int(u.get('promptTokenCount') or 0) - cached), 'cache_read': cached,
+            'output': int(u.get('candidatesTokenCount') or 0) + int(u.get('thoughtsTokenCount') or 0)}
 
 
 def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_mode=False, interactive=False, patient=False,
-                    models=None):
+                    models=None, prefix=''):
     """
     呼叫 Gemini；失敗回傳 None。
     每個模型最多試 2 次 (503 / 5xx / 逾時後等 RETRY_DELAY 秒重試)，主要模型失敗改用備援模型；
@@ -193,14 +254,20 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
     patient=True (店家按下後願意等的批次工作，例如 AI 翻譯菜單)：不理會冷卻、每個模型試 3 次並逐次拉長等待
     (RETRY_DELAY × 2 / 5 秒)；Gemini 尖峰時段的 503 通常幾秒內就會恢復。
     """
-    global _gemini_cooldown_until
     api_key = api_key or _api_key()
-    if not api_key or (not patient and time.time() < _gemini_cooldown_until):
+    cid = key_id(api_key)
+    if not api_key or (not patient and cooldown_left(cid)):
         return None
     body = {"contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": temperature}}
+    if prefix:   # 固定的前段：Gemini 會自動快取重複的開頭 (隱式快取)
+        body["systemInstruction"] = {"parts": [{"text": prefix}]}
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
+    tid = _current_tenant()
+
+    def done(model, ok, started, payload=None):
+        ai_usage.record(tid, 'gemini', model, ok, _gemini_usage(payload) if payload else None, time.time() - started, cid)
     reason = 'overload'
     models = list(models or gemini_models())
     models = models[:1] if interactive else models
@@ -211,10 +278,12 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
             time.sleep(RETRY_DELAY * ((2, 5)[attempt - 1] if patient else 1))
     for model in models:
         for attempt in attempts:
+            started = time.time()
             try:
                 resp = requests.post(GEMINI_URL.format(model=model), timeout=INTERACTIVE_TIMEOUT if interactive else GEMINI_TIMEOUT,
                                      headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, json=body)
             except requests.RequestException as e:
+                done(model, False, started)
                 _note_error('', f'連線異常 {e.__class__.__name__}', model)
                 logger.warning('Gemini (%s) 連線異常 (%s)，第 %d 次', model, e, attempt)
                 pause(attempt)
@@ -222,14 +291,17 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
             status = resp.status_code
             if status == 200:
                 try:
-                    text = _extract_text(resp.json())
-                except ValueError:
-                    text = ''
+                    payload = resp.json()
+                    text = _extract_text(payload)
+                except (ValueError, AttributeError):
+                    payload, text = None, ''
+                done(model, bool(text), started, payload if isinstance(payload, dict) else None)
                 if text:
                     _gemini_last.update(ok_at=time.time(), model=model, error='')
                     return text
                 _note_error(status, '回應沒有內容', model)
                 break
+            done(model, False, started)
             detail = ''
             try:
                 detail = (resp.json().get('error') or {}).get('message', '')[:160]
@@ -237,7 +309,7 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
                 pass
             _note_error(status, detail, model)
             if status in (401, 403):
-                _gemini_cooldown_until = time.time() + COOLDOWN['auth']
+                _set_cooldown(cid, COOLDOWN['auth'])
                 logger.warning('Gemini 金鑰無效或無權限 (%s)，冷卻 %d 秒', status, COOLDOWN['auth'])
                 return None
             if status == 429:
@@ -251,7 +323,7 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
                 continue
             logger.warning('Gemini (%s) 回應 %s %s，改用下一個模型', model, status, detail)
             break
-    _gemini_cooldown_until = time.time() + COOLDOWN[reason]
+    _set_cooldown(cid, COOLDOWN[reason])
     logger.warning('Gemini 全部模型失敗，冷卻 %d 秒後再試；改用下一層', COOLDOWN[reason])
     return None
 
@@ -346,8 +418,7 @@ def run_local_slm(prompt_text, max_tokens=100, system=None, stop=None, temperatu
 
 
 def ai_status():
-    """系統健康頁：Gemini 與本機模型目前的狀態"""
-    now = time.time()
+    """系統健康頁：各組雲端 AI 金鑰、本月用量與本機模型目前的狀態"""
     path = current_app.config.get('LOCAL_MODEL_PATH') or ''
     try:
         import llama_cpp  # noqa: F401
@@ -357,16 +428,19 @@ def ai_status():
     providers = []
     for cred in credentials():
         r = llm_providers.resolve(cred)
-        cooldown = _gemini_cooldown_until if r.provider == 'gemini' else _cooldowns.get(cred.id, 0)
-        providers.append({'source': cred.source, 'key': cred.masked, 'provider': r.label, 'models': r.models, 'auto': r.auto,
-                          'error': r.error, 'cooldown_seconds': max(0, int(cooldown - now))})
+        health = {m: ai_usage.health(cred.id, m) for m in dict.fromkeys(r.models + r.for_tier('fast'))}
+        providers.append({'source': cred.source, 'key': cred.masked, 'provider': r.label, 'models': r.models,
+                          'fast': r.for_tier('fast'), 'auto': r.auto, 'error': r.error, 'health': health,
+                          'cooldown_seconds': int(cooldown_left(cred.id))})
+    env_key = _api_key()
     return {
         'providers': providers,
         'last_error': last_ai_error(),
+        'usage': ai_usage.month_summary(_current_tenant()),
         'gemini': {
             'configured': has_api_key(),
             'models': gemini_models(),
-            'cooldown_seconds': max(0, int(_gemini_cooldown_until - now)),
+            'cooldown_seconds': int(cooldown_left(key_id(env_key))) if env_key else 0,
             'last_ok': _gemini_last['ok_at'],
             'last_error': _gemini_last['error'],
             'last_error_at': _gemini_last['error_at'],
@@ -405,26 +479,34 @@ def extract_json(text):
     return None
 
 
-def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None, interactive=False):
-    """結構化輸出：雲端 AI (依序備援) → 本機 SLM；回 (解析後的物件, 來源) 或 (None, '')。interactive 見 cloud_generate"""
-    text, source = cloud_generate(prompt, max_tokens=max_tokens, temperature=0.1, json_mode=True, interactive=interactive)
+def _joined(prefix, prompt):
+    return f'{prefix}\n{prompt}' if prefix else prompt
+
+
+def generate_json(prompt, max_tokens=600, system=None, local_max_tokens=None, interactive=False, prefix='', tier=None):
+    """結構化輸出：雲端 AI (依序備援) → 本機 SLM；回 (解析後的物件, 來源) 或 (None, '')。
+    interactive / prefix / tier 見 cloud_generate (prefix = 每次都一樣的前段，prompt = 這次才有的內容)"""
+    text, source = cloud_generate(prompt, max_tokens=max_tokens, temperature=0.1, json_mode=True, interactive=interactive,
+                                  prefix=prefix, tier=tier)
     data = extract_json(text)
     if data is not None:
         return data, source
-    data = extract_json(run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system,
+    data = extract_json(run_local_slm(_joined(prefix, prompt), max_tokens=local_max_tokens or max_tokens, system=system,
                                       stop=["<|im_end|>"], temperature=0.1))
     if data is not None:
         return data, 'local'
     return None, ''
 
 
-def generate_text(prompt, max_tokens=400, system=None, local_max_tokens=None, temperature=0.3, interactive=False):
-    """自由文字：雲端 AI (依序備援) → 本機 SLM；回 (文字, 來源) 或 (None, '')。interactive 見 cloud_generate"""
-    text, source = cloud_generate(prompt, max_tokens=max_tokens, temperature=temperature, interactive=interactive)
+def generate_text(prompt, max_tokens=400, system=None, local_max_tokens=None, temperature=0.3, interactive=False, prefix='',
+                  tier=None):
+    """自由文字：雲端 AI (依序備援) → 本機 SLM；回 (文字, 來源) 或 (None, '')。interactive / prefix / tier 見 cloud_generate"""
+    text, source = cloud_generate(prompt, max_tokens=max_tokens, temperature=temperature, interactive=interactive,
+                                  prefix=prefix, tier=tier)
     if text:
         return text, source
-    text = run_local_slm(prompt, max_tokens=local_max_tokens or max_tokens, system=system, temperature=temperature,
-                         lock_timeout=10.0 if interactive else 3.0)
+    text = run_local_slm(_joined(prefix, prompt), max_tokens=local_max_tokens or max_tokens, system=system,
+                         temperature=temperature, lock_timeout=10.0 if interactive else 3.0)
     if text:
         return text, 'local'
     return None, ''
@@ -454,7 +536,7 @@ def generate_menu_description(name, category):
     prompt = (f"你是一位專業的美食文案師。請直接輸出最終的繁體中文介紹，禁止輸出思考過程或英文。\n"
               f"為餐點【{name}】(分類：{category or '特色美饌'}) 撰寫 2~3 句、70 字以內的商品介紹，"
               f"聚焦口感層次、料理手法或風味特色，不要編號、引號或 Markdown。")
-    text = _clean_text(cloud_generate(prompt, max_tokens=1200, temperature=0.2)[0], min_len=12)
+    text = _clean_text(cloud_generate(prompt, max_tokens=1200, temperature=0.2, tier='fast')[0], min_len=12)
     if text is None:
         text = _clean_text(run_local_slm(f"請為餐點【{name}】（分類：{category or '美饌'}）撰寫一段 50 字以內的誘人繁體中文商品介紹，直接輸出文案。", 120), 12)
     return text or fallback_menu_description(name, category)
@@ -487,7 +569,8 @@ def _offline_advice(a):
 
 def _fetch_advice(app, tenant_id, analytics, signature, creds):
     with app.app_context():
-        text = _clean_text(cloud_generate(_advice_prompt(analytics), creds=creds)[0], 12) or _offline_advice(analytics)
+        text = _clean_text(cloud_generate(_advice_prompt(analytics), creds=creds, tier='fast', tenant_id=tenant_id)[0], 12) \
+            or _offline_advice(analytics)
     entry = _advice_cache[tenant_id]
     entry.update(advice=text, signature=signature, fetching=False)
 
@@ -524,6 +607,8 @@ def invalidate_ai_advice(tenant_id):
 TRANSLATE_BATCH = 10
 TRANSLATE_MAX_TOKENS = 8192
 TRANSLATE_LANGS = ('en', 'ja')
+TRANSLATE_WORKERS = 3   # 同時送出的批次數 (大菜單快很多；太多容易被限流)
+GLOSSARY_HINTS = 20     # 每批最多附幾條店家既有譯名
 
 
 def rule_translate(text: str) -> dict[str, str]:
@@ -534,13 +619,24 @@ def rule_translate(text: str) -> dict[str, str]:
     return {'en': hit[0], 'ja': hit[1]} if hit else {'en': '', 'ja': ''}
 
 
-def _translate_prompt(entries: list[dict]) -> str:
+def _translate_prompt(entries: list[dict], hint: str = '') -> str:
     rows = '\n'.join(f'{i + 1}. {e.get("name", "")}' + (f'｜{e["description"]}' if e.get('description') else '')
                      for i, e in enumerate(entries))
     return ('你是餐廳菜單翻譯。把下列繁體中文餐點名稱 (與「｜」之後的說明，若有) 翻成自然的英文與日文，'
             '保留品牌 / 專有名詞、數字與規格，不要加解釋。只輸出 JSON 陣列，每個元素形如 '
             '{"i": 編號, "name_en": "", "name_ja": "", "description_en": "", "description_ja": ""}，沒有說明時留空字串。\n'
-            f'{rows}')
+            f'{hint}{rows}')
+
+
+def _glossary_hint(batch: list[dict], glossary: dict) -> str:
+    """這批品名裡出現的店家既有譯名 (例如「牛肉麵」已譯為 Beef Noodle Soup)：請 AI 沿用，整份菜單用詞一致"""
+    names = ' '.join(e.get('name', '') for e in batch)
+    hits = sorted((zh for zh, v in glossary.items() if len(zh) >= 2 and zh in names and v.get('en') and v.get('ja')),
+                  key=len, reverse=True)[:GLOSSARY_HINTS]
+    if not hits:
+        return ''
+    return '店家已採用的譯名 (出現相同字詞時請沿用)：\n' + '\n'.join(
+        f'{zh} = {glossary[zh]["en"]} / {glossary[zh]["ja"]}' for zh in hits) + '\n要翻譯的項目：\n'
 
 
 def _parse_translations(text: str | None, count: int) -> dict[int, dict[str, str]]:
@@ -577,44 +673,71 @@ def _parse_translations(text: str | None, count: int) -> dict[int, dict[str, str
 TRANSLATE_TIME_BUDGET = 150   # 秒：一次按鈕最多花這麼久 (Gemini 尖峰 503 時重試)；剩下的再按一次只翻還沒翻的
 
 
-def translate_entries(entries: list[dict], stats: dict | None = None) -> tuple[list[dict[str, str]], str]:
-    """翻譯一批 {name, description}：回 ([{name_en, name_ja, description_en, description_ja}, ...], 來源 'gemini' / 'rules')。
-    Gemini 失敗 (沒金鑰 / 過載 / 格式錯) 的項目用規則字典，只有整字命中的才有值。
-    Gemini 過載 (503) 很常見且通常幾秒後恢復：每批耐心重試 (patient)，失敗的批次在其他批次之後再補跑一輪；
-    超過 TRANSLATE_TIME_BUDGET 就停止。stats (可省略) 會填入 {'ai': 雲端 AI 翻好的項數, 'fallback': 項數, 'provider': 廠商}。"""
+def translate_entries(entries: list[dict], stats: dict | None = None,
+                      glossary: dict | None = None) -> tuple[list[dict[str, str]], str]:
+    """翻譯一批 {name, description}：回 ([{name_en, name_ja, description_en, description_ja}, ...], 來源 'gemini' / 'rules'…)。
+    glossary：店家既有譯名 {中文: {'en', 'ja'}} —— 品名完全相同且沒有說明的直接沿用 (不送 AI)，其他的附在提示裡請 AI 沿用用詞。
+    雲端 AI 失敗 (沒金鑰 / 過載 / 格式錯) 的項目用店家譯名 / 規則字典，只有整字命中的才有值。
+    批次同時送出 TRANSLATE_WORKERS 批；過載 (503) 很常見且通常幾秒後恢復：每批耐心重試 (patient)，失敗的批次在其他批次之後
+    再補跑一輪；超過 TRANSLATE_TIME_BUDGET 就停止。
+    stats (可省略) 會填入 {'ai': 雲端 AI 翻好的項數, 'store': 沿用店家譯名的項數, 'fallback': 項數, 'provider': 廠商}。"""
+    glossary = glossary or {}
     results: list[dict[str, str]] = [{'name_en': '', 'name_ja': '', 'description_en': '', 'description_ja': ''} for _ in entries]
     done = [False] * len(entries)
+    reused = 0
+    for i, entry in enumerate(entries):
+        hit = glossary.get(entry.get('name', ''))
+        if hit and hit.get('en') and hit.get('ja') and not entry.get('description'):
+            results[i].update(name_en=hit['en'], name_ja=hit['ja'])
+            done[i], reused = True, reused + 1
     deadline = time.time() + TRANSLATE_TIME_BUDGET
     creds = credentials()
+    tid = _current_tenant()
+    app = current_app._get_current_object()  # type: ignore[attr-defined]
     providers: set[str] = set()
-    starts = list(range(0, len(entries), TRANSLATE_BATCH))
-    for round_no in range(2):
+    todo = [i for i in range(len(entries)) if not done[i]]
+    batches = [todo[n:n + TRANSLATE_BATCH] for n in range(0, len(todo), TRANSLATE_BATCH)]
+
+    def run(idx):
+        if time.time() > deadline:
+            return idx, {}, ''
+        batch = [entries[i] for i in idx]
+        with app.app_context():
+            text, source = cloud_generate(_translate_prompt(batch, _glossary_hint(batch, glossary)),
+                                          max_tokens=TRANSLATE_MAX_TOKENS, temperature=0.1, json_mode=True, patient=True,
+                                          creds=creds, tier='strong', tenant_id=tid)
+        return idx, _parse_translations(text, len(batch)), source
+    for _round in range(2):
+        if not batches:
+            break
+        if TRANSLATE_WORKERS > 1 and len(batches) > 1:
+            with ThreadPoolExecutor(max_workers=min(TRANSLATE_WORKERS, len(batches)), thread_name_prefix='ai-translate') as pool:
+                outcomes = list(pool.map(run, batches))
+        else:
+            outcomes = [run(b) for b in batches]
         failed = []
-        for start in starts:
-            if time.time() > deadline:
-                failed.append(start)
-                continue
-            batch = entries[start:start + TRANSLATE_BATCH]
-            text, source = cloud_generate(_translate_prompt(batch), max_tokens=TRANSLATE_MAX_TOKENS, temperature=0.1,
-                                          json_mode=True, patient=True, creds=creds)
-            parsed = _parse_translations(text, len(batch))
+        for idx, parsed, source in outcomes:
             if parsed:
                 providers.add(source)
-            for i in range(len(batch)):
-                got = parsed.get(i)
+            else:
+                failed.append(idx)
+            for n, i in enumerate(idx):
+                got = parsed.get(n)
                 if got and got.get('name_en'):
-                    results[start + i], done[start + i] = got, True
-            if not parsed:
-                failed.append(start)
+                    results[i], done[i] = got, True
         if not failed or not has_api_key() or time.time() > deadline:
             break
-        starts = failed
-        time.sleep(RETRY_DELAY * 5)   # 補跑前再等一下，讓 Gemini 的尖峰過去
+        batches = failed
+        time.sleep(RETRY_DELAY * 5)   # 補跑前再等一下，讓 AI 服務的尖峰過去
     for i, entry in enumerate(entries):
         if not done[i]:
-            rule = rule_translate(entry.get('name', ''))
+            hit = glossary.get(entry.get('name', ''))
+            rule = {'en': hit['en'], 'ja': hit['ja']} if hit and hit.get('en') and hit.get('ja') \
+                else rule_translate(entry.get('name', ''))
             results[i].update(name_en=rule['en'], name_ja=rule['ja'])
-    ai_count = sum(done)
+    ai_count = sum(done) - reused
     if stats is not None:
-        stats.update(ai=ai_count, fallback=len(entries) - ai_count, provider=provider_names(providers))
-    return results, (sorted(providers)[0] if providers else 'ai') if ai_count else 'rules'
+        stats.update(ai=ai_count, store=reused, fallback=len(entries) - ai_count - reused, provider=provider_names(providers))
+    if ai_count:
+        return results, sorted(providers)[0] if providers else 'ai'
+    return results, 'store' if reused else 'rules'

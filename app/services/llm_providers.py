@@ -5,15 +5,18 @@
 辨識廠商：先看金鑰開頭 (sk-ant- = Anthropic、gsk_ = Groq…)；開頭不唯一 (例如 sk- 可能是 OpenAI 或 DeepSeek) 時，
 依序呼叫各家的「模型清單」API，接受這組金鑰的就是。
 挑模型：各家的模型清單 + 挑選規則 (寫「系列」不寫死版本，新版推出自動換)；設定裡有指定模型時以指定為準。
+每組金鑰挑兩檔：models (主力，翻譯菜單等店家願意等的工作) 與 fast (快速便宜，客服 / 語音點餐 / 短文案)。
 結果快取 24 小時 (失敗快取 10 分鐘)；呼叫回「模型不存在」時重新查一次。
 Anthropic (Claude) 走官方 anthropic SDK；其餘多為 OpenAI 相容格式 (/chat/completions)，以 requests 呼叫。
+多行程部署 (設定 REDIS_URL) 時，辨識結果、冷卻與模型健康紀錄經 Redis 共用 (shared_*)；沒有 Redis 時只存在本行程記憶體。
 """
 import hashlib
+import json
 import logging
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 
 import requests
 
@@ -72,10 +75,14 @@ class Credential:
 @dataclass
 class Resolved:
     provider: str = ''
-    models: list = field(default_factory=list)   # [主要, 備援...]
+    models: list = field(default_factory=list)   # 主力 [主要, 備援...]
     error: str = ''
     at: float = 0.0
     auto: bool = True
+    fast: list = field(default_factory=list)     # 快速便宜 [主要, 備援...]；空 = 同主力
+
+    def for_tier(self, tier):
+        return list(self.fast or self.models) if tier == 'fast' else list(self.models)
 
     @property
     def label(self):
@@ -86,8 +93,100 @@ class Resolved:
         return bool(self.provider and self.models)
 
 
+class Reply(str):
+    """模型的回答文字，另外帶 usage = {'input', 'output', 'cache_read', 'cache_write'} (token 數，統計費用用)"""
+    usage: dict = {}
+
+    @classmethod
+    def of(cls, text, usage=None):
+        reply = cls(text)
+        reply.usage = {k: int(v or 0) for k, v in (usage or {}).items()}
+        return reply
+
+
 _cache: dict[str, Resolved] = {}
 _lock = threading.Lock()
+
+
+# ---------------------------------------------------------------------------
+# 多行程共用狀態 (REDIS_URL)：沒有 Redis 或連不上時回 None / 不做事，呼叫端只用本行程記憶體
+# ---------------------------------------------------------------------------
+_redis = None
+_redis_url = None
+
+
+def _shared():
+    global _redis, _redis_url
+    try:
+        from flask import current_app
+        url = current_app.config.get('REDIS_URL') or ''
+    except RuntimeError:   # 沒有 app context
+        return _redis
+    if url != _redis_url:
+        _redis_url, _redis = url, None
+        if url:
+            try:
+                import redis
+                _redis = redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+                _redis.ping()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning('AI 共用狀態無法使用 Redis (%s)，只存在本行程', exc)
+                _redis = None
+    return _redis
+
+
+def shared_get(key):
+    r = _shared()
+    if r is None:
+        return None
+    try:
+        raw = r.get(f'ai:{key}')
+        return json.loads(raw) if raw else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def shared_set(key, value, ttl):
+    r = _shared()
+    if r is not None:
+        try:
+            r.set(f'ai:{key}', json.dumps(value), ex=max(1, int(ttl)))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def shared_delete(key):
+    r = _shared()
+    if r is not None:
+        try:
+            r.delete(f'ai:{key}')
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def shared_push(key, value, maxlen, ttl):
+    """清單左端加入一筆 (保留最新 maxlen 筆)"""
+    r = _shared()
+    if r is not None:
+        try:
+            pipe = r.pipeline()
+            pipe.lpush(f'ai:{key}', json.dumps(value))
+            pipe.ltrim(f'ai:{key}', 0, maxlen - 1)
+            pipe.expire(f'ai:{key}', int(ttl))
+            pipe.execute()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def shared_list(key):
+    """回清單 (最新的在前)；沒有 Redis 回 None"""
+    r = _shared()
+    if r is None:
+        return None
+    try:
+        return [json.loads(x) for x in r.lrange(f'ai:{key}', 0, -1)]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def candidates(key):
@@ -185,13 +284,53 @@ def pick_models(provider, models):
     return picks
 
 
+def pick_fast(provider, models, strong):
+    """快速便宜的一檔 (客服、語音點餐、短文案)：Gemini 最新 Flash-Lite、Claude 最新 Haiku、OpenAI 最新 gpt-*-nano / mini；
+    找不到時沿用主力的順序反過來 (備援通常是較小的模型)"""
+    chat = [m for m in models if not _NOT_CHAT.search(m['id']) and 'preview' not in m['id']]
+    picks = []
+    if provider == 'gemini':
+        picks = [_newest(chat, r'gemini-\d+(?:\.\d+)*-flash-lite'), _newest(chat, r'gemini-\d+(?:\.\d+)*-flash')]
+    elif provider == 'anthropic':
+        picks = [_newest_created(chat, 'claude-haiku-'), _newest_created(chat, 'claude-sonnet-')]
+    elif provider == 'openai':
+        picks = [_newest(chat, r'gpt-\d+(?:\.\d+)*-nano'), _newest(chat, r'gpt-\d+(?:\.\d+)*-mini')]
+    elif provider == 'mistral':
+        picks = [m for m in ('mistral-small-latest', 'mistral-large-latest') if m in {x['id'] for x in models}]
+    picks = [p for p in dict.fromkeys(picks) if p]
+    if not picks:
+        picks = list(reversed(strong)) if provider in ('gemini', 'anthropic') else list(strong)
+    return picks
+
+
+def _to_shared(result):
+    return asdict(result)
+
+
+def _from_shared(data):
+    try:
+        return Resolved(**{k: data[k] for k in ('provider', 'models', 'error', 'at', 'auto', 'fast') if k in data})
+    except (TypeError, KeyError):
+        return None
+
+
 def resolve(cred, force=False):
     """辨識金鑰的廠商與要用的模型 (快取)；回 Resolved (error 不為空代表無法使用)"""
     now = time.time()
+
+    def fresh(r):
+        return r is not None and now - r.at < (DETECT_TTL if r.ok else ERROR_TTL)
     with _lock:
         hit = _cache.get(cred.id)
-    if hit is not None and not force and now - hit.at < (DETECT_TTL if hit.ok else ERROR_TTL):
+    if not force and fresh(hit):
         return hit
+    if not force:   # 其他行程已經辨識過 (Redis)
+        other = shared_get(f'detect:{cred.id}')
+        other = _from_shared(other) if isinstance(other, dict) else None
+        if fresh(other):
+            with _lock:
+                _cache[cred.id] = other
+            return other
     result, errors = Resolved(at=now), []
     names = (cred.provider,) if cred.provider in PROVIDERS else candidates(cred.key)
     if cred.provider in PROVIDERS and cred.model:   # 廠商與模型都已指定：不用查模型清單
@@ -211,6 +350,8 @@ def resolve(cred, force=False):
         result.provider = provider
         result.models = [m.strip() for m in cred.model.split(",") if m.strip()] if cred.model else pick_models(provider, models)
         result.auto = not cred.model
+        # 指定模型時兩檔都用指定的 (店家明確選了就照辦)
+        result.fast = [] if cred.model else pick_fast(provider, models, result.models)
         if not result.models:
             result.error = '找不到可用的文字模型 (請在設定指定模型)'
         break
@@ -218,8 +359,10 @@ def resolve(cred, force=False):
         result.error = '；'.join(errors) or '無法辨識金鑰'
     with _lock:
         _cache[cred.id] = result
+    shared_set(f'detect:{cred.id}', _to_shared(result), DETECT_TTL if result.ok else ERROR_TTL)
     if result.ok:
-        logger.info('AI 金鑰 %s (%s)：%s，模型 %s', cred.masked, cred.source, result.label, ' → '.join(result.models))
+        logger.info('AI 金鑰 %s (%s)：%s，模型 %s (快速 %s)', cred.masked, cred.source, result.label, ' → '.join(result.models),
+                    ' → '.join(result.for_tier('fast')))
     else:
         logger.warning('AI 金鑰 %s (%s) 無法使用：%s', cred.masked, cred.source, result.error)
     return result
@@ -228,6 +371,7 @@ def resolve(cred, force=False):
 def forget(cred):
     with _lock:
         _cache.pop(cred.id, None)
+    shared_delete(f'detect:{cred.id}')
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +404,15 @@ _CLAUDE_FALLBACK_MODELS = re.compile(r'claude-(opus-5|fable-5-1|sonnet-5-5)')
 _CLAUDE_EFFORT_MODELS = re.compile(r'claude-(opus|sonnet|haiku|fable)-[5-9]')
 
 
-def call_anthropic(key, model, prompt, max_tokens, interactive):
+def call_anthropic(key, model, prompt, max_tokens, interactive, prefix=''):
+    """prefix：每次都一樣的前段 (客服的店家資訊與菜單…)，放在 system 並標記提示快取，重複的部分只收約一成費用"""
     anthropic = _anthropic()
     client = anthropic.Anthropic(api_key=key, max_retries=0, timeout=12.0 if interactive else 120.0)
     # 思考 (thinking) 的用量也算在 max_tokens 裡：太小會在思考完之前就被截斷而沒有回答
     kwargs = {'model': model, 'max_tokens': max(max_tokens, 4000 if interactive else 16000),
               'messages': [{'role': 'user', 'content': prompt}]}
+    if prefix:
+        kwargs['system'] = [{'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral'}}]
     if interactive and _CLAUDE_EFFORT_MODELS.search(model):
         kwargs['output_config'] = {'effort': 'low'}   # 即時對話：顧客在等，少想一點
     try:
@@ -281,12 +428,17 @@ def call_anthropic(key, model, prompt, max_tokens, interactive):
     text = ''.join(b.text for b in resp.content if b.type == 'text').strip()
     if not text:
         raise ProviderError('other', f'回應沒有內容 ({resp.stop_reason})')
-    return text
+    u = resp.usage
+    return Reply.of(text, {'input': getattr(u, 'input_tokens', 0), 'output': getattr(u, 'output_tokens', 0),
+                           'cache_read': getattr(u, 'cache_read_input_tokens', 0) or 0,
+                           'cache_write': getattr(u, 'cache_creation_input_tokens', 0) or 0})
 
 
-def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature, interactive):
+def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature, interactive, prefix=''):
+    """prefix 放在 system 訊息 (固定的前段在最前面，OpenAI / DeepSeek 等會自動快取重複的開頭)"""
     base = PROVIDERS[provider][2]
-    body = {'model': model, 'messages': [{'role': 'user', 'content': prompt}]}
+    body = {'model': model, 'messages': ([{'role': 'system', 'content': prefix}] if prefix else [])
+            + [{'role': 'user', 'content': prompt}]}
     if provider == 'openai':
         # OpenAI 新模型改用 max_completion_tokens，推理模型不接受自訂 temperature
         body['max_completion_tokens'] = max(max_tokens, 4000)
@@ -307,7 +459,10 @@ def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature
     text = ((choices[0].get('message') or {}).get('content') or '').strip()
     if not text:
         raise ProviderError('other', '回應沒有內容')
-    return text
+    u = data.get('usage') or {}
+    cached = int((u.get('prompt_tokens_details') or {}).get('cached_tokens') or u.get('prompt_cache_hit_tokens') or 0)
+    return Reply.of(text, {'input': max(0, int(u.get('prompt_tokens') or 0) - cached), 'output': u.get('completion_tokens'),
+                           'cache_read': cached})
 
 
 # ---------------------------------------------------------------------------
@@ -327,12 +482,15 @@ def test_settings(cfg):
             lines.append(f'金鑰 {n}：{r.error or "無法辨識"}')
             continue
         how = '自動挑選' if r.auto else '指定'
-        text, _source = ai_service.cloud_generate('只回覆兩個字：正常', max_tokens=50, patient=False, creds=[cred])
+        models = f'模型 {" → ".join(r.models)}'
+        if r.for_tier('fast') != r.models:
+            models += f'，快速 {" → ".join(r.for_tier("fast"))}'
+        text, _source = ai_service.cloud_generate('只回覆兩個字：正常', max_tokens=50, patient=False, creds=[cred], tier='fast')
         if text:
             ok += 1
-            lines.append(f'金鑰 {n}：{r.label}，模型 {" → ".join(r.models)} ({how})，回應正常')
+            lines.append(f'金鑰 {n}：{r.label}，{models} ({how})，回應正常')
         else:
-            lines.append(f'金鑰 {n}：{r.label}，模型 {" → ".join(r.models)} ({how})，但呼叫失敗：{ai_service.last_ai_error()}')
+            lines.append(f'金鑰 {n}：{r.label}，{models} ({how})，但呼叫失敗：{ai_service.last_ai_error()}')
     if not lines:
         raise AppError('尚未填寫任何金鑰')
     if not ok:

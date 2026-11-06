@@ -43,7 +43,7 @@ def test_llm_fallback_only_when_rules_find_nothing(app, monkeypatch):
     calls = []
 
     def fake_json(prompt, **kw):
-        calls.append(prompt)
+        calls.append((kw.get('prefix') or '') + prompt)   # 菜單在固定前段 (prefix)，顧客的話在後段
         return [{'name': '珍珠奶荼', 'qty': 2, 'size': '大杯', 'sugar': '微糖', 'ice': '去冰'}, {'name': '火星漢堡', 'qty': 1},
                 'junk', {'name': '炙燒起司牛肉堡', 'qty': '三', 'addons': ['加起司']}], 'gemini'
     monkeypatch.setattr(ai_service, 'generate_json', fake_json)

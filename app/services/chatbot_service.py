@@ -211,15 +211,16 @@ def _llm_answer(question, history, cfg, items, shop_name):
     name = cfg.get('bot_name') or '小幫手'
     convo = '\n'.join(f'{"顧客" if h.get("role") == "user" else name}：{str(h.get("text") or "")[:200]}'
                       for h in (history or [])[-MAX_HISTORY:] if isinstance(h, dict))
-    prompt = (f'你是「{shop_name}」的客服助理「{name}」，用台灣繁體中文、2~3 句內友善回答顧客。'
+    # 店家資訊與菜單每次都一樣 (prefix)：放在最前面讓 AI 服務的提示快取生效，重複的部分費用大幅降低、回應也較快
+    prefix = (f'你是「{shop_name}」的客服助理「{name}」，用台灣繁體中文、2~3 句內友善回答顧客。'
               '只能依據下面的店家資訊與菜單回答；資料裡沒有的事 (例如食材細節、過敏原) 不要猜，請顧客洽櫃檯或撥打店家電話。'
               f'如果問題和本店的餐點、點餐、付款、會員點數、營業資訊或訂單無關 (例如閒聊、天氣、新聞、寫作業、程式)，只輸出 {OFF_TOPIC_MARK}。'
               '不要承諾折扣或訂位，不要輸出 Markdown、星號、井號或條列符號。\n'
               f'店家資訊：{(cfg.get("store_info") or "").strip() or "未提供"}\n'
               f'常見問答：{" / ".join(f"{q}：{a}" for q, a in _faq_entries(cfg)) or "無"}\n'
-              f'菜單 (分類|品名|價格|標示)：\n{_menu_summary(items)}\n'
-              + (f'之前的對話：\n{convo}\n' if convo else '') + f'顧客問：{question}\n回答：')
-    text, source = ai_service.generate_text(prompt, max_tokens=300, local_max_tokens=160, interactive=True,
+              f'菜單 (分類|品名|價格|標示)：\n{_menu_summary(items)}')
+    prompt = (f'之前的對話：\n{convo}\n' if convo else '') + f'顧客問：{question}\n回答：'
+    text, source = ai_service.generate_text(prompt, max_tokens=300, local_max_tokens=160, interactive=True, prefix=prefix,
                                             system=f'你是餐廳「{shop_name}」的客服助理，用繁體中文簡短回答，'
                                                    f'不確定就請顧客洽櫃檯；與本店無關的問題只輸出 {OFF_TOPIC_MARK}。')
     return clean_llm_text(text), source

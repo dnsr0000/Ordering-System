@@ -1,5 +1,4 @@
 """客服助手：Gemini 503 立即改用本機模型、只回答本店相關問題 (你是否要問)、清除 Markdown、轉接真人客服與後台回覆"""
-import time
 
 import requests
 
@@ -32,7 +31,7 @@ def test_interactive_503_switches_to_local_model_without_waiting(app, gemini, mo
         assert ai_service.generate_text('牛肉產地？', interactive=True) == ('本機回答', 'local')
         assert calls == ['gemini-main'], '即時對話不重試、不換備援模型'
         assert slept == [], '不等待重試'
-        assert ai_service._gemini_cooldown_until > time.time(), '進入冷卻：接下來的問題直接由本機模型回答'
+        assert ai_service.cooldown_left(ai_service.key_id('test-key-123')) > 0, '進入冷卻：接下來的問題直接由本機模型回答'
         assert local[0]['lock_timeout'] >= 10
         assert ai_service.generate_text('第二題', interactive=True) == ('本機回答', 'local')
         assert calls == ['gemini-main'], '冷卻期間不再呼叫 Gemini'
@@ -76,7 +75,8 @@ def test_off_topic_questions_get_refusal_did_you_mean_and_handoff(app, store_set
         r = chatbot_service.answer('今天台北天氣如何？')
         assert r['source'] == 'off_topic' and '只能回答' in r['answer'] and r['handoff'] is True
         assert len(r['did_you_mean']) == 3 and all(q.endswith('？') for q in r['did_you_mean'])
-        assert 'OFF_TOPIC' in replies[0][0] and replies[0][1]['interactive'] is True, '提示要求無關問題回標記、即時模式'
+        assert 'OFF_TOPIC' in replies[0][1]['prefix'] and replies[0][1]['interactive'] is True, '提示要求無關問題回標記、即時模式'
+        assert '菜單 (分類|品名|價格|標示)' in replies[0][1]['prefix'] and '今天台北天氣如何' in replies[0][0] and '今天台北天氣如何' not in replies[0][1]['prefix'], '菜單在固定前段 (可快取)，問題在後段'
         dym = chatbot_service.did_you_mean('客服烏龍綠的作者是誰', chatbot_service._items(), chatbot_service.config())
         assert dym[:2] == ['客服烏龍綠多少錢？', '客服烏龍綠有什麼過敏原？'], '提到的餐點優先'
         assert chatbot_service.did_you_mean('停車要錢嗎', [], chatbot_service.config())[0] == '停車？', '常見問答的關鍵字也是候選'

@@ -14,7 +14,7 @@ def test_allergen_and_menu_answers_are_retrieval_only(app, store_settings, monke
     make_item(app, '客服蔬菜咖哩', price=110, category='客服主餐', diet='vegan', is_recommended=True, stock=10)
     make_item(app, '客服拿鐵', price=60, category='客服飲料', allergens='milk', stock=10, description='濃郁奶香')
     called = []
-    monkeypatch.setattr(ai_service, 'generate_text', lambda *a, **k: (called.append(a) or ('AI 亂講', 'gemini')))
+    monkeypatch.setattr(ai_service, 'generate_text', lambda *a, **k: (called.append(a[0] + (k.get('prefix') or '')) or ('AI 亂講', 'gemini')))
     with app.test_request_context('/'):
         from app.models.tenant import Tenant
         from app.tenant_context import _use_tenant
@@ -44,7 +44,7 @@ def test_allergen_and_menu_answers_are_retrieval_only(app, store_settings, monke
         assert called == [], '以上都不該呼叫 LLM'
         r = chatbot_service.answer('你們的牛肉是哪裡來的？')
         assert r['source'] == 'llm' and r['answer'] == 'AI 亂講' and len(called) == 1
-        assert '客服蝦仁炒飯' in called[0][0] and '11:00' in called[0][0], 'LLM 提示包含菜單與店家資訊'
+        assert '客服蝦仁炒飯' in called[0] and '11:00' in called[0], 'LLM 提示包含菜單與店家資訊'
         monkeypatch.setattr(ai_service, 'generate_text', lambda *a, **k: (None, ''))
         r = chatbot_service.answer('你們的牛肉是哪裡來的？')
         assert r['source'] == 'fallback' and '櫃檯' in r['answer']

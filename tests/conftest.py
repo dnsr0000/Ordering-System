@@ -120,6 +120,11 @@ def _per_test_isolation(app, monkeypatch):
     limiter.reset()
     limiter.enabled = True
     monkeypatch.setattr(auth_routes, 'extract_feature', deterministic_face)
+    # 雲端 AI 的冷卻、模型健康、用量與辨識快取都是模組層級狀態：每個測試從乾淨的狀態開始
+    from app.services import ai_service, ai_usage, llm_providers
+    ai_service._cooldowns.clear()
+    ai_usage.reset()
+    llm_providers._cache.clear()
     yield
 
 

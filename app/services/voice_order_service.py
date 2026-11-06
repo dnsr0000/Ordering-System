@@ -240,7 +240,8 @@ def rule_parse(text, items, addons):
     return lines, leftover
 
 
-def _llm_prompt(text, items, addons):
+def _llm_prefix(items, addons):
+    """每次都一樣的前段 (說明 + 菜單 + 加料)：放在最前面讓 AI 服務的提示快取生效"""
     names = '、'.join(i.name for i in items[:200])
     addon_names = '、'.join(m['name'] for m in addons) or '無'
     return ('你是餐廳點餐機的語音助理。顧客說了一句話，請從「菜單」中找出顧客要點的品項與數量，'
@@ -248,12 +249,16 @@ def _llm_prompt(text, items, addons):
             '"sugar": 甜度或空字串, "ice": 冰塊或空字串, "spicy": 辣度或空字串, "addons": [加料名稱]}。'
             '甜度只能是 全糖/半糖/微糖/無糖，冰塊只能是 正常冰/少冰/去冰/熱飲，辣度只能是 不辣/微辣/中辣/大辣；'
             '聽不出來或菜單沒有的品項不要編造，直接略過。只輸出 JSON，不要其他文字。\n'
-            f'菜單：{names}\n加料：{addon_names}\n顧客說：{text}')
+            f'菜單：{names}\n加料：{addon_names}')
+
+
+def _llm_prompt(text, items, addons):
+    return f'{_llm_prefix(items, addons)}\n顧客說：{text}'
 
 
 def llm_parse(text, items, addons):
     """LLM 解析 (雲端 AI → 本機)；回 (lines, 沒對到菜單的名稱, 來源)"""
-    data, source = ai_service.generate_json(_llm_prompt(_norm(text), items, addons), max_tokens=500,
+    data, source = ai_service.generate_json(f'顧客說：{_norm(text)}', max_tokens=500, prefix=_llm_prefix(items, addons),
                                             system='你是餐廳點餐助理，只輸出 JSON。', local_max_tokens=300, interactive=True)
     if not isinstance(data, list):
         return [], [], source

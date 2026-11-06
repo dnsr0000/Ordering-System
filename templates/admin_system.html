@@ -28,11 +28,23 @@
             <div class="small text-white-50" id="aiProviders">
                 {% for p in ai.providers %}
                 <div>{{ loop.index }}. {{ p.provider }} <span class="text-white-50">({{ p.key }}，{{ '系統設定金鑰 ' ~ p.source[9:] if p.source.startswith('settings:') else '.env ' ~ p.source[4:] }})</span>：
-                    {% if p.error %}<span class="text-danger">{{ p.error[:120] }}</span>{% else %}{{ p.models | join(' → ') }} {{ '(自動挑選)' if p.auto else '(指定)' }}{% if p.cooldown_seconds %} <span class="text-warning">冷卻中 {{ p.cooldown_seconds }} 秒</span>{% endif %}{% endif %}</div>
+                    {% if p.error %}<span class="text-danger">{{ p.error[:120] }}</span>{% else %}
+                    {%- macro model_list(names, health) -%}
+                        {%- for m in names -%}{{ ' → ' if not loop.first }}{{ m }}{% set h = health.get(m) %}{% if h and h.failures %} <span class="text-warning">(近 10 分鐘失敗 {{ h.failures }}/{{ h.calls }})</span>{% elif h and h.avg_seconds %} <span class="text-white-50">({{ h.avg_seconds }} 秒)</span>{% endif %}{%- endfor -%}
+                    {%- endmacro -%}
+                    主力 {{ model_list(p.models, p.health) }}{% if p.fast != p.models %}；快速 {{ model_list(p.fast, p.health) }}{% endif %} {{ '(自動挑選)' if p.auto else '(指定)' }}{% if p.cooldown_seconds %} <span class="text-warning">冷卻中 {{ p.cooldown_seconds }} 秒</span>{% endif %}{% endif %}</div>
                 {% else %}
                 <div>到「系統設定 → AI 服務」貼上金鑰 (支援 Gemini、Claude、OpenAI、DeepSeek、Groq、xAI、OpenRouter、Mistral)</div>
                 {% endfor %}
                 {% if ai.last_error %}<div class="text-danger">最近錯誤：{{ ai.last_error[:120] }}</div>{% endif %}
+                {% set u = ai.usage %}
+                {% if u and (u.calls or u.budget) %}
+                <div class="mt-1" id="aiUsage">本月 ({{ u.month }}) 呼叫 {{ u.calls }} 次，估計 <span class="{{ 'text-danger' if u.over_budget else 'text-white' }}">US${{ '%.2f' | format(u.cost) }}</span>{% if u.budget %} / 預算 US${{ u.budget }}{% if u.over_budget %} <span class="text-danger">已達上限，暫停雲端 AI</span>{% endif %}{% endif %}
+                    {% if u.rows %}<details class="d-inline"><summary class="d-inline text-info" style="cursor:pointer">明細</summary>
+                    {% for r in u.rows %}<div>{{ r.provider }} {{ r.model }}：{{ r.calls }} 次{% if r.failures %} (失敗 {{ r.failures }}){% endif %}、{{ '{:,}'.format(r.tokens) }} token{% if r.cache_read %} (快取 {{ '{:,}'.format(r.cache_read) }}){% endif %}、US${{ '%.4f' | format(r.cost) }}</div>{% endfor %}
+                    <div class="text-white-50">依公開牌價估算，實際以各家帳單為準</div></details>{% endif %}
+                </div>
+                {% endif %}
             </div>
         {% endcall %}
         {% call stat_tile('AI：本機模型 (Qwen)', '已載入' if ai.local.loaded else ('未安裝套件' if not ai.local.installed else ('找不到模型檔' if not ai.local.model_exists else ('載入失敗' if ai.local.error else '尚未使用 (第一次需要時載入)'))),
