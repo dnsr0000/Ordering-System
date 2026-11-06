@@ -10,12 +10,6 @@
 <main class="container-fluid px-4 py-4" id="menu-page">
     {% call page_header('菜單與套餐', 'bi-grid-fill', '品項、套餐、庫存與紅利兌換；每個品項的「進階」可設定供應時段、通路價、過敏原、規格與英日文名稱',
                         back_url=url_for('settings_admin.edit', key='menu'), back_label='菜單顯示設定') %}
-    <button class="btn btn-outline-info btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#unifiedImportModal">
-        <i class="bi bi-file-earmark-excel me-1"></i> 匯入 Excel 菜單
-    </button>
-    <button class="btn btn-outline-light btn-sm fw-bold" type="button" data-bs-toggle="modal" data-bs-target="#unifiedExportModal">
-        <i class="bi bi-box-arrow-up-right me-1"></i> 匯出資料
-    </button>
     <button class="btn btn-warning btn-sm fw-bold text-dark" type="button" data-bs-toggle="modal" data-bs-target="#addItemModal">
         <i class="bi bi-plus-lg me-1"></i> 新增品項
     </button>
@@ -277,7 +271,7 @@
     </section>
 </main>
 {% include "_menu_modals.html" %}
-{% include "_data_modals.html" %}
+{# 匯入 / 匯出統一放在後台總覽頂欄 (admin.html)，這裡不重複 #}
 {% endblock %}
 
 {% block page_data %}

@@ -84,10 +84,11 @@ def test_dashboard_home_tab_and_pending_items(app, admin_client, manager_client)
 
 
 def test_menu_and_member_pages(app, admin_client):
-    """菜單、會員各自一頁 (品項清單、套餐、匯入與進階設定同一頁)"""
+    """菜單、會員各自一頁 (品項清單、套餐與進階設定同一頁；匯入 / 匯出只在後台總覽)"""
     menu = admin_client.get('/admin/menu').get_data(as_text=True)
     assert 'id="menuItemTable"' in menu and 'id="comboTable"' in menu and 'id="addItemModal"' in menu and 'menuTranslateForm' in menu
-    assert 'id="unifiedImportModal"' in menu and 'name="avail_start"' in menu, '品項清單、套餐、匯入與進階設定同一頁'
+    assert 'name="avail_start"' in menu, '品項清單、套餐與進階設定同一頁'
+    assert 'unifiedImportModal' not in menu and 'unifiedExportModal' not in menu, '匯入 / 匯出只放在後台總覽'
     assert admin_client.get('/admin/members').status_code == 200
     members = admin_client.get('/admin/members').get_data(as_text=True)
     assert 'id="memberTable"' in members and 'id="memberTiersCard"' in members and 'id="editUserModal"' in members
