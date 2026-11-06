@@ -117,7 +117,8 @@ async function parse() {
         parsed = (res.lines || []).map((l) => ({ ...l, quantity: Math.max(1, Number(l.quantity) || 1) }));
         $('voiceHeard').textContent = `${t('voice_heard', '聽到：')}${res.text || text}`;
         $('voiceHeard').classList.remove('d-none');
-        $('voiceSourceNote').classList.toggle('d-none', !(res.source === 'gemini' || res.source === 'local'));
+        // 規則以外 (雲端 AI 或本機模型) 解析的結果要提醒顧客確認
+        $('voiceSourceNote').classList.toggle('d-none', !res.source || res.source === 'rules' || res.source === 'none');
         const unmatched = res.unmatched || [];
         $('voiceUnmatched').textContent = unmatched.length ? `${t('voice_unmatched', '沒聽懂：')}${unmatched.join('、')}` : '';
         $('voiceUnmatched').classList.toggle('d-none', unmatched.length === 0);

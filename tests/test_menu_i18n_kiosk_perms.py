@@ -17,6 +17,14 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 # ---------------------------------------------------------------------------
 # AI 翻譯
 # ---------------------------------------------------------------------------
+
+def _cloud(fn):
+    """把回傳文字的假 Gemini 包成 cloud_generate 的 (文字, 來源)"""
+    def call(prompt, **kw):
+        text = fn(prompt, **kw)
+        return (text, 'gemini') if text else (None, '')
+    return call
+
 def test_translate_entries_parses_gemini_json_and_falls_back_to_rules(app, monkeypatch):
     from app.services import ai_service
     calls = []
@@ -25,14 +33,14 @@ def test_translate_entries_parses_gemini_json_and_falls_back_to_rules(app, monke
         calls.append(prompt)
         return ('```json\n[{"i": 1, "name_en": "Beef Burger", "name_ja": "ビーフバーガー", "description_en": "Juicy", "description_ja": "ジューシー"},'
                 ' {"i": 2, "name_en": "", "name_ja": ""}]\n```')
-    monkeypatch.setattr(ai_service, 'gemini_generate', fake_gemini)
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(fake_gemini))
     with app.app_context():
         results, source = ai_service.translate_entries([{'name': '牛肉堡', 'description': '多汁'}, {'name': '飲料', 'description': ''}])
     assert source == 'gemini' and len(calls) == 1 and '牛肉堡｜多汁' in calls[0]
     assert results[0] == {'name_en': 'Beef Burger', 'name_ja': 'ビーフバーガー', 'description_en': 'Juicy', 'description_ja': 'ジューシー'}
     assert results[1]['name_en'] == 'Drinks' and results[1]['name_ja'] == 'ドリンク', '第 2 筆 Gemini 沒翻 → 規則字典'
     # 沒有金鑰 / 回應壞掉：整批走規則字典
-    monkeypatch.setattr(ai_service, 'gemini_generate', lambda *a, **k: 'not json')
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(lambda *a, **k: 'not json'))
     with app.app_context():
         results, source = ai_service.translate_entries([{'name': '主餐'}, {'name': '招牌和牛堡'}])
     assert source == 'rules' and results[0]['name_en'] == 'Mains' and results[1]['name_en'] == '', '品名只在整個字串命中時才翻'
@@ -53,7 +61,7 @@ def test_translate_salvages_truncated_reply_and_batches_small(app, monkeypatch):
         sizes.append(prompt.count('\n'))
         assert kw.get('max_tokens', 0) >= 8000 and kw.get('json_mode') is True
         return truncated
-    monkeypatch.setattr(ai_service, 'gemini_generate', fake_gemini)
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(fake_gemini))
     with app.app_context():
         results, source = ai_service.translate_entries([{'name': f'品項{i}'} for i in range(23)])
     assert source == 'gemini' and len(sizes) == 3 and max(sizes) <= ai_service.TRANSLATE_BATCH
@@ -64,22 +72,62 @@ def test_menu_translate_with_key_but_gemini_failing_says_why(app, admin_client, 
     """有設定金鑰但 Gemini 這次失敗 (例如 503)：訊息要說明原因，不可寫成「未設定 GEMINI_API_KEY」"""
     from app.services import ai_service
     make_item(app, '翻譯失敗測試主餐', price=100, category='主餐')
+    monkeypatch.setattr(ai_service, 'RETRY_DELAY', 0)
     monkeypatch.setattr(ai_service, 'has_api_key', lambda: True)
-    monkeypatch.setattr(ai_service, 'gemini_generate', lambda *a, **k: None)
-    monkeypatch.setattr(ai_service, 'last_gemini_error', lambda: '503 The model is overloaded.')
+    calls = []
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(lambda *a, **k: calls.append(k.get('patient'))))
+    monkeypatch.setattr(ai_service, 'last_ai_error', lambda: '503 The model is overloaded.')
     r = admin_client.post('/admin/menu', data={'action': 'translate', 'overwrite': '1'}, follow_redirects=True)
     html = r.get_data(as_text=True)
-    assert 'Gemini 這次沒有成功 (503 The model is overloaded.)' in html
+    assert 'AI 服務目前忙碌或失敗 (503 The model is overloaded.)' in html and '背景每隔幾分鐘自動補翻' in html
     assert '未設定 GEMINI_API_KEY，只翻' not in html
+    assert calls and all(calls), '翻譯用耐心重試模式 (patient)'
+    assert len(calls) % 2 == 0, '失敗的批次在最後再補跑一輪'
+
+
+def test_translate_retries_failed_batches_and_skips_translated_items(app, admin_client, monkeypatch):
+    """Gemini 尖峰 503：失敗的批次稍後補跑；已有翻譯的品項 (不覆蓋時) 不再送 Gemini"""
+    from app.models.menu import CategoryTranslation
+    from app.services import ai_service
+    monkeypatch.setattr(ai_service, 'RETRY_DELAY', 0)
+    monkeypatch.setattr(ai_service, 'has_api_key', lambda: True)
+    with app.app_context():
+        MenuItem.query.update({'name_en': 'x', 'name_ja': 'x', 'description_en': 'x', 'description_ja': 'x'})
+        for row in CategoryTranslation.query.all():
+            row.name_en = row.name_ja = 'x'
+        have = {(r.tenant_id, r.category) for r in CategoryTranslation.query.all()}
+        for tid, cat in {(i.tenant_id, (i.category or '未分類').strip()) for i in MenuItem.query.all()} - have:
+            db.session.add(CategoryTranslation(tenant_id=tid, category=cat, name_en='x', name_ja='x'))
+        db.session.commit()
+    done = make_item(app, '已翻好的餐', price=100, category='補跑分類', name_en='Done', name_ja='済み')
+    todo = make_item(app, '補跑測試麵', price=100, category='補跑分類')
+    prompts = []
+
+    def flaky(prompt, **kw):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return None   # 第一次 503
+        n = prompt.count(chr(10))   # 每個品項一行
+        return json.dumps([{'i': i + 1, 'name_en': f'EN{i}', 'name_ja': f'JA{i}'} for i in range(n)])
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(flaky))
+    r = admin_client.post('/admin/menu', data={'action': 'translate'}, follow_redirects=True)
+    assert len(prompts) == 2 and '補跑測試麵' in prompts[0] and '已翻好的餐' not in prompts[0], '只送還缺翻譯的'
+    assert '補跑分類' in prompts[0]
+    assert 'Google Gemini 已翻譯 2 項' in r.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(MenuItem, todo).name_en.startswith('EN') and db.session.get(MenuItem, done).name_en == 'Done'
+    prompts.clear()
+    r = admin_client.post('/admin/menu', data={'action': 'translate'}, follow_redirects=True)
+    assert prompts == [] and '都已有英 / 日文翻譯' in r.get_data(as_text=True), '全部都翻好了就不再呼叫 Gemini'
 
 
 def test_menu_translate_action_fills_only_blank_fields(app, admin_client, monkeypatch):
     from app.services import ai_service
     item = make_item(app, '翻譯測試雞腿飯', price=120, category='翻譯測試分類', name_en='Hand typed')
     item2 = make_item(app, '翻譯測試紅茶', price=30, category='翻譯測試分類', description='香醇')
-    monkeypatch.setattr(ai_service, 'gemini_generate', lambda prompt, **k: json.dumps(
+    monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(lambda prompt, **k: json.dumps(
         [{'i': i + 1, 'name_en': f'EN{i}', 'name_ja': f'JA{i}', 'description_en': f'DE{i}', 'description_ja': f'DJ{i}'}
-         for i in range(60)]))
+         for i in range(60)])))
     r = admin_client.post('/admin/menu', data={'action': 'translate'})
     assert r.status_code == 302
     with app.app_context():

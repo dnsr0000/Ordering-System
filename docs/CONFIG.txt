@@ -69,8 +69,11 @@
     LOG_FILE                          輪替記錄檔位置 (預設 database/logs/app.log；設為空字串只輸出主控台，Docker 用)
     LOG_MAX_BYTES / LOG_BACKUP_COUNT  每個記錄檔大小 (預設 10 MB) 與保留個數 (預設 5)
   選用
-    GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議、一鍵翻譯菜單、語音點餐 / 客服的 AI 備援)
-    GEMINI_MODEL / GEMINI_FALLBACK_MODEL   Gemini 主要模型與備援模型 (主要模型 503 / 逾時重試一次後改用備援)
+    GEMINI_API_KEY                    Google Gemini 金鑰 (AI 文案與營運建議、一鍵翻譯菜單、語音點餐 / 客服)；
+                                      建議改在後台「系統設定 → AI 服務」填 (可填 3 組、依序備援，排在 .env 之前)
+    AI_API_KEYS                       其他廠商的金鑰，逗號分隔、依序備援 (Claude / OpenAI / DeepSeek / Groq / xAI / OpenRouter /
+                                      Mistral，依金鑰開頭與各家模型清單自動辨識)
+    GEMINI_MODEL / GEMINI_FALLBACK_MODEL   要固定 Gemini 版本才填；留空 = 依金鑰可用的模型自動挑最新的 Flash (備援 Flash-Lite)
     SENTRY_DSN                        設定後 (需 pip install sentry-sdk) 未預期錯誤送到 Sentry；
                                       SENTRY_TRACES_SAMPLE_RATE 效能取樣 (預設 0)
     METRICS_TOKEN                     設定後 GET /metrics?token=… 回 Prometheus 指標 (未設定 404)

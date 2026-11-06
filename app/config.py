@@ -135,9 +135,12 @@ class Config:
     SFACE_MODEL = os.path.join(MODELS_DIR, "face_recognition_sface_2021dec.onnx")
     LOCAL_MODEL_PATH = os.path.join(MODELS_DIR, "qwen2.5-1.5b-instruct-q4_k_m.gguf")
     GEMINI_API_KEY = _env("GEMINI_API_KEY")
-    # Gemini 模型：主要模型 503 (過載) / 5xx 時重試一次，再改用備援模型；都失敗才降到本機 SLM / 規則引擎
-    GEMINI_MODEL = _env("GEMINI_MODEL") or "gemini-3.6-flash"
-    GEMINI_FALLBACK_MODEL = _env("GEMINI_FALLBACK_MODEL") or "gemini-3.5-flash-lite"
+    # 其他廠商的 AI 金鑰 (逗號分隔，依序備援；Claude / OpenAI / DeepSeek / Groq / xAI / OpenRouter / Mistral 自動辨識)。
+    # 也可以在後台「系統設定 → AI 服務」填 (優先使用)。見 app/services/llm_providers.py
+    AI_API_KEYS = _env("AI_API_KEYS")
+    # Gemini 模型：留空 = 依金鑰可用的模型自動挑最新的 Flash (備援 Flash-Lite)；要固定版本才填
+    GEMINI_MODEL = _env("GEMINI_MODEL")
+    GEMINI_FALLBACK_MODEL = _env("GEMINI_FALLBACK_MODEL")
 
     MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024
     MAX_TOTAL_EXTRACT_SIZE = 150 * 1024 * 1024

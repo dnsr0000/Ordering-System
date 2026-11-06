@@ -4,7 +4,7 @@
 兩層：
 1. 規則比對 (離線可用)：以菜單品名 (含英文名) 做最長優先比對，品名前後的數量 (一份 / 2 杯)、規格 (大杯)、
    甜度 / 冰塊 / 辣度與加料字眼歸給最近的品項。
-2. 規則完全沒命中時才交給 LLM (Gemini → 本機 Qwen)，要求輸出 JSON，品名再以模糊比對對回菜單；
+2. 規則完全沒命中時才交給 LLM (雲端 AI 依序備援 → 本機 Qwen)，要求輸出 JSON，品名再以模糊比對對回菜單；
    LLM 只負責「聽懂」，價格與可點與否一律由菜單資料決定。
 解析結果一定先在點餐機畫面上讓顧客確認，才會加入購物車 (前端)；後端不直接建立訂單。
 """
@@ -252,7 +252,7 @@ def _llm_prompt(text, items, addons):
 
 
 def llm_parse(text, items, addons):
-    """LLM 解析 (Gemini → 本機)；回 (lines, 沒對到菜單的名稱, 來源)"""
+    """LLM 解析 (雲端 AI → 本機)；回 (lines, 沒對到菜單的名稱, 來源)"""
     data, source = ai_service.generate_json(_llm_prompt(_norm(text), items, addons), max_tokens=500,
                                             system='你是餐廳點餐助理，只輸出 JSON。', local_max_tokens=300, interactive=True)
     if not isinstance(data, list):
@@ -282,7 +282,7 @@ def llm_parse(text, items, addons):
 def parse(text, items, addons, use_llm=True):
     """
     解析顧客說的話。items：可點的 MenuItem；addons：[{'id', 'name'}] (加料選項)。
-    回 {'lines': [...], 'unmatched': [...], 'source': 'rules' / 'gemini' / 'local' / 'none', 'text': 正規化後的句子}
+    回 {'lines': [...], 'unmatched': [...], 'source': 'rules' / 雲端廠商 (gemini / anthropic / openai…) / 'local' / 'none', 'text': 正規化後的句子}
     """
     text = _norm(text)
     if not text:

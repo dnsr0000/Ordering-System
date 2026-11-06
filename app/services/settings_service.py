@@ -215,7 +215,7 @@ SECTIONS = {s.key: s for s in (
                 Field('accessibility_button', '顯示「大字 / 高對比」切換按鈕', 'bool', True),
                 Field('voice_ordering', '語音點餐 (點餐頁麥克風按鈕)', 'bool', True,
                       help='顧客用說的點餐：瀏覽器語音辨識 (需 HTTPS 或本機網址) → 先以菜單規則解析，聽不懂再交給 AI '
-                           '(Gemini → 本機模型)；一律先顯示確認畫面才加入購物車'),
+                           '(雲端 AI → 本機模型)；一律先顯示確認畫面才加入購物車'),
                 Field('voice_llm', '規則解析不到時使用 AI 解析', 'bool', True),
             ),
             subgroup='菜單與點餐頁', keywords='語言 過敏原 熱量 碳足跡 語音點餐'),
@@ -247,9 +247,26 @@ SECTIONS = {s.key: s for s in (
                 Field('po_email_supplier', '送出採購單時 Email 給供應商', 'bool', False, help='需設定寄信伺服器 (SMTP)'),
             ), enabled_field='enabled',
             subgroup='庫存', keywords='原料 扣料 庫存 批號'),
+    Section('ai', 'AI 服務 (金鑰自動辨識)', 'D 菜單', 'bi-stars',
+            '客服小助手、AI 翻譯菜單、語音點餐、菜單文案與營運建議用的雲端 AI。貼上金鑰即可，系統依金鑰開頭與各家的模型清單'
+            '自動辨識廠商並挑最新的模型；金鑰 1 失敗 (過載 / 限流) 時自動改用金鑰 2、3，都不行才用本機模型。'
+            '.env 的 GEMINI_API_KEY / AI_API_KEYS 排在這些之後。送出的內容 (菜單、顧客的提問) 會傳到該 AI 廠商。',
+            (
+                Field('key1', '金鑰 1 (優先使用)', 'secret',
+                      help='支援 Google Gemini、Anthropic Claude、OpenAI、DeepSeek、Groq、xAI Grok、OpenRouter、Mistral'),
+                Field('model1', '金鑰 1 指定模型 (留空 = 自動挑最新)', placeholder='例如 claude-sonnet-5-5；多個以逗號分隔 (主要, 備援)'),
+                Field('key2', '金鑰 2 (金鑰 1 失敗時)', 'secret'),
+                Field('model2', '金鑰 2 指定模型 (留空 = 自動)'),
+                Field('key3', '金鑰 3', 'secret'),
+                Field('model3', '金鑰 3 指定模型 (留空 = 自動)'),
+            ), enabled_field='key1',
+            docs=(('Google AI Studio 金鑰', 'https://aistudio.google.com/apikey'),
+                  ('Anthropic Console 金鑰', 'https://console.anthropic.com/settings/keys'),
+                  ('OpenAI 金鑰', 'https://platform.openai.com/api-keys')),
+            keywords='AI Gemini Claude Anthropic OpenAI ChatGPT DeepSeek Groq Grok OpenRouter Mistral 金鑰 API key 翻譯 客服 模型'),
     Section('chatbot', 'AI 客服機器人', 'D 菜單', 'bi-robot',
             '點餐頁與出餐進度頁右下角的對話窗：過敏原 / 素食 / 辣度只從菜單標示直接查 (不經 AI 改寫)，訂單進度直接讀訂單，'
-            '營業資訊與常見問答用這裡填的文字；其他問題才交給 AI (Gemini → 本機模型)，AI 回答會標示「請以櫃檯為準」。',
+            '營業資訊與常見問答用這裡填的文字；其他問題才交給 AI (系統設定「AI 服務」的金鑰 → 本機模型)，AI 回答會標示「請以櫃檯為準」。',
             (
                 Field('enabled', '啟用客服機器人', 'bool', False),
                 Field('bot_name', '機器人名稱', default='小幫手'),
@@ -259,7 +276,7 @@ SECTIONS = {s.key: s for s in (
                 Field('faq', '常見問答 (每行「關鍵字1 關鍵字2 => 回答」)', 'textarea', '',
                       help='例如「停車 車位 => 店門口有 3 個機車位，汽車請停對面公有停車場」；關鍵字命中越多的優先'),
                 Field('llm_enabled', '其他問題交給 AI 回答', 'bool', True,
-                      help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫 Gemini (有費用) 或本機模型'),
+                      help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫雲端 AI (有費用) 或本機模型'),
                 Field('fallback', '答不出來時的回覆', default='這個問題我不太確定，請直接洽詢櫃檯人員，謝謝！'),
                 Field('off_topic', '與本店無關的問題的回覆', default='',
                       help='空白時使用「我是本店的點餐小幫手，只能回答餐點、點餐、付款、會員點數、營業資訊與訂單相關的問題喔！」'),

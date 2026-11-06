@@ -295,6 +295,8 @@ def _loop(app):
                     webhook_service.run_all()
                 if ticks % 12 == 0:          # 每分鐘
                     run_daily_jobs()
+                    from app.services import menu_translate_service
+                    menu_translate_service.run_due(app)   # Gemini 過載時沒翻成的菜單：時間到在背景執行緒補翻
                 if ticks % 60 == 0:          # 每 5 分鐘
                     einvoice_ecpay.retry_pending()
                     from app.services import payment_service

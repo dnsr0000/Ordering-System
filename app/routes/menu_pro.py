@@ -6,7 +6,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, url_f
 from app.errors import AppError
 from app.extensions import db
 from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
-from app.services import ai_service, menu_service, settings_service
+from app.services import ai_service, menu_service, menu_translate_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.settings_service import TIME_RE
@@ -56,36 +56,25 @@ def apply_pro_form(item, form):
     return item
 
 
-def translate_menu(overwrite=False):
-    """AI 一鍵翻譯：品項的 name / description 與分類的英 / 日文。預設只填空白欄位 (不覆蓋手填)；回 (填入欄位數, 來源)"""
-    items = MenuItem.query.order_by(MenuItem.id).all()
-    categories = sorted({(i.category or '未分類').strip() for i in items})
-    translations = {t.category: t for t in CategoryTranslation.query.all()}
-    entries = [{'name': i.name, 'description': i.description or ''} for i in items] + [{'name': c, 'description': ''} for c in categories]
-    results, source = ai_service.translate_entries(entries)
-    filled = 0
-
-    def put(obj, field, value, limit):
-        nonlocal filled
-        if value and (overwrite or not getattr(obj, field)):
-            setattr(obj, field, value[:limit])
-            filled += 1
-    for item, got in zip(items, results[:len(items)]):
-        put(item, 'name_en', got['name_en'], 100)
-        put(item, 'name_ja', got['name_ja'], 100)
-        if item.description:
-            put(item, 'description_en', got['description_en'], 300)
-            put(item, 'description_ja', got['description_ja'], 300)
-    for cat, got in zip(categories, results[len(items):]):
-        row = translations.get(cat)
-        if row is None and (got['name_en'] or got['name_ja']):
-            row = CategoryTranslation(tenant_id=g.tenant_id, category=cat)
-            db.session.add(row)
-            translations[cat] = row
-        if row is not None:
-            put(row, 'name_en', got['name_en'], 60)
-            put(row, 'name_ja', got['name_ja'], 60)
-    return filled, source
+def _translate_message(filled, stats):
+    """AI 翻譯結果訊息 (flash 的內容與類別)：有金鑰但 AI 服務過載時照實說明，並提示再按一次只翻剩下的"""
+    if not stats['pending']:
+        return '每個品項與分類都已有英 / 日文翻譯 (要重翻請勾「連已填的也重新翻譯」)', 'info'
+    check = '請逐一檢查後再儲存修改'
+    who = stats.get('provider') or 'AI'
+    if not ai_service.has_api_key():
+        if filled:
+            return f'已填入 {filled} 個翻譯欄位 (規則字典，未設定 GEMINI_API_KEY，只翻常見分類 / 品名)；{check}', 'success'
+        return '沒有可填的欄位 (規則字典沒有對應；設定 GEMINI_API_KEY 後可翻譯任意品名)', 'warning'
+    if not stats['fallback']:
+        return f"{who} 已翻譯 {stats['ai']} 項，填入 {filled} 個欄位；{check}", 'success'
+    reason = ai_service.last_ai_error() or '回應格式不完整'
+    busy = f'AI 服務目前忙碌或失敗 ({reason})，已自動重試數次'
+    retry = '系統會在背景每隔幾分鐘自動補翻還沒翻好的項目，不用再按 (也可以稍後自己再按一次)'
+    if stats['ai']:
+        return (f"{who} 已翻譯 {stats['ai']} 項；另外 {stats['fallback']} 項沒翻成 ({busy})，先以規則字典填常見分類 / 品名。"
+                f'共填入 {filled} 個欄位；{retry}', 'warning')
+    return f"這次 {stats['fallback']} 項都沒翻成：{busy}。規則字典填入 {filled} 個欄位 (只有常見分類 / 品名)；{retry}", 'warning'
 
 
 @menu_pro_bp.route('/admin/menu', methods=['GET', 'POST'], endpoint='manage')
@@ -116,25 +105,14 @@ def manage():
                 row.name_ja = (request.form.get(f'ja__{cat}') or '').strip()[:60]
             flash('已更新分類翻譯', 'success')
         elif action == 'translate':
-            filled, source = translate_menu(overwrite=request.form.get('overwrite') == '1')
-            record_staff_audit('MENU_TRANSLATE', details=f'AI 翻譯菜單：填入 {filled} 個欄位 ({source})')
-            # 有金鑰但這次 Gemini 沒成功 (過載 / 限流 / 回應不完整) 要照實說，不可顯示成「未設定金鑰」
-            if source == 'gemini':
-                via, hint = 'Gemini', ''
-            elif ai_service.has_api_key():
-                reason = ai_service.last_gemini_error() or '回應格式不完整'
-                via = '規則字典，只翻常見分類 / 品名'
-                hint = f'Gemini 這次沒有成功 ({reason})，請稍後再按一次；'
-            else:
-                via, hint = '規則字典，未設定 GEMINI_API_KEY，只翻常見分類 / 品名', ''
-            if filled:
-                flash(f'{hint}已填入 {filled} 個翻譯欄位 ({via})；請逐一檢查後再儲存修改', 'success' if not hint else 'warning')
-            elif hint:
-                flash(f'{hint}規則字典沒有可填的欄位', 'warning')
-            elif source == 'gemini':
-                flash('沒有可填的欄位 (都已有翻譯；要重翻請勾「連已填的也重新翻譯」)', 'info')
-            else:
-                flash('沒有可填的欄位 (都已有翻譯，或規則字典沒有對應；設定 GEMINI_API_KEY 後可翻譯任意品名)', 'warning')
+            filled, source, stats = menu_translate_service.translate_menu(overwrite=request.form.get('overwrite') == '1')
+            menu_translate_service.note_result(g.tenant_id, stats)   # 還有沒翻成的：排背景自動補翻
+            record_staff_audit('MENU_TRANSLATE', details=f"AI 翻譯菜單：填入 {filled} 個欄位 ({stats.get('provider') or 'AI'} {stats['ai']} 項、"
+                                                         f"未翻成 {stats['fallback']} 項)")
+            flash(*_translate_message(filled, stats))
+        elif action == 'translate_cancel':
+            menu_translate_service.cancel(g.tenant_id)
+            flash('已停止背景自動補翻', 'info')
         else:
             raise AppError('不支援的操作')
         db.session.commit()
@@ -152,4 +130,5 @@ def manage():
                            admin_menu_items=[menu_service.item_form_data(i) for i in items],
                            allergens=ALLERGENS, diets=DIETS, weekdays=WEEKDAY_LABELS,
                            menu_cfg=dict(settings_service.get('menu'), ai_ready=ai_service.has_api_key()),
+                           translate_pending=menu_translate_service.get_pending(g.tenant_id),
                            **data_modal_context())

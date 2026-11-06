@@ -266,8 +266,20 @@
             <input type="hidden" name="action" value="translate">
             <button class="btn btn-warning btn-sm fw-bold" type="submit"><i class="bi bi-translate me-1"></i>AI 一鍵翻譯菜單</button>
             <label class="form-check form-check-inline small mb-0"><input class="form-check-input" type="checkbox" name="overwrite" value="1" id="translateOverwrite"><span class="form-check-label" for="translateOverwrite">連已填的也重新翻譯</span></label>
-            <span class="small text-white-50">{% if menu_cfg.ai_ready %}使用 Gemini (GEMINI_API_KEY)；{% else %}未設定 GEMINI_API_KEY：只翻常見分類 / 品名 (規則字典)；{% endif %}品項的英日文名稱在各品項的「進階」設定。</span>
+            <span class="small text-white-50">{% if menu_cfg.ai_ready %}使用雲端 AI (系統設定 → AI 服務的金鑰依序備援)，忙碌時先以內建字典翻常見菜名、其餘在背景自動補翻；{% else %}未設定 AI 金鑰 (系統設定 → AI 服務)：只用內建字典翻常見分類 / 品名；{% endif %}品項的英日文名稱在各品項的「進階」設定。</span>
         </form>
+        {% if translate_pending %}
+        <form method="POST" class="alert {{ 'alert-secondary' if translate_pending.gave_up else 'alert-info' }} small d-flex flex-wrap align-items-center gap-2 mt-2 mb-0 py-2" id="translatePendingBox">{{ csrf() }}
+            <input type="hidden" name="action" value="translate_cancel">
+            <i class="bi bi-hourglass-split"></i>
+            {% if translate_pending.gave_up %}
+            <span>背景自動補翻已停止 (重試 {{ translate_pending.attempts }} 次 AI 服務仍無法使用)，還有 {{ translate_pending.remaining }} 項沒翻譯；可稍後再按「AI 一鍵翻譯菜單」。</span>
+            {% else %}
+            <span>還有 {{ translate_pending.remaining }} 項等 AI 服務恢復後自動補翻：下次 {{ translate_pending.next_at[11:16] }}{% if translate_pending.attempts %}，已在背景重試 {{ translate_pending.attempts }} 次{% endif %}{% if translate_pending.error %} (最近錯誤：{{ translate_pending.error }}){% endif %}。</span>
+            {% endif %}
+            <button class="btn btn-outline-light btn-sm ms-auto" type="submit">{{ '關閉提示' if translate_pending.gave_up else '停止自動補翻' }}</button>
+        </form>
+        {% endif %}
     </section>
 </main>
 {% include "_menu_modals.html" %}

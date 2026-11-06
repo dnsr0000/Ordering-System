@@ -123,4 +123,15 @@ def test_local_model_status_reports_missing_file_or_package(app, monkeypatch):
 def test_system_health_page_shows_ai_status(app, admin_client, monkeypatch):
     monkeypatch.setitem(app.config, 'GEMINI_API_KEY', '')
     page = admin_client.get('/admin/system').get_data(as_text=True)
-    assert 'id="aiGeminiTile"' in page and '未設定金鑰' in page and 'id="aiLocalTile"' in page
+    assert 'id="aiGeminiTile"' in page and '未設定金鑰' in page and 'id="aiLocalTile"' in page and 'AI 服務' in page
+
+
+def test_patient_mode_ignores_cooldown_and_retries_three_times(app, gemini, monkeypatch):
+    """AI 翻譯菜單等店家願意等的工作：冷卻中也照樣呼叫，每個模型試 3 次 (尖峰 503 通常幾秒後恢復)"""
+    calls = gemini([_Resp(503), _Resp(503), _ok('第三次成功')])
+    monkeypatch.setattr(ai_service, '_gemini_cooldown_until', time.time() + 60)
+    with app.app_context():
+        assert ai_service.gemini_generate('hi') is None, '一般呼叫在冷卻中直接略過'
+        assert calls == []
+        assert ai_service.gemini_generate('hi', patient=True) == '第三次成功'
+    assert calls == ['gemini-main'] * 3

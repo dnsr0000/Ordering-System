@@ -22,9 +22,18 @@
             {% if health.role == 'node' %}<div class="small text-white-50">最後同步：{{ health.sync_last_ok or '-' }}{% if health.sync_last_error %}<br><span class="text-danger">{{ health.sync_last_error[:80] }}</span>{% endif %}</div>{% endif %}
         {% endcall %}
         {% set ai = health.ai %}
-        {% call stat_tile('AI：Gemini', '未設定金鑰' if not ai.gemini.configured else ('冷卻中 ' ~ ai.gemini.cooldown_seconds ~ ' 秒' if ai.gemini.cooldown_seconds else '可用'),
-                          'text-secondary' if not ai.gemini.configured else ('text-warning' if ai.gemini.cooldown_seconds else 'text-success'), col='col-12 col-md-6', tile_id='aiGeminiTile') %}
-            <div class="small text-white-50">模型 {{ ai.gemini.models | join(' → ') }}{% if ai.gemini.last_error %}<br><span class="text-danger">最近錯誤：{{ ai.gemini.last_error[:100] }} ({{ ai.gemini.last_model }})</span>{% endif %}</div>
+        {% set usable = ai.providers | selectattr('models') | list %}
+        {% call stat_tile('AI：雲端服務 (依序備援)', '未設定金鑰' if not ai.providers else (usable | length ~ ' / ' ~ ai.providers | length ~ ' 組可用'),
+                          'text-secondary' if not ai.providers else ('text-success' if usable else 'text-danger'), col='col-12 col-md-6', tile_id='aiGeminiTile') %}
+            <div class="small text-white-50" id="aiProviders">
+                {% for p in ai.providers %}
+                <div>{{ loop.index }}. {{ p.provider }} <span class="text-white-50">({{ p.key }}，{{ '系統設定金鑰 ' ~ p.source[9:] if p.source.startswith('settings:') else '.env ' ~ p.source[4:] }})</span>：
+                    {% if p.error %}<span class="text-danger">{{ p.error[:120] }}</span>{% else %}{{ p.models | join(' → ') }} {{ '(自動挑選)' if p.auto else '(指定)' }}{% if p.cooldown_seconds %} <span class="text-warning">冷卻中 {{ p.cooldown_seconds }} 秒</span>{% endif %}{% endif %}</div>
+                {% else %}
+                <div>到「系統設定 → AI 服務」貼上金鑰 (支援 Gemini、Claude、OpenAI、DeepSeek、Groq、xAI、OpenRouter、Mistral)</div>
+                {% endfor %}
+                {% if ai.last_error %}<div class="text-danger">最近錯誤：{{ ai.last_error[:120] }}</div>{% endif %}
+            </div>
         {% endcall %}
         {% call stat_tile('AI：本機模型 (Qwen)', '已載入' if ai.local.loaded else ('未安裝套件' if not ai.local.installed else ('找不到模型檔' if not ai.local.model_exists else ('載入失敗' if ai.local.error else '尚未使用 (第一次需要時載入)'))),
                           'text-success' if ai.local.loaded else ('text-danger' if ai.local.error else ('text-warning' if not ai.local.installed or not ai.local.model_exists else '')), col='col-12 col-md-6', tile_id='aiLocalTile') %}

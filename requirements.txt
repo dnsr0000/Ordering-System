@@ -16,6 +16,8 @@ waitress==3.0.2
 # 線上端 (Linux 容器) 的 WSGI 伺服器 (設定見 deploy/gunicorn.conf.py)；Windows 門市端用 waitress
 gunicorn==26.2.0; sys_platform != "win32"
 python-dotenv==1.2.3
+# 雲端 AI 的 Anthropic Claude (app/services/llm_providers.py)；沒裝時 Claude 金鑰無法使用，其他廠商不受影響
+anthropic==2.6.0
 Requests==2.34.2
 # Windows 門市的 HTTPS 改用系統憑證庫 (app/services/http_client.py)：防毒 / 公司網路攔截 HTTPS 時，
 # 只用 requests 內建清單會 CERTIFICATE_VERIFY_FAILED (人臉模型、版本更新、綠界、LINE 都連不上)

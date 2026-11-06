@@ -6,7 +6,7 @@ AI 客服機器人 (顧客端：點餐頁與出餐進度頁的對話窗)。
 2. 訂單狀態 (出餐進度頁帶訂單)：直接讀訂單。
 3. 營業資訊 / 自訂 FAQ：店家在後台填的文字，關鍵字命中就回。
 4. 菜單查詢 (價格 / 分類 / 推薦)：檢索菜單資料。
-5. 其他：LLM (Gemini → 本機 Qwen；Gemini 503 / 逾時時立刻改用本機模型，顧客感覺不到)，只給菜單摘要 + 店家資訊當上下文；
+5. 其他：LLM (系統設定「AI 服務」的金鑰依序備援 → 本機 Qwen；雲端 503 / 逾時時立刻換下一個，顧客感覺不到)，只給菜單摘要 + 店家資訊當上下文；
    只回答與本店相關的問題 (餐點、點餐、付款、會員點數、營業資訊、訂單)，無關的問題由模型回 OFF_TOPIC 標記，
    改回固定的婉拒說明。LLM 不可用時回固定的「請洽櫃檯」。
 答不出來 / 無關的問題附「你是否要問」(依問句挑出最接近的可回答問題) 與「轉接真人客服」(support_service)。
@@ -271,7 +271,7 @@ def answer(question, order=None, history=None, tenant_id=None, shop_name=''):
         return {'answer': '請輸入您想問的問題。', 'source': 'fallback', 'suggestions': _suggestions(order), **extra}
     q = question.lower()
     if cfg.get('llm_enabled', True):
-        ai_service.warm_local_llm_async()   # 先在背景載入本機模型：Gemini 503 時可立即接手
+        ai_service.warm_local_llm_async()   # 先在背景載入本機模型：雲端 AI 503 時可立即接手
     if handoff_ok and any(w in q for w in HANDOFF_WORDS):
         return {'answer': '好的，請按下方「轉接真人客服」，店員會直接在這個對話窗回覆您。', 'source': 'faq',
                 'suggestions': _suggestions(order), 'did_you_mean': [], 'handoff': True}
