@@ -1,5 +1,5 @@
 """後台共用版面：側欄七個群組依角色 / 權限 / 主機角色過濾、所在頁面標示、總覽分頁 (含今日數字與熱門排行)、
-菜單 / 會員 / 稽核各自的頁面 (舊的 ?tab= 網址導向過去)、系統設定左欄與搜尋資料、舊按鈕 id 保留"""
+菜單 / 會員 / 稽核各自的頁面、系統設定左欄與搜尋資料、側欄固定 id"""
 import re
 
 from app.extensions import db
@@ -23,7 +23,7 @@ def test_sidebar_groups_follow_role(app, admin_client, manager_client, staff_cli
     for must in ('總覽', '菜單與套餐', '員工帳號', '系統設定', '自動排班', '稽核紀錄', 'API 與 Webhook', '帳號安全'):
         assert must in labels, must
     assert '分店管理' not in labels and '同步狀態' not in labels, '單機模式沒有分店同步項目'
-    assert 'id="nav-settings"' in html and 'id="nav-live"' in html and 'id="nav-menu-pro"' in html, '舊按鈕 id 保留給測試 / 腳本'
+    assert 'id="nav-settings"' in html and 'id="nav-live"' in html and 'id="nav-menu-pro"' in html, '側欄固定 id 保留給測試 / 腳本'
     assert 'navbar-admin' not in html, '舊的整排標頭按鈕已移除'
 
     html = manager_client.get('/admin').get_data(as_text=True)
@@ -83,18 +83,12 @@ def test_dashboard_home_tab_and_pending_items(app, admin_client, manager_client)
     assert 'id="home-pane"' in manager_client.get('/admin').get_data(as_text=True)
 
 
-def test_old_tab_urls_redirect_to_pages(app, admin_client):
-    """舊的 /admin?tab=menu|users|audit 導到各自的頁面；會員搜尋參數 uq / up 轉成 q / page；analytics 留在總覽"""
-    for tab, target in (('menu', '/admin/menu'), ('audit', '/admin/audit'), ('users', '/admin/members')):
-        r = admin_client.get(f'/admin?tab={tab}')
-        assert r.status_code == 302 and r.headers['Location'].endswith(target), tab
-    r = admin_client.get('/admin?tab=users&uq=0912&up=2')
-    assert r.status_code == 302 and 'q=0912' in r.headers['Location'] and 'page=2' in r.headers['Location']
-    assert admin_client.get('/admin?tab=analytics').status_code == 200
+def test_menu_and_member_pages(app, admin_client):
+    """菜單、會員各自一頁 (品項清單、套餐、匯入與進階設定同一頁)"""
     menu = admin_client.get('/admin/menu').get_data(as_text=True)
     assert 'id="menuItemTable"' in menu and 'id="comboTable"' in menu and 'id="addItemModal"' in menu and 'menuTranslateForm' in menu
     assert 'id="unifiedImportModal"' in menu and 'name="avail_start"' in menu, '品項清單、套餐、匯入與進階設定同一頁'
-    assert admin_client.get('/admin/menu_pro').status_code == 200 and admin_client.get('/admin/members_pro').status_code == 200, '舊網址仍可用'
+    assert admin_client.get('/admin/members').status_code == 200
     members = admin_client.get('/admin/members').get_data(as_text=True)
     assert 'id="memberTable"' in members and 'id="memberTiersCard"' in members and 'id="editUserModal"' in members
 

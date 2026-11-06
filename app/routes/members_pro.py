@@ -26,7 +26,6 @@ def _user(uid):
     return user
 
 
-@members_pro_bp.route('/admin/members_pro', methods=['GET', 'POST'])   # 舊網址 (url_for 用先註冊的 /admin/members)
 @members_pro_bp.route('/admin/members', methods=['GET', 'POST'], endpoint='manage')
 @permission_required('members')
 def manage():

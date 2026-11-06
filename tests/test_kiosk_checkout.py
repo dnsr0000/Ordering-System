@@ -82,9 +82,7 @@ def test_whitelists_and_invalid_combo(app, ctx):
     assert checkout(c, tea, order_type='無人機空投').status_code == 400
     assert checkout(c, [line(ids['錫蘭紅茶'], combo_option_id=ctx['combo_a'])]).status_code == 400
     assert checkout(c, [{'name': '不存在', 'quantity': 1}]).status_code == 400
-    # 舊版前端的付款別名仍可使用，存檔時轉為標準值
-    r = checkout(c, tea, payment_method='LinePay')
-    assert r.status_code == 200 and r.get_json()['payment_method'] == 'Line Pay'
+    assert checkout(c, tea, payment_method='LinePay').status_code == 400   # 只接受標準付款方式代碼
 
 
 def test_pickup_number_wraps_after_999(app):

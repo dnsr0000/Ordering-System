@@ -206,18 +206,18 @@ def test_menu_pro_and_i18n(app, admin_client, store_settings):
     form = {'action': 'item', 'item_id': iid, 'avail_days': list('1234567'), 'takeout_price': '150',
             'allergens': ['peanut', 'gluten', 'bogus'], 'diet': 'vegan', 'spicy_level': '2', 'name_en': 'Beef Noodle Soup',
             'name_ja': '牛肉麺', 'description_en': 'Slow braised', 'external_code': 'BN-01', 'unit_cost': '60'}
-    admin_client.post('/admin/menu_pro', data=form)
+    admin_client.post('/admin/menu', data=form)
     with app.app_context():
         item = db.session.get(MenuItem, iid)
         assert item.takeout_price == 150 and item.allergens == 'peanut,gluten' and item.diet == 'vegan'
         assert item.price_for('takeout') == 150 and item.price_for('dine_in') == 160
-    admin_client.post('/admin/menu_pro', data=dict(form, external_code='DUP-1'))
+    admin_client.post('/admin/menu', data=dict(form, external_code='DUP-1'))
     assert_flash(admin_client, '已被「代碼重複測試」使用')
-    admin_client.post('/admin/menu_pro', data=dict(form, avail_days=[]))
+    admin_client.post('/admin/menu', data=dict(form, avail_days=[]))
     assert_flash(admin_client, '至少勾選一個供應星期')
-    admin_client.post('/admin/menu_pro', data=dict(form, avail_start='9:00'))
+    admin_client.post('/admin/menu', data=dict(form, avail_start='9:00'))
     assert_flash(admin_client, 'HH:MM')
-    admin_client.post('/admin/menu_pro', data={'action': 'categories', 'category': ['多語系分類'],
+    admin_client.post('/admin/menu', data={'action': 'categories', 'category': ['多語系分類'],
                                                'en__多語系分類': 'Noodles', 'ja__多語系分類': '麺類'})
     store_settings('menu', languages=['en', 'ja'], show_allergens=True)
     c = guest_client(app)
@@ -230,4 +230,4 @@ def test_menu_pro_and_i18n(app, admin_client, store_settings):
     assert '多語系牛肉麵' in zh
     store_settings('menu', languages=[])
     assert '多語系牛肉麵' in c.get('/?lang=en').get_data(as_text=True), '關閉的語言回到中文'
-    assert admin_client.get('/admin/menu_pro').status_code == 200
+    assert admin_client.get('/admin/menu').status_code == 200

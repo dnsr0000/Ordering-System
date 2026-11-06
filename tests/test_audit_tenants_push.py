@@ -63,8 +63,6 @@ def test_audit_page_requires_manager_and_dashboard_links(app):
     assert staff.get('/admin/audit').status_code in (302, 403)
     assert staff.get('/admin/audit/export').status_code in (302, 403)
     mgr = login_staff(app, 'audit_mgr2', 'manager')
-    r = mgr.get('/admin?tab=audit')
-    assert r.status_code == 302 and r.headers['Location'].endswith('/admin/audit'), '舊的稽核分頁導到完整頁'
     assert 'auditLogTable' in mgr.get('/admin/audit').get_data(as_text=True)
     assert '稽核紀錄' in mgr.get('/admin/settings').get_data(as_text=True)
 
@@ -116,7 +114,7 @@ def test_tenant_toggle_disables_login_storefront_and_audits(app):
         assert StaffAuditLog.query.filter_by(action_type='TENANT_TOGGLE').count() >= 1
     assert app.test_client().get('/shop/tenant-toggle-shop').status_code == 404
     assert '登入' in other.get('/admin').get_data(as_text=True), '已登入的員工因店家停用而失效'
-    assert other.get('/admin/menu_pro').status_code in (302, 401, 403)
+    assert other.get('/admin/menu').status_code in (302, 401, 403)
     assert '已停用' in platform.get('/admin/tenants').get_data(as_text=True)
     # 再啟用
     platform.post(f'/admin/tenants/{tid}/toggle')

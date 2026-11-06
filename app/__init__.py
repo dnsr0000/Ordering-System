@@ -1,10 +1,9 @@
 import logging
 import os
-import posixpath
 import re
 import sqlite3
 
-from flask import Flask, abort, request
+from flask import Flask, request
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -41,39 +40,6 @@ CSP_POLICY = "; ".join([
 ])
 
 
-def _move_legacy_uploads(app):
-    """
-    舊版上傳檔放在 static/member、static/menu；第一次啟動新版時搬到設定的上傳資料夾 (已存在的檔案不覆蓋)。
-    只在正式執行、且上傳資料夾位於專案內時搬移：測試或腳本使用暫存資料夾時絕不可搬走真實檔案
-    (暫存資料夾結束時會被刪除)。
-    """
-    import shutil
-    if app.testing:
-        return
-    base = os.path.abspath(app.config['BASE_DIR'])
-    for legacy, key in (('member', 'UPLOAD_FOLDER_MEMBER'), ('menu', 'UPLOAD_FOLDER_MENU')):
-        src = os.path.join(app.static_folder, legacy)
-        dst = app.config[key]
-        if not os.path.isdir(src) or os.path.abspath(src) == os.path.abspath(dst):
-            continue
-        if os.path.commonpath([base, os.path.abspath(dst)]) != base:
-            logging.getLogger(__name__).warning('上傳資料夾 %s 不在專案內，未自動搬移 static/%s 的舊檔案', dst, legacy)
-            continue
-        moved = 0
-        for root, _dirs, files in os.walk(src):
-            for name in files:
-                if name == '.gitkeep':
-                    continue
-                rel = os.path.relpath(os.path.join(root, name), src)
-                target = os.path.join(dst, rel)
-                if not os.path.exists(target):
-                    os.makedirs(os.path.dirname(target), exist_ok=True)
-                    shutil.move(os.path.join(root, name), target)
-                    moved += 1
-        if moved:
-            logging.getLogger(__name__).info('已將 %d 個舊上傳檔從 static/%s 搬到 %s', moved, legacy, dst)
-
-
 def create_app(config_class=Config):
     app = Flask(__name__,
                 template_folder=os.path.join(config_class.BASE_DIR, 'templates'),
@@ -92,7 +58,6 @@ def create_app(config_class=Config):
 
     for folder in ('DATABASE_DIR', 'UPLOAD_FOLDER_MEMBER', 'UPLOAD_FOLDER_MENU', 'MODELS_DIR'):
         os.makedirs(app.config[folder], exist_ok=True)
-    _move_legacy_uploads(app)
 
     @app.before_request
     def allow_large_backup_restore():
@@ -249,10 +214,3 @@ def _register_security_hooks(app):
             header = 'Content-Security-Policy-Report-Only' if csp_mode == 'report-only' else 'Content-Security-Policy'
             resp.headers.setdefault(header, CSP_POLICY)
         return resp
-
-    @app.before_request
-    def block_legacy_member_folder():
-        """舊版把會員照片放在 static/member；改由 /media/member 控管後，靜態路徑一律不提供 (含 /static/./Member 等變形)"""
-        path = posixpath.normpath(request.path.replace('\\', '/')).lower()
-        if path == '/static/member' or path.startswith('/static/member/'):
-            abort(404)

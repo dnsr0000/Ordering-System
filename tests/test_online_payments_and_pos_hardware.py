@@ -420,9 +420,9 @@ def test_size_options_change_price_and_are_validated(app, admin_client, staff_cl
     assert parse_size_options('小:-10\n大:abc') == [('小', -10)]
     item = make_item(app, '規格紅茶', price=40, category='飲料')
     form = {'action': 'item', 'item_id': str(item), 'avail_days': list('1234567'), 'size_options': '中杯:0, 大杯:15'}
-    assert admin_client.post('/admin/menu_pro', data=form).status_code == 302
+    assert admin_client.post('/admin/menu', data=form).status_code == 302
     bad = dict(form, size_options='大杯:abc')
-    flashes_before = admin_client.post('/admin/menu_pro', data=bad)
+    flashes_before = admin_client.post('/admin/menu', data=bad)
     assert flashes_before.status_code in (302, 400)
     assert_flash(admin_client, '規格格式')
     with app.app_context():

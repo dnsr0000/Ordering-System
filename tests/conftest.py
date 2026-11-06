@@ -316,7 +316,7 @@ def page(browser, live_url):
 # backup_restore 會整庫還原 (換掉資料庫)，所以兩者放最後。
 # ---------------------------------------------------------------------------
 RUN_ORDER = [
-    'test_startup_defaults', 'test_legacy_database_upgrade', 'test_staff_login_and_roles', 'test_web_security',
+    'test_startup_defaults', 'test_staff_login_and_roles', 'test_web_security',
     'test_menu_admin', 'test_member_accounts', 'test_member_face_and_photos', 'test_kiosk_checkout',
     'test_coupons_and_rewards', 'test_pos_checkout', 'test_order_status_and_cancel', 'test_reports_and_excel',
     'test_rate_limits_and_lockout', 'test_concurrency_stock_points', 'test_live_updates_sse', 'test_tenants_and_isolation',

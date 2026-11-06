@@ -190,7 +190,7 @@ def test_calories_and_nutrition_shown_and_configurable(app, admin_client, store_
     item = make_item(app, '熱量雞胸餐', price=160, category='輕食')
     form = {'action': 'item', 'item_id': str(item), 'avail_days': list('1234567'), 'calories': '520',
             'nutrition': '蛋白質 42g、脂肪 12g'}
-    assert admin_client.post('/admin/menu_pro', data=form).status_code == 302
+    assert admin_client.post('/admin/menu', data=form).status_code == 302
     page = guest_client(app).get('/').get_data(as_text=True)
     assert '520 kcal' in page and '蛋白質 42g' in page and 'id="cart-calories-row"' in page
     assert '"calories": 520' in page
@@ -198,7 +198,7 @@ def test_calories_and_nutrition_shown_and_configurable(app, admin_client, store_
     page = guest_client(app).get('/').get_data(as_text=True)
     assert '520 kcal' not in page and 'menu-nutrition' not in page
     huge = dict(form, calories='999999')
-    admin_client.post('/admin/menu_pro', data=huge)
+    admin_client.post('/admin/menu', data=huge)
     from app.models.menu import MenuItem
     with app.app_context():
         assert db.session.get(MenuItem, item).calories == 5000

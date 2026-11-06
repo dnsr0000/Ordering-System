@@ -34,8 +34,6 @@ database/*
 
 # ---- 上傳檔 (會員人臉照片、餐點照片；新舊位置都排除) ----
 uploads
-static/member
-static/menu
 
 # ---- 測試、備份、匯出檔 (backups/ 含資料庫 dump 與會員照片，絕不可打包進映像) ----
 backups

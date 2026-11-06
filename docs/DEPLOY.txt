@@ -149,9 +149,6 @@
        .venv\Scripts\pip install -r requirements-store.txt
      (requirements-store.txt = 核心套件 + numpy / opencv-python-headless 人臉辨識；gunicorn 只用於 Linux，Windows 上會自動略過。
       套件清單的三層說明見 docs/CONFIG.txt 一。)
-   - 從舊版升級時，OpenCV 已改用 opencv-python-headless，請先移除舊套件再安裝，避免兩個套件互相覆蓋：
-       .venv\Scripts\pip uninstall -y opencv-python
-       .venv\Scripts\pip install -r requirements-store.txt
    - 人臉辨識模型檔 (models/*.onnx) 不在程式包內：第一次啟動時自動從 OpenCV Zoo 下載 (主機需能連 github.com)，
      或先在有網路的電腦執行 .venv\Scripts\flask --app run models download 再把 models\ 複製過去；
      後台「系統監控與備份」的「人臉辨識登入」方塊顯示可用 / 停用與原因 (docs/CONFIG.txt 二)。
@@ -289,7 +286,6 @@
 [ ] 多分店叫貨 / 調撥：各店原料名稱要一致 (依名稱對應)；總部中央廚房的原料建立在線上端後台「原物料與配方」。
     分店價格 / 上下架在線上端設定，分店約 20 秒內套用 (分店離線時於恢復連線後套用)
 [ ] 後台建立正式使用的員工帳號 (owner / manager / staff / kitchen)，停用或刪除測試帳號
-[ ] 升級舊版門市：先 pip uninstall -y opencv-python，再 pip install -r requirements-store.txt (pandas 已不需要，可一併移除)
 [ ] 門市人臉辨識：後台「系統監控與備份」的「人臉辨識登入」顯示「可用」(模型檔已下載、套件已安裝)；線上端沒有此功能
 
 業務 / 法規面

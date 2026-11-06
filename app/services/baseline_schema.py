@@ -1,7 +1,6 @@
 """
 重構前 (0001_baseline) 的資料表結構。
 - migrations/versions/0001_baseline.py 以此建立全新資料庫 (已存在的資料表略過)。
-- legacy_upgrade 以此把「導入 Alembic 之前」結構不一的舊資料庫整理成一致的 baseline。
 """
 import sqlalchemy as sa
 

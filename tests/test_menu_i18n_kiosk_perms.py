@@ -47,7 +47,7 @@ def test_menu_translate_action_fills_only_blank_fields(app, admin_client, monkey
     monkeypatch.setattr(ai_service, 'gemini_generate', lambda prompt, **k: json.dumps(
         [{'i': i + 1, 'name_en': f'EN{i}', 'name_ja': f'JA{i}', 'description_en': f'DE{i}', 'description_ja': f'DJ{i}'}
          for i in range(60)]))
-    r = admin_client.post('/admin/menu_pro', data={'action': 'translate'})
+    r = admin_client.post('/admin/menu', data={'action': 'translate'})
     assert r.status_code == 302
     with app.app_context():
         a, b = db.session.get(MenuItem, item), db.session.get(MenuItem, item2)
@@ -59,10 +59,10 @@ def test_menu_translate_action_fills_only_blank_fields(app, admin_client, monkey
         from app.models.user import StaffAuditLog
         assert StaffAuditLog.query.filter_by(action_type='MENU_TRANSLATE').count() >= 1
     # 連已填的也重新翻譯
-    admin_client.post('/admin/menu_pro', data={'action': 'translate', 'overwrite': '1'})
+    admin_client.post('/admin/menu', data={'action': 'translate', 'overwrite': '1'})
     with app.app_context():
         assert db.session.get(MenuItem, item).name_en.startswith('EN')
-    html = admin_client.get('/admin/menu_pro').get_data(as_text=True)
+    html = admin_client.get('/admin/menu').get_data(as_text=True)
     assert 'AI 一鍵翻譯菜單' in html and 'menuTranslateForm' in html
 
 
@@ -180,7 +180,7 @@ def test_member_price_applies_only_to_members(app, store_settings):
     assert 'member_prices' in core and 'isGuest' in core
     # 後台表單可設定
     admin = login_staff(app, 'member_price_admin', 'manager')
-    admin.post('/admin/menu_pro', data={'action': 'item', 'item_id': item, 'member_price': '160', 'takeout_price': '0',
+    admin.post('/admin/menu', data={'action': 'item', 'item_id': item, 'member_price': '160', 'takeout_price': '0',
                                         'online_price': '0', 'delivery_price': '0', 'avail_start': '', 'avail_end': '',
                                         'sale_from': '', 'sale_until': '', 'spicy_level': '0',
                                         'avail_days': ['1', '2', '3', '4', '5', '6', '7']})
@@ -198,7 +198,7 @@ def test_page_permissions_grant_staff_access_to_back_office_pages(app):
     staff = login_staff(app, 'perm_page_staff', 'staff')
     # 預設：後台導回 POS、各頁 403
     assert staff.get('/admin').status_code == 302
-    for path in ('/admin/menu_pro', '/admin/promotions', '/admin/members_pro', '/admin/feedback', '/admin/settings'):
+    for path in ('/admin/menu', '/admin/promotions', '/admin/members', '/admin/feedback', '/admin/settings'):
         assert staff.get(path).status_code == 403, path
     item = make_item(app, '權限測試餐', price=10)
     assert staff.post(f'/admin/edit/{item}', data={'name': 'x'}).status_code == 403

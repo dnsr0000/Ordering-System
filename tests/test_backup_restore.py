@@ -1,16 +1,11 @@
-"""整庫備份與還原：權限、往返還原、惡意備份檔、舊版備份還原後立即升級"""
+"""整庫備份與還原：權限、往返還原、惡意備份檔、較舊版本的備份還原後立即升級"""
 import io
 import os
-import pickle
 import sqlite3
 import zipfile
 
-import numpy as np
 import pytest
 
-from app.models.user import (
-    FEATURE_MAGIC_PREFIX,
-)
 from tests.conftest import IS_SQLITE
 from tests.support import (
     assert_flash,
@@ -143,19 +138,20 @@ def test_malicious_backups_rejected(app, admin_client):
     assert {f for f in os.listdir(db_dir) if '.bak-' in f} == before
 
 
-def legacy_backup_zip(folder):
-    path = os.path.join(folder, 'legacy_make.db')
+def older_revision_backup_zip(folder):
+    """把目前的資料庫複製一份並退回上一版結構 (移除最新遷移加的資料表與欄位)，當作「舊版本的備份」"""
+    src = sqlite3.connect(os.path.join(folder, 'menu.db'))
+    path = os.path.join(folder, 'older_make.db')
     if os.path.exists(path):
         os.remove(path)
-    conn = sqlite3.connect(path)
-    conn.execute('CREATE TABLE user (id INTEGER PRIMARY KEY, name VARCHAR(100) NOT NULL, phone VARCHAR(50) NOT NULL, '
-                 'photo_path VARCHAR(200) NOT NULL, feature BLOB, points INTEGER DEFAULT 0)')
-    conn.execute('INSERT INTO user (name, phone, photo_path, feature, points) VALUES (?,?,?,?,?)',
-                 ('舊庫甲', '0911000001', 'a.jpg', pickle.dumps(np.linspace(0.2, 0.8, 128, dtype=np.float32), protocol=4), 40))
-    conn.execute('INSERT INTO user (name, phone, photo_path, feature, points) VALUES (?,?,?,?,?)',
-                 ('舊庫乙', '0911000002', 'b.jpg', b'\x80\x04garbage-feature', 5))
-    conn.commit()
-    conn.close()
+    dst = sqlite3.connect(path)
+    src.backup(dst)
+    src.close()
+    dst.execute('DROP TABLE staff_availability')
+    dst.execute('ALTER TABLE staff_account DROP COLUMN max_hours_week')
+    dst.execute("UPDATE alembic_version SET version_num = '0027_gps_carbon'")
+    dst.commit()
+    dst.close()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as zf:
         zf.write(path, 'menu.db')
@@ -165,8 +161,9 @@ def legacy_backup_zip(folder):
 
 @pytest.mark.parametrize('file_locked', [False, True], ids=['replace-file', 'windows-in-place'])
 @pytest.mark.skipif(not IS_SQLITE, reason='整庫還原只支援本機 SQLite')
-def test_restore_legacy_backup_upgrades_immediately(app, monkeypatch, file_locked):
+def test_restore_older_backup_upgrades_immediately(app, monkeypatch, file_locked):
     db_dir = app.config['DATABASE_DIR']
+    backup = older_revision_backup_zip(db_dir)
     if file_locked:  # 模擬 Windows：資料庫仍被其他連線開啟，無法以換檔方式替換
         real_replace = os.replace
 
@@ -178,19 +175,15 @@ def test_restore_legacy_backup_upgrades_immediately(app, monkeypatch, file_locke
 
     admin = login_staff(app, 'admin_test')  # 前一次還原已換掉資料庫，重新登入
     r = admin.post('/admin/restore_backup', content_type='multipart/form-data',
-                   data={'restore_db': '1', 'backup_zip': (io.BytesIO(legacy_backup_zip(db_dir)), 'legacy.zip')})
+                   data={'restore_db': '1', 'backup_zip': (io.BytesIO(backup), 'older.zip')})
     assert r.status_code == 302, r.get_data(as_text=True)[:300]
     assert_flash(admin, '還原完成')
 
     conn = sqlite3.connect(os.path.join(db_dir, 'menu.db'))
     try:
-        cols = {row[1] for row in conn.execute('PRAGMA table_info(user)')}
-        assert {'tenant_id', 'pin_hash', 'uuid'} <= cols
-        feats = dict(conn.execute('SELECT phone, feature FROM user'))
-        assert bytes(feats['0911000001']).startswith(FEATURE_MAGIC_PREFIX)
-        assert bytes(feats['0911000002']) == b'\x80\x04garbage-feature'
-        assert conn.execute("SELECT COUNT(*) FROM tenant WHERE slug = 'default'").fetchone()[0] == 1
-        assert conn.execute('SELECT COUNT(*) FROM user WHERE tenant_id IS NULL').fetchone()[0] == 0
+        cols = {row[1] for row in conn.execute('PRAGMA table_info(staff_account)')}
+        assert 'max_hours_week' in cols
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'staff_availability'").fetchone()[0] == 1
         assert conn.execute('SELECT version_num FROM alembic_version').fetchone()[0] == head_revision()
     finally:
         conn.close()

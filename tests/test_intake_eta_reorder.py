@@ -192,9 +192,9 @@ def test_eta_disabled_returns_zero_and_prep_minutes_form(app, store_settings):
     owner = login_staff(app, 'eta_owner', 'owner')
     from app.extensions import db
     from app.models.menu import MenuItem
-    page = owner.get('/admin/menu_pro').get_data(as_text=True)
+    page = owner.get('/admin/menu').get_data(as_text=True)
     assert 'name="prep_minutes"' in page
-    owner.post('/admin/menu_pro', data={'action': 'item', 'item_id': item, 'prep_minutes': '7',
+    owner.post('/admin/menu', data={'action': 'item', 'item_id': item, 'prep_minutes': '7',
                                         'avail_days': ['1', '2', '3', '4', '5', '6', '7']})
     with app.app_context():
         assert db.session.get(MenuItem, item).prep_minutes == 7

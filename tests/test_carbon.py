@@ -45,14 +45,14 @@ def test_carbon_from_recipe_and_manual(app, admin_client, store_settings):
 
     # 菜單進階設定：改為手動填寫，之後重算不覆蓋；再切回依配方就重算
     base = {'name': '碳足跡牛肉麵', 'avail_days': ['1', '2', '3', '4', '5', '6', '7'], 'action': 'item', 'item_id': iid}
-    admin_client.post('/admin/menu_pro', data=dict(base, carbon_grams='500'))
+    admin_client.post('/admin/menu', data=dict(base, carbon_grams='500'))
     info = _item(app, iid)
     assert (info['carbon'], info['auto']) == (500, False)
     admin_client.post('/admin/inventory', data={'action': 'carbon_refresh'})
     assert _item(app, iid)['carbon'] == 500
-    pro_page = admin_client.get('/admin/menu_pro').get_data(as_text=True)
+    pro_page = admin_client.get('/admin/menu').get_data(as_text=True)
     assert f'carbon-auto-{iid}' in pro_page and 'value="500"' in pro_page
-    admin_client.post('/admin/menu_pro', data=dict(base, carbon_grams='999', carbon_auto='1'))
+    admin_client.post('/admin/menu', data=dict(base, carbon_grams='999', carbon_auto='1'))
     info = _item(app, iid)
     assert (info['carbon'], info['auto']) == (3150, True)
 

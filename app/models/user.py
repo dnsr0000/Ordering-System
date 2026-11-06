@@ -62,7 +62,7 @@ def encode_feature_array(arr):
 
 
 def decode_feature_bytes(raw):
-    """解碼 NPF32v1 特徵；格式、長度或數值不合法時回傳 None (舊版 Pickle 由 legacy 升級程序一次轉換)"""
+    """解碼 NPF32v1 特徵；格式、長度或數值不合法時回傳 None"""
     if raw is None:
         return None
     raw = bytes(raw)

@@ -159,7 +159,7 @@ def test_kitchen_prep_card(app, kitchen_client, admin_client):
         js = fh.read()
     assert 'prep-card' in js and '/api/kitchen/prep_card/' in js and 'has_card' in js
     # 菜單進階設定可填
-    r = admin_client.post('/admin/menu_pro', data={'action': 'item', 'item_id': plain, 'prep_note': '  盛飯 150g  ',
+    r = admin_client.post('/admin/menu', data={'action': 'item', 'item_id': plain, 'prep_note': '  盛飯 150g  ',
                                                    'avail_days': list('1234567'), 'spicy_level': '0'})
     assert r.status_code == 302
     with app.app_context():

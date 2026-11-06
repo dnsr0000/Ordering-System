@@ -15,7 +15,7 @@ from tests.support import browser_staff_login, checkout, line, login_staff, seed
 pytestmark = pytest.mark.e2e
 
 ADMIN_PAGES = ['/admin/settings', '/admin/invoices', '/admin/refunds', '/admin/shifts', '/admin/printers',
-               '/admin/menu_pro', '/admin/inventory', '/admin/members_pro', '/admin/promotions', '/admin/delivery',
+               '/admin/menu', '/admin/inventory', '/admin/members', '/admin/promotions', '/admin/delivery',
                '/admin/reports', '/admin/timeclock', '/admin/system', '/reservations', '/admin/purchasing', '/admin/forecast',
                '/admin/live', '/admin/gift_cards', '/admin/feedback', '/admin/security', '/admin/dispatch']
 

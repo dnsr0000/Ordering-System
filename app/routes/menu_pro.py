@@ -88,7 +88,6 @@ def translate_menu(overwrite=False):
     return filled, source
 
 
-@menu_pro_bp.route('/admin/menu_pro', methods=['GET', 'POST'])   # 舊網址 (url_for 用先註冊的 /admin/menu)
 @menu_pro_bp.route('/admin/menu', methods=['GET', 'POST'], endpoint='manage')
 @permission_required('menu')
 def manage():

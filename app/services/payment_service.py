@@ -419,8 +419,6 @@ def process_refund(refund_id, ecpay_post=None):
     return refund.status
 
 
-process_linepay_refund = process_refund   # 舊名稱 (相容)
-
 AUTO_REFUND_FAILED = '退刷失敗：'
 
 

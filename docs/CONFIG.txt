@@ -13,7 +13,7 @@
   requirements-store.txt  -r requirements.txt + numpy + opencv-python-headless：門市 (人臉辨識登入)；
                           deploy/windows/update_store.cmd (門市一鍵更新) 也安裝這個檔案。
   requirements-dev.txt    -r requirements-store.txt + pytest、pytest-cov、playwright、axe-playwright-python：開發、測試與 CI。
-  Excel 匯出 / 匯入直接用 openpyxl (不再依賴 pandas)，只支援 .xlsx 與 .csv；舊版 .xls 會被拒絕並提示先另存為 .xlsx。
+  Excel 匯出 / 匯入直接用 openpyxl，只支援 .xlsx 與 .csv (.xls 會被拒絕並提示先另存為 .xlsx)。
   選用：sentry-sdk[flask] (錯誤回報)、llama-cpp-python (本機 Qwen，見 docs/FEATURES.txt 二-I)。
 
 

@@ -71,20 +71,9 @@ PAYMENT_METHOD_LABELS = {
 }
 
 
-# 舊版前端/匯入資料曾使用的別名，統一轉成標準值後再存檔
-_PAYMENT_ALIASES = {
-    'CreditCard': PaymentMethod.CREDIT_CARD,
-    'LinePay': PaymentMethod.LINE_PAY,
-    'JKOPay': PaymentMethod.JKO_PAY,
-    'StoredValue': PaymentMethod.STORED_VALUE,
-}
-
-
 def normalize_payment_method(value):
     """回傳標準付款方式；不支援的值回傳 None"""
     raw = str(value or '').strip()
-    if raw in _PAYMENT_ALIASES:
-        return _PAYMENT_ALIASES[raw]
     try:
         return PaymentMethod(raw)
     except ValueError:

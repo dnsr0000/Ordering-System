@@ -186,9 +186,9 @@ def phone_login():
 
     user = User.query.filter_by(phone=phone).first()
     if user is not None and not user.pin_hash:
-        # 舊版會員尚未設定 PIN：提示改用人臉或洽櫃檯 (仍計入 IP 層級失敗次數，避免被拿來列舉會員)
+        # 會員尚未設定 PIN (例如由 Excel 匯入)：提示改用人臉或洽櫃檯 (仍計入 IP 層級失敗次數，避免被拿來列舉會員)
         auth_throttle.record_pin_failure(keys, ip_only=True)
-        raise AppError('此舊版會員帳號尚未設定安全 PIN 碼，請改用人臉辨識登入，或洽詢櫃檯人員協助設定！', 403)
+        raise AppError('此會員帳號尚未設定安全 PIN 碼，請改用人臉辨識登入，或洽詢櫃檯人員協助設定！', 403)
     if user is None:
         auth_throttle.spend_hash_time(pin)  # 回應時間與手機已註冊時相同，無法藉此列舉會員
     if user is None or not user.check_pin(pin):

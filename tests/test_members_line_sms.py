@@ -55,9 +55,9 @@ def _line_login(client, posts, code='ok', register=False):
 # 等級 / 生日 / 儲值金 (後台)
 # ---------------------------------------------------------------------------
 def test_tier_admin_and_recompute(app, admin_client, staff_client):
-    admin_client.post('/admin/members_pro', data={'action': 'add_tier', 'name': '金卡測試', 'min_spend': '800',
+    admin_client.post('/admin/members', data={'action': 'add_tier', 'name': '金卡測試', 'min_spend': '800',
                                                   'points_multiplier': '1.5', 'discount_percent': '5', 'color': 'warning'})
-    admin_client.post('/admin/members_pro', data={'action': 'add_tier', 'name': '金卡測試'})
+    admin_client.post('/admin/members', data={'action': 'add_tier', 'name': '金卡測試'})
     assert_flash(admin_client, '已存在')
     uid = make_member(app, '等級會員', '0966100001')
     iid = make_item(app, '等級測試餐', price=500, stock=20)
@@ -68,14 +68,14 @@ def test_tier_admin_and_recompute(app, admin_client, staff_client):
     # 降低門檻後重新計算：只升不降
     with app.app_context():
         tier_id = MemberTier.query.filter_by(name='金卡測試').first().id
-    admin_client.post('/admin/members_pro', data={'action': 'edit_tier', 'tier_id': tier_id, 'name': '金卡測試',
+    admin_client.post('/admin/members', data={'action': 'edit_tier', 'tier_id': tier_id, 'name': '金卡測試',
                                                   'min_spend': '100000', 'discount_percent': '0', 'points_multiplier': '1'})
-    admin_client.post('/admin/members_pro', data={'action': 'recompute_tiers'})
+    admin_client.post('/admin/members', data={'action': 'recompute_tiers'})
     assert _user(app, '0966100001')['tier'] == '金卡測試'
-    page = admin_client.get('/admin/members_pro?q=0966100001').get_data(as_text=True)
+    page = admin_client.get('/admin/members?q=0966100001').get_data(as_text=True)
     assert '等級會員' in page and '金卡測試' in page
-    assert staff_client.get('/admin/members_pro').status_code == 403
-    admin_client.post('/admin/members_pro', data={'action': 'delete_tier', 'tier_id': tier_id})
+    assert staff_client.get('/admin/members').status_code == 403
+    admin_client.post('/admin/members', data={'action': 'delete_tier', 'tier_id': tier_id})
     assert _user(app, '0966100001')['tier'] is None
 
 
@@ -87,7 +87,7 @@ def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api
                       line_user_id='U' + 'b' * 32)
     make_member(app, '非壽星', '0966100003', points=10,
                 birthday=today.replace(year=1990, month=(today.month % 12) + 1, day=1))
-    admin_client.post('/admin/members_pro', data={'action': 'birthday_now'})
+    admin_client.post('/admin/members', data={'action': 'birthday_now'})
     msgs = flashes(admin_client)
     assert any('已送出' in m for m in msgs)
     assert _user(app, '0966100002')['points'] == 60 and _user(app, '0966100002')['gift_year'] == today.year
@@ -100,7 +100,7 @@ def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api
         assert wallet_service.grant_birthday_gifts(default_tenant_id(app)) == 0, '同一年只送一次'
     assert _user(app, '0966100002')['points'] == 60
     # 後台修改生日
-    admin_client.post('/admin/members_pro', data={'action': 'member', 'user_id': uid, 'birthday': '1991-02-03', 'tier_id': ''})
+    admin_client.post('/admin/members', data={'action': 'member', 'user_id': uid, 'birthday': '1991-02-03', 'tier_id': ''})
     with app.app_context():
         assert db.session.get(User, uid).birthday == date(1991, 2, 3)
 
@@ -108,11 +108,11 @@ def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api
 def test_wallet_adjust_owner_only(app, admin_client, store_settings):
     uid = make_member(app, '調整儲值會員', '0966100004')
     mgr = login_staff(app, 'wallet_mgr', 'manager')
-    mgr.post('/admin/members_pro', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '100', 'note': '補償'})
+    mgr.post('/admin/members', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '100', 'note': '補償'})
     assert _user(app, '0966100004')['wallet'] == 0
-    admin_client.post('/admin/members_pro', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '100', 'note': '補償'})
+    admin_client.post('/admin/members', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '100', 'note': '補償'})
     assert _user(app, '0966100004')['wallet'] == 100
-    admin_client.post('/admin/members_pro', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '-150', 'note': '扣回'})
+    admin_client.post('/admin/members', data={'action': 'wallet_adjust', 'user_id': uid, 'delta': '-150', 'note': '扣回'})
     assert_flash(admin_client, '超過目前餘額')
     assert _user(app, '0966100004')['wallet'] == 100
 
@@ -168,11 +168,11 @@ def test_ready_push_and_broadcast(app, admin_client, staff_client, store_setting
     push = [p for p in posts if p[0] == line_service.PUSH_URL][-1][1]
     assert push['headers']['Authorization'] == 'Bearer bot-token' and push['json']['to'] == 'U' + 'c' * 32
     assert '已完成' in push['json']['messages'][0]['text']
-    admin_client.post('/admin/members_pro', data={'action': 'broadcast', 'target': 'all', 'message': '週末買一送一'})
+    admin_client.post('/admin/members', data={'action': 'broadcast', 'target': 'all', 'message': '週末買一送一'})
     multi = [p for p in posts if p[0] == line_service.MULTICAST_URL][-1][1]['json']
     assert 'U' + 'c' * 32 in multi['to'] and multi['messages'][0]['text'] == '週末買一送一'
     store_settings('line', messaging_enabled=False)
-    admin_client.post('/admin/members_pro', data={'action': 'broadcast', 'target': 'all', 'message': 'x'})
+    admin_client.post('/admin/members', data={'action': 'broadcast', 'target': 'all', 'message': 'x'})
     assert_flash(admin_client, '尚未啟用')
 
 

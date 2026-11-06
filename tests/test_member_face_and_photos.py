@@ -1,7 +1,6 @@
 """會員人臉與照片：特徵比對與驗證、人臉登入錯誤處理、同一張臉不可重複註冊、上傳圖片限制、照片存取權限"""
 import io
 import os
-import pickle
 
 import numpy as np
 import pytest
@@ -20,7 +19,6 @@ from app.services.cv_service import (
     find_best_match_vectorized,
     save_and_fix_image,
 )
-from app.services.legacy_upgrade import decode_legacy_feature
 from tests.support import (
     assert_flash,
     jpeg_bytes,
@@ -81,7 +79,6 @@ def test_feature_vectors_are_validated(app):
     assert decode_feature_bytes(FEATURE_MAGIC_PREFIX + np.zeros(64, np.float32).tobytes()) is None
     assert decode_feature_bytes(FEATURE_MAGIC_PREFIX + nan.tobytes()) is None
     assert decode_feature_bytes(FEATURE_MAGIC_PREFIX + good.tobytes()[:-2]) is None
-    assert decode_legacy_feature(pickle.dumps(np.zeros(64, np.float32), protocol=4)) is None
     assert np.allclose(decode_feature_bytes(encode_feature_array(good)), good)
     with pytest.raises(ValueError):
         encode_feature_array(np.zeros(64, np.float32))

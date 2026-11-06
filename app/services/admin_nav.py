@@ -88,8 +88,8 @@ NAV_GROUPS: tuple = (
     )),
 )
 
-# 舊標頭按鈕的 id (測試與自動化腳本用)，對應到側欄項目
-LEGACY_IDS = {
+# 側欄項目的固定 id (測試與自動化腳本用來定位)
+NAV_IDS = {
     ('menu_pro.manage', ''): 'nav-menu-pro', ('promotions.manage', ''): 'nav-promotions',
     ('members_pro.manage', ''): 'nav-members-pro', ('feedback.index', ''): 'nav-feedback', ('live.index', ''): 'nav-live',
     ('tables.manage', ''): 'nav-tables',
@@ -156,7 +156,7 @@ def build_nav():
             rows.append({
                 'label': item_label, 'icon': item_icon, 'url': url_for(endpoint, **kwargs),
                 'active': _active(endpoint, extra), 'blank': bool(extra.get('_blank')),
-                'id': extra.get('id') or LEGACY_IDS.get((endpoint, ''), ''),
+                'id': extra.get('id') or NAV_IDS.get((endpoint, ''), ''),
             })
         if rows:
             groups.append({'key': key, 'label': label, 'icon': icon, 'items': rows})

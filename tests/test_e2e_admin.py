@@ -93,7 +93,7 @@ def test_add_menu_item_via_form(page, app):
     modal.locator('button[type="submit"]').click()
 
     row = page.locator('#menuItemTable tbody tr.menu-row', has_text=name)
-    expect(row).to_be_visible()  # 送出後導回 ?tab=menu 並自動切到菜單分頁
+    expect(row).to_be_visible()  # 送出後導回菜單頁
     expect(row).to_contain_text('<b>描述不是粗體</b>')
     expect(row).to_contain_text('[限分類:飲料]')
     with app.app_context():

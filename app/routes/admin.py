@@ -35,7 +35,7 @@ from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, get_own, is_p
 admin_bp = Blueprint('admin', __name__)
 
 
-# 舊分頁 → 各自的頁面 (菜單、會員、稽核已從後台首頁拆成獨立頁面；營運分析併入總覽)
+# 動作完成後導回的頁面：菜單、會員、稽核是獨立頁面，其餘 (rewards…) 是後台首頁的分頁
 TAB_PAGES = {'menu': 'menu_pro.manage', 'users': 'members_pro.manage', 'audit': 'audit.index', 'analytics': 'admin.admin_dashboard'}
 
 
@@ -97,11 +97,6 @@ def admin_dashboard():
 
     if not current_user.is_authenticated:
         return render_template('admin.html', is_admin=False)
-    tab = request.args.get('tab') or ''
-    if tab in TAB_PAGES and tab != 'analytics':
-        # 舊版的菜單 / 會員 / 稽核分頁：導到各自的頁面 (舊的會員搜尋參數 uq / up 一併帶過去)
-        args = {'q': request.args.get('uq'), 'page': request.args.get('up')} if tab == 'users' else {}
-        return redirect(url_for(TAB_PAGES[tab], **{k: v for k, v in args.items() if v}))
     from app.models.enums import PAGE_PERMISSIONS
     tabs = [p for p in PAGE_PERMISSIONS if current_user.has_permission(p)]
     if current_user.role not in MANAGER_ROLES and not tabs:

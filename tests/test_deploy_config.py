@@ -111,6 +111,6 @@ def test_deploy_files():
         assert needle in compose, needle
 
     dockerignore = _read('deploy/Dockerfile.dockerignore').splitlines()
-    for pattern in ('.env', 'venv', '.venv', 'database/*', 'uploads', 'static/member', 'static/menu'):
+    for pattern in ('.env', 'venv', '.venv', 'database/*', 'uploads'):
         assert pattern in dockerignore, pattern
 
