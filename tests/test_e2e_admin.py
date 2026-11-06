@@ -342,3 +342,31 @@ def test_tenant_register_page(page, app):
     expect(page.locator('#pane-restore-zip')).to_have_count(0)
     with app.app_context():
         assert Tenant.query.filter_by(slug=slug).one().name == f"E2E <b>新店</b> {slug}"
+
+
+def test_dashboard_tabs_follow_sidebar_and_url(page):
+    """側欄「總覽 / 實時訂單 / 回饋商城」與首頁分頁一致：點過其他分頁後再點側欄「總覽」要回到總覽 (不可被上次的分頁蓋掉)"""
+    _login(page)
+    sidebar = lambda key: page.locator(  # noqa: E731
+        'a.admin-nav-link[href$="/admin"]' if key == 'home' else f'a.admin-nav-link[href*="tab={key}"]').first
+
+    page.click('#orders-tab')
+    expect(page.locator('#orders-pane')).to_be_visible()
+    expect(page).to_have_url(re.compile(r'/admin\?tab=orders$'))
+    expect(sidebar('orders')).to_have_class(re.compile(r'\bactive\b'))
+
+    sidebar('home').click()
+    expect(page.locator('#home-pane')).to_be_visible()
+    expect(page.locator('#orders-pane')).to_be_hidden()
+    expect(sidebar('home')).to_have_class(re.compile(r'\bactive\b'))
+
+    sidebar('orders').click()
+    expect(page.locator('#orders-pane')).to_be_visible()
+    page.click('#home-tab')
+    expect(page.locator('#home-pane')).to_be_visible()
+    expect(page).to_have_url(re.compile(r'/admin$'))
+    expect(sidebar('orders')).not_to_have_class(re.compile(r'\bactive\b'))
+
+    page.click('#rewards-tab')
+    page.reload()
+    expect(page.locator('#rewards-pane')).to_be_visible()   # 重新整理停在網址上的分頁

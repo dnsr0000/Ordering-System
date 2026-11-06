@@ -69,7 +69,7 @@ Project Root/
 ├── templates/                 全部繼承 base.html：admin.html (後台首頁三分頁)、_admin_sidebar.html、admin_menu.html、admin_members.html、
 │                              對話框子樣板 _menu_modals / _member_modals / _coupon_modals / _data_modals / _pos_pro_modals.html、
 │                              其餘 admin_*.html 各後台頁
-├── static/css/、js/           theme.css、common.js 共用；admin.js (後台共用：頁籤記憶、實時訂單、總覽即時更新，提供 window.AdminPage)、
+├── static/css/、js/           theme.css、common.js 共用；admin.js (後台共用：首頁分頁由網址決定、實時訂單、總覽即時更新，提供 window.AdminPage)、
 │                              admin-menu.js、admin-coupons.js、admin-members.js、admin-pro.js、settings-hub.js；pos.js 為 POS 進入點
 │                              (ES module)，功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live / pro / shift / split)；
 │                              customer.js 為點餐機進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout / live / voice)；

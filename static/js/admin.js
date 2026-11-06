@@ -1,5 +1,5 @@
 /*
- * 後台共用腳本 (後台首頁 admin.html 與菜單頁 admin_menu.html)：頁籤記憶、實時訂單看板、總覽數字與菜單庫存的即時更新。
+ * 後台共用腳本 (後台首頁 admin.html 與菜單頁 admin_menu.html)：首頁分頁 (由網址決定)、實時訂單看板、總覽數字與菜單庫存的即時更新。
  * 菜單 / 套餐 / 圖片裁切見 admin-menu.js；優惠券與兌換餐點見 admin-coupons.js；會員頁見 admin-members.js。
  * 本檔需最先載入，提供 window.AdminPage 給 admin-menu.js 共用。
  */
@@ -7,7 +7,6 @@
     'use strict';
     const { html, $, setText, store } = Kiosk;
     const data = Kiosk.pageData();
-    const TAB_STORAGE_KEY = 'adminActiveTab';
 
     function autoExpand(el) {
         if (!el) return;
@@ -24,25 +23,34 @@
         showModal,
         // 菜單品項的編輯預設值 (id 字串 → 資料)，即時同步庫存時一併更新
         menuItems: new Map((data.menuItems || []).map((item) => [String(item.id), item])),
-        activeTab: () => store.get(TAB_STORAGE_KEY) || 'home',
-        rememberTab: (key) => store.set(TAB_STORAGE_KEY, key),
     };
 
-    // ---------------------------------------------------------------- 頁籤 (記住上次停留的分頁；只有後台首頁有)
+    // ---------------------------------------------------------------- 頁籤 (只有後台首頁有)
+    // 由網址決定分頁：/admin = 總覽、?tab=orders | rewards。切換分頁時同步更新網址與側欄標示，
+    // 側欄連結、重新整理與動作後的導回都會停在網址指定的分頁 (不另外記憶上次的分頁，避免與側欄不一致)
+    function syncTabUrl(key) {
+        const params = new URLSearchParams(window.location.search);
+        if (key === 'home') params.delete('tab');
+        else params.set('tab', key);
+        const query = params.toString();
+        window.history.replaceState({}, document.title, window.location.pathname + (query ? `?${query}` : ''));
+        document.querySelectorAll('a.admin-nav-link').forEach((link) => {
+            const url = new URL(link.href, window.location.href);
+            if (url.pathname !== window.location.pathname) return;
+            const on = (url.searchParams.get('tab') || 'home') === key;
+            link.classList.toggle('active', on);
+            if (on) link.setAttribute('aria-current', 'page');
+            else link.removeAttribute('aria-current');
+        });
+    }
+
     function initTabs() {
         if (!$('adminTab')) return;
-        const params = new URLSearchParams(window.location.search);
-        const target = params.get('tab') || AdminPage.activeTab();
-        const btn = $(`${target}-tab`) || $('home-tab');
+        const target = new URLSearchParams(window.location.search).get('tab') || 'home';
+        const btn = $(`${target}-tab`) || document.querySelector('#adminTab [data-tab-key]');
         if (btn) bootstrap.Tab.getOrCreateInstance(btn).show();
-        if (params.has('tab')) {
-            AdminPage.rememberTab(btn ? btn.dataset.tabKey : 'home');
-            params.delete('tab');
-            const query = params.toString();
-            window.history.replaceState({}, document.title, window.location.pathname + (query ? `?${query}` : ''));
-        }
         document.querySelectorAll('#adminTab [data-tab-key]').forEach((tabBtn) => {
-            tabBtn.addEventListener('shown.bs.tab', () => AdminPage.rememberTab(tabBtn.dataset.tabKey));
+            tabBtn.addEventListener('shown.bs.tab', () => syncTabUrl(tabBtn.dataset.tabKey));
         });
     }
 
@@ -243,7 +251,6 @@
         let limit = Math.floor(Number(input && input.value));
         if (!limit || limit < 1) limit = 3;
         limit = Math.min(limit, 100);
-        AdminPage.rememberTab('home');
         window.location.href = `${data.loginUrl || '/admin'}?limit=${limit}`;
     }
 
