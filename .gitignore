@@ -23,7 +23,7 @@ uploads/
 *.xlsx
 *.xls
 *.csv
-!docs/menu_import_example.xlsx
+!docs/import_template.xlsx
 backups/
 *.dump
 *.tgz

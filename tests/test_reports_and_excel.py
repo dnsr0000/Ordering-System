@@ -297,3 +297,37 @@ def test_import_rejects_xlsx_bomb(app, admin_client):
     r = admin_client.post('/admin/import_smart', data={'file': (buf, 'bomb.xlsx')}, content_type='multipart/form-data')
     assert r.status_code == 302
     assert_flash(admin_client, '檔案內容過大')
+
+
+def test_import_template_imports_every_sheet(app):
+    """docs/import_template.xlsx 可直接匯入：菜單 / 會員 / 優惠券各 3 筆以上，說明頁略過 (在獨立店家匯入，不影響其他測試)"""
+    from werkzeug.datastructures import FileStorage
+
+    from app.models.coupon import Coupon
+    from app.services import excel_service
+    from tests.support import get_or_create_tenant, tenant_request
+
+    path = os.path.join(os.path.dirname(__file__), '..', 'docs', 'import_template.xlsx')
+    book = openpyxl.load_workbook(path, read_only=True)
+    sheets = {ws.title: ws.max_row - 1 for ws in book.worksheets}
+    book.close()
+    assert {'菜單品項(MenuItem)', '會員資料(User)', '優惠券(Coupon)'} <= set(sheets)
+    assert all(n >= 3 for title, n in sheets.items() if title != '匯入說明(Readme)'), sheets
+
+    tid = get_or_create_tenant(app, 'import-template')
+    with tenant_request(app, tid):
+        with open(path, 'rb') as fh:
+            counts = excel_service.import_workbook(FileStorage(fh, filename='import_template.xlsx'))
+        assert counts == {'MenuItem': sheets['菜單品項(MenuItem)'], 'User': sheets['會員資料(User)'],
+                          'Coupon': sheets['優惠券(Coupon)']}
+        tea = MenuItem.query.filter_by(name='古早味紅茶').one()
+        assert (tea.modifiers, tea.is_reward, tea.reward_points, tea.reward_discount_points) == ('ice_sugar', True, 30, 20)
+        assert MenuItem.query.filter_by(name='照燒雞腿堡').one().discount_price == 150
+        assert User.query.filter_by(phone='0912000101').one().points == 0, '電話保留開頭 0、點數 0 照填'
+        assert Coupon.query.filter_by(code='SAVE85').one().discount_value == 85
+        reward = Coupon.query.filter_by(code='REWARD100').one()
+        assert (reward.is_reward, reward.reward_points, reward.per_user_limit) == (True, 300, 2)
+        # 再匯入一次只會更新、不會重複新增
+        with open(path, 'rb') as fh:
+            excel_service.import_workbook(FileStorage(fh, filename='import_template.xlsx'))
+        assert MenuItem.query.filter_by(name='古早味紅茶').count() == 1 and Coupon.query.filter_by(code='SAVE85').count() == 1

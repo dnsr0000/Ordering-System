@@ -26,8 +26,7 @@
   - 實時訂單看板：今日訂單與狀態操作 (出餐 / 取餐 / 取消)。
   - 回饋商城與優惠券：紅利折抵設定、優惠券 (新增 / 編輯 / 批量發放) 與兌換餐點清單 (上架；「修改點數」開同一個
     對話框並預填)。
-  舊網址 /admin?tab=menu | users | audit 分別導向 /admin/menu、/admin/members、/admin/audit (?tab=analytics 顯示總覽)。
-- 頂欄「匯出資料 / 匯入資料」：Excel 匯出 (勾選資料表)、智慧匯入 (.xlsx / .csv；範例 docs/menu_import_example.xlsx)、整庫備份 / 還原
+- 頂欄「匯出資料 / 匯入資料」：Excel 匯出 (勾選資料表)、智慧匯入 (.xlsx / .csv；範本 docs/import_template.xlsx 含菜單、會員、優惠券與欄位說明，可直接匯入)、整庫備份 / 還原
   (只限平台管理者、只支援 SQLite)。
 - 系統設定 (/admin/settings)：左右兩欄，左欄是 A～H 群組與區塊清單 (含搜尋，支援同義詞例如「綠界」找到電子發票，
   Enter 直接開第一個符合的區塊)，右欄是卡片或表單；同一群組內再以子群組歸類 (收款、顧客通知、財務…)。外部服務的

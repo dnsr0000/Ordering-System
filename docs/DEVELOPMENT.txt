@@ -88,8 +88,8 @@ Project Root/
 ├── docker-compose.yml、.github/workflows/tests.yml、.github/dependabot.yml、
 │   pyproject.toml (ruff / mypy / pytest 設定；pytest 預設略過 e2e、stress)
 ├── .env.example (門市 / 單機範例)、.env、.env.hub [不進版控]、VERSION (YYYY.MM.DD)、README.txt
-├── docs/                      文件 (FEATURES、CONFIG、DEPLOY、SYNC、DEVELOPMENT、SECURITY、API、CHANGELOG、MANUAL_TEST)、
-│                              menu_import_example.xlsx (菜單匯入範例)
+├── docs/                      文件 (FEATURES、CONFIG、DEPLOY、SYNC、DEVELOPMENT、SECURITY、API、MANUAL_TEST)、
+│                              import_template.xlsx (後台「匯入資料」範本：菜單、會員、優惠券)
 ├── requirements.txt、requirements-store.txt、requirements-dev.txt (見 docs/CONFIG.txt 一)
 ├── serve_windows.py           正式營業啟動 (Waitress)
 └── run.py                     開發用啟動
