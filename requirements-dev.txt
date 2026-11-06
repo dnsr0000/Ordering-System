@@ -1,10 +1,10 @@
 # 開發與測試：門市完整套件 + 測試工具 (CI 與本機開發用這個檔案)。
 -r requirements-store.txt
 
-pytest==9.1.1
+pytest==9.2.0
 # 涵蓋率 (CI 的 3.13 工作：pytest --cov=app)
 pytest-cov==7.1.0
 # 瀏覽器端對端測試 (pytest -m e2e)；安裝後需執行一次 playwright install chromium
-playwright==1.64.0
+playwright==1.64.1
 # 顧客頁無障礙檢查 (tests/test_e2e_a11y_filters_receipt_perms.py，axe-core；未安裝時該測試跳過)
 axe-playwright-python==0.1.8
