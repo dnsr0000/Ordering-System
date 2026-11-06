@@ -98,7 +98,7 @@ class Config:
     RATELIMIT_ENABLED = _env_flag("RATELIMIT_ENABLED", True)
     RATELIMIT_HEADERS_ENABLED = True
 
-    # ---- 線上 / 分店同步 (說明見 SYNC.txt) ----
+    # ---- 線上 / 分店同步 (說明見 docs/SYNC.txt) ----
     # standalone：單機 (預設，不同步)；hub：線上端；node：分店 (本機) 端
     SYNC_ROLE = (_env("SYNC_ROLE") or "standalone").lower()
     SYNC_HUB_URL = _env("SYNC_HUB_URL").rstrip("/")          # 分店端：線上端網址，例如 https://shop.example.com

@@ -1,0 +1,101 @@
+====================================================================
+套件、環境變數與 CLI 指令
+====================================================================
+
+安裝與啟動步驟見 README.txt「快速開始」；線上端 / 門市部署見 docs/DEPLOY.txt。
+
+
+一、套件清單 (三層，後者包含前者)
+--------------------------------------------------------------------
+  requirements.txt        核心執行套件 (Flask、SQLAlchemy、waitress / gunicorn、openpyxl、Pillow、segno、cryptography、
+                          py-vapid、psycopg、redis…)：線上端 Docker 映像只裝這個檔案，因此線上端沒有人臉辨識、沒有測試工具。
+                          Windows 另裝 truststore：HTTPS 改用系統憑證庫 (防毒 / 公司網路攔截 HTTPS 時仍可連線)。
+  requirements-store.txt  -r requirements.txt + numpy + opencv-python-headless：門市 (人臉辨識登入)；
+                          deploy/windows/update_store.cmd (門市一鍵更新) 也安裝這個檔案。
+  requirements-dev.txt    -r requirements-store.txt + pytest、pytest-cov、playwright、axe-playwright-python：開發、測試與 CI。
+  Excel 匯出 / 匯入直接用 openpyxl (不再依賴 pandas)，只支援 .xlsx 與 .csv；舊版 .xls 會被拒絕並提示先另存為 .xlsx。
+  選用：sentry-sdk[flask] (錯誤回報)、llama-cpp-python (本機 Qwen，見 docs/FEATURES.txt 二-I)。
+
+
+二、人臉辨識模型 (models/*.onnx)
+--------------------------------------------------------------------
+  - 人臉辨識是選用功能：沒有安裝 opencv / numpy 時 (例如線上端 Docker) 程式照常啟動，只是人臉註冊 / 登入不可用；
+    系統監控頁 (/admin/system) 的「人臉辨識登入」方塊顯示可用 / 停用與原因。
+  - 模型檔 (YuNet、SFace，約 37 MB) 不進版控：伺服器第一次啟動時在背景從 OpenCV Zoo 自動下載到 models/ 並比對 SHA-256
+    (不符不保留)，也可手動 flask --app run models download [--force]。離線主機請先在有網路的電腦下載後把 models/ 複製過去。
+
+
+三、環境變數
+--------------------------------------------------------------------
+門市 / 單機寫在專案根目錄的 .env (範例 .env.example)；線上端寫在 .env.hub (範例 deploy/hub.env.example)。
+.env 的值優先於系統環境變數。
+  一般
+    ADMIN_USERNAME / ADMIN_PASSWORD   預設店家負責人 (第一次建立時使用)
+    RESET_ADMIN_PASSWORD_ON_START     1 = 重啟時把負責人密碼重設為 ADMIN_PASSWORD (忘記密碼時用，用完改回 0)
+    SECRET_KEY                        Session 簽章金鑰；留空自動產生並存於 database/.secret_key (線上端必填)
+    DATABASE_URL                      留空 = database/menu.db (SQLite)；線上端為 postgresql://…
+    AUTO_MIGRATE                      1 = 啟動時升級資料庫；0 = 需先執行 flask --app run setup
+    UPLOAD_FOLDER_MEMBER / _MENU      上傳檔位置 (預設 uploads/member、uploads/menu)
+    HOST / PORT                       serve_windows.py、run.py 的監聽位址與埠號 (預設 0.0.0.0:5000)
+    WAITRESS_THREADS                  Waitress 執行緒數 (每條 SSE 看板連線占 1 條，預設 128)
+  安全
+    TRUSTED_PROXY_COUNT               前面有幾層反向代理 (直接對外 0；Nginx / Cloudflare / Caddy 後面 1)
+    SESSION_COOKIE_SECURE             全站 HTTPS 時 1 (門市以 http://區網IP 使用時維持 0)
+    CSP_MODE                          enforce / report-only / off
+    RATELIMIT_ENABLED                 1 = 啟用 IP 頻率限制
+    REDIS_URL                         選用：多行程部署時共用頻率限制計數與 SSE 通知
+    ALLOW_TENANT_REGISTER             1 = 開放公開的「建立新店家」頁 (/tenant/register)。線上端預設 1；門市主機預設 0
+                                      (任何連得到主機的人都能建店並取得負責人權限)，平台管理者登入後仍可建立新店
+  同步 (說明見 docs/SYNC.txt)
+    SYNC_ROLE                         standalone / node / hub
+    SYNC_HUB_URL / SYNC_NODE_TOKEN    分店：線上端網址 (https) 與分店權杖
+    SYNC_INTERVAL / SYNC_LONG_POLL    分店：上傳檢查間隔、等待線上新訂單的長輪詢秒數
+    SYNC_TENANT_SLUG / SYNC_AUTOSTART 分店：要同步的本機店家、啟動時是否自動同步
+    SYNC_NODE_OFFLINE_AFTER           線上端：分店超過幾秒沒連線就暫停該分店的線上點餐
+  線上付款 (線上端；說明見 docs/DEPLOY.txt 五)
+    ONLINE_PAYMENT                    1 = 線上點餐需先付款 (付款後才送分店)
+    ECPAY_STAGE                       1 = 綠界測試環境 (預設，免註冊、不扣款)；0 = 正式收款 (需填下面三項)
+    ECPAY_MERCHANT_ID / _HASH_KEY / _HASH_IV   綠界正式特店資料
+    ECPAY_ALLOW_TEST_KEYS             1 = 允許以綠界「公開測試金鑰」收款 (測試環境用)。測試金鑰是公開的，任何人都能
+                                      偽造付款通知，因此未設定時付款頁與通知一律拒絕 (線上付款 / 桌邊結帳 / 訂位訂金)
+    PUBLIC_BASE_URL                   綠界付款通知用的公開網址 (留空使用目前網址)；門市使用桌邊線上結帳 / 訂位訂金 /
+                                      外送員 GPS 回報時門市主機也要設定 (對外 HTTPS)，訂位提醒簡訊的取消連結也用這個網址
+    PAYMENT_TIMEOUT_MINUTES           逾時未付款自動取消 (預設 15 分鐘)
+  Webhook (說明見 app/services/webhook_service.py)
+    WEBHOOK_ALLOW_PRIVATE             1 = 允許送到內網 / 本機位址 (只限自架內網整合；預設只送公開網際網路位址；
+                                      監控通知的 Webhook 也依此檢查)
+    WEBHOOK_ALLOW_HTTP                1 = 允許 http:// 網址 (預設只允許 https)
+  記錄檔 (app/services/log_service.py)
+    LOG_FILE                          輪替記錄檔位置 (預設 database/logs/app.log；設為空字串只輸出主控台，Docker 用)
+    LOG_MAX_BYTES / LOG_BACKUP_COUNT  每個記錄檔大小 (預設 10 MB) 與保留個數 (預設 5)
+  選用
+    GEMINI_API_KEY                    Google Gemini (AI 文案與營運建議、一鍵翻譯菜單、語音點餐 / 客服的 AI 備援)
+    GEMINI_MODEL / GEMINI_FALLBACK_MODEL   Gemini 主要模型與備援模型 (主要模型 503 / 逾時重試一次後改用備援)
+    SENTRY_DSN                        設定後 (需 pip install sentry-sdk) 未預期錯誤送到 Sentry；
+                                      SENTRY_TRACES_SAMPLE_RATE 效能取樣 (預設 0)
+    METRICS_TOKEN                     設定後 GET /metrics?token=… 回 Prometheus 指標 (未設定 404)
+    UPDATE_REPO                       版本更新來源 GitHub owner/repo (預設 dnsr0000/Ordering-System)
+
+
+四、常用指令
+--------------------------------------------------------------------
+  flask --app run setup                              升級資料庫並建立預設資料 (可重複執行)
+  flask --app run db migrate -m "說明"                修改 app/models/ 後產生遷移檔 (檢查後再 setup)
+  flask --app run models download [--force]          下載 (或重新下載) 人臉辨識模型檔到 models/ (啟動時也會自動補下載)
+  flask --app run sync create-node --name 台南店      (線上端) 新增分店並顯示權杖
+  flask --app run sync now / sync status             (分店) 立即同步 / 顯示同步狀態
+  flask --app run payments expire                    (線上端) 取消逾時未付款的訂單 (背景也會每分鐘執行)
+  flask --app run privacy purge-inactive [--apply]   刪除停止使用超過設定月數的會員 (多分店時在線上端執行)
+  flask --app run tables check [--fix]               檢查桌邊點餐的資料衝突 (沒有桌位的未結帳訂單、已取消卻已收款、
+                                                     久未結帳)；--fix 把「已取消卻已收款」改為需退款
+  flask --app run ops check-integrations            檢查後台填寫的外部服務 (電子發票、LINE Pay、LINE、簡訊、SMTP、外送平台)
+  flask --app run ops retry-invoices                 立即重送待開立的電子發票 (背景每 5 分鐘也會執行)
+  flask --app run ops backup [--keep-days 14]        立即備份門市資料庫到 database/backups/
+  flask --app run ops daily                          立即執行每日工作 (自動備份、生日禮、定期報表；已執行過的當天不重複)
+  flask --app run demo seed [--days 60] [--orders-per-day 80] [--password ...] [--reset] [--slug demo]
+                                                     建立獨立的「示範店家」(/shop/demo) 與過去 N 天的營運資料 (所有報表都有內容)；
+                                                     帳號 demo_owner 等 (密碼顯示在畫面)、示範會員手機 0900000001 起、PIN 2468；
+                                                     不動其他店家，只能在單機執行
+  flask --app run demo remove [--yes]                刪除示範店家與它的所有資料 (只刪由 demo seed 建立的店家)
+  python tests/test_payment_ecpay_script.py [live]   線上付款測試 (見 docs/DEVELOPMENT.txt 一)
+  docker compose up -d --build                       (線上端) 部署 / 更新

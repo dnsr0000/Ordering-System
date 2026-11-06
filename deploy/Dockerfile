@@ -1,5 +1,6 @@
 # 線上端 (SYNC_ROLE=hub) 映像檔：gunicorn (gthread) + PostgreSQL + Redis
-# 建置：docker compose build    (完整部署步驟見 DEPLOY.txt)
+# 建置：在專案根目錄執行 docker compose build (建置內容為整個專案，排除清單在 deploy/Dockerfile.dockerignore；
+#       完整部署步驟見 docs/DEPLOY.txt)
 ARG PYTHON_IMAGE=python:3.13-slim
 FROM ${PYTHON_IMAGE}
 

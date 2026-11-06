@@ -21,6 +21,7 @@ ENV
 .pytest_cache
 .mypy_cache
 .ruff_cache
+.cache
 .coverage
 htmlcov
 
@@ -42,7 +43,6 @@ backups
 *.tgz
 chrome-kiosk
 tests
-test_menu.xlsx
 *.zip
 *.xlsx
 *.xls
@@ -55,15 +55,14 @@ models/*.gguf
 
 # ---- 文件、門市專用與範例設定 (容器內不需要) ----
 README.txt
-DEPLOY.txt
-SYNC.txt
-pytest.ini
+docs
+pyproject.toml
 serve_windows.py
 deploy/hub.env.example
 
 # ---- 部署設定本身不需要放進映像檔 ----
 docker-compose*.yml
 compose*.yml
-Dockerfile
-.dockerignore
+deploy/Dockerfile
+deploy/Dockerfile.dockerignore
 deploy/Caddyfile

@@ -2,7 +2,7 @@
 線上端 (hub) 與門市分店 (node) 的資料同步
 ====================================================================
 
-角色 (環境變數 SYNC_ROLE：standalone / node / hub，說明與架構圖見 README.txt 一；部署與設定步驟見 DEPLOY.txt 一、三)
+角色 (環境變數 SYNC_ROLE：standalone / node / hub，說明與架構圖見 README.txt 一；部署與設定步驟見 docs/DEPLOY.txt 一、三)
 一個線上店家 (tenant) 可以有多家分店；分店之間不直接連線，都透過線上端交換資料。
 
 同步的資料

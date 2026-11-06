@@ -1,5 +1,5 @@
 # 線上端 (SYNC_ROLE=hub) 部署：app (gunicorn) + PostgreSQL + Redis + Caddy (自動 HTTPS)
-# 使用方式 (詳見 DEPLOY.txt)：
+# 使用方式 (詳見 docs/DEPLOY.txt)：
 #   cp deploy/hub.env.example .env.hub    # 填入網域、密碼、SECRET_KEY
 #   docker compose up -d --build
 # 所有服務都從 .env.hub 讀取設定；下方 environment 為線上端固定值 (優先於 .env.hub)。
@@ -13,7 +13,9 @@ x-logging: &default-logging
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
     image: kiosk-hub-app:latest
     restart: unless-stopped
     env_file:

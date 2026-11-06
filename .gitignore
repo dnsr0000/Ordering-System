@@ -25,7 +25,7 @@ static/menu/
 *.xlsx
 *.xls
 *.csv
-!test_menu.xlsx
+!docs/menu_import_example.xlsx
 backups/
 *.dump
 *.tgz
@@ -48,6 +48,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+# ruff / mypy 的快取 (pyproject.toml 設定到這裡)
+.cache/
 .coverage
 htmlcov/
 .venv/

@@ -1,0 +1,62 @@
+# 開發工具設定 (ruff / mypy / pytest)。本專案不是可安裝的套件，這裡只放工具設定；套件清單見 requirements*.txt。
+
+# ---- ruff：靜態檢查 (CI 的 lint 工作與本機 `ruff check .`) ----
+# 先只開「一定是錯」的規則 (未定義名稱、未使用匯入、語法錯誤)，風格規則 (E / W) 另外用 --select 手動檢查，不擋 CI。
+[tool.ruff]
+line-length = 130
+cache-dir = ".cache/ruff"
+target-version = "py313"
+extend-exclude = ["repomix-output.xml", ".venv", "database", "uploads", "models"]
+
+[tool.ruff.lint]
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+# 測試檔以 import 共用其他測試檔的 fixture (pytest 以名稱注入)，對 pyflakes 來說像是「重新定義」
+"tests/*" = ["F811"]
+# 套件入口的 re-export
+"app/services/order_service.py" = ["F401"]
+"app/__init__.py" = ["F401"]
+
+# ---- mypy：型別檢查 (CI 的 lint 工作與本機 `mypy`) ----
+# 先只檢查 app/services (已加型別註記的函式才檢查內容)，之後逐步擴大。
+[tool.mypy]
+python_version = "3.13"
+cache_dir = ".cache/mypy"
+files = ["app/services"]
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = false
+warn_unused_ignores = true
+no_implicit_optional = false
+show_error_codes = true
+
+# 新模組完整檢查 (未註記函式的內容也檢查)；舊模組逐步補註記後加入
+[[tool.mypy.overrides]]
+module = [
+    "app.services.offsite_backup_service",
+    "app.services.update_service",
+    "app.services.observability",
+    "app.services.receipt_service",
+    "app.services.i18n_pages",
+    "app.services.intake_service",
+    "app.services.eta_service",
+    "app.services.reorder_service",
+    "app.services.push_service",
+    "app.services.log_service",
+    "app.services.static_version",
+    "app.services.http_client",
+]
+check_untyped_defs = true
+
+# ---- pytest ----
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = '-p no:cacheprovider -m "not stress and not e2e"'
+# 與正式執行時一致 (app/services/cv_service.py)：超過像素上限的圖片直接拋錯而不是只警告
+filterwarnings = ["error::PIL.Image.DecompressionBombWarning"]
+markers = [
+    "stress: 真實 HTTP 壓力測試 (預設略過，以 pytest -m stress 執行)",
+    "e2e: 以瀏覽器實際操作頁面的端對端測試 (預設略過，以 pytest -m e2e 執行；需先 playwright install chromium)",
+]

@@ -105,7 +105,8 @@ def test_mypy_config_present_and_passes_if_installed():
     import shutil
     import subprocess
     import sys
-    assert os.path.exists(os.path.join(ROOT, 'mypy.ini'))
+    with open(os.path.join(ROOT, 'pyproject.toml'), encoding='utf-8') as fh:
+        assert '[tool.mypy]' in fh.read()
     mypy = shutil.which('mypy') or os.path.join(os.path.dirname(sys.executable), 'mypy')
     if not os.path.exists(mypy):
         import pytest

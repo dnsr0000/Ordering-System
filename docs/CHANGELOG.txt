@@ -1,0 +1,44 @@
+====================================================================
+升級紀錄與從舊版升級
+====================================================================
+
+從舊版升級 (任何版本 → 目前版本)
+--------------------------------------------------------------------
+1. 先備份 database/menu.db、uploads/ (或舊的 static/member、static/menu)。
+2. pip uninstall -y opencv-python 後 pip install -r requirements-store.txt (門市) 或 requirements-dev.txt (開發)。舊版曾安裝的
+   pandas、opencv-python 已不需要；人臉模型檔第一次啟動自動下載 (或 flask --app run models download)。
+3. 第一次啟動自動完成：升級資料庫 (0001 → 0028)、舊上傳檔搬到 uploads/、會員現有點數記為「期初」點數異動。
+4. 舊檔案已不使用：app/routes/common.py、app/services/idempotency.py、app/services/migration_service.py、test_all_features.py、
+   static/js/pos-pro.js、templates/admin_menu_pro.html、admin_members_pro.html、_admin_modals.html。
+5. 環境變數 DISABLE_RATE_LIMIT 改為 RATELIMIT_ENABLED (0 = 停用)；門市不需要 Redis (只有線上端多行程部署使用)。
+6. 升級前註冊的會員沒有個資同意紀錄：登入後點餐頁上方會請他閱讀並同意；原有人臉資料仍可使用，可在 /privacy 刪除。
+7. 所有進階功能預設關閉或不影響原流程，到後台「系統設定」逐項啟用並填寫金鑰；隱私權告知版本 2026-10-23 (新增 LINE 綁定、
+   生日、儲值金、電子發票載具等蒐集項目)，會員下次登入會再請他同意。
+
+
+升級紀錄
+--------------------------------------------------------------------
+- 2026-11-06：文件整理：README 精簡為簡介與快速開始，其餘拆到 docs/ (FEATURES、CONFIG、DEVELOPMENT、SECURITY、API、
+  CHANGELOG)，DEPLOY / SYNC / MANUAL_TEST 搬進 docs/。門市一鍵更新只覆蓋不刪檔，舊門市根目錄的 DEPLOY.txt、SYNC.txt、
+  MANUAL_TEST.txt、test_menu.xlsx 會留著 (內容已過時)，可手動刪除。根目錄整理：ruff / mypy / pytest 設定合併為
+  pyproject.toml (工具快取改放 .cache/)；Dockerfile 與 .dockerignore 搬到 deploy/Dockerfile、deploy/Dockerfile.dockerignore
+  (線上端照常在根目錄執行 docker compose up -d --build，需 Docker 的 BuildKit，docker compose v2 預設即是)；
+  菜單匯入範例改為 docs/menu_import_example.xlsx。
+  Windows 門市的 HTTPS 改用系統憑證庫 (新套件 truststore，只裝在 Windows)：修正防毒 / 公司網路攔截 HTTPS 時人臉模型、
+  版本更新、綠界、LINE 出現 CERTIFICATE_VERIFY_FAILED。git pull 後請重新 pip install -r requirements-store.txt。
+- 2026-11-05：後台版面改版 (共用左側選單、總覽儀表板、/admin/menu「菜單與套餐」、/admin/members「會員」、系統設定兩欄與
+  搜尋)；套件清單拆成 requirements / -store / -dev，移除 pandas (Excel 改用 openpyxl，.xls 不再支援)，人臉辨識改為選用且模型檔
+  自動下載 (線上端映像不含人臉辨識)；POS 前端全部 ES module (pos-pro.js 併入 pos/pro.js、shift.js、split.js)；顧客端字串集中到
+  i18n_pages.py；設定區塊帶 subgroup / keywords、服務改用 settings_service.reader / flag；AI 引擎重試與備援模型、語音點餐、
+  AI 客服機器人、自動排班 (遷移 0028)、POS 桌號快捷鍵；外送員 GPS 追蹤與碳足跡 (遷移 0027)；數位看板；測試檔依主題重新命名。
+  同功能合併：點餐機與 POS 的計價 / 加購 / 客製化 / 金額 / 優惠碼邏輯合成 js/shared/ (順帶修正點餐機促銷預覽漏送套餐任選與
+  寄杯、優惠碼連按時舊回應蓋掉新回應、配餐售完的套餐仍可選、POS 加料順序不同不合併)；各頁小工具集中到 Kiosk；後台巨集
+  (KPI 卡、看板頂欄、分頁、庫存徽章、對話框標頭)；路由共用的日期 / 分頁 / ETag / Excel 工具集中到 app/utils.py；綠界三組路由、
+  兩種收據、點數 / 儲值金記帳、公開網址、sha256、建立時間欄位等各只留一份；POS 即時連線中斷時改為每 5 秒輪詢。
+- 2026-10-31：AI 一鍵翻譯菜單、飲食篩選、點餐機禮物卡付款、會員價、電子收據、廚房製作卡、評價回覆與公開好評、後台頁面權限、
+  異地備份、門市一鍵更新、Sentry / Prometheus、N+1 守門與 axe-core、設定匯出匯入、淺色模式、PWA 安裝按鈕、POS 常用備註
+  (遷移 0026)；接單控制、預估等候時間、再點一次、售完即時更新、Web Push、稽核紀錄完整頁、店家管理、POS 條碼、記錄檔與
+  X-Request-ID、靜態資源版本化、顧客端全面多語系、ruff / mypy / pip-audit / 涵蓋率 CI、Pillow 13.0.0 與 Werkzeug 3.1.9
+  (遷移 0025)；修正百分比優惠券後的點數折抵上限 (改為四捨五入後的應付金額，點餐機 / POS / 後端一致)。
+- 2026-10：進階營運功能 (電子發票、LINE Pay、交班、工作站 KDS、原物料、會員等級 / 儲值金 / LINE、外送平台、訂位候位、進階
+  報表、打卡、總部設定、2FA…，遷移 0006 ～ 0024；需要 cryptography)；依負載測試加上 order.pickup_at 索引、看板每秒最多重抓一次。

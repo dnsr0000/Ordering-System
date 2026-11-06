@@ -2,13 +2,13 @@
 部署說明：線上端 (Docker) 與本機門市端 (Windows)
 ====================================================================
 
-架構 (系統角色與資料分工見 README.txt 一、同步規則見 SYNC.txt)
+架構 (系統角色與資料分工見 README.txt 一、同步規則見 docs/SYNC.txt)
 - 本機門市端：Windows 電腦 + Waitress (serve_windows.py) + SQLite (database/menu.db)，可完全離線營業；
   安裝 requirements-store.txt (含人臉辨識)。
 - 線上端 (SYNC_ROLE=hub)：Linux 主機 + Docker：
     caddy (自動 HTTPS 反向代理，80/443) → app (gunicorn gthread，多 worker) → postgres + redis
   映像只安裝 requirements.txt (核心套件)：線上端沒有人臉辨識 (會員人臉登入只在門市)、沒有測試工具。
-  相關檔案：Dockerfile、docker-compose.yml、deploy/hub.env.example、deploy/gunicorn.conf.py、
+  相關檔案：docker-compose.yml、deploy/Dockerfile (排除清單 deploy/Dockerfile.dockerignore)、deploy/hub.env.example、deploy/gunicorn.conf.py、
             deploy/entrypoint.sh、deploy/Caddyfile。
 
 
@@ -145,24 +145,29 @@
 --------------------------------------------------------------------
 1. 安裝
    - 安裝 Python 3.13 (勾選 Add to PATH)，在專案資料夾 (例如 C:\kiosk) 執行：
-       python -m venv venv
-       venv\Scripts\pip install -r requirements-store.txt
+       python -m venv .venv
+       .venv\Scripts\pip install -r requirements-store.txt
      (requirements-store.txt = 核心套件 + numpy / opencv-python-headless 人臉辨識；gunicorn 只用於 Linux，Windows 上會自動略過。
-      套件清單的三層說明見 README.txt 3.2。)
+      套件清單的三層說明見 docs/CONFIG.txt 一。)
    - 從舊版升級時，OpenCV 已改用 opencv-python-headless，請先移除舊套件再安裝，避免兩個套件互相覆蓋：
-       venv\Scripts\pip uninstall -y opencv-python
-       venv\Scripts\pip install -r requirements-store.txt
+       .venv\Scripts\pip uninstall -y opencv-python
+       .venv\Scripts\pip install -r requirements-store.txt
    - 人臉辨識模型檔 (models/*.onnx) 不在程式包內：第一次啟動時自動從 OpenCV Zoo 下載 (主機需能連 github.com)，
-     或先在有網路的電腦執行 venv\Scripts\flask --app run models download 再把 models\ 複製過去；
-     後台「系統監控與備份」的「人臉辨識登入」方塊顯示可用 / 停用與原因 (README.txt 3.3)。
+     或先在有網路的電腦執行 .venv\Scripts\flask --app run models download 再把 models\ 複製過去；
+     後台「系統監控與備份」的「人臉辨識登入」方塊顯示可用 / 停用與原因 (docs/CONFIG.txt 二)。
+   - 下載出現 CERTIFICATE_VERIFY_FAILED (unable to get local issuer certificate)：
+       (1) .env 若有 REQUESTS_CA_BUNDLE (只用於本機模擬線上端) 請刪除；
+       (2) git pull 之後要重新執行 .venv\Scripts\pip install -r requirements-store.txt (Windows 會裝 truststore，
+           改用系統憑證庫，防毒軟體或公司 / 校園網路攔截 HTTPS 時瀏覽器能連的這裡就能連)；
+       (3) 仍不行就在其他電腦下載模型後把 models\ 複製過去。
    - 複製 .env.example 為 .env，至少設定 ADMIN_USERNAME / ADMIN_PASSWORD。
    - Windows 時區必須是「(UTC+08:00) 台北」並開啟自動校時 (營業日、換日結案都依電腦時間)。
-   - 先手動執行一次 venv\Scripts\python serve_windows.py，確認 http://127.0.0.1:5000/ 可開啟。
+   - 先手動執行一次 .venv\Scripts\python serve_windows.py，確認 http://127.0.0.1:5000/ 可開啟。
 
 2. 開機自動啟動 (以 Windows 服務執行 Waitress，二擇一)
    (A) NSSM (建議；可在當機時自動重啟並保存 log)：
        下載 nssm (https://nssm.cc/)，以系統管理員身分開啟命令提示字元：
-         nssm install KioskPOS C:\kiosk\venv\Scripts\python.exe C:\kiosk\serve_windows.py
+         nssm install KioskPOS C:\kiosk\.venv\Scripts\python.exe C:\kiosk\serve_windows.py
          nssm set KioskPOS AppDirectory C:\kiosk
          nssm set KioskPOS AppStdout C:\kiosk\logs\service.log
          nssm set KioskPOS AppStderr C:\kiosk\logs\service.log
@@ -172,7 +177,7 @@
          nssm start KioskPOS
        (先建立 C:\kiosk\logs 資料夾。) 查看狀態：nssm status KioskPOS；重啟：nssm restart KioskPOS。
    (B) 工作排程器：建立工作 →「不論使用者登入與否均執行」、「以最高權限執行」；
-       觸發程序「啟動時」；動作「啟動程式」C:\kiosk\venv\Scripts\python.exe，
+       觸發程序「啟動時」；動作「啟動程式」C:\kiosk\.venv\Scripts\python.exe，
        引數 serve_windows.py，開始位置 C:\kiosk；設定頁勾選「如果工作失敗，重新啟動間隔 1 分鐘」。
    (C) 內附腳本 (最簡單)：以系統管理員身分開啟 PowerShell，在專案資料夾執行
          powershell -ExecutionPolicy Bypass -File deploy\windows\install_autostart.ps1
@@ -187,15 +192,15 @@
      備份仍在同一台電腦，請另外複製到其他磁碟 / 雲端：「自動備份」設定裡的「異地備份」可在每日備份後自動上傳到
      WebDAV (Synology / Nextcloud)、S3 相容儲存 (AWS S3 / MinIO / Cloudflare R2 / Backblaze B2：填端點、Access Key /
      Secret Key、Bucket、Region) 或自訂指令 (例如 rclone copy {file} gdrive:kiosk-backups)；設定頁「測試」會上傳一個
-     小檔確認 (功能說明見 README.txt 五-H)。上傳檔 (照片) 不在自動備份內。
+     小檔確認 (功能說明見 docs/FEATURES.txt 二-H)。上傳檔 (照片) 不在自動備份內。
    - database/menu.db 使用 WAL 模式，營業中直接複製檔案可能得到不完整的備份。其他方式：
      (1) 後台「整庫備份」(平台管理者)：一次下載資料庫 + 上傳檔的壓縮檔，適合手動備份。
      (2) 排程自動備份：建立 C:\kiosk\backup.bat，內容例如：
            @echo off
            cd /d C:\kiosk
-           for /f %%i in ('venv\Scripts\python -c "import datetime;print(datetime.date.today())"') do set D=%%i
+           for /f %%i in ('.venv\Scripts\python -c "import datetime;print(datetime.date.today())"') do set D=%%i
            mkdir D:\KioskBackup\%D% 2>nul
-           venv\Scripts\python -c "import sqlite3;s=sqlite3.connect('database/menu.db');d=sqlite3.connect(r'D:\KioskBackup\%D%\menu.db');s.backup(d);d.close()"
+           .venv\Scripts\python -c "import sqlite3;s=sqlite3.connect('database/menu.db');d=sqlite3.connect(r'D:\KioskBackup\%D%\menu.db');s.backup(d);d.close()"
            copy /y database\.secret_key D:\KioskBackup\%D%\ >nul
            robocopy uploads D:\KioskBackup\%D%\uploads /E /R:1 /W:1 >nul
          再用工作排程器每天打烊後執行一次。(sqlite3 的 backup 在營業中執行也是一致的快照。)
@@ -243,7 +248,7 @@
 
 三、同步設定 (門市 ↔ 線上)
 --------------------------------------------------------------------
-架構與合併規則請看 SYNC.txt。設定步驟：
+架構與合併規則請看 docs/SYNC.txt。設定步驟：
 
 1. 線上端 (已依「一」部署完成)：以負責人登入後台 →「分店管理」→ 新增分店 (例如「台南店」)。
    畫面會顯示一次權杖 (kn_ 開頭)，請立即複製；遺失時按「重新產生權杖」，舊權杖立即失效。
@@ -259,7 +264,7 @@
    - 斷網時照常營業，後台「同步狀態」頁會顯示最後一次錯誤；恢復連線後自動補齊。
    - 手動同步：後台「同步狀態」→「立即同步」，或在命令列執行 flask --app run sync now / sync status。
 
-3. 一個線上店家可以有多家分店 (每家一台門市伺服器、各自一組權杖)；哪些資料共用、哪些各店獨立見 README.txt 一與 SYNC.txt。
+3. 一個線上店家可以有多家分店 (每家一台門市伺服器、各自一組權杖)；哪些資料共用、哪些各店獨立見 README.txt 一與 docs/SYNC.txt。
 
 4. 注意事項
    - SYNC_HUB_URL 必須是 https (權杖與會員資料經由此連線傳送)。
@@ -339,7 +344,7 @@
 [ ] 更新部署後不必請顧客清快取：靜態檔網址帶版本 (?v=)，PWA 的 Service Worker 也會在下次開啟時換新快取。
 [ ] CI：GitHub Actions 安裝 requirements-dev.txt (unit / postgres 工作另裝 node 22 跑前端共用純邏輯測試)，lint 工作會跑
     ruff / mypy (擋) 與 pip-audit (只警告，掃三個 requirements 檔)；
-    pip-audit 有新漏洞時請升級 requirements*.txt 的版本並重跑測試 (測試指令見 README.txt 七)。
+    pip-audit 有新漏洞時請升級 requirements*.txt 的版本並重跑測試 (測試指令見 docs/DEVELOPMENT.txt 一)。
 [ ] 調整 GUNICORN_WORKERS / GUNICORN_THREADS：每個分店的長輪詢與每個開著的看板 (SSE) 都會占用一條執行緒
 
 
@@ -347,7 +352,7 @@
 --------------------------------------------------------------------
 線上點餐的流程：會員選取餐分店 → 結帳 → 導到綠界付款頁刷卡 → 綠界通知線上端付款成功 → 訂單才送到分店廚房。
 逾時 (PAYMENT_TIMEOUT_MINUTES，預設 15 分鐘) 未付款：線上端先向綠界查詢確認，未付款就自動取消並回補庫存與點數。
-線上點餐只開放會員；門市仍可訪客點餐、到店付款。付款方式 (ATM / 超商代碼) 與退刷等功能說明見 README.txt 五-A。
+線上點餐只開放會員；門市仍可訪客點餐、到店付款。付款方式 (ATM / 超商代碼) 與退刷等功能說明見 docs/FEATURES.txt 二-A。
 
 1. 測試環境 (預設，免註冊、不會真的扣款)
    - 不需設定任何金鑰，使用綠界公開的測試特店 3002607。
@@ -436,3 +441,17 @@
    - 支援 ESC/POS 網路印表機 (TCP 9100，例如 Epson TM-T82III、Xprinter)：在後台「印表機與廚房工作站」新增 IP，
      印表機請設定固定 IP。收據機可在「收銀規則」勾選結帳後自動列印；廚房單依工作站分別出單。
    - 印表機離線時列印工作保留在佇列中重試，三次失敗後在後台顯示並通知，可按「重印」。
+
+
+七、本機模擬線上端 (同一台電腦同時跑線上端與門市；開發與同步測試用)
+--------------------------------------------------------------------
+1. cp deploy/hub.env.example .env.hub，設定 SITE_DOMAIN=localhost、PUBLIC_BASE_URL=https://localhost，填 POSTGRES_PASSWORD
+   (DATABASE_URL 裡的密碼要相同) 與 SECRET_KEY → docker compose up -d --build。第一次的負責人帳密在
+   docker compose logs app；後台 https://localhost/admin (自簽憑證，瀏覽器警告按繼續)。
+2. 線上端後台「分店管理」新增分店 (或 docker compose exec app flask --app run sync create-node --name 台南店) 取得權杖。
+3. 匯出 Caddy 的本機憑證讓門市信任：
+     docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt database\caddy-root.crt
+4. 門市 .env (先備份 database\menu.db)：SYNC_ROLE=node、SYNC_HUB_URL=https://localhost、SYNC_NODE_TOKEN=kn_…、
+   REQUESTS_CA_BUNDLE=<專案路徑>\database\caddy-root.crt → python serve_windows.py，後台「同步狀態」確認已連線。
+- 綠界伺服器通知連不到 localhost：付款結果改由付款後瀏覽器回到本站與每分鐘向綠界查詢來確認。
+- REQUESTS_CA_BUNDLE 只用於本機模擬 (會讓門市只信任這張憑證)；正式上線前刪除。

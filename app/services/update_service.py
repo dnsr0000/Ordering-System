@@ -5,7 +5,7 @@
 - 下載：release 的 zipball 存到 database/updates/<tag>.zip (只下載，不套用)。
 - 套用：Windows 門市主機執行 deploy\\windows\\update_store.cmd <zip> <pid>：備份 → 停伺服器 → 覆蓋程式檔 →
   pip install → alembic upgrade → 重啟 (失敗自動還原)。後台「套用並重啟」會以獨立行程啟動該腳本。
-線上端 (Docker) 不走這條：DEPLOY.txt 的「更新版本」。
+線上端 (Docker) 不走這條：docs/DEPLOY.txt 的「更新版本」。
 """
 import logging
 import os
@@ -160,7 +160,7 @@ def download(tag: str | None = None) -> str:
 def apply(zip_path: str) -> str:
     """Windows 門市：以獨立行程啟動更新腳本 (會停掉目前伺服器、覆蓋、升級、重啟)。回傳腳本路徑。"""
     if os.name != 'nt':
-        raise AppError('一鍵套用只支援 Windows 門市主機；線上端請依 DEPLOY.txt「更新版本」操作')
+        raise AppError('一鍵套用只支援 Windows 門市主機；線上端請依 docs/DEPLOY.txt「更新版本」操作')
     if not os.path.isfile(zip_path) or os.path.dirname(os.path.abspath(zip_path)) != os.path.abspath(updates_dir()):
         raise AppError('請先下載更新檔')
     script = os.path.join(ROOT, 'deploy', 'windows', 'update_store.cmd')

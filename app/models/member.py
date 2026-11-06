@@ -78,7 +78,7 @@ class StampLedger(TenantScoped, CreatedAtMixin, db.Model):
 class GiftCard(TenantScoped, CreatedAtMixin, db.Model):
     """
     禮物卡 (商品禮券)：卡號 16 碼 (自然鍵，各分店通用)，餘額 = 異動帳合計。
-    依「商品 (服務) 禮券定型化契約應記載及不得記載事項」：不得記載使用期限，售出時需提供履約保證 (見 DEPLOY.txt)。
+    依「商品 (服務) 禮券定型化契約應記載及不得記載事項」：不得記載使用期限，售出時需提供履約保證 (見 docs/DEPLOY.txt)。
     """
     __tablename__ = 'gift_card'
     __table_args__ = (db.UniqueConstraint('tenant_id', 'code', name='uq_gift_card_tenant_code'),)
@@ -99,7 +99,7 @@ class GiftCard(TenantScoped, CreatedAtMixin, db.Model):
 class PassProduct(TenantScoped, db.Model):
     """
     寄杯 / 多次券商品：例如「美式咖啡 10 杯 $450」。會員購買後得到 MemberPass，每次取一杯 (份) 扣一次。
-    屬預收款 (商品禮券)，上線前請確認履約保證 (DEPLOY.txt)；依規定不設使用期限。
+    屬預收款 (商品禮券)，上線前請確認履約保證 (docs/DEPLOY.txt)；依規定不設使用期限。
     """
     __tablename__ = 'pass_product'
 

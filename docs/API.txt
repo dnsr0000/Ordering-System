@@ -1,0 +1,64 @@
+====================================================================
+API 摘要
+====================================================================
+
+對外 API (/api/v1) 的完整說明以系統內的 /developers 與 /developers/openapi.json 為準；
+這裡整理點餐機 / POS / 後台內部使用的主要端點。同步 API 見 docs/SYNC.txt。
+
+
+訂單狀態  POST /api/orders/<id>/status   {"status": "Completed" | "PickedUp" | "Cancelled"}
+  流轉：Pending → Completed → PickedUp；非終態都可轉為 Cancelled (終態)。
+  權限：             owner  manager  staff  kitchen
+    Pending→Completed  O      O       O      O
+    Pending→Cancelled  O      O       O      X
+    Completed→PickedUp O      O       O      X
+    Completed→Cancelled O     O       O      X
+    PickedUp→Cancelled O      O       X      X
+  回應：200 成功、400 狀態值錯誤、401 未登入、403 權限不足 (先於訂單是否存在判斷)、404 查無訂單、409 非法轉換或已被變更。
+  取消會在同一交易內回補庫存、退還點數、還原會員券、扣回贈點，只執行一次。
+
+結帳  POST /submit_order (點餐頁)、POST /api/pos/checkout (POS)
+  {"client_order_id": "<前端產生的去重識別，重送沿用；訂單 uuid 由伺服器另外產生>",
+   "items": [{"menu_item_id": 1, "quantity": 2, "modifier_ids": [3], "combo_option_id": null, "combo_choices": [任選配餐 id],
+              "pass_id": null, "is_add_on": false, "is_reward": false, "customization": "備註"}],
+   "payment_method": "Cash", "order_type": "內用", "promo_code": "", "use_points": 0, "note": ""}
+  POS 另有 user_id、cash_received、table_number、payment_info {auth_code, card_last4, one_time_key, tenders (混合付款)}、
+  invoice {type, carrier, love_code, buyer_id, buyer_name, email}、order_discount {type: amount|percent, value}、
+  items[].override_price、is_rush。
+  價格一律由後端計算；replayed: true 表示是重送的同一張訂單；線上端另回傳 payment_url。需主管核准的操作回應 403 +
+  need_approval，帶 approver_username / approver_password 重送。被擋：409 intake_paused / intake_full (接單控制)、
+  coupon_unavailable / points_changed (券或點數已被其他通路用掉，不會默默改用原價)、insufficient_gift；畫面金額與後端不同時
+  要求確認後重送。
+
+POS / 店員
+  GET  /api/pos/today_orders (含未結帳桌位)、/api/kitchen_orders、/api/pickup_orders、/api/counter_orders、/api/orders_stream (SSE)
+  POST /api/pos/tables/<id>/settle {payment_method, cash_received, order_ids (分開結帳), payments [{method, amount, ...}] (多種付款)}
+  POST /api/pos/tables/<id>/move {to_table_id, order_ids} 換桌 / 併桌      GET /api/pos/floor 平面圖狀態
+  POST /api/pos/orders/<id>/refund {amount, reason}、/void_item {item_id, quantity, reason, method}、/reprint、/rush
+  GET  /api/pos/shift、POST /api/pos/shift/open | movement | close        POST /api/pos/wallet/topup {user_id, amount, payment_method}
+  POST /api/pos/delivery_order {items, platform, external_ref}            POST /api/pos/passes/sell {user_id, product_id, payment_method}
+  POST /api/kitchen/orders/<id>/station_done {station_id}                 GET /api/kitchen/prep_card/<id>
+  POST /api/promotions/preview   促銷試算 (點餐頁 / POS 即時顯示)
+顧客
+  GET /api/eta、/api/menu/availability (ETag)、POST /api/reorder/<id>、/api/voice/parse、/api/chat、/api/gift_cards/balance、
+  /api/member/marketing {opt_in}
+  GET /track/<uuid>、/api/track/<uuid>、POST /api/track/<uuid>/push、GET /api/push/vapid     GET /api/table/bill、POST /api/table/pay
+  POST /api/my_orders/<id>/receipt/email | line      POST /api/kiosk/offline_order {shop, code, queued_at, order} 斷線暫存補送
+  (一律訪客 / 現金；重送回原訂單 replayed: true；店家不符 409、超過 3 小時 410)
+  /shop/<店家>/group/new、/shop/<店家>/group/<token> (參加)、…/manage (主揪)、…/print (分裝清單)   團體預購
+  /driver/<憑證>、POST /api/driver/<憑證>/position   外送員手機頁與位置回報
+付款與外部
+  /pay/<訂單>、/payment/ecpay/notify | result | info (線上端)；/payment/ecpay/table_notify | table_result、reservation_notify |
+  reservation_result (門市)；/reserve/<代碼>/pay 訂位訂金 (每次開啟換新的交易編號)
+  POST /webhooks/ubereats (X-Uber-Signature)、/webhooks/foodpanda/<店家代碼> (Bearer 權杖)   外送平台
+  /api/sync/v1/hello、push、pull、media/menu/<路徑> (分店權杖，詳見 docs/SYNC.txt)      GET /healthz、GET /metrics?token=
+  /device/pair、POST /api/device/heartbeat {version, path} (回傳 locked / reload)
+後台
+  /admin/menu、/admin/members?q=&page=、/admin/audit、/admin/tenants、/admin/expenses?month=YYYY-MM (POST action=add | edit |
+  delete | copy_fixed)、/admin/pnl?month= | start=&end= [&node=分店 uuid] [&format=xlsx]、/admin/cost-history?days=30&kind=ingredient|menu、
+  /admin/group-orders、/admin/staffing?date=YYYY-MM-DD、/admin/staffing/auto
+對外 API  /api/v1/... (Authorization: Bearer kk_...)
+  GET orders?since=&after_id=&limit= (依建立時間；next 為下一頁參數)、GET orders?cursor=0 (異動追蹤，回傳 next_cursor；建議在
+  線上端呼叫)、GET orders/<uuid>、GET menu (ETag)、POST menu/<id>/availability {sold_out, stock}、GET members/<手機>、
+  GET reports/daily?date=
+  完整說明 (參數、回應欄位、錯誤碼、Webhook 簽章範例、線上試打)：/developers；OpenAPI 3.0：/developers/openapi.json

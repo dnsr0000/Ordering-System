@@ -1,0 +1,159 @@
+====================================================================
+開發指南：測試、專案結構與開發慣例
+====================================================================
+
+安裝開發環境：pip install -r requirements-dev.txt (套件分層見 docs/CONFIG.txt 一)。
+
+
+一、測試
+--------------------------------------------------------------------
+測試一律使用暫存資料庫與暫存資料夾，不讀 .env，不會動到 database/、uploads/ 與 static/。
+  pip install -r requirements-dev.txt  安裝測試工具 (pytest、pytest-cov、playwright、axe-playwright-python)
+  pytest -q                           後端測試 (SQLite)；需要 node (前端共用純邏輯的測試 test_shared_js_logic 以 node 執行，
+                                      沒有 node 時該測試跳過)
+  set TEST_DATABASE_URL=postgresql://kiosk:kiosk@127.0.0.1/kiosk_test → pytest   同一套測試改在 PostgreSQL 上跑 (該資料庫會被清空)
+  playwright install chromium (第一次) → pytest -m e2e   瀏覽器端對端測試 (實際操作各頁面；JS 錯誤或違反 CSP 都會失敗；
+                                      含 axe-core 無障礙檢查)
+  pytest -m stress                    真實 HTTP 壓力測試
+  set TEST_SYNC_HUB_DATABASE_URL=postgresql://kiosk:kiosk@127.0.0.1/kiosk_sync_test → pytest tests/test_sync_hub_node.py
+                                      同步測試的線上端改用 PostgreSQL
+  pytest tests/test_pos_checkout.py   只跑一個主題 (有情境依賴的檔案會自動加入前置檔，開頭會列出)
+  python tests/test_payment_ecpay_script.py [live]   線上付款：模擬綠界通知走完 30 項情境 (不需網路)；live 到綠界測試環境用
+                                      測試卡實際付款 (卡號 4311-9522-2222-2222、未來的有效期限、任意安全碼、3D 驗證碼 1234)
+  ruff check . / mypy                 靜態檢查 (設定在 pyproject.toml；pip install ruff mypy)
+  pip-audit -r requirements.txt -r requirements-store.txt -r requirements-dev.txt   依賴套件已知漏洞 (pip install pip-audit)
+  pytest --cov=app                    涵蓋率 (CI 的 3.13 工作，app/ 低於 85% 失敗)
+  python tests/load_gunicorn_pg.py --url ... --password ... [--database-url ...]   多 worker 負載測試：對執行中的 gunicorn +
+                                      PostgreSQL + Redis 模擬點餐機 / POS / 廚房 / SSE / 對外 API 的尖峰流量並檢查一致性
+                                      (步驟與參考結果見 docs/DEPLOY.txt 一-11)
+  GitHub Actions (.github/workflows/tests.yml)：push 到 main 或開 PR 時安裝 requirements-dev.txt 並執行 lint (ruff / mypy；
+  pip-audit 只警告)、unit (SQLite，Python 3.13 含涵蓋率門檻 85% / 3.14，另裝 node 22 跑前端純邏輯測試)、postgres (含同步測試
+  的線上端)、e2e 四組工作；
+  .github/dependabot.yml 每週檢查 pip 與 actions。
+
+測試檔 (tests/)：檔名即測試主題 (例如 test_pos_checkout、test_sync_hub_node、test_e2e_pos)，新的測試一律放這裡並照此
+命名；要找某功能的測試，直接依關鍵字搜尋檔名。e2e (test_e2e_*) 與壓力 (test_stress_*) 測試預設略過 (pyproject.toml)，
+load_gunicorn_pg.py 不是 pytest，直接執行。
+
+測試共用同一個暫存資料庫，有先後依賴 (例如 POS 測試使用菜單測試建立的餐點)：執行順序寫在 tests/conftest.py 的 RUN_ORDER，
+前置依賴寫在 NEEDS (新增測試檔時一併維護)。共用的輔助函式在 tests/support.py (login_staff、make_item、make_member、checkout、
+run_together、count_queries、get_or_create_tenant、tenant_request、item_stock、seed_demo…)。
+
+
+二、專案結構
+--------------------------------------------------------------------
+Project Root/
+├── app/
+│   ├── __init__.py            create_app：設定、擴充元件、安全標頭 / CSP、錯誤處理、多店家、啟動遷移、背景工作、人臉模型補下載
+│   ├── config.py              所有設定 (讀取 .env)
+│   ├── cli.py                 flask CLI 指令 (setup、sync、payments、privacy、tables、models、ops、demo)
+│   ├── extensions.py、errors.py、tenant_context.py、utils.py
+│   │                          db / migrate / csrf / login / limiter；AppError 與統一錯誤處理；多店家隔離 (查詢自動加店家條件、
+│   │                          寫入防跨店)；role_required、platform_admin_required、store_only / hub_only、get_own / find_own、
+│   │                          輸入驗證、日期區間 / 分頁 / ETag 回應 / Excel 下載等各路由共用的小工具 (見三)
+│   ├── models/                ORM (每個主題一個檔，例如 order、menu、member、payment、sync)；mixins (uuid / updated_at /
+│   │                          sync_rev / tenant_id 等共用欄位)、enums (訂單狀態、付款方式、角色組合、權限)
+│   ├── services/              商業邏輯 (重點；檔名即主題，*_service.py)。幾個入口：
+│   │   ├── order_service.py   結帳與訂單的對外入口 (只匯出；呼叫端一律 import 這裡)。實作在 order_pricing (計價)、
+│   │   │                      order_stock (庫存與取餐號)、order_checkout (原子結帳 process_checkout)、order_lifecycle (狀態機)
+│   │   ├── settings_service.py  系統設定的區塊 / 欄位定義 (後台表單自動產生)、讀寫、連線測試
+│   │   ├── i18n_pages.py      顧客端三語字串 (PAGES / MESSAGES / MESSAGE_PATTERNS)；admin_nav.py 後台側欄
+│   │   ├── points_service.py  點數異動帳；receipt_service.py 收據內容 (熱感機與純文字共用)；payment_ecpay.py 綠界共用骨架
+│   │   ├── maintenance_service.py / monitor_service.py  背景排程 (多行程只由「排程主控」執行)
+│   │   └── api_docs.py (對外 API 端點只在這裡宣告一次)、deferred.py (交易提交後才執行)、event_bus.py (SSE，可選 Redis)
+│   ├── sync/                  registry (資料表、方向、本機欄位)、tracking (sync_rev 與刪除紀錄)、engine (合併規則)、
+│   │                          hub (/api/sync/v1)、node (分店背景同步)、nodes (分店登記與權杖)、runtime (目前角色)
+│   └── routes/                Blueprint，每個主題一個檔 (customer、pos、kitchen、admin、menu_pro (/admin/menu)、
+│                              members_pro (/admin/members)、reports、api_v1、health (/healthz)…)
+├── migrations/versions/       資料庫遷移 (檔名為「序號_主題」，例如 0028_staff_availability)
+├── templates/                 全部繼承 base.html：admin.html (後台首頁三分頁)、_admin_sidebar.html、admin_menu.html、admin_members.html、
+│                              對話框子樣板 _menu_modals / _member_modals / _coupon_modals / _data_modals / _pos_pro_modals.html、
+│                              其餘 admin_*.html 各後台頁
+├── static/css/、js/           theme.css、common.js 共用；admin.js (後台共用：頁籤記憶、實時訂單、總覽即時更新，提供 window.AdminPage)、
+│                              admin-menu.js、admin-coupons.js、admin-members.js、admin-pro.js、settings-hub.js；pos.js 為 POS 進入點
+│                              (ES module)，功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live / pro / shift / split)；
+│                              customer.js 為點餐機進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout / live / voice)；
+│                              js/shared/ 是點餐機與 POS 共用的純邏輯 (addons 加購配額、pricing 單價、cartline 購物車行、modifiers
+│                              客製化視窗、totals 金額計算、orderpayload、promo、invoice、combos)，不碰 DOM；
+│                              floor-plan、device、api-docs、kiosk-offline、kiosk-attract、chatbot、signage、driver、dispatch、track 等
+│                              各頁腳本；img/ 預設圖片；vendor/ Bootstrap、Bootstrap Icons、Cropper.js (離線使用)
+├── uploads/                   會員照片 (member/)、餐點照片 (menu/)；不放在 static/，由 /media/ 控管讀取 [不進版控]
+├── database/                  menu.db、.secret_key、menu.db.bak-* (還原前另存)、caddy-root.crt (本機模擬)、backups/ (每日自動備份)、
+│                              archive/ (封存檔，需備份)、updates/、logs/、system_events.jsonl [不進版控]
+├── models/                    人臉辨識模型 (YuNet、SFace .onnx，自動下載) 與選用的 Qwen2.5 GGUF [都不進版控]
+├── tests/                     所有測試 (檔名即測試主題)、support.py 共用輔助、conftest.py (RUN_ORDER / NEEDS)、
+│                              js/shared_spec.mjs (node 執行的前端共用純邏輯測試)
+├── deploy/                    Dockerfile 與 Dockerfile.dockerignore (線上端映像)、gunicorn.conf.py、entrypoint.sh、Caddyfile、hub.env.example、pg_backup.sh / pg_restore_check.sh、
+│                              windows/ (install_autostart.ps1、start_store.cmd、update_store.cmd)
+├── docker-compose.yml、.github/workflows/tests.yml、.github/dependabot.yml、
+│   pyproject.toml (ruff / mypy / pytest 設定；pytest 預設略過 e2e、stress)
+├── .env.example (門市 / 單機範例)、.env、.env.hub [不進版控]、VERSION (YYYY.MM.DD)、README.txt
+├── docs/                      文件 (FEATURES、CONFIG、DEPLOY、SYNC、DEVELOPMENT、SECURITY、API、CHANGELOG、MANUAL_TEST)、
+│                              menu_import_example.xlsx (菜單匯入範例)
+├── requirements.txt、requirements-store.txt、requirements-dev.txt (見 docs/CONFIG.txt 一)
+├── serve_windows.py           正式營業啟動 (Waitress)
+└── run.py                     開發用啟動
+
+
+三、開發慣例
+--------------------------------------------------------------------
+- 換行格式：由 .gitattributes 管理 (版本庫一律存 LF，取出時依作業系統轉換)；不要手動改換行。
+- 前端 (CSP 強制，tests/test_frontend_static_files.py 自動檢查)：
+  - 不寫行內 <script> 或 onclick；事件用 data-action="名稱" 搭配 Kiosk.on(root, 'click', {名稱: fn})。頁面資料以
+    <script type="application/json" id="page-data"> 嵌入，用 Kiosk.pageData() 讀取。不引用外部網址，第三方套件放 static/vendor/。
+    模組載入完成前顧客就按下的 data-action 按鈕，common.js 會先記下、等 Kiosk.on 綁定後補跑一次 (點擊不會不見)；
+    點餐機與 POS 的 <link rel="modulepreload"> 清單要涵蓋入口、頁面模組與 shared/ 的每個檔案 (新增模組時一併加入，有測試檢查)。
+  - 動態 HTML 一律用 Kiosk.html`...` (自動跳脫) 或 textContent。API 用 Kiosk.api(url, {json})：自動帶 CSRF Token，失敗時丟出
+    含後端訊息的錯誤。刪除確認用 <form data-confirm="…">；圖片備援用 <img data-fallback="預設圖網址">。
+  - POS 與點餐機前端全部是 ES module (templates/pos.html、customer.html 以 type="module" 載入 js/pos.js、js/customer.js)：
+    新增功能放進 js/pos/、js/customer/ 對應的模組並 export，其他模組以 import 使用；共用狀態只放 core.js 的 state (跨模組不可
+    重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。POS 進階功能在 pos/pro.js (主管核准 / 會員驗證 / LINE Pay / 補印 /
+    開錢櫃 / 接單控制)、pos/shift.js (交班 / 儲值 / 禮物卡)、pos/split.js (作廢退款 / 分桌換桌)；對話框在 templates/_pos_pro_modals.html。
+  - 點餐機與 POS 都要遵守的規則 (單價、加購配額、購物車行合併鍵、客製化視窗、金額順序、送後端的品項格式、優惠碼驗證、發票欄位、
+    套餐可售判斷) 只寫在 js/shared/ 的純函式，兩邊的模組只負責讀寫 DOM；改規則時兩邊會一起變 (有測試檢查匯入與 500 行限制，
+    tests/test_shared_js_logic.py 以 node 跑 tests/js/shared_spec.mjs 固定這些規則；改了規則請一併補案例)。
+    各頁共用的小工具在 common.js 的 Kiosk：$ / modal / setText / toggleRow、store (localStorage JSON)、money、pad3 / pickupNo、
+    ORDER_STATUS / PAYMENT_STATUS / statusBadge / paymentBadge、stockClass、takeoutBlock、setOrderStatus、
+    onOrdersChanged (含備援輪詢)、pollJson (ETag)、beep；不要在各頁再寫一份。庫存徽章的黃色門檻只定義在
+    menu_service.LOW_STOCK (樣板的 stock_badge 直接用，base.html 以 <meta name="low-stock"> 交給 Kiosk.stockClass)。
+  - 模板共用巨集在 templates/_macros.html：modal_head (title_id 可指定標題 id)、stat_tile (KPI 卡)、screen_header (廚房 / 取餐 /
+    櫃台看板頂欄)、pagination、stock_badge (庫存徽章，門檻與 Kiosk.stockClass 相同)。
+  - 後台對話框與表單巨集依頁面拆在 templates/_menu_modals.html (菜單 / 套餐)、_member_modals.html (會員)、_coupon_modals.html
+    (優惠券 / 兌換餐點)、_data_modals.html (匯出 / 匯入 / 備份)。新增後台頁面：在 app/services/admin_nav.py 的 NAV_GROUPS 加一行
+    (條件 perm:xxx / role:xxx / platform、sync=hub|node|store)。
+  - 提示訊息 flash(文字, 類別)：圖示由 _flashes.html 依類別 (success / danger / warning / info) 自動加上，文字不要再寫 ✅ ❌。
+  - 顧客頁 (點餐機 / 手機看得到的樣板與 JS) 不寫死中文介面文字：樣板用 {{ ui.鍵 }}，JS 用 Kiosk.t('鍵', '中文備援') (點餐頁
+    ES module 用 core.js 的 ui.鍵 || '中文')；鍵與中 / 英 / 日文加在 app/services/i18n_pages.py 的 PAGES，鍵名不可與 dict 方法
+    同名 (clear、copy、items…)。送給後端的值 (order_type、冰塊 / 甜度選項…) 維持中文，只翻顯示文字。員工頁維持中文。
+    tests/test_i18n_coverage.py 的 CUSTOMER_TEMPLATES 列出顧客頁樣板，新增顧客頁時一併加入。顧客頁的顏色：深底上的文字
+    對比 4.5:1 以上 (axe-core 會擋嚴重 / 重大違規)；表單控制項要有 label 或 aria-label。
+- 後端：
+  - 錯誤一律 raise AppError(訊息, 狀態碼)：API 回 {"success": false, "message": …}；表單的 400/409 flash 後導回。訊息一律寫
+    中文；顧客會看到的新訊息請在 i18n_pages.py 的 MESSAGES (整句) 或 MESSAGE_PATTERNS (帶品名 / 數量，具名群組) 補英 / 日文。
+  - 權限用 @role_required(*MANAGER_ROLES) (角色組合定義在 app/models/enums.py：MANAGER_ROLES / POS_ROLES / KITCHEN_ROLES /
+    ALL_STAFF_ROLES，不要在各檔自己寫元組)；整庫備份等用 @platform_admin_required。店長以上的後台頁面用
+    @permission_required('menu' | 'coupons' | 'members' | 'feedback' | 'settings') (enums.PERMISSIONS，可個別授權給櫃檯)；
+    只有負責人的仍用 role_required('owner')。
+  - 查詢自動加上目前店家條件；系統工作需要跨店時用 with tenant_bypass():。路由以主鍵取單筆資料一律用 app/utils.py 的
+    get_own(Model, id, '標籤') (不存在或其他店家 → 404) 或 find_own (回 None)，不要自己寫 db.session.get + tenant_id 比對
+    (命中 identity map 時不經過租戶過濾)。
+  - 結帳一律走 order_service.process_checkout，訂單狀態一律走 order_service.change_order_status (下層不可匯入上層，有測試檢查)；
+    加減會員點數一律用 points_service.change_points (寫入點數異動帳)。
+  - 系統設定：新區塊加在 settings_service.py (填 subgroup / keywords)，服務模組用 settings_service.reader('key') /
+    flag('key', field) 取得 config() / enabled()，不要自己寫包裝函式。
+  - 路由常用的輸入與回應都在 app/utils.py：parse_date (選填日期)、parse_date_range (?start / ?end / ?preset)、day_bounds
+    (日期 → 半開 datetime 區間)、parse_local_dt、parse_hm / hm_minutes (結束時間可以是 24:00)、paginate、json_etag_response、
+    workbook_bytes / send_xlsx、sha256_hex、
+    current_staff_name、@store_only / @hub_only (門市 / 線上端限定)。會員頁用 @member_required。營收訂單條件用
+    report_service.revenue_orders / is_revenue；點數與儲值金的原子加減共用 points_service.atomic_change。
+  - 修改資料表：改 app/models/ → flask --app run db migrate → 檢查遷移檔 → 測試。遷移代號 (revision) 不可超過 32 個字
+    (有測試檢查)。新資料表要同步：繼承 TenantScoped 並加入 app/sync/registry.py 的 SPECS (依外鍵順序)；本機欄位放 local_only。
+  - 背景工作 / 會被同時觸發的動作先以條件式 UPDATE「搶」再處理 (例如 status pending → sending)，多個行程才不會重複執行。
+  - Excel / CSV 匯出含使用者輸入的文字時，用 app/utils.py 的 neutralize_formulas / csv_safe (防公式注入)。
+  - 送出前執行 ruff check . 與 mypy (CI 會擋)；新的 service 函式請加型別註記 (ORM 物件用 Any)；模組層級的 dict / tuple 要標
+    型別；新模組請加進 pyproject.toml [[tool.mypy.overrides]] 的完整檢查清單 (check_untyped_defs = true)。
+  - 記錄用 logging.getLogger(__name__)；每一行會自動帶請求識別碼，不要自己 print。新的稽核動作在 app/services/audit.py 的
+    ACTION_LABELS 補顯示名稱。
+  - 列表頁 / API 的查詢數要與資料量無關 (tests/test_ops_backup_update_metrics.py 的 N+1 守門)：關聯用 selectinload 一次載入。
+  - 人臉辨識相關程式要能在沒有 opencv / numpy 時載入 (cv_service.FACE_AVAILABLE)。
+  - 版本：發布新版時改 VERSION 檔 (YYYY.MM.DD) 並在 GitHub 建 release (tag 同版本)，門市才會看到「有新版本」。

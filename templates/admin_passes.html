@@ -11,7 +11,7 @@
         <a class="btn btn-sm btn-outline-light" href="{{ url_for('settings_admin.index') }}">回系統設定</a>
     </div>
     <div class="alert alert-secondary small">會員一次購買 N 杯 (份)，之後在點餐機 / 桌邊 / 線上 / POS 每次兌換一份 (免費，只收加料)。
-        POS 綁定會員後可售出；寄杯屬預收款 (商品禮券)，依規定不設使用期限，上線前請確認履約保證 (DEPLOY.txt)。</div>
+        POS 綁定會員後可售出；寄杯屬預收款 (商品禮券)，依規定不設使用期限，上線前請確認履約保證 (docs/DEPLOY.txt)。</div>
     <div class="row g-3 mb-3">
         {{ stat_tile('未兌換次數', outstanding, 'text-warning', id='passOutstanding', col='col-6 col-md-4') }}
         {{ stat_tile('未兌換預收金額 (估)', '$' ~ '{:,}'.format(liability), 'text-warning', id='passLiability', col='col-6 col-md-4') }}

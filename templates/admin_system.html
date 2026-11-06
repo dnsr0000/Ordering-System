@@ -63,7 +63,7 @@
                 {% if backup_cfg.offsite and backup_cfg.offsite != 'none' %}異地備份：每日備份後上傳到 {{ {'webdav': 'WebDAV', 's3': 'S3', 'command': '自訂指令'}[backup_cfg.offsite] }} (保留 {{ backup_cfg.offsite_keep }} 份)。{% else %}尚未設定異地備份 (備份設定 → 異地備份)，建議另外複製到雲端硬碟或隨身碟。{% endif %}
                 還原：後台「匯入資料 → 整庫還原」選擇備份檔。</div>
             {% else %}
-            <div class="small text-white-50">線上端 PostgreSQL 由 docker compose 的 backup 服務每天備份到 pg_backups volume，還原演練請執行 deploy/pg_restore_check.sh (說明見 DEPLOY.txt)。</div>
+            <div class="small text-white-50">線上端 PostgreSQL 由 docker compose 的 backup 服務每天備份到 pg_backups volume，還原演練請執行 deploy/pg_restore_check.sh (說明見 docs/DEPLOY.txt)。</div>
             {% endif %}
         </div></section>
         {% if update %}

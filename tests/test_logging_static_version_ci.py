@@ -158,7 +158,8 @@ def test_ci_workflow_has_lint_audit_and_coverage():
     wf = _read('.github/workflows/tests.yml')
     assert 'ruff check .' in wf and 'pip-audit -r requirements.txt' in wf
     assert '--cov=app' in wf and '--cov-fail-under=' in wf
-    assert os.path.exists(os.path.join(ROOT, 'ruff.toml')) and os.path.exists(os.path.join(ROOT, 'mypy.ini'))
+    pyproject = _read('pyproject.toml')
+    assert '[tool.ruff]' in pyproject and '[tool.mypy]' in pyproject and '[tool.pytest.ini_options]' in pyproject
     assert '- run: mypy' in wf
     assert 'pytest-cov' in _read('requirements-dev.txt') and 'pip install -r requirements-dev.txt' in wf
 

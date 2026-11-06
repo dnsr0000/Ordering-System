@@ -20,7 +20,7 @@ def status():
     from app.services import update_service
     from app.sync import runtime as sync_runtime
     update = None
-    if is_platform_admin() and not sync_runtime.is_hub():   # 線上端 (Docker) 依 DEPLOY.txt 更新，不顯示
+    if is_platform_admin() and not sync_runtime.is_hub():   # 線上端 (Docker) 依 docs/DEPLOY.txt 更新，不顯示
         try:
             update = update_service.check(force=request.args.get('update') == '1')
         except Exception as exc:  # noqa: BLE001  查版本失敗不影響監控頁

@@ -1,5 +1,5 @@
 """
-線上 (hub) 與分店 (node) 同步用的資料表。設計說明見 SYNC.txt。
+線上 (hub) 與分店 (node) 同步用的資料表。設計說明見 docs/SYNC.txt。
 
 所有角色都建立全部資料表 (結構一致、遷移單純)，但各自只使用其中一部分：
 - 共用：sync_clock (變更序號)、sync_tombstone (刪除紀錄)、point_ledger (點數異動帳)

@@ -24,9 +24,9 @@ jobs:
           cache: pip
       # mypy 需要專案的相依套件才能看到正確的型別 (與本機結果一致)
       - run: pip install -r requirements-dev.txt ruff pip-audit mypy
-      # 未定義名稱 / 未使用匯入 / 語法錯誤 (規則在 ruff.toml)：有問題就失敗
+      # 未定義名稱 / 未使用匯入 / 語法錯誤 (規則在 pyproject.toml 的 [tool.ruff])：有問題就失敗
       - run: ruff check .
-      # 型別檢查 (mypy.ini：目前只檢查 app/services 有型別註記的函式)
+      # 型別檢查 (pyproject.toml 的 [tool.mypy]：目前只檢查 app/services 有型別註記的函式)
       - run: mypy
       # 已知漏洞的套件版本：只提出警告 (不擋合併)，請依報告升級 requirements.txt 的版本
       - run: pip-audit -r requirements.txt -r requirements-store.txt -r requirements-dev.txt --desc on

@@ -63,7 +63,7 @@ def test_sse_headers_for_reverse_proxy(app):
 
 
 # ---------------------------------------------------------------------------
-# 部署設定檔的基本檢查 (容器實際建置與啟動見 DEPLOY.txt)
+# 部署設定檔的基本檢查 (容器實際建置與啟動見 docs/DEPLOY.txt)
 # ---------------------------------------------------------------------------
 def test_gunicorn_conf(monkeypatch):
     for name in ('GUNICORN_WORKERS', 'GUNICORN_THREADS', 'GUNICORN_TIMEOUT', 'GUNICORN_BIND', 'PORT'):
@@ -91,7 +91,7 @@ def test_deploy_files():
     assert '-r requirements.txt' in store and '-r requirements-store.txt' in dev and re.search(r'^pytest==', dev, re.M)
     assert re.search(r'^gunicorn==[\d.]+; sys_platform != "win32"$', requirements, re.M)
 
-    dockerfile = _read('Dockerfile')
+    dockerfile = _read('deploy/Dockerfile')
     assert 'pip install -r requirements.txt' in dockerfile and 'pip install -r requirements-store' not in dockerfile and 'cv2' not in dockerfile
     assert 'pip install -r requirements-store.txt' in _read('deploy/windows/update_store.cmd'), '門市更新裝含人臉辨識的清單'
     assert 'TZ=Asia/Taipei' in dockerfile and 'tzdata' in dockerfile
@@ -110,7 +110,7 @@ def test_deploy_files():
                    'REDIS_URL: redis://redis:6379/0', '/app/database', '/app/uploads', 'service_healthy'):
         assert needle in compose, needle
 
-    dockerignore = _read('.dockerignore').splitlines()
+    dockerignore = _read('deploy/Dockerfile.dockerignore').splitlines()
     for pattern in ('.env', 'venv', '.venv', 'database/*', 'uploads', 'static/member', 'static/menu'):
         assert pattern in dockerignore, pattern
 
