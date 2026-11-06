@@ -39,7 +39,10 @@
         const due = Date.now() - lastSentAt >= intervalMs;
         if (!force && !moved && !due) return;
         try {
-            const res = await Kiosk.api(`/api/driver/${data.token}/position`, { json: latest });
+            // age：這個定位是幾秒前取得的 (GPS 中斷時定時重送的是舊位置，伺服器據此記錄實際時間)
+            const age = latest.fixAt ? Math.max(0, Math.round((Date.now() - latest.fixAt) / 1000)) : 0;
+            const res = await Kiosk.api(`/api/driver/${data.token}/position`,
+                { json: { lat: latest.lat, lng: latest.lng, accuracy: latest.accuracy, age } });
             lastSent = latest;
             lastSentAt = Date.now();
             sent += 1;
@@ -53,7 +56,7 @@
     }
 
     function onPosition(pos) {
-        latest = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || 0 };
+        latest = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy || 0, fixAt: pos.timestamp || Date.now() };
         send();
     }
 

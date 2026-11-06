@@ -43,16 +43,25 @@
         idleTimer = setTimeout(start, cfg.seconds * 1000);
     }
 
+    let wokeAt = 0;
     function wake(ev) {
         if (overlay.dataset.active === '1') {
             ev.preventDefault();
             ev.stopPropagation();
             stop();
+            // 只有觸控喚醒會再補發一個 click；滑鼠 / 鍵盤喚醒的那一下已經擋掉，之後的點擊照常
+            wokeAt = ev.type === 'touchstart' ? Date.now() : 0;
+        } else if (ev.type === 'click' && Date.now() - wokeAt < 700) {
+            // 觸控喚醒：touchstart 已關掉輪播，瀏覽器接著補發的 click 會點到底下的按鈕 (例如員工後台、訪客點餐)，一併擋掉
+            ev.preventDefault();
+            ev.stopPropagation();
+            wokeAt = 0;
         }
         reset();
     }
 
-    ['click', 'touchstart', 'keydown'].forEach((e) => document.addEventListener(e, wake, { capture: true }));
+    // touchstart 明確設為非 passive，preventDefault 才有效
+    ['click', 'touchstart', 'keydown'].forEach((e) => document.addEventListener(e, wake, { capture: true, passive: false }));
     ['mousemove', 'scroll'].forEach((e) => document.addEventListener(e, () => { if (overlay.dataset.active !== '1') reset(); }, { passive: true }));
     reset();
     window.KioskAttract = { start, stop };

@@ -293,12 +293,15 @@ def complete_all_pending_orders(tenant_id, order_ids):
     pending_ids = [o.id for o in Order.query.filter(Order.tenant_id == tenant_id, Order.id.in_(ids),
                                                     Order.status == OrderStatus.PENDING,
                                                     Order.payment_status.notin_(('pending', 'authorizing', 'expired'))).all()]
-    count = db.session.execute(
+    # 只通知這次真的「搶」到的訂單 (RETURNING)：兩台 KDS 同時按或網路重試時，另一個請求的 UPDATE 會是 0 列，不可重複發出餐通知
+    done_ids = db.session.execute(
         update(Order).where(Order.id.in_(pending_ids), Order.status == OrderStatus.PENDING)
         .values(status=OrderStatus.COMPLETED, completed_at=datetime.now())
+        .returning(Order.id)
         .execution_options(synchronize_session=False)
-    ).rowcount if pending_ids else 0
-    for oid in pending_ids:
+    ).scalars().all() if pending_ids else []
+    count = len(done_ids)
+    for oid in sorted(done_ids):
         notify_service.order_ready(db.session.get(Order, oid))
     if count:
         record_staff_audit('KITCHEN_COMPLETE_ALL', tenant_id=tenant_id,

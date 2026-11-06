@@ -78,6 +78,8 @@ def subscribe(order: Any, info: Any, user_id: int | None = None) -> Any:
     if not endpoint.startswith('https://') or len(endpoint) > 500 or not p256dh or not auth or len(p256dh) > 200 \
             or len(auth) > 100:
         raise AppError('訂閱資料不完整')
+    if not _valid_keys(p256dh, auth):
+        raise AppError('訂閱資料格式錯誤')
     ensure_keys(order.tenant_id)   # 正常流程瀏覽器已先取公鑰；這裡再保證金鑰存在
     sub = PushSubscription.query.filter_by(tenant_id=order.tenant_id, endpoint=endpoint, order_uuid=order.uuid) \
         .execution_options(skip_tenant_filter=True).first()
@@ -92,6 +94,16 @@ def subscribe(order: Any, info: Any, user_id: int | None = None) -> Any:
     return sub
 
 
+def _valid_keys(p256dh: str, auth: str) -> bool:
+    """瀏覽器的訂閱金鑰：p256dh 為 65 位元組未壓縮 P-256 公鑰 (0x04 開頭)、auth 為 16 位元組。
+    格式不對的訂閱加密時會拋例外 (原本會讓同一張訂單的推播整批失敗並回滾)"""
+    try:
+        key, secret = _b64url_decode(p256dh), _b64url_decode(auth)
+    except (ValueError, TypeError):
+        return False
+    return len(key) == 65 and key[0] == 4 and len(secret) == 16
+
+
 def _send_one(sub: Any, payload: dict, private_pem: str, contact: str) -> tuple[bool, bool, str]:
     """送一則推播。回傳 (ok, 是否應刪除訂閱, 錯誤訊息)"""
     import http_ece
@@ -102,9 +114,12 @@ def _send_one(sub: Any, payload: dict, private_pem: str, contact: str) -> tuple[
     headers = vapid.sign({'aud': f'{url.scheme}://{url.netloc}', 'sub': f'mailto:{contact}',
                           'exp': int(time.time()) + 12 * 3600})
     server_key = ec.generate_private_key(ec.SECP256R1())
-    body = http_ece.encrypt(json.dumps(payload, ensure_ascii=False).encode('utf-8'), salt=os.urandom(16),
-                            private_key=server_key, dh=_b64url_decode(sub.p256dh), auth_secret=_b64url_decode(sub.auth),
-                            version='aes128gcm')
+    try:
+        body = http_ece.encrypt(json.dumps(payload, ensure_ascii=False).encode('utf-8'), salt=os.urandom(16),
+                                private_key=server_key, dh=_b64url_decode(sub.p256dh), auth_secret=_b64url_decode(sub.auth),
+                                version='aes128gcm')
+    except Exception as exc:  # noqa: BLE001  金鑰壞掉的訂閱：刪除，不影響同一張訂單的其他裝置
+        return False, True, f'訂閱金鑰無效：{exc}'[:200]
     headers.update({'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', 'TTL': str(TTL_SECONDS),
                     'Urgency': 'high'})
     try:

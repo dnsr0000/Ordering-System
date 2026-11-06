@@ -197,6 +197,7 @@
 
     // ---------------------------------------------------------------- 會員動態條碼
     let qrTimer = null;
+    let qrOpen = false;   // 會員條碼視窗是否開著 (關掉後不再自動刷新)
 
     function fetchQr(rotate, pin) {
         const json = rotate || pin ? { action: rotate ? 'rotate' : 'confirm', pin: pin || '' } : null;
@@ -224,17 +225,21 @@
             img.src = data.qr;
             img.dataset.token = data.token;
             clearTimeout(qrTimer);
-            qrTimer = setTimeout(() => loadMemberQr(), Math.max(5, data.expires_in) * 1000);
+            // 視窗在載入途中被關掉時不再排下一次刷新 (否則關掉後仍一直刷新、甚至跳出 PIN 輸入框)
+            if (qrOpen) {
+                qrTimer = setTimeout(() => loadMemberQr(), Math.max(5, data.expires_in) * 1000);
+            }
         } catch (err) {
             msg.textContent = err.message;
         }
     }
 
     const qrModalEl = document.getElementById('memberQrModal');
-    if (qrModalEl) qrModalEl.addEventListener('hidden.bs.modal', () => clearTimeout(qrTimer));
+    if (qrModalEl) qrModalEl.addEventListener('hidden.bs.modal', () => { qrOpen = false; clearTimeout(qrTimer); });
 
     Kiosk.on(document, 'click', {
         'show-member-qr': () => {
+            qrOpen = true;
             Kiosk.modal(qrModalEl).show();
             loadMemberQr();
         },

@@ -103,23 +103,38 @@ def push_text(tenant_id, line_user_id, text):
     return status == 200
 
 
+class MulticastResult(int):
+    """群發成功人數 (可當 int 用)；error 不為空代表後面幾批失敗、只送出一部分"""
+    error = ''
+
+
 def multicast_text(tenant_id, user_ids, text):
-    """群發 (每次最多 500 人)；回傳成功送出的人數"""
+    """群發 (每次最多 500 人)；回傳成功送出的人數 (MulticastResult)。
+    第一批就失敗時拋 AppError (什麼都沒送出，可重試)；之後的批次失敗時不拋例外，回傳已送出的人數並附上錯誤 ——
+    否則呼叫端回滾、沒有稽核紀錄，店家重試會讓前面已收到的會員再收一次"""
     if not messaging_enabled(tenant_id):
         raise AppError('尚未啟用 LINE 官方帳號推播 (系統設定 → LINE)')
     ids = [u for u in dict.fromkeys(user_ids) if u]
     sent = 0
     for i in range(0, len(ids), 500):
         chunk = ids[i:i + 500]
+        error = ''
         try:
             status, body = _post(MULTICAST_URL, headers=_auth(tenant_id),
                                  json={'to': chunk, 'messages': [{'type': 'text', 'text': text[:4900]}]})
+            if status != 200:
+                error = f"LINE 推播失敗 ({status})：{body.get('message') or body}"
         except requests.RequestException as exc:
-            raise AppError(f'LINE 推播失敗：{exc}', 502)
-        if status != 200:
-            raise AppError(f"LINE 推播失敗 ({status})：{body.get('message') or body}", 502)
+            error = f'LINE 推播失敗：{exc}'
+        if error:
+            if not sent:
+                raise AppError(error, 502)
+            logger.warning('LINE 群發部分失敗：已送出 %d 人，其餘 %d 人未送出 (%s)', sent, len(ids) - sent, error)
+            result = MulticastResult(sent)
+            result.error = f'{error}；已送出 {sent} 人、其餘 {len(ids) - sent} 人未送出 (請勿整批重送)'
+            return result
         sent += len(chunk)
-    return sent
+    return MulticastResult(sent)
 
 
 @settings_service.register_tester('line')

@@ -38,10 +38,19 @@ def run_migrations_online():
             process_revision_directives=skip_empty_autogenerate,
             **current_app.extensions['migrate'].configure_args,
         )
-        with context.begin_transaction():
-            context.run_migrations()
-        if is_sqlite:
-            connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+        try:
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            # 遷移失敗 (例如還原舊備份後升級) 也要恢復外鍵檢查：這條連線會回到連線池給之後的請求用，
+            # 外鍵關著時 ON DELETE CASCADE / SET NULL 都不會執行，刪訂單 / 會員會留下孤兒資料
+            if is_sqlite:
+                try:
+                    if connection.in_transaction():
+                        connection.rollback()
+                    connection.exec_driver_sql('PRAGMA foreign_keys=ON')
+                except Exception:  # noqa: BLE001  恢復不了就讓連線作廢，不要帶著關閉的外鍵回到連線池
+                    connection.invalidate()
 
 
 if context.is_offline_mode():

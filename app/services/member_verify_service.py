@@ -41,7 +41,8 @@ def is_verified(user_id, now=None):
 
 
 def uses_member_assets(data):
-    """結帳請求是否動用會員資產：儲值金 (含混合付款的儲值金)、點數折抵、寄杯兌換"""
+    """結帳請求是否動用會員資產：儲值金 (含混合付款的儲值金)、點數折抵、寄杯兌換、
+    紅利兌換品項 (會用掉會員的兌換券或扣點)、會員持有的優惠券代碼"""
     if str(data.get('payment_method') or '') == '儲值金':
         return True
     if safe_int(data.get('use_points'), 0) > 0:
@@ -49,7 +50,20 @@ def uses_member_assets(data):
     tenders = ((data.get('payment_info') or {}).get('tenders') if isinstance(data.get('payment_info'), dict) else None) or []
     if any(isinstance(t, dict) and str(t.get('method') or '') == '儲值金' for t in tenders):
         return True
-    return any(isinstance(i, dict) and safe_int(i.get('pass_id'), 0) > 0 for i in (data.get('items') or []))
+    items = [i for i in (data.get('items') or []) if isinstance(i, dict)]
+    if any(safe_int(i.get('pass_id'), 0) > 0 or i.get('is_reward') for i in items):
+        return True
+    return _holds_coupon(safe_int(data.get('user_id'), 0), data.get('promo_code'))
+
+
+def _holds_coupon(user_id, code):
+    """代碼是這位會員持有、尚未使用的優惠券 (公開優惠代碼不算會員資產)"""
+    from app.models.coupon import UserCoupon
+    from app.services.coupon_service import normalize_code
+    code = normalize_code(code) if code else ''
+    if not user_id or not code:
+        return False
+    return UserCoupon.query.filter_by(user_id=user_id, code=code, is_used=False).first() is not None
 
 
 def require_verified(user, data, label='動用會員儲值金 / 點數 / 寄杯'):

@@ -206,8 +206,9 @@ def _register_security_hooks(app):
         resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
         resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
         resp.headers.setdefault('Referrer-Policy', 'same-origin')
-        # 人臉註冊/登入需使用相機 (限本站)，其餘感測器一律禁用
-        resp.headers.setdefault('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()')
+        # 只允許本站使用 (嵌入的第三方 iframe 一律不行)：相機 = 人臉註冊 / 登入、麥克風 = 語音點餐 (Web Speech)、
+        # 定位 = 外送員回報位置 / 顧客追蹤頁「我的位置」。設成 () 會讓這些功能在本站也被瀏覽器直接拒絕。
+        resp.headers.setdefault('Permissions-Policy', 'camera=(self), microphone=(self), geolocation=(self)')
         if request.is_secure:
             resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
         if csp_mode != 'off' and resp.mimetype == 'text/html':

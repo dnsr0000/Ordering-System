@@ -147,6 +147,13 @@ def _init_sentry(app: Any) -> bool:
 
     @app.before_request
     def _sentry_tags():
+        # sentry-sdk 2.x 起 configure_scope 已棄用、3.x 移除 (每個請求都會 500)；新版用 get_current_scope
+        getter = getattr(sentry_sdk, 'get_current_scope', None)
+        if getter is not None:
+            scope = getter()
+            scope.set_tag('request_id', current_request_id() or '')
+            scope.set_tag('tenant_id', str(getattr(g, 'tenant_id', '') or ''))
+            return
         with sentry_sdk.configure_scope() as scope:
             scope.set_tag('request_id', current_request_id() or '')
             scope.set_tag('tenant_id', str(getattr(g, 'tenant_id', '') or ''))

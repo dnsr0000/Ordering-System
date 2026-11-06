@@ -41,11 +41,13 @@ def is_active(promo, channel, has_member, now=None):
         return False
     if str(now.isoweekday()) not in (promo.days or '1234567'):
         return False
-    hm = now.strftime('%H:%M')
-    if promo.start_time and hm < promo.start_time:
-        return False
-    if promo.end_time and hm > promo.end_time:
-        return False
+    if promo.start_time or promo.end_time:
+        hm = now.strftime('%H:%M')
+        start, end = promo.start_time or '00:00', promo.end_time or '23:59'
+        # 跨午夜 (宵夜 22:00~02:00) 與菜單供應時段同一套規則
+        inside = start <= hm <= end if start <= end else (hm >= start or hm <= end)
+        if not inside:
+            return False
     channels = {c.strip() for c in (promo.channels or '').split(',') if c.strip()}
     if channels and channel not in channels:
         return False
@@ -125,7 +127,8 @@ def evaluate(lines, channel, has_member=False, now=None, promotions=None):
         if base < (promo.threshold or 0) or base <= 0:
             continue
         if promo.kind == 'threshold_discount':
-            off = promo.amount if (promo.amount or 0) > 0 else base * (100 - min(100, max(0, promo.percent or 100))) / 100
+            pct = promo.percent if promo.percent is not None else 100   # 0 = 應付 0% (免費)，不可當成沒設定
+            off = promo.amount if (promo.amount or 0) > 0 else base * (100 - min(100, max(0, pct))) / 100
             amount = min(_round(off), _round(base))
             if amount > 0:
                 result.discount += amount

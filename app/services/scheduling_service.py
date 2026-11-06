@@ -78,7 +78,7 @@ def _existing(tenant_id, start, end):
         if s is None or e is None:
             continue
         if e <= s:
-            e = 24 * 60
+            e += 24 * 60   # 跨夜班 (18:00~02:00 = 8 小時)；原本只算到 24:00，週工時被少算而超過上限
         hours[(ws.staff_account_id, ws.work_date)] += (e - s) / 60
     return hours
 
@@ -93,8 +93,9 @@ def generate(tenant_id, week_start, today=None):
     avail = availability_map(tenant_id)
     eligible = [s for s in staff if s.id in avail]
     skipped = [s.username for s in staff if s.id not in avail]
-    # 既有班表：本週 (計週工時) 與前 6 天 (計連續工作天)
-    worked = _existing(tenant_id, week_start - timedelta(days=cfg['max_consecutive_days']), week_start + timedelta(days=6))
+    # 既有班表：本週 (計週工時)，與前後各 max_consecutive_days 天 (計連續工作天；後面已排好的班也要算)
+    worked = _existing(tenant_id, week_start - timedelta(days=cfg['max_consecutive_days']),
+                       week_start + timedelta(days=6 + cfg['max_consecutive_days']))
     week_hours = defaultdict(float)
     for (sid, d), h in worked.items():
         if week_start <= d <= week_start + timedelta(days=6):
@@ -105,6 +106,12 @@ def generate(tenant_id, week_start, today=None):
     def consecutive_before(sid, d):
         n = 0
         while worked.get((sid, d - timedelta(days=n + 1))):
+            n += 1
+        return n
+
+    def consecutive_after(sid, d):
+        n = 0
+        while worked.get((sid, d + timedelta(days=n + 1))):
             n += 1
         return n
 
@@ -125,7 +132,8 @@ def generate(tenant_id, week_start, today=None):
                     continue   # 當天已有班 (既有或本次已排)
                 if length > limit_day or week_hours[st.id] + length > cap_week:
                     continue
-                if consecutive_before(st.id, d) >= cfg['max_consecutive_days']:
+                # 排進這天後的連續天數 = 前面 + 這天 + 後面 (已排好的班)
+                if consecutive_before(st.id, d) + 1 + consecutive_after(st.id, d) > cfg['max_consecutive_days']:
                     continue
                 if not is_available(avail, st.id, weekday, s_h, e_h):
                     continue

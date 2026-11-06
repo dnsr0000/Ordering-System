@@ -45,7 +45,8 @@ def position(token):
     order = _order_or_404(token)
     data = get_json_dict()
     with tenant_bypass():
-        pos = tracking.record_position(order, data.get('lat'), data.get('lng'), data.get('accuracy'))
+        pos = tracking.record_position(order, data.get('lat'), data.get('lng'), data.get('accuracy'),
+                                       data.get('age'))
         db.session.commit()
         return jsonify({'success': True, 'at': pos.to_dict()['at'], 'delivery_status': order.delivery_status,
                         'active': tracking.is_active(order), 'interval': tracking.interval_seconds(order.tenant_id)})

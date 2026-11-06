@@ -16,6 +16,7 @@ REDIS_CHANNEL = 'kiosk:orders'
 
 
 class OrderEventBus:
+    retry_base = 1.0   # Redis 斷線後第一次重新連線前等待秒數 (之後倍增到 30 秒)
     def __init__(self, max_public_subscribers=25, max_per_ip=10, max_staff_subscribers=60):
         self._subscribers = {}  # queue -> {'tenant_id', 'ip', 'is_staff'}
         self._lock = threading.Lock()
@@ -24,6 +25,7 @@ class OrderEventBus:
         self._max_staff = max_staff_subscribers
         self._redis = None
         self._listener = None
+        self._listener_lock = threading.Lock()
 
     # ---------------- 設定 ----------------
     def init_app(self, app):
@@ -39,21 +41,45 @@ class OrderEventBus:
             self._redis = None
 
     def _ensure_listener(self):
-        if self._redis is None or self._listener is not None:
+        """背景執行緒訂閱 Redis 頻道 (每個行程一條)。兩個連線同時第一次訂閱時只啟動一條 (否則每則通知送兩次)。"""
+        if self._redis is None:
             return
-        pubsub = self._redis.pubsub(ignore_subscribe_messages=True)
-        pubsub.subscribe(REDIS_CHANNEL)
+        with self._listener_lock:
+            if self._listener is not None and self._listener.is_alive():
+                return
+            pubsub = self._redis.pubsub(ignore_subscribe_messages=True)
+            pubsub.subscribe(REDIS_CHANNEL)   # 先同步訂閱，啟動後立刻發生的通知不漏接
+            self._listener = threading.Thread(target=self._listen_forever, args=(pubsub,),
+                                              name='order-event-listener', daemon=True)
+            self._listener.start()
 
-        def _run():
-            for msg in pubsub.listen():
-                try:
-                    data = json.loads(msg['data'])
-                    self._fanout(data.get('tenant_id'), msg['data'].decode() if isinstance(msg['data'], bytes) else msg['data'])
-                except Exception:  # noqa: BLE001
-                    logger.exception('處理 Redis 訂單通知失敗')
-
-        self._listener = threading.Thread(target=_run, name='order-event-listener', daemon=True)
-        self._listener.start()
+    def _listen_forever(self, pubsub):
+        """Redis 斷線 / 重啟時 listen() 會拋出例外：重新連線訂閱 (1 → 30 秒退避)，不可讓執行緒就此結束
+        (否則 notify 仍發布成功、但本行程再也收不到，POS / 廚房 / 取餐看板停止即時更新直到重開)"""
+        delay = self.retry_base
+        while True:
+            try:
+                if pubsub is None:
+                    pubsub = self._redis.pubsub(ignore_subscribe_messages=True)
+                    pubsub.subscribe(REDIS_CHANNEL)
+                    logger.info('Redis 訂單通知已重新連線')
+                    delay = self.retry_base
+                for msg in pubsub.listen():
+                    try:
+                        data = json.loads(msg['data'])
+                        self._fanout(data.get('tenant_id'), msg['data'].decode() if isinstance(msg['data'], bytes) else msg['data'])
+                    except Exception:  # noqa: BLE001
+                        logger.exception('處理 Redis 訂單通知失敗')
+            except Exception as e:  # noqa: BLE001
+                logger.warning('Redis 訂單通知中斷 (%s)，%d 秒後重新連線', e, delay)
+            try:
+                if pubsub is not None:
+                    pubsub.close()
+            except Exception:  # noqa: BLE001
+                pass
+            pubsub = None
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
 
     # ---------------- 訂閱 ----------------
     def _evict(self, q):

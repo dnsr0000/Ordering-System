@@ -37,6 +37,10 @@ def _move_to_ready(session):
 
 @event.listens_for(Session, 'after_soft_rollback')
 def _discard(session, previous_transaction):
+    # 只有最外層交易回滾才丟掉待執行工作；savepoint (begin_nested，搶號 / 唯一鍵衝突重試) 回滾時外層仍會 commit，
+    # 這時丟掉會讓發票 / 列印 / 退款等背景工作默默消失
+    if previous_transaction.nested or previous_transaction.parent is not None:
+        return
     session.info.pop(_PENDING, None)
 
 

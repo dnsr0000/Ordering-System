@@ -133,8 +133,34 @@ def _make_line(item, qty, attrs):
     return line
 
 
+_NUMERIC_ALIASES = sorted((w for w in (*SUGAR_ALIASES, *ICE_ALIASES, *SPICY_ALIASES) if re.search(_NUM_RE, w)),
+                          key=len, reverse=True)
+_SEP_RE = re.compile(r'[\s,.;:!?，。、；：！？]+')
+_TRAIL_QTY_RE = re.compile(rf'(?:{_NUM_RE}\s*[{UNITS}]?)?\s*(?:{"|".join(SIZE_WORDS)})?\s*$')
+
+
+def _mask_numeric_aliases(text):
+    """「三分糖」「一點辣」裡的數字不是數量：換成等長空白 (保留位置)"""
+    for word in _NUMERIC_ALIASES:
+        text = text.replace(word, ' ' * len(word))
+    return text
+
+
+def _split_gap(gap):
+    """兩個品名之間的文字分給前後兩個品項 (不可同時算給兩邊)：
+    有標點 / 空白時以最後一個為界 (「珍珠奶茶兩杯，薯條」的兩杯屬於奶茶；「…，再一份薯條」的一份屬於薯條)；
+    沒有時，緊接下一個品名的「數量 / 規格」屬於下一個，其餘 (甜度、冰塊、加料) 屬於前一個"""
+    seps = list(_SEP_RE.finditer(gap))
+    if seps:
+        return gap[:seps[-1].start()], gap[seps[-1].end():]
+    m = _TRAIL_QTY_RE.search(gap)
+    cut = m.start() if m and m.group(0).strip() else len(gap)
+    return gap[:cut], gap[cut:]
+
+
 def _quantity(pre, post, is_last=True):
     """數量：品名後面的「兩杯」優先 (但緊接著下一個品名的數字屬於下一個品項)，否則取品名前面最後出現的數字"""
+    pre, post = _mask_numeric_aliases(pre), _mask_numeric_aliases(post)
     for m in _QTY_BEFORE.finditer(post):   # 品名後面 (中間可夾甜度 / 辣度等字眼)
         if is_last or m.end() < len(post.rstrip()):
             n = _to_int(m.group(1))
@@ -201,13 +227,16 @@ def rule_parse(text, items, addons):
                 continue
             leftover.append(token)
     matches.sort()
+    if not matches:
+        return [], leftover
+    # 每個品項的前文 / 後文：兩個品名之間的文字只分給其中一個 (否則「珍珠奶茶兩杯，薯條」連薯條也變兩份、甜度也套到下一杯)
+    pres = [text[:matches[0][0]]] + [''] * (len(matches) - 1)
+    posts = [''] * (len(matches) - 1) + [text[matches[-1][1]:]]
+    for i in range(len(matches) - 1):
+        posts[i], pres[i + 1] = _split_gap(text[matches[i][1]:matches[i + 1][0]])
     lines = []
-    for i, (start, end, item) in enumerate(matches):
-        prev_end = matches[i - 1][1] if i else 0
-        is_last = i + 1 >= len(matches)
-        next_start = len(text) if is_last else matches[i + 1][0]
-        pre, post = text[prev_end:start], text[end:next_start]
-        lines.append(_make_line(item, _quantity(pre, post, is_last), _attributes(item, pre, post, addons)))
+    for (_start, _end, item), pre, post in zip(matches, pres, posts):
+        lines.append(_make_line(item, _quantity(pre, post), _attributes(item, pre, post, addons)))
     return lines, leftover
 
 

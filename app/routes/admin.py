@@ -357,6 +357,14 @@ def edit_item(id):
 @permission_required('menu')
 def delete_item(id):
     item = db.get_or_404(MenuItem, id)
+    # 寄杯綁定品項：刪除品項會連帶刪掉寄杯商品 (資料庫 CASCADE)，會員手上的寄杯也對不到品項而無法兌換 (預收的商品禮券)
+    from app.models.member import MemberPass, PassProduct
+    held = MemberPass.query.filter(MemberPass.menu_item_id == item.id, MemberPass.status == 'active',
+                                   MemberPass.remaining > 0).count()
+    if held:
+        raise AppError(f'有 {held} 位會員的寄杯還沒兌換完 (綁定此品項)，不能刪除；請改用「停售 / 下架」')
+    if PassProduct.query.filter_by(menu_item_id=item.id, is_active=True).first() is not None:
+        raise AppError('此品項有販售中的寄杯商品，請先到「寄杯」停售該商品再刪除品項 (或改用下架)')
     if item.image_path:
         remove_upload(current_app.config['UPLOAD_FOLDER_MENU'], item.image_path)
     record_staff_audit('DELETE_MENU_ITEM', details=f'刪除菜單品項：{item.name} (${item.price})')

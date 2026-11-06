@@ -102,8 +102,9 @@ def manage():
             if not ids:
                 raise AppError('沒有符合條件且已綁定 LINE 的會員')
             sent = line_service.multicast_text(g.tenant_id, ids, text)
-            record_staff_audit('LINE_BROADCAST', details=f'LINE 推播給 {sent} 位會員：{text[:100]}')
-            flash(f'已推播給 {sent} 位會員', 'success')
+            partial = getattr(sent, 'error', '')
+            record_staff_audit('LINE_BROADCAST', details=f'LINE 推播給 {sent} 位會員{"(部分失敗)" if partial else ""}：{text[:100]}')
+            flash(partial or f'已推播給 {sent} 位會員', 'warning' if partial else 'success')
         else:
             raise AppError('不支援的操作')
         db.session.commit()

@@ -54,19 +54,23 @@
             el.addEventListener('pointerdown', (ev) => {
                 ev.preventDefault();
                 const rect = canvas.getBoundingClientRect();
-                if (el.parentElement !== canvas) {   // 從待擺放區拖進平面圖
-                    canvas.appendChild(el);
-                    el.style.left = `${((ev.clientX - rect.left) / rect.width) * 100}%`;
-                    el.style.top = `${((ev.clientY - rect.top) / rect.height) * 100}%`;
-                }
-                el.setPointerCapture(ev.pointerId);
-                el.classList.add('fp-dragging');
-                const move = (e) => {
-                    const x = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 0.95);
-                    const y = Math.min(Math.max((e.clientY - rect.top) / rect.height, 0), 0.92);
+                // 位置限制在平面圖內並扣掉桌子本身的寬高 (長桌拖到右邊、方桌拖到底部不會被切掉一半)
+                const place = (clientX, clientY) => {
+                    const maxX = Math.max(0, 1 - el.offsetWidth / rect.width);
+                    const maxY = Math.max(0, 1 - el.offsetHeight / rect.height);
+                    const x = Math.min(Math.max((clientX - rect.left) / rect.width, 0), maxX);
+                    const y = Math.min(Math.max((clientY - rect.top) / rect.height, 0), maxY);
                     el.style.left = `${x * 100}%`;
                     el.style.top = `${y * 100}%`;
                 };
+                if (el.parentElement !== canvas) {   // 從待擺放區拖進平面圖
+                    canvas.appendChild(el);
+                    // 待擺放區在平面圖下方：只點一下沒拖曳時，原本會放到平面圖外 (被裁掉看不到，儲存後也找不回來)
+                    place(ev.clientX, ev.clientY);
+                }
+                el.setPointerCapture(ev.pointerId);
+                el.classList.add('fp-dragging');
+                const move = (e) => place(e.clientX, e.clientY);
                 const up = () => {
                     el.classList.remove('fp-dragging');
                     el.removeEventListener('pointermove', move);

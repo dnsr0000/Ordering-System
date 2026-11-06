@@ -89,7 +89,9 @@ def send_otp(tenant_id, phone, purpose, ip=''):
                            expires_at=now + OTP_TTL, ip_address=ip[:50]))
     shop = db.session.get(Tenant, tenant_id)
     template = settings_service.get('sms', tenant_id).get('template') or '驗證碼 {code}'
-    db.session.flush()
+    # 先存檔再呼叫簡訊商：簡訊商逾時 (其實已送達) 或失敗時驗證碼紀錄仍在 —— 顧客收到的碼可驗證，
+    # 失敗的寄送也計入每支手機 60 秒 / 每小時與全店上限 (否則可一直重試灌簡訊)
+    db.session.commit()
     send_sms(tenant_id, phone, template.replace('{code}', code).replace('{shop}', shop.name if shop else ''))
     return code
 

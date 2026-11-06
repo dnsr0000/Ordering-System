@@ -5,7 +5,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.errors import AppError
 from app.extensions import db
@@ -56,6 +56,10 @@ def complete_station(order_id, station_id, tenant_id, staff):
     order = db.session.get(Order, order_id)
     if order is None or order.tenant_id != tenant_id:
         raise AppError('查無此訂單！', 404)
+    # 鎖住訂單列：兩個工作站同時按完成時排隊處理，後面那個才看得到前一個已完成的品項 (否則兩邊都以為還有別站沒做完，
+    # 訂單永遠停在製作中)；SQLite 本來就一次只有一個寫入交易
+    db.session.execute(select(Order.id).where(Order.id == order.id).with_for_update())
+    db.session.refresh(order)
     if order.status != OrderStatus.PENDING:
         raise AppError('訂單已不在製作中', 409)
     station = db.session.get(KitchenStation, station_id)

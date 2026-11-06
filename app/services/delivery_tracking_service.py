@@ -10,7 +10,7 @@
 import math
 import uuid
 from urllib.parse import quote
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import current_app, has_request_context, request
 from sqlalchemy import delete, select
@@ -34,8 +34,13 @@ def interval_seconds(tenant_id=None):
     return max(5, min(120, int(settings_service.get('own_delivery', tenant_id).get('gps_interval') or 15)))
 
 
-def ensure_token(order):
-    """指派外送員時產生憑證 (已有就沿用，改派同一張訂單連結不變)"""
+def ensure_token(order, new_driver=False):
+    """指派外送員時產生憑證 (同一位外送員重新指派時沿用，連結不變)。
+    new_driver=True (改派給另一位)：換新憑證並清掉前一位回報的位置 —— 舊連結會看到顧客地址 / 電話，
+    也能繼續回報位置讓追蹤頁顯示成新外送員的位置"""
+    if new_driver and order.driver_token:
+        DeliveryPosition.query.filter_by(order_uuid=order.uuid).delete(synchronize_session=False)
+        order.driver_token = ''
     if not order.driver_token:
         order.driver_token = str(uuid.uuid4())
     return order.driver_token
@@ -67,8 +72,12 @@ def is_active(order):
     return (order.delivery_status or '') in ACTIVE_STATUSES and order.status != 'Cancelled'
 
 
-def record_position(order, lat, lng, accuracy=0):
-    """外送員回報位置；已送達 / 失敗 / 取消的訂單不再接受 (409)"""
+MAX_FIX_AGE = 3600
+
+
+def record_position(order, lat, lng, accuracy=0, age=0):
+    """外送員回報位置；已送達 / 失敗 / 取消的訂單不再接受 (409)。
+    age = 這個定位是幾秒前取得的 (GPS 訊號中斷時手機會定時重送最後一個位置)：記錄時間往前推，顧客頁才不會把舊位置顯示成「剛更新」"""
     if not is_active(order):
         raise AppError('此訂單已結束配送，不需再回報位置', 409)
     try:
@@ -81,8 +90,12 @@ def record_position(order, lat, lng, accuracy=0):
         accuracy = max(0.0, min(100000.0, float(accuracy or 0)))
     except (TypeError, ValueError):
         accuracy = 0.0
+    try:
+        age = max(0, min(MAX_FIX_AGE, int(float(age or 0))))
+    except (TypeError, ValueError):
+        age = 0
     pos = DeliveryPosition(tenant_id=order.tenant_id, order_uuid=order.uuid, lat=lat, lng=lng, accuracy=accuracy,
-                           recorded_at=datetime.now())
+                           recorded_at=datetime.now() - timedelta(seconds=age))
     db.session.add(pos)
     db.session.flush()
     _prune(order)

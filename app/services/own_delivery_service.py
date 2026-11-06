@@ -98,9 +98,11 @@ def assign(order, driver):
         raise AppError('請選擇外送員')
     if order.delivery_status == 'out':
         raise AppError('已出發配送，無法改派', 409)
+    changed = bool(order.driver_name) and order.driver_name != driver
     order.driver_name, order.delivery_status = driver, 'assigned'
     from app.services import delivery_tracking_service
-    delivery_tracking_service.ensure_token(order)   # 外送員手機回報位置的連結 (派車頁顯示 QR code)
+    # 外送員手機回報位置的連結 (派車頁顯示 QR code)；改派給另一位時換新連結，舊連結失效
+    delivery_tracking_service.ensure_token(order, new_driver=changed)
 
 
 def depart(order):

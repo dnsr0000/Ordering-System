@@ -1035,7 +1035,7 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^送單失敗：(?P<e>.+)$'), ('Submission failed: {e}', '送信失敗：{e}')),
     (re.compile(r'^金額已變動：畫面顯示 \$(?P<a>\d+)，目前應付 \$(?P<b>\d+) (?P<rest>.*)$'), ('The total changed: shown ${a}, now ${b}. Please check and confirm again.', '金額が変わりました：表示 ${a}、現在 ${b}。ご確認のうえもう一度確定してください。')),
     (re.compile(r'^會員點數已變動 \(目前 (?P<p>\d+) 點，不足折抵 (?P<u>\d+) 點\)，(?P<rest>.*)$'), ('Your points changed (now {p}, not enough to redeem {u}); please check again.', 'ポイントが変わりました (現在 {p} pt、{u} pt の利用に不足)。もう一度ご確認ください。')),
-    (re.compile(r'^⚠️ PIN 碼錯誤次數過多，此帳號或裝置已暫時鎖定，請於 (?P<m>\d+) 分鐘後再試(?P<rest>.*)$'), ('Too many incorrect PINs; this account or device is temporarily locked. Please try again in {m} minutes.', 'PIN の誤りが多すぎるため一時的にロックされました。{m} 分後にお試しください。')),
+    (re.compile(r'^PIN 碼錯誤次數過多，此帳號或裝置已暫時鎖定，請於 (?P<m>\d+) 分鐘後再試(?P<rest>.*)$'), ('Too many incorrect PINs; this account or device is temporarily locked. Please try again in {m} minutes.', 'PIN の誤りが多すぎるため一時的にロックされました。{m} 分後にお試しください。')),
     (re.compile(r'^(?P<l>.+?)需輸入 PIN 碼確認身分 \(您是以人臉辨識登入\)$'), ('{l} requires your PIN (you logged in with face recognition)', '{l}には PIN の入力が必要です (顔認証でログインしているため)')),
     (re.compile(r'^候位號碼 (?P<n>.+)$'), ('Waitlist number {n}', '受付番号 {n}')),
     (re.compile(r'^已送單，取餐號 #(?P<n>\d+)，請於 (?P<t>.+?) 到店取餐(?P<rest>.*)$'), ('Submitted: pickup #{n}, please pick up at {t}', '送信しました。番号 #{n}、{t} に店舗でお受け取りください')),

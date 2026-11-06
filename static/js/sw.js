@@ -1,5 +1,5 @@
 /*
- * Service Worker：靜態檔 (CSS / JS / 圖示) 快取優先；頁面一律走網路 (菜單、價格、庫存需即時)，
+ * Service Worker：有版本參數 (?v=) 的靜態檔快取優先、沒有的 (模組 import) 網路優先；頁面一律走網路 (菜單、價格、庫存需即時)，
  * 斷線時改顯示離線頁 /offline。API 與訂單不快取。
  */
 const CACHE = 'kiosk-static-v2';
@@ -47,12 +47,22 @@ self.addEventListener('fetch', (event) => {
         return;
     }
     if (url.pathname.startsWith('/static/')) {
-        event.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((resp) => {
+        const save = (resp) => {
             if (resp.ok) {
                 const copy = resp.clone();
                 caches.open(CACHE).then((cache) => cache.put(req, copy));
             }
             return resp;
-        })));
+        };
+        // 離線時：帶版本參數的網址也可以用預先快取的同一個檔案 (預先快取清單沒有 ?v=)
+        const offline = () => caches.match(req, { ignoreSearch: true });
+        if (url.searchParams.has('v')) {
+            // 有版本參數 (?v=)：內容不會變，快取優先
+            event.respondWith(caches.match(req).then((hit) => hit || fetch(req).then(save).catch(offline)));
+        } else {
+            // 沒有版本參數 (ES module 的相對 import 如 ./customer/core.js)：網路優先，離線才用快取 ——
+            // 快取優先時，部署後第一次開啟會拿到舊模組配新主程式，整頁無法執行
+            event.respondWith(fetch(req).then(save).catch(offline));
+        }
     }
 });
