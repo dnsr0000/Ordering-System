@@ -385,3 +385,19 @@ def test_member_birthday_dropdowns_preselect(page, app):
     group = page.locator(f'#bd-{uid}').locator('xpath=..')
     expect(group.locator('select[data-part="month"]')).to_have_value('7')
     expect(group.locator('select[data-part="day"]')).to_have_value('9')
+
+
+def test_sidebar_keeps_scroll_position_between_pages(page):
+    """點側欄換頁後，側欄停在原本捲到的位置 (不跳回最上面)"""
+    page.set_viewport_size({'width': 1280, 'height': 560})   # 讓側欄需要捲動
+    _login(page)
+    body = page.locator('#adminSidebar .admin-sidebar-body')
+    body.evaluate('el => { el.scrollTop = el.scrollHeight; }')
+    before = body.evaluate('el => el.scrollTop')
+    assert before > 100, '側欄應該可以捲動'
+    link = page.locator('#adminSidebar a.admin-nav-link[href$="/admin/settings"]')
+    link.click()
+    page.wait_for_url('**/admin/settings')
+    after = page.locator('#adminSidebar .admin-sidebar-body').evaluate('el => el.scrollTop')
+    assert abs(after - before) <= 2, (before, after)
+    expect(page.locator('#adminSidebar a.admin-nav-link.active')).to_be_in_viewport()
