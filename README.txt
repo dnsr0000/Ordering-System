@@ -70,8 +70,8 @@
      pip install -r requirements-store.txt          (門市：核心 + 人臉辨識；開發 / 測試改用 requirements-dev.txt)
 3. 設定：複製 .env.example 為 .env，至少填 ADMIN_USERNAME / ADMIN_PASSWORD (負責人帳號，只在第一次建立時使用)。
    未填會自動產生一組隨機帳密並只在啟動畫面顯示一次。其他環境變數見 docs/CONFIG.txt 三。
-4. 啟動：python serve_windows.py (正式營業，Waitress，預設 0.0.0.0:5000，區網內的看板與 POS 可連線)；
-   python run.py (開發除錯，FLASK_DEBUG=1 開啟除錯模式)。前台 http://127.0.0.1:5000/、後台 http://127.0.0.1:5000/admin。
+4. 啟動：python run.py (Waitress，預設 0.0.0.0:5000，區網內的看板與 POS 可連線；啟動成功會印出前台與後台網址)。
+   開發除錯時在 .env 設 FLASK_DEBUG=1，同一個指令改用 Flask 開發伺服器 (只監聽本機)。
 5. 啟動時會自動建立 / 更新資料庫結構 (AUTO_MIGRATE=1)；第一次啟動會在背景下載人臉模型檔 (docs/CONFIG.txt 二)。
 6. 後台「隱私權告知」填寫營運者名稱與聯絡方式。
 

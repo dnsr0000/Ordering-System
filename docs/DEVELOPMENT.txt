@@ -91,8 +91,8 @@ Project Root/
 ├── docs/                      文件 (FEATURES、CONFIG、DEPLOY、SYNC、DEVELOPMENT、SECURITY、API、MANUAL_TEST)、
 │                              import_template.xlsx (後台「匯入資料」範本：菜單、會員、優惠券)
 ├── requirements.txt、requirements-store.txt、requirements-dev.txt (見 docs/CONFIG.txt 一)
-├── serve_windows.py           正式營業啟動 (Waitress)
-└── run.py                     開發用啟動
+└── run.py                     啟動入口：python run.py (Waitress；FLASK_DEBUG=1 時改用 Flask 開發伺服器)、
+                               flask --app run …、線上端 gunicorn run:app
 
 
 三、開發慣例

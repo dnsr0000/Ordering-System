@@ -3,7 +3,7 @@
 ====================================================================
 
 架構 (系統角色與資料分工見 README.txt 一、同步規則見 docs/SYNC.txt)
-- 本機門市端：Windows 電腦 + Waitress (serve_windows.py) + SQLite (database/menu.db)，可完全離線營業；
+- 本機門市端：Windows 電腦 + Waitress (python run.py) + SQLite (database/menu.db)，可完全離線營業；
   安裝 requirements-store.txt (含人臉辨識)。
 - 線上端 (SYNC_ROLE=hub)：Linux 主機 + Docker：
     caddy (自動 HTTPS 反向代理，80/443) → app (gunicorn gthread，多 worker) → postgres + redis
@@ -159,12 +159,12 @@
        (3) 仍不行就在其他電腦下載模型後把 models\ 複製過去。
    - 複製 .env.example 為 .env，至少設定 ADMIN_USERNAME / ADMIN_PASSWORD。
    - Windows 時區必須是「(UTC+08:00) 台北」並開啟自動校時 (營業日、換日結案都依電腦時間)。
-   - 先手動執行一次 .venv\Scripts\python serve_windows.py，確認 http://127.0.0.1:5000/ 可開啟。
+   - 先手動執行一次 .venv\Scripts\python run.py，確認 http://127.0.0.1:5000/ 可開啟。
 
 2. 開機自動啟動 (以 Windows 服務執行 Waitress，二擇一)
    (A) NSSM (建議；可在當機時自動重啟並保存 log)：
        下載 nssm (https://nssm.cc/)，以系統管理員身分開啟命令提示字元：
-         nssm install KioskPOS C:\kiosk\.venv\Scripts\python.exe C:\kiosk\serve_windows.py
+         nssm install KioskPOS C:\kiosk\.venv\Scripts\python.exe C:\kiosk\run.py
          nssm set KioskPOS AppDirectory C:\kiosk
          nssm set KioskPOS AppStdout C:\kiosk\logs\service.log
          nssm set KioskPOS AppStderr C:\kiosk\logs\service.log
@@ -175,7 +175,7 @@
        (先建立 C:\kiosk\logs 資料夾。) 查看狀態：nssm status KioskPOS；重啟：nssm restart KioskPOS。
    (B) 工作排程器：建立工作 →「不論使用者登入與否均執行」、「以最高權限執行」；
        觸發程序「啟動時」；動作「啟動程式」C:\kiosk\.venv\Scripts\python.exe，
-       引數 serve_windows.py，開始位置 C:\kiosk；設定頁勾選「如果工作失敗，重新啟動間隔 1 分鐘」。
+       引數 run.py，開始位置 C:\kiosk；設定頁勾選「如果工作失敗，重新啟動間隔 1 分鐘」。
    (C) 內附腳本 (最簡單)：以系統管理員身分開啟 PowerShell，在專案資料夾執行
          powershell -ExecutionPolicy Bypass -File deploy\windows\install_autostart.ps1
        會建立開機啟動工作 KioskPOS-Server (執行 deploy\windows\start_store.cmd：先校時再啟動，失敗每分鐘重試，
@@ -234,7 +234,7 @@
 
 5. 桌邊掃碼點餐 (顧客用自己的手機)
    - 顧客手機要連上店內 Wi-Fi，且能開啟門市伺服器：在路由器把伺服器電腦設為固定 IP (DHCP 保留)，
-     並允許 Windows 防火牆讓 5000 埠在「私人網路」連入 (第一次啟動 serve_windows.py 時的提示選「允許」)。
+     並允許 Windows 防火牆讓 5000 埠在「私人網路」連入 (第一次啟動 run.py 時的提示選「允許」)。
    - 後台「桌位 QR」：確認「門市網址」(例如 http://192.168.1.10:5000，預設自動偵測) → 新增桌位 (A1-A10) →
      列印桌卡放在桌上。用自己的手機連店內 Wi-Fi 掃一張實際點一次，確認廚房看板出現該桌的訂單。
    - 顧客點餐後訂單直接送廚房 (標示桌號、未結帳)；用餐後在 POS「桌位結帳」一次結清該桌。
@@ -255,7 +255,7 @@
      SYNC_ROLE=node
      SYNC_HUB_URL=https://您的網域
      SYNC_NODE_TOKEN=kn_……(上一步的權杖)
-   重新啟動 serve_windows.py。伺服器會在背景自動同步：
+   重新啟動 run.py。伺服器會在背景自動同步：
    - 第一次連線時，本機店家改用線上店家的識別碼，並上傳門市既有的菜單、會員、訂單 (資料多時需要幾分鐘)。
    - 之後本機有變更時立即上傳；線上點餐的新訂單以長輪詢接收，通常 1~2 秒內出現在廚房看板。
    - 斷網時照常營業，後台「同步狀態」頁會顯示最後一次錯誤；恢復連線後自動補齊。
@@ -279,7 +279,7 @@
 [ ] 網域 DNS 指向主機，https://網域/healthz 回應正常，憑證有效
 [ ] 線上端資料庫每日備份 (pg_dump 排程，見一-7)，並實際演練過一次還原
 [ ] 門市端每日備份 database/ 與 uploads/ (見二)，並複製一份到其他位置 (隨身碟/雲端)
-[ ] 門市 .env：ADMIN_PASSWORD 已改成自己的密碼；SYNC_* 已設定；serve_windows.py 設為開機自動啟動
+[ ] 門市 .env：ADMIN_PASSWORD 已改成自己的密碼；SYNC_* 已設定；run.py 設為開機自動啟動
 [ ] 門市電腦已開啟自動校時
 [ ] 以手機實際走一次線上點餐 → 門市廚房看板出現 → 出餐 → 線上看到狀態，並測試取消後庫存與點數回補
 [ ] 拔掉門市網路線測試：門市照常點餐/結帳；接回後「同步狀態」無錯誤、待上傳筆數歸零
@@ -448,6 +448,6 @@
 3. 匯出 Caddy 的本機憑證讓門市信任：
      docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt database\caddy-root.crt
 4. 門市 .env (先備份 database\menu.db)：SYNC_ROLE=node、SYNC_HUB_URL=https://localhost、SYNC_NODE_TOKEN=kn_…、
-   REQUESTS_CA_BUNDLE=<專案路徑>\database\caddy-root.crt → python serve_windows.py，後台「同步狀態」確認已連線。
+   REQUESTS_CA_BUNDLE=<專案路徑>\database\caddy-root.crt → python run.py，後台「同步狀態」確認已連線。
 - 綠界伺服器通知連不到 localhost：付款結果改由付款後瀏覽器回到本站與每分鐘向綠界查詢來確認。
 - REQUESTS_CA_BUNDLE 只用於本機模擬 (會讓門市只信任這張憑證)；正式上線前刪除。

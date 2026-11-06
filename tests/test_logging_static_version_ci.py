@@ -106,7 +106,7 @@ def test_testing_app_does_not_write_log_file(app):
     assert 'LOG_FILE: ""' in compose and 'max-size' in compose
     cmd = _read('deploy/windows/start_store.cmd')
     assert 'server.log.1' in cmd, '門市主控台輸出超過 5 MB 時換檔'
-    assert 'basicConfig' not in _read('serve_windows.py')
+    assert 'basicConfig' not in _read('run.py')
 
 
 # ---------------------------------------------------------------------------

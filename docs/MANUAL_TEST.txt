@@ -26,7 +26,7 @@
 - 安裝與啟動：
     .venv\Scripts\activate
     pip install -r requirements-store.txt        (門市套件；含人臉辨識用的 numpy / opencv-python-headless)
-    python serve_windows.py
+    python run.py
   第一次啟動會在背景下載人臉模型檔到 models\ (需能連 github.com；或先執行 flask --app run models download)；
   後台「系統監控與備份」的「人臉辨識登入」方塊顯示「可用」才能測 D-04。
 - .env 已設定 ADMIN_USERNAME / ADMIN_PASSWORD (下文稱「負責人帳號」)。
@@ -51,7 +51,7 @@ A. 啟動、後台登入與系統設定
 --------------------------------------------------------------------
 [A-01] 項目：伺服器啟動
   步驟：
-    1. 執行 python serve_windows.py。
+    1. 執行 python run.py。
     2. 瀏覽器開 http://127.0.0.1:5000/healthz。
   預期：
     - 主控台沒有錯誤訊息，顯示前台與後台網址。

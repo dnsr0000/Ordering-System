@@ -6,7 +6,7 @@ w32tm /resync /nowait >nul 2>&1
 REM 主控台輸出 (只有啟動訊息與警告；完整記錄在 database\logs\app.log，會自動輪替) 超過 5 MB 時換檔，避免無限成長
 for %%A in ("database\server.log") do if %%~zA GTR 5000000 move /y "database\server.log" "database\server.log.1" >nul 2>&1
 if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" serve_windows.py >> "database\server.log" 2>&1
+    ".venv\Scripts\python.exe" run.py >> "database\server.log" 2>&1
 ) else (
-    python serve_windows.py >> "database\server.log" 2>&1
+    python run.py >> "database\server.log" 2>&1
 )

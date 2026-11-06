@@ -55,7 +55,6 @@ models/*.gguf
 README.txt
 docs
 pyproject.toml
-serve_windows.py
 deploy/hub.env.example
 
 # ---- 部署設定本身不需要放進映像檔 ----

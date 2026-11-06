@@ -36,7 +36,7 @@
     DATABASE_URL                      留空 = database/menu.db (SQLite)；線上端為 postgresql://…
     AUTO_MIGRATE                      1 = 啟動時升級資料庫；0 = 需先執行 flask --app run setup
     UPLOAD_FOLDER_MEMBER / _MENU      上傳檔位置 (預設 uploads/member、uploads/menu)
-    HOST / PORT                       serve_windows.py、run.py 的監聽位址與埠號 (預設 0.0.0.0:5000)
+    HOST / PORT                       python run.py 的監聽位址與埠號 (預設 0.0.0.0:5000；FLASK_DEBUG=1 時只監聽本機)
     WAITRESS_THREADS                  Waitress 執行緒數 (每條 SSE 看板連線占 1 條，預設 128)
   安全
     TRUSTED_PROXY_COUNT               前面有幾層反向代理 (直接對外 0；Nginx / Cloudflare / Caddy 後面 1)
