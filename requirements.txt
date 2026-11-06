@@ -17,6 +17,9 @@ waitress==3.0.2
 gunicorn==26.2.0; sys_platform != "win32"
 python-dotenv==1.2.3
 Requests==2.34.2
+# Windows 門市的 HTTPS 改用系統憑證庫 (app/services/http_client.py)：防毒 / 公司網路攔截 HTTPS 時，
+# 只用 requests 內建清單會 CERTIFICATE_VERIFY_FAILED (人臉模型、版本更新、綠界、LINE 都連不上)
+truststore==0.10.5; sys_platform == "win32"
 
 # ---- 資料處理 ----
 # Excel 匯出 / 匯入 (app/services/excel_service.py 直接用 openpyxl 讀寫，不需要 pandas)

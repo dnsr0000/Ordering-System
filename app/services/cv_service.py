@@ -112,7 +112,11 @@ def ensure_models_async():
         try:
             download_models()
         except Exception as exc:   # noqa: BLE001  (網路不通等：下次啟動或 flask models download 再試)
-            logger.warning('人臉模型下載失敗，人臉登入暫不可用：%s', exc)
+            hint = ''
+            if 'CERTIFICATE_VERIFY_FAILED' in str(exc):
+                hint = ('；憑證驗證失敗：請確認 .env 沒有設定 REQUESTS_CA_BUNDLE (只用於本機模擬線上端)、已執行 '
+                        'pip install -r requirements-store.txt，或在其他電腦執行 flask --app run models download 後把 models\\ 複製過來')
+            logger.warning('人臉模型下載失敗，人臉登入暫不可用：%s%s', exc, hint)
     t = threading.Thread(target=run, name='face-models-download', daemon=True)
     t.start()
     return t

@@ -82,6 +82,8 @@ def create_app(config_class=Config):
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options_for(app.config['SQLALCHEMY_DATABASE_URI'])
     from app.services import log_service
     log_service.configure_logging(app)   # 主控台 + 輪替記錄檔 (LOG_FILE)、每個請求的 X-Request-ID
+    from app.services import http_client
+    http_client.use_system_certificates()   # Windows：HTTPS 改用系統憑證庫 (防毒 / 公司網路攔截 HTTPS 時仍可連線)
 
     # 僅在明確設定代理層數時才信任 X-Forwarded-*，否則來源 IP 可被偽造而繞過頻率限制
     if app.config['TRUSTED_PROXY_COUNT'] > 0:

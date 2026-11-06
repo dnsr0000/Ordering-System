@@ -81,3 +81,38 @@ def test_models_not_tracked_by_git():
     root = os.path.dirname(os.path.dirname(__file__))
     ignore = open(os.path.join(root, '.gitignore'), encoding='utf-8').read()
     assert 'models/*.onnx' in ignore and 'models/*.gguf' in ignore
+
+
+def test_windows_https_uses_system_certificate_store(monkeypatch):
+    """防毒 / 公司網路攔截 HTTPS 時，只信任 certifi 會 CERTIFICATE_VERIFY_FAILED：Windows 改用系統憑證庫 (truststore)"""
+    import sys
+
+    from app.services import http_client
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    with open(os.path.join(root, 'requirements.txt'), encoding='utf-8') as fh:
+        lines = [ln.strip() for ln in fh if ln.startswith('truststore==')]
+    assert lines and lines[0].endswith('; sys_platform == "win32"'), '只在 Windows 門市安裝 (線上端 Linux 容器用系統預設)'
+
+    monkeypatch.setattr(http_client, '_system_certs_done', False)
+    monkeypatch.setattr(sys, 'platform', 'linux')
+    assert http_client.use_system_certificates() is False   # 非 Windows 不動 ssl
+
+    injected = []
+    fake = type(sys)('truststore')
+    fake.inject_into_ssl = lambda: injected.append(True)
+    monkeypatch.setitem(sys.modules, 'truststore', fake)
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    assert http_client.use_system_certificates() is True and injected == [True]
+    assert http_client.use_system_certificates() is True and injected == [True], '只注入一次'
+
+
+def test_certificate_failure_warning_has_hint(monkeypatch, caplog):
+    monkeypatch.setattr(cv_service, 'FACE_AVAILABLE', True)
+    monkeypatch.setattr(cv_service, 'missing_models', lambda: ['x.onnx'])
+
+    def boom(**kwargs):
+        raise RuntimeError('SSLError(SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed"))')
+    monkeypatch.setattr(cv_service, 'download_models', boom)
+    with caplog.at_level('WARNING', logger='app.services.cv_service'):
+        cv_service.ensure_models_async().join(5)
+    assert 'REQUESTS_CA_BUNDLE' in caplog.text and 'flask --app run models download' in caplog.text
