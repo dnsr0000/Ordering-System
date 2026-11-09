@@ -66,12 +66,19 @@
         }
     }
 
+    // 按鈕文字與樣式跟著 audioEnabled (後台關閉提示音時，頁面一開啟就要顯示「已靜音」)
+    function syncSoundUi() {
+        if (soundStatusText) soundStatusText.textContent = audioEnabled ? '已開啟' : '已靜音';
+        if (soundToggleBtn) {
+            soundToggleBtn.classList.toggle('btn-outline-warning', audioEnabled);
+            soundToggleBtn.classList.toggle('btn-outline-secondary', !audioEnabled);
+        }
+    }
+
     function toggleSound() {
         audioEnabled = !audioEnabled;
         getAudioContext();
-        soundStatusText.textContent = audioEnabled ? '已開啟' : '已靜音';
-        soundToggleBtn.classList.toggle('btn-outline-warning', audioEnabled);
-        soundToggleBtn.classList.toggle('btn-outline-secondary', !audioEnabled);
+        syncSoundUi();
         if (audioEnabled) playChime(); // 開啟時試播一次
     }
 
@@ -82,9 +89,37 @@
         return { border: 'border-time-normal', badge: 'bg-success' };
     }
 
+    // 計時起點：一般訂單為建立時間；預約單為「取餐前 PREP_LEAD_MINUTES 分鐘」(後端 sort_at)，不以建立時間計算逾時
+    function timerStart(o) {
+        return Math.max(Number(o.timestamp) || 0, Number(o.sort_at) || 0);
+    }
+
+    // 還沒到開始製作時間的預約單
+    function isUpcoming(o, nowSeconds) {
+        return Boolean(o.pickup_at) && timerStart(o) > nowSeconds;
+    }
+
+    // 備註 (所有用餐方式都顯示) 與餐具需求 (外帶、外送到府)
+    function noteBlock(o) {
+        const cutlery = o.order_type === '外帶' || o.order_type === '外送到府';
+        if (!cutlery && !o.note) return '';
+        return html`
+            <div class="mb-2">
+                ${cutlery ? html`<span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'}">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>` : ''}
+                ${o.note ? html`<div class="small text-warning mt-1 kds-note">備註：${o.note}</div>` : ''}
+            </div>`;
+    }
+
+    function waitBadge(o, nowSeconds, waitMinutes, style) {
+        if (isUpcoming(o, nowSeconds)) {
+            return html`<span class="badge bg-info text-dark"><i class="bi bi-clock me-1"></i>預約 ${o.pickup_at}</span>`;
+        }
+        return html`<span class="badge ${style.badge}"><i class="bi bi-clock me-1"></i>${style.late ? '逾時 ' : '已等 '}${waitMinutes} 分鐘</span>`;
+    }
+
     function orderCard(o, nowSeconds) {
-        const waitMinutes = Math.max(0, Math.floor((nowSeconds - o.timestamp) / 60));
-        const style = waitStyle(waitMinutes);
+        const waitMinutes = Math.max(0, Math.floor((nowSeconds - timerStart(o)) / 60));
+        const style = isUpcoming(o, nowSeconds) ? waitStyle(0) : waitStyle(waitMinutes);
         const items = o.items.map((item) => html`
             <div class="item-row py-2 ${item.done || !Number(item.quantity) ? 'opacity-50 text-decoration-line-through' : ''}">
                 <div class="d-flex justify-content-between align-items-center gap-2">
@@ -111,10 +146,10 @@
                         </div>
                         <div class="text-end">
                             <span class="badge bg-primary mb-1">${o.order_type}</span><br>
-                            <span class="badge ${style.badge}"><i class="bi bi-clock me-1"></i>${style.late ? '逾時 ' : '已等 '}${waitMinutes} 分鐘</span>
+                            ${waitBadge(o, nowSeconds, waitMinutes, style)}
                         </div>
                     </div>
-                    ${Kiosk.takeoutBlock(o, 'kds-note')}
+                    ${noteBlock(o)}
                     <div class="flex-grow-1 my-2 kds-items">${items}</div>
                     <div class="pt-2 mt-auto d-flex gap-2">
                         <button type="button" class="btn btn-outline-danger btn-sm" data-action="toggle-rush" data-id="${o.id}" data-rush="${o.is_rush ? 1 : 0}"
@@ -181,19 +216,25 @@
 
     async function completeAll() {
         getAudioContext();
-        const count = currentOrders.length;
+        // 還沒到製作時間的預約單 (今天稍晚取餐) 不一起完成：否則會提早發出取餐通知，這張單也從看板消失
+        const nowSeconds = Date.now() / 1000;
+        const targets = currentOrders.filter((o) => !isUpcoming(o, nowSeconds));
+        const skipped = currentOrders.length - targets.length;
+        const count = targets.length;
         if (count === 0) {
-            alert('目前沒有待製作的訂單！');
+            alert(skipped ? `目前只有 ${skipped} 筆還沒到製作時間的預約單，沒有可完成的訂單！` : '目前沒有待製作的訂單！');
             return;
         }
-        if (!window.confirm(`⚠️ 確定要將目前畫面上共 ${count} 筆待製作訂單【全部標記為已出餐】嗎？`)) return;
+        const note = skipped ? `\n(還沒到製作時間的 ${skipped} 筆預約單不會一起完成)` : '';
+        if (!window.confirm(`⚠️ 確定要將目前畫面上共 ${count} 筆待製作訂單【全部標記為已出餐】嗎？${note}`)) return;
 
         const original = completeAllBtn.innerHTML;
         completeAllBtn.disabled = true;
         Kiosk.setHtml(completeAllBtn, html`<span class="spinner-border spinner-border-sm me-1"></span> 處理中...`);
         try {
-            // 只完成畫面上這幾張 (工作站分頁沒有這個按鈕；未付款的線上單、晚一點的預約單不在畫面上)
-            await Kiosk.api('/api/kitchen_complete_all', { json: { order_ids: currentOrders.map((o) => o.id) } });
+            // 只完成畫面上這幾張 (工作站分頁沒有這個按鈕；未付款的線上單、明天以後的預約單不在畫面上，
+            // 今天稍晚的預約單在畫面上但上面已排除)
+            await Kiosk.api('/api/kitchen_complete_all', { json: { order_ids: targets.map((o) => o.id) } });
             knownOrderIds.clear();
         } catch (err) {
             alert(`❌ ${err.message}`);
@@ -250,6 +291,7 @@
         'toggle-sound': () => toggleSound(),
     });
 
+    syncSoundUi();
     Kiosk.startClock(document.getElementById('clock'));
     setInterval(render, 30000); // 定期更新「已等 N 分鐘」與逾時顏色
     loadOrders();

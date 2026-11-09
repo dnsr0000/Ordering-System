@@ -23,9 +23,10 @@ NAV_GROUPS: tuple = (
         ('實時訂單', 'admin.admin_dashboard', 'bi-receipt-cutoff', 'perm:reports', {'tab': 'orders'}),
         ('即時看板', 'live.index', 'bi-broadcast', 'role:manager', {}),
         ('櫃檯 POS', 'pos.pos_terminal', 'bi-pc-display-horizontal', 'role:pos', {'_blank': True}),
-        ('廚房 KDS', 'kitchen.kitchen_display', 'bi-fire', 'role:kitchen', {'_blank': True}),
-        ('取餐核銷', 'pickup.pickup_management', 'bi-bag-check', 'role:pos', {'_blank': True}),
-        ('叫號看板', 'pickup.counter_display', 'bi-display', None, {'_blank': True}),
+        # 廚房 / 取餐核銷 / 叫號看板是門市出餐流程 (線上端回 404)
+        ('廚房 KDS', 'kitchen.kitchen_display', 'bi-fire', 'role:kitchen', {'_blank': True, 'sync': 'store'}),
+        ('取餐核銷', 'pickup.pickup_management', 'bi-bag-check', 'role:pos', {'_blank': True, 'sync': 'store'}),
+        ('叫號看板', 'pickup.counter_display', 'bi-display', None, {'_blank': True, 'sync': 'store'}),
         ('數位看板', 'signage.board', 'bi-tv', None, {'_blank': True}),
     )),
     ('menu', '菜單', 'bi-grid-fill', (
@@ -40,9 +41,10 @@ NAV_GROUPS: tuple = (
         ('會員', 'members_pro.manage', 'bi-people-fill', 'perm:members', {}),
         ('回饋商城與優惠券', 'admin.admin_dashboard', 'bi-gift-fill', 'perm:coupons', {'tab': 'rewards'}),
         ('促銷活動', 'promotions.manage', 'bi-tags', 'perm:coupons', {}),
-        ('集點 / 寄杯', 'passes.index', 'bi-cup-hot', 'role:manager', {}),
-        ('禮物卡', 'gift_cards.index', 'bi-gift', 'role:manager', {}),
-        ('分群與自動行銷', 'marketing.index', 'bi-send', 'role:manager', {}),
+        # 這三頁的路由是 permission_required('coupons')：被授權「優惠券」的櫃檯也要看得到入口
+        ('集點 / 寄杯', 'passes.index', 'bi-cup-hot', 'perm:coupons', {}),
+        ('禮物卡', 'gift_cards.index', 'bi-gift', 'perm:coupons', {}),
+        ('分群與自動行銷', 'marketing.index', 'bi-send', 'perm:coupons', {}),
         ('顧客評價', 'feedback.index', 'bi-star-half', 'perm:feedback', {}),
         ('客服對話', 'support.index', 'bi-headset', 'perm:feedback', {}),
     )),
@@ -50,15 +52,17 @@ NAV_GROUPS: tuple = (
         ('桌位管理', 'tables.manage', 'bi-qr-code', 'role:manager', {'sync': 'store'}),
         ('外送平台', 'delivery.manage', 'bi-bicycle', 'role:manager', {}),
         ('外送派車', 'dispatch.board', 'bi-scooter', 'role:pos', {}),
-        ('訂位 / 候位', 'reservations.board', 'bi-calendar-check', 'perm:reservations', {}),
-        ('團體預購', 'group_orders.admin', 'bi-people', 'role:manager', {}),
+        # 訂位 / 候位與團體預購後台是門市本機資料 (線上端回 404)
+        ('訂位 / 候位', 'reservations.board', 'bi-calendar-check', 'perm:reservations', {'sync': 'store'}),
+        ('團體預購', 'group_orders.admin', 'bi-people', 'role:pos', {'sync': 'store'}),
     )),
     ('people', '人員', 'bi-person-badge', (
         ('員工帳號', 'admin.staff_accounts', 'bi-person-vcard', 'role:owner', {}),
-        ('打卡與排班', 'timeclock.admin', 'bi-person-badge', 'role:manager', {}),
-        ('可排時段', 'timeclock.availability', 'bi-calendar-week', 'role:manager', {}),
-        ('排班建議', 'timeclock.staffing', 'bi-people', 'role:manager', {}),
-        ('自動排班', 'timeclock.auto_schedule', 'bi-magic', 'role:manager', {}),
+        # 打卡 / 排班是門市本機資料 (timeclock blueprint 在線上端回 404)
+        ('打卡與排班', 'timeclock.admin', 'bi-person-badge', 'role:manager', {'sync': 'store'}),
+        ('可排時段', 'timeclock.availability', 'bi-calendar-week', 'role:manager', {'sync': 'store'}),
+        ('排班建議', 'timeclock.staffing', 'bi-people', 'role:manager', {'sync': 'store'}),
+        ('自動排班', 'timeclock.auto_schedule', 'bi-magic', 'role:manager', {'sync': 'store'}),
         ('交班與日結', 'shifts.list_shifts', 'bi-cash-coin', 'perm:cash_drawer', {}),
     )),
     ('reports', '報表', 'bi-bar-chart-line', (

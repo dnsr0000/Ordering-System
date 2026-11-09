@@ -3,10 +3,12 @@
 並在結束後檢查資料一致性。不是 pytest 測試 (檔名不以 test_ 開頭)，請直接執行：
 
   1. 準備 (線上端的測試機，或本機 docker compose 環境；不要對正式資料庫執行)：
-       flask --app run demo seed --days 14 --password LoadTest!2026
+     伺服器須以 SYNC_ROLE=standalone 執行 (hub 角色不開放訪客點餐，demo seed 也會拒絕)，Docker 做法見 docs/DEPLOY.txt 一-11；
+     密碼用單引號包住，否則 bash 會把 ! 當成歷史展開
+       flask --app run demo seed --days 14 --password 'LoadTest!2026'
        gunicorn -c deploy/gunicorn.conf.py run:app        (GUNICORN_WORKERS=4、REDIS_URL、TRUSTED_PROXY_COUNT=1)
   2. 執行：
-       python tests/load_gunicorn_pg.py --url http://127.0.0.1:8000 --password LoadTest!2026 \
+       python tests/load_gunicorn_pg.py --url http://127.0.0.1:8000 --password 'LoadTest!2026' \
            --kiosks 60 --cashiers 6 --kitchens 2 --sse 40 --duration 120 \
            --database-url postgresql://kiosk:kiosk@127.0.0.1/kiosk
      (--database-url 選填：提供時會把「限量布朗尼」庫存設為 --hot-stock 並在結束後直接查資料庫做一致性檢查)
@@ -36,6 +38,9 @@ import requests
 CSRF_RE = re.compile(r'<meta name="csrf-token" content="([^"]+)"')
 PAGE_DATA_RE = re.compile(r'<script type="application/json" id="page-data">(.*?)</script>', re.S)
 HOT_ITEM = '布朗尼'
+# 每條 SSE 長連線至少要收到「成功結帳 + 成功改狀態」通知總數的這個比例：沒有跨 worker 轉送 (Redis 未設定 / 發布失敗) 時，
+# 一條連線只收得到自己 worker 的通知 (2 個 worker 約一半、4 個約四分之一)，會低於門檻
+SSE_MIN_RATIO = 0.8
 
 
 class Stats:
@@ -43,7 +48,7 @@ class Stats:
         self.lock = threading.Lock()
         self.lat = defaultdict(list)
         self.codes = defaultdict(lambda: defaultdict(int))
-        self.created = {}            # order uuid -> (來源, 餐點數量 dict)
+        self.created = {}            # 伺服器產生的 order uuid (結帳回應的 order_uuid) -> (來源, 餐點數量 dict)
         self.hot_ok = 0
         self.errors = []
 
@@ -123,6 +128,14 @@ def pick_lines(items, rng, hot_id):
     return lines
 
 
+def order_uuid(resp, body):
+    """訂單 uuid 由伺服器產生 (client_order_id 另存一欄，只用來辨識重送)：資料庫與對外 API 比對都用結帳回應的 order_uuid"""
+    try:
+        return resp.json().get('order_uuid') or f"(回應沒有 order_uuid) {body['client_order_id']}"
+    except ValueError:
+        return f"(回應不是 JSON) {body['client_order_id']}"
+
+
 def kiosk_user(args, idx, stats, stop):
     rng = random.Random(idx)
     c = Client(args.url, f'10.10.{idx // 250}.{idx % 250 + 1}')
@@ -147,7 +160,7 @@ def kiosk_user(args, idx, stats, stop):
         resp = timed(stats, 'kiosk_checkout', lambda: c.post('/submit_order', json=body))
         if resp is not None and resp.status_code == 200:
             with stats.lock:
-                stats.created[body['client_order_id']] = ('kiosk', lines)
+                stats.created[order_uuid(resp, body)] = ('kiosk', lines)
                 if any(ln['menu_item_id'] == hot for ln in lines):
                     stats.hot_ok += 1
         stop.wait(rng.uniform(2.8, 4.0))
@@ -166,7 +179,7 @@ def cashier(args, idx, stats, stop):
         resp = timed(stats, 'pos_checkout', lambda: c.post('/api/pos/checkout', json=body))
         if resp is not None and resp.status_code == 200:
             with stats.lock:
-                stats.created[body['client_order_id']] = ('pos', body['items'])
+                stats.created[order_uuid(resp, body)] = ('pos', body['items'])
         stop.wait(rng.uniform(2.2, 3.0))
 
 
@@ -188,10 +201,14 @@ def sse_listener(args, idx, stats, stop, counts):
     while not stop.is_set():
         try:
             with c.s.get(args.url + '/api/orders_stream', stream=True, timeout=(10, 30)) as r:
+                first = True
                 for line in r.iter_lines(decode_unicode=True):
                     if stop.is_set():
                         return
                     if line and line.startswith('data:'):
+                        if first:   # 每次連上 (含斷線重連) 伺服器都先送一筆初始資料，不是訂單通知，不計入
+                            first = False
+                            continue
                         counts[idx] += 1
         except requests.RequestException:
             stop.wait(1)
@@ -295,7 +312,7 @@ def main():
     t0 = set_hot_stock(args) if args.database_url else None
     key = create_api_key(args, stats)
     stop = threading.Event()
-    sse_counts = defaultdict(int)
+    sse_counts = defaultdict(int, {i: 0 for i in range(args.sse)})   # 完全沒收到通知 (或登入失敗) 的連線也算進最小值
     feed_seen, feed_state = set(), {'cursor': 0}
     threads = [threading.Thread(target=sse_listener, args=(args, i, stats, stop, sse_counts), daemon=True)
                for i in range(args.sse)]
@@ -329,9 +346,13 @@ def main():
     print(f'SSE 長連線 {args.sse} 條：每條收到的通知數 最少 {min(sse_counts.values(), default=0)}、'
           f'中位數 {statistics.median(sse_counts.values()) if sse_counts else 0}、最多 {max(sse_counts.values(), default=0)}')
     errors = sum(n for codes in stats.codes.values() for c, n in codes.items() if not isinstance(c, int) or c >= 500)
+    # 每次成功結帳、成功改狀態都會通知一次：有跨 worker 轉送時，每條連線都應收到幾乎全部
+    expected = len(stats.created) + stats.codes['order_status'].get(200, 0)
+    sse_min = min(sse_counts.values(), default=0)
     checks = [('沒有 5xx 或連線錯誤', errors == 0, f'{errors} 次'),
-              ('每條 SSE 長連線都收到其他 worker 的訂單通知', bool(sse_counts) and min(sse_counts.values()) > 1,
-               f'最少 {min(sse_counts.values(), default=0)}')]
+              ('每條 SSE 長連線都收到其他 worker 的訂單通知', bool(sse_counts) and expected > 0
+               and sse_min >= SSE_MIN_RATIO * expected,
+               f'最少 {sse_min} / 應收約 {expected} 則 (門檻 {SSE_MIN_RATIO:.0%})')]
     if args.database_url:
         checks += db_checks(args, stats, t0, args.hot_stock, feed_seen)
     print('\n一致性檢查：')

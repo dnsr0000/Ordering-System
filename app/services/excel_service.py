@@ -1,11 +1,12 @@
 """Excel 報表匯出與智慧匯入 (會員 / 菜單 / 優惠券)"""
 import csv
 import io
+import re
 import unicodedata
 import zipfile
-from datetime import datetime, timedelta
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
 from sqlalchemy.orm import selectinload
 
@@ -14,10 +15,10 @@ from app.extensions import db
 from app.models.coupon import Coupon, UserCoupon, parse_discount_value
 from app.models.enums import DiscountType
 from app.models.menu import MenuItem
-from app.models.order import Order, OrderItem
+from app.models.order import Order
 from app.models.user import AdminLog, StaffAuditLog, User
-from app.services.menu_service import is_blank, parse_bool, upsert_menu_items_from_rows
-from app.utils import safe_int, workbook_bytes
+from app.services.menu_service import MAX_AMOUNT, is_blank, parse_bool, upsert_menu_items_from_rows
+from app.utils import day_bounds, parse_date, safe_int, validate_phone, workbook_bytes
 
 
 def _write_sheet(wb, sheet_name, rows, startrow=0):
@@ -31,22 +32,49 @@ def _write_sheet(wb, sheet_name, rows, startrow=0):
         ws.append([])
     ws.append(headers)
     for row in rows:
-        ws.append([row.get(key) for key in headers])
+        ws.append([_xlsx_value(row.get(key)) for key in headers])
     return ws
+
+
+def _xlsx_value(val):
+    """
+    openpyxl 寫入含控制字元 (\\x00-\\x08、\\x0b、\\x0c、\\x0e-\\x1f) 的字串會拋 IllegalCharacterError；
+    顧客可輸入的文字 (會員姓名、客製化) 可能夾帶這些字元，匯出前先去掉，避免整份報表 500。
+    """
+    return ILLEGAL_CHARACTERS_RE.sub('', val) if isinstance(val, str) else val
+
+
+ORDER_TABLES = {'Order', 'OrderItem', 'Analytics'}
+MAX_POINTS = 100_000_000          # 點數上限 (與後台表單 admin.MAX_POINTS 一致)；金額上限用 MAX_AMOUNT
+MAX_PER_USER_LIMIT = 1_000_000
+
+
+def _export_percent_value(c):
+    """
+    百分比券的折抵值：1~10 (例如 5 = 0.5 折) 寫成 0.05 這種小數，
+    匯回時 parse_discount_value 才不會把它當成「8.5 折寫法」再乘 10；其他值照存檔值輸出。
+    """
+    if c.discount_type == DiscountType.PERCENT and c.discount_value is not None and 1 <= c.discount_value <= 10:
+        return c.discount_value / 100
+    return c.discount_value
 
 
 def generate_excel_export(selected_tables, start_date_str=None, end_date_str=None):
     """產出 10 張工作表之 Excel 檔案流"""
-    start_date = datetime.strptime(start_date_str, '%Y-%m-%d') if start_date_str else None
-    end_date = datetime.strptime(end_date_str, '%Y-%m-%d') + timedelta(days=1, seconds=-1) if end_date_str else None
+    start = parse_date(start_date_str, '開始日期')
+    end = parse_date(end_date_str, '結束日期')
+    # 半開區間 [開始日 00:00, 結束日 + 1 天 00:00)，與報表的 day_bounds 一致 (不會漏掉 23:59:59.5 的資料)
+    start_date = day_bounds(start)[0] if start else None
+    end_date = day_bounds(end)[1] if end else None
 
-    orders_query = Order.query.options(selectinload(Order.items), selectinload(Order.customer_log))
-    if start_date:
-        orders_query = orders_query.filter(Order.created_at >= start_date)
-    if end_date:
-        orders_query = orders_query.filter(Order.created_at <= end_date)
-    filtered_orders = orders_query.all()
-    filtered_order_ids = [o.id for o in filtered_orders]
+    filtered_orders = []
+    if ORDER_TABLES & set(selected_tables):   # 只勾菜單 / 會員 / 優惠券時不必載入整個訂單歷史
+        orders_query = Order.query.options(selectinload(Order.items), selectinload(Order.customer_log))
+        if start_date:
+            orders_query = orders_query.filter(Order.created_at >= start_date)
+        if end_date:
+            orders_query = orders_query.filter(Order.created_at < end_date)
+        filtered_orders = orders_query.all()
 
     wb = Workbook()
     wb.remove(wb.active)   # 只保留實際勾選的工作表
@@ -80,9 +108,11 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
     if 'Coupon' in selected_tables:
         coupon_data = [{
             'ID': c.id, '代碼(Code)': c.code, '標題(Title)': c.title, '折抵類型(Discount Type)': c.discount_type,
-            '折抵值(Discount Value)': c.discount_value, '門檻(Min Spend)': c.min_spend,
+            '折抵值(Discount Value)': _export_percent_value(c), '門檻(Min Spend)': c.min_spend,
             '兌換所需點數(Reward Points)': c.reward_points, '限時特惠點數(Reward Discount Points)': c.reward_discount_points,
-            '每人兌換上限(Per User Limit)': c.limit_display, '上架回饋商城(Is Reward)': '是' if c.is_reward else '否'
+            # 純數字 (或「無上限」)，匯回時才解析得回同樣的上限 (limit_display 的「2次」會被當成無上限)
+            '每人兌換上限(Per User Limit)': c.per_user_limit if (c.per_user_limit or 0) > 0 else '無上限',
+            '上架回饋商城(Is Reward)': '是' if c.is_reward else '否'
         } for c in Coupon.query.all()]
         _write_sheet(wb, '優惠券(Coupon)', coupon_data if coupon_data else [{'資料': '目前無資料'}])
 
@@ -124,7 +154,9 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
         _write_sheet(wb, '訂單總覽(Order)', order_data if order_data else [{'資料': '目前無資料'}], startrow=1)
 
     if 'OrderItem' in selected_tables:
-        order_items = OrderItem.query.filter(OrderItem.order_id.in_(filtered_order_ids)).all() if filtered_order_ids else []
+        # 直接用已 selectinload 的明細 (分批查詢)；不要把全部訂單 id 塞進同一個 IN，超過 SQLite 32766 /
+        # PostgreSQL 65535 個綁定參數會整個匯出 500
+        order_items = sorted((it for o in filtered_orders for it in o.items), key=lambda it: it.id)
         data = [{
             'ID': oi.id, '關聯訂單ID(Order ID)': oi.order_id, '品名(Item Name)': oi.item_name,
             '單價(Price)': oi.price, '數量(Qty)': oi.quantity, '客製化(Customization)': oi.customization
@@ -132,8 +164,10 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
         _write_sheet(wb, '訂單明細(OrderItem)', data if data else [{'資料': '目前無明細'}], startrow=1)
 
     if 'Analytics' in selected_tables:
-        valid_orders = [o for o in filtered_orders if o.status != 'Cancelled']
-        tot_revenue = sum(o.total_price or 0 for o in valid_orders)
+        from app.services.report_service import is_revenue
+        # 與營運報表 / 後台總覽同一口徑：待付款、授權中、桌邊未結帳、待退款都不計入營收與熱銷
+        valid_orders = [o for o in filtered_orders if is_revenue(o)]
+        tot_revenue = sum(o.refundable_amount for o in valid_orders)   # 實收：扣掉部分退款
         total_points = sum(o.points_used or 0 for o in valid_orders)
         analytics_data = [
             {'指標 (Metric)': '區間總訂單數', '數值 (Value)': len(filtered_orders)},
@@ -168,7 +202,7 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
         if start_date:
             logs_query = logs_query.filter(AdminLog.login_at >= start_date)
         if end_date:
-            logs_query = logs_query.filter(AdminLog.login_at <= end_date)
+            logs_query = logs_query.filter(AdminLog.login_at < end_date)
         log_data = [{
             'ID': lg.id, '管理員帳號': lg.username,
             '登入時間': lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '',
@@ -181,7 +215,7 @@ def generate_excel_export(selected_tables, start_date_str=None, end_date_str=Non
         if start_date:
             audit_query = audit_query.filter(StaffAuditLog.created_at >= start_date)
         if end_date:
-            audit_query = audit_query.filter(StaffAuditLog.created_at <= end_date)
+            audit_query = audit_query.filter(StaffAuditLog.created_at < end_date)
         audit_data = [{
             'ID': au.id, '員工帳號(Staff)': au.staff_username, '角色(Role)': au.staff_role,
             '操作類型(Action)': au.action_type, '關聯訂單ID(Order ID)': au.target_order_id or '',
@@ -259,16 +293,43 @@ COUPON_COLUMNS = {
 }
 
 
+COUPON_TYPE_ALIASES = {
+    'fixed': DiscountType.FIXED, 'amount': DiscountType.FIXED, '固定': DiscountType.FIXED, '固定金額': DiscountType.FIXED,
+    '金額': DiscountType.FIXED, '現折': DiscountType.FIXED, '折抵金額': DiscountType.FIXED,
+    'percent': DiscountType.PERCENT, 'percentage': DiscountType.PERCENT, '%': DiscountType.PERCENT,
+    '百分比': DiscountType.PERCENT, '折扣': DiscountType.PERCENT, '打折': DiscountType.PERCENT, '折數': DiscountType.PERCENT,
+}
+
+
 def clean_phone_number(val):
+    """
+    匯入的手機號碼：Excel 數字欄位會掉開頭 0 (9 碼且 9 開頭補 0)；去掉 -、空白、括號等分隔符號，
+    國碼 886 開頭換成 0 (+886 912 000 222 → 0912000222)。是否為有效手機由呼叫端 validate_phone 檢查。
+    """
     if is_blank(val):
         return ''
-    s = str(val).strip().removesuffix('.0')
-    return '0' + s if len(s) == 9 and s.startswith('9') else s
+    digits = re.sub(r'\D', '', str(val).strip().removesuffix('.0'))
+    if digits.startswith('886') and len(digits) > 10:
+        digits = digits[3:] if digits[3:].startswith('0') else '0' + digits[3:]
+    return '0' + digits if len(digits) == 9 and digits.startswith('9') else digits
 
 
-def parse_per_user_limit(val):
+def parse_per_user_limit(val, default=0):
+    """每人兌換上限：空白 / 無上限 → 0 (不限)；數字或「2次」→ 2；無法辨識時回傳 default"""
     s = '' if is_blank(val) else str(val).strip()
-    return 0 if s in ('', '無上限', '不限', 'none', 'null') else max(0, safe_int(s, 0))
+    if s.lower() in ('', '無上限', '不限', 'none', 'null'):
+        return 0
+    num = safe_int(s.removesuffix('次').strip(), None)
+    return default if num is None else min(MAX_PER_USER_LIMIT, max(0, num))
+
+
+def _int_field(row, key, current, upper):
+    """
+    非負整數欄位 (上限 upper)：空白或無法解析時沿用 current (既有資料的原值；新資料傳預設值)。
+    夾上限避免 '1e20' 這類值寫入 Integer 欄位時溢位，讓整批匯入 500。
+    """
+    num = safe_int(_value(row, key), None)
+    return current if num is None else min(upper, max(0, num))
 
 
 def _value(row, key):
@@ -289,20 +350,23 @@ def _import_users(rows):
     has_points = 'points' in columns
     count = 0
     for row in rows:
-        name = str(_value(row, 'name') or '').strip()
+        name = str(_value(row, 'name') or '').strip()[:100]   # User.name 為 String(100)，PostgreSQL 超長會整批失敗
         phone = clean_phone_number(_value(row, 'phone'))
         if not name or not phone or name == '目前無資料':
+            continue
+        if not validate_phone(phone):
+            # 不是 09 開頭 10 碼的手機：存進去之後查不到、無法登入，顧客再註冊時還會變成重複會員，整列略過
             continue
         points = _value(row, 'points') if has_points else None
         user = User.query.filter_by(phone=phone).first()
         if user is None:
             # 檔案有提供點數就照填 (包含 0 點)；沒有點數欄才給新會員預設 20 點
             db.session.add(User(name=name, phone=phone, photo_path='',
-                                points=max(0, safe_int(points, 0)) if points is not None else 20))
+                                points=min(MAX_POINTS, max(0, safe_int(points, 0))) if points is not None else 20))
         else:
+            # 既有會員不以檔案覆寫點數：匯出檔的點數是匯出當時的快照，拿舊檔改菜單再匯入時
+            # 會把之後賺到 / 用掉的點數全部改回去 (點數等同金額；要調整請在會員頁逐筆修改，會留下異動紀錄)
             user.name = name
-            if points is not None:
-                user.points = max(0, safe_int(points, 0))
         count += 1
     return count
 
@@ -318,22 +382,43 @@ def _import_coupons(rows):
         title = str(_value(row, 'title') or '').strip()[:100]
         if not code or not title or code == '目前無資料' or not CODE_RE.match(code):
             continue   # 代碼格式不合 (空白、符號、過短) 的列略過
-        dtype = str(_value(row, 'discount_type') or DiscountType.FIXED).strip()
-        dtype = dtype if dtype in (DiscountType.FIXED, DiscountType.PERCENT) else DiscountType.FIXED
-        points = max(0, safe_int(_value(row, 'reward_points'), 0))
-        is_reward = _value(row, 'is_reward')
+        raw_type = _value(row, 'discount_type')
+        dtype = COUPON_TYPE_ALIASES.get(str(raw_type).strip().lower()) if raw_type is not None else None
+        if raw_type is not None and dtype is None:
+            continue   # 折抵類型無法辨識的列略過 (不可默默當成固定金額：9 折券會變成現折 $90)
         coupon = Coupon.query.filter_by(code=code).first()
-        if coupon is None:
-            coupon = Coupon(code=code)
+        is_new = coupon is None
+        # 既有券只更新檔案裡有填的欄位 (與菜單匯入一致)；新券才套用預設值
+        dtype = dtype or (DiscountType.FIXED if is_new else coupon.discount_type)
+        raw_value = _value(row, 'discount_value')
+        if raw_value is not None:
+            value = parse_discount_value(dtype, raw_value)
+        elif not is_new and dtype == coupon.discount_type:
+            value = coupon.discount_value
+        else:   # 新的百分比券或改了折抵類型卻沒填折抵值：無法決定折扣，略過
+            value = 0 if is_new and dtype == DiscountType.FIXED else None
+        if value is None:
+            continue
+        if is_new:
+            coupon = Coupon(code=code, discount_type=dtype, discount_value=value, min_spend=0,
+                            reward_points=0, reward_discount_points=0, per_user_limit=0)
             db.session.add(coupon)
         coupon.title = title
         coupon.discount_type = dtype
-        coupon.discount_value = parse_discount_value(dtype, _value(row, 'discount_value') or 0)
-        coupon.min_spend = max(0, safe_int(_value(row, 'min_spend'), 0))
-        coupon.reward_points = points
-        coupon.reward_discount_points = max(0, safe_int(_value(row, 'reward_discount_points'), 0))
-        coupon.is_reward = parse_bool(is_reward) if is_reward is not None else points > 0
-        coupon.per_user_limit = parse_per_user_limit(_value(row, 'per_user_limit'))
+        coupon.discount_value = value
+        coupon.min_spend = _int_field(row, 'min_spend', coupon.min_spend or 0, MAX_AMOUNT)
+        coupon.reward_points = _int_field(row, 'reward_points', coupon.reward_points or 0, MAX_POINTS)
+        coupon.reward_discount_points = _int_field(row, 'reward_discount_points', coupon.reward_discount_points or 0,
+                                                   MAX_POINTS)
+        is_reward = _value(row, 'is_reward')
+        if is_reward is not None or is_new or _value(row, 'reward_points') is not None:
+            # 上架回饋商城空白時，有兌換點數就自動上架；兌換點數為 0 一律不上架 (0 點即可兌換，
+            # 與後台表單 / 菜單匯入的防呆一致)
+            wanted = parse_bool(is_reward) if is_reward is not None else coupon.reward_points > 0
+            coupon.is_reward = wanted and coupon.redeem_points > 0
+        raw_limit = _value(row, 'per_user_limit')
+        if raw_limit is not None or is_new:   # 空白 = 沿用原上限 (新券為不限)
+            coupon.per_user_limit = parse_per_user_limit(raw_limit, default=coupon.per_user_limit or 0)
         count += 1
     return count
 

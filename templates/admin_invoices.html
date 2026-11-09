@@ -5,8 +5,26 @@
 {% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
+{% macro carrier_form(inv, action, label, submit) %}
+<details class="text-start invoice-carrier-form">
+    <summary class="btn btn-sm btn-outline-info">{{ label }}</summary>
+    <form method="POST" action="{{ url_for('invoices.invoice_action', invoice_id=inv.id) }}" class="d-flex flex-column gap-1 mt-1" style="min-width: 14rem">{{ csrf() }}
+        <input type="hidden" name="action" value="{{ action }}">
+        <select class="form-select form-select-sm" name="type" aria-label="發票類型">
+            {% for k, v in [('print', '紙本證明聯'), ('mobile', '手機條碼'), ('citizen', '自然人憑證'), ('donate', '捐贈'), ('company', '打統編')] %}
+            <option value="{{ k }}" {{ 'selected' if inv.carrier_type == k }}>{{ v }}</option>{% endfor %}
+        </select>
+        <input class="form-control form-control-sm" name="carrier" value="{{ inv.carrier_num }}" placeholder="手機條碼 / 自然人憑證" aria-label="載具號碼">
+        <input class="form-control form-control-sm" name="love_code" value="{{ inv.love_code }}" placeholder="愛心碼" aria-label="愛心碼">
+        <input class="form-control form-control-sm" name="buyer_id" value="{{ inv.buyer_identifier }}" placeholder="統一編號" aria-label="統一編號">
+        <input class="form-control form-control-sm" name="buyer_name" value="{{ inv.buyer_name }}" placeholder="買方名稱" aria-label="買方名稱">
+        <input class="form-control form-control-sm" type="email" name="email" value="{{ inv.buyer_email }}" placeholder="Email" aria-label="Email">
+        <button class="btn btn-sm btn-info" type="submit">{{ submit }}</button>
+    </form>
+</details>
+{% endmacro %}
 <main class="container-fluid px-4 py-4" id="invoices-page">
-    {% call page_header('電子發票', 'bi-receipt', '綠界加值中心開立紀錄：失敗會自動重送，也可在此手動重送、修改載具、作廢或折讓') %}
+    {% call page_header('電子發票', 'bi-receipt', '綠界加值中心開立紀錄：失敗會自動重送，也可在此手動重送、修改載具、作廢 (作廢後可重開) 或折讓') %}
     <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('settings_admin.edit', key='einvoice') }}">發票設定</a>
     {% endcall %}
     {% if not cfg.enabled %}<div class="alert alert-warning">尚未啟用電子發票：請到「發票設定」開啟並填寫特店資料 (測試環境可直接使用綠界測試帳號)。</div>{% endif %}
@@ -19,7 +37,9 @@
                 {% for k, v in labels.items() %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ v[0] }} ({{ counts.get(k, 0) }})</option>{% endfor %}
             </select></div>
         <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></div>
-        <div class="col-auto ms-auto small text-white-50">已開立金額合計：<strong class="text-warning">${{ '{:,}'.format(total) }}</strong></div>
+        <div class="col-auto ms-auto small text-white-50" id="invoiceTotals">已開立金額合計：<strong class="text-warning">${{ '{:,}'.format(total) }}</strong>
+            {% if allowance_total %}<span class="ms-2">折讓合計：<strong class="text-info">${{ '{:,}'.format(allowance_total) }}</strong></span>
+            <span class="ms-2">扣除折讓後淨額：<strong class="text-warning">${{ '{:,}'.format(net_total) }}</strong></span>{% endif %}</div>
     </form>
     <div class="table-responsive">
         <table class="table table-dark table-striped table-sm align-middle" id="invoicesTable">
@@ -38,9 +58,21 @@
                 <td class="small text-white-50">{{ inv.last_error }}</td>
                 <td class="text-end">
                     <div class="d-inline-flex flex-wrap gap-1 justify-content-end">
+                    {% if inv.id in remote_ids %}
+                    {% if inv.status in ('issued', 'allowance') %}
+                    <a class="btn btn-sm btn-outline-light" href="{{ url_for('invoices.invoice_print', invoice_id=inv.id) }}" target="_blank" rel="noopener">列印</a>
+                    {% endif %}
+                    <span class="small text-white-50 invoice-remote">分店開立，請在分店處理</span>
+                    {% else %}
                     {% if inv.status in ('pending', 'failed') %}
                     <form method="POST" action="{{ url_for('invoices.invoice_action', invoice_id=inv.id) }}">{{ csrf() }}
                         <input type="hidden" name="action" value="retry"><button class="btn btn-sm btn-outline-warning" type="submit">重送</button></form>
+                    {% endif %}
+                    {% if inv.status in ('pending', 'failed', 'waiting') %}
+                    {{ carrier_form(inv, 'update_carrier', '修改載具', '儲存') }}
+                    {% endif %}
+                    {% if inv.id in reissuable %}
+                    {{ carrier_form(inv, 'reissue', '重開', '重開發票') }}
                     {% endif %}
                     {% if inv.status in ('issued', 'allowance') %}
                     <a class="btn btn-sm btn-outline-light" href="{{ url_for('invoices.invoice_print', invoice_id=inv.id) }}" target="_blank" rel="noopener">列印</a>
@@ -51,6 +83,7 @@
                         <input type="hidden" name="action" value="allowance">
                         <input class="form-control form-control-sm" type="number" name="amount" min="1" max="{{ inv.amount - inv.allowance_amount }}" placeholder="折讓$" aria-label="折讓金額" style="width: 6rem">
                         <button class="btn btn-sm btn-outline-info" type="submit">折讓</button></form>
+                    {% endif %}
                     {% endif %}
                     </div>
                 </td>

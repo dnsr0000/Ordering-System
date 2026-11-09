@@ -38,6 +38,8 @@
                     </tr>
                 </thead>
                 <tbody>
+                    {% set addon_item_names = items | map(attribute='name') | reject('none') | map('trim') | map('lower') | list %}
+                    {% set addon_categories = items | map(attribute='category') | reject('none') | map('trim') | map('lower') | list %}
                     {% for item in items %}
                     {% set stock = item.stock or 0 %}
                     {% set ok, hint = item.service_status() %}
@@ -63,9 +65,13 @@
                             {% if item.is_new %}<span class="badge bg-success me-1">新品</span>{% endif %}
                             {% if item.is_discount and item.discount_price > 0 %}<span class="badge bg-warning text-dark me-1">特價</span>{% endif %}
                             {% if item.can_be_add_on %}
-                            <span class="badge bg-info text-dark me-1" title="加購條件：{{ item.addon_trigger_type }} - {{ item.addon_trigger_target }}">
+                            {# 條件目標 (以名稱比對，不分大小寫) 已不在菜單中：規則失效，改用警示樣式提醒 #}
+                            {% set addon_stale = item.addon_trigger_type in ('category', 'item')
+                                and ((item.addon_trigger_target or '') | trim | lower) not in (addon_categories if item.addon_trigger_type == 'category' else addon_item_names) %}
+                            <span class="badge {{ 'text-bg-warning' if addon_stale else 'bg-info text-dark' }} me-1" title="加購條件：{{ item.addon_trigger_type }} - {{ item.addon_trigger_target }}{{ ' (目標已不存在，此加購品不會出現)' if addon_stale }}">
                                 可加購 (${{ item.add_on_price }})
                                 {% if item.addon_trigger_type == 'category' %}[限分類:{{ item.addon_trigger_target }}]{% elif item.addon_trigger_type == 'item' %}[限餐點:{{ item.addon_trigger_target }}]{% endif %}
+                                {% if addon_stale %}(目標已不存在){% endif %}
                             </span>
                             {% endif %}
                             {% for a in item.allergen_codes %}<span class="badge bg-danger allergen-badge me-1">{{ allergens[a] }}</span>{% endfor %}
@@ -123,10 +129,10 @@
                                     <span class="input-group-text">~</span><input class="form-control" type="date" name="sale_until" value="{{ item.sale_until or '' }}" aria-label="販售結束"></div></div>
                             <div class="col-md-3"><div class="form-label small">通路價 (0 = 同內用 ${{ item.price }})</div>
                                 <div class="input-group input-group-sm">
-                                    <span class="input-group-text">外帶</span><input class="form-control" type="number" min="0" name="takeout_price" value="{{ item.takeout_price }}" aria-label="外帶價">
-                                    <span class="input-group-text">線上</span><input class="form-control" type="number" min="0" name="online_price" value="{{ item.online_price }}" aria-label="線上價">
-                                    <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" name="delivery_price" value="{{ item.delivery_price }}" aria-label="外送價">
-                                    <span class="input-group-text">會員</span><input class="form-control" type="number" min="0" name="member_price" value="{{ item.member_price }}" aria-label="會員價" title="登入 / 綁定會員時與通路價取低者；0 = 無會員價"></div></div>
+                                    <span class="input-group-text">外帶</span><input class="form-control" type="number" min="0" max="1000000" name="takeout_price" value="{{ item.takeout_price }}" aria-label="外帶價">
+                                    <span class="input-group-text">線上</span><input class="form-control" type="number" min="0" max="1000000" name="online_price" value="{{ item.online_price }}" aria-label="線上價">
+                                    <span class="input-group-text">外送</span><input class="form-control" type="number" min="0" max="1000000" name="delivery_price" value="{{ item.delivery_price }}" aria-label="外送價">
+                                    <span class="input-group-text">會員</span><input class="form-control" type="number" min="0" max="1000000" name="member_price" value="{{ item.member_price }}" aria-label="會員價" title="登入 / 綁定會員時與通路價取低者；0 = 無會員價"></div></div>
                             <div class="col-md-6"><div class="form-label small">過敏原</div>
                                 {% for code, label in allergens.items() %}<div class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="allergens" value="{{ code }}" id="al-{{ code }}-{{ item.id }}" {{ 'checked' if code in item.allergen_codes }}>
                                     <label class="form-check-label small" for="al-{{ code }}-{{ item.id }}">{{ label }}</label></div>{% endfor %}</div>
@@ -140,7 +146,7 @@
                             <div class="col-md-3"><label class="form-label small" for="den-{{ item.id }}">English description</label><input class="form-control form-control-sm" id="den-{{ item.id }}" name="description_en" value="{{ item.description_en }}"></div>
                             <div class="col-md-3"><label class="form-label small" for="dja-{{ item.id }}">日本語の説明</label><input class="form-control form-control-sm" id="dja-{{ item.id }}" name="description_ja" value="{{ item.description_ja }}"></div>
                             <div class="col-md-3"><label class="form-label small" for="ext-{{ item.id }}">外送平台 / 條碼代碼 (POS 掃描槍)</label><input class="form-control form-control-sm" id="ext-{{ item.id }}" name="external_code" value="{{ item.external_code }}" placeholder="與平台上的品項代碼相同"></div>
-                            <div class="col-md-3"><label class="form-label small" for="cost-{{ item.id }}">單位成本 (未設定配方時)</label><input class="form-control form-control-sm" id="cost-{{ item.id }}" type="number" min="0" name="unit_cost" value="{{ item.unit_cost }}"></div>
+                            <div class="col-md-3"><label class="form-label small" for="cost-{{ item.id }}">單位成本 (未設定配方時)</label><input class="form-control form-control-sm" id="cost-{{ item.id }}" type="number" min="0" max="1000000" name="unit_cost" value="{{ item.unit_cost }}"></div>
                             <div class="col-md-6"><label class="form-label small" for="size-{{ item.id }}">規格 (名稱:加減價，逗號分隔；第一個為預設)</label><input class="form-control form-control-sm" id="size-{{ item.id }}" name="size_options" value="{{ item.size_options }}" placeholder="例如 中杯:0, 大杯:15, 小杯:-10" maxlength="200"></div>
                             <div class="col-md-3"><label class="form-label small" for="kcal-{{ item.id }}">熱量 (大卡，0 = 不標示)</label><input class="form-control form-control-sm" id="kcal-{{ item.id }}" type="number" min="0" max="5000" name="calories" value="{{ item.calories }}"></div>
                             <div class="col-md-3"><label class="form-label small" for="carbon-{{ item.id }}">碳足跡 (g CO₂e / 份，0 = 不標示)</label>

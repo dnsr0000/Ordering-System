@@ -5,7 +5,7 @@
 
 {% block head %}
 {# 預載整個 ES module 圖 (入口 → 頁面模組 → shared/)：瀏覽器一次抓齊，不必逐層發現；清單與 static/js 的檔案一致 (有測試檢查) #}
-{% for m in ['pos.js', 'pos/core.js', 'pos/menu.js', 'pos/cart.js', 'pos/member.js', 'pos/totals.js', 'pos/checkout.js', 'pos/live.js', 'pos/pro.js', 'pos/shift.js', 'pos/split.js', 'shared/addons.js', 'shared/pricing.js', 'shared/cartline.js', 'shared/modifiers.js', 'shared/totals.js', 'shared/orderpayload.js', 'shared/promo.js', 'shared/invoice.js', 'shared/combos.js'] %}<link rel="modulepreload" href="{{ url_for('static', filename='js/' ~ m) }}">
+{% for m in ['pos.js', 'pos/core.js', 'pos/menu.js', 'pos/cart.js', 'pos/member.js', 'pos/totals.js', 'pos/checkout.js', 'pos/live.js', 'pos/pro.js', 'pos/shift.js', 'pos/split.js', 'pos/orders.js', 'shared/addons.js', 'shared/pricing.js', 'shared/cartline.js', 'shared/modifiers.js', 'shared/totals.js', 'shared/orderpayload.js', 'shared/promo.js', 'shared/invoice.js', 'shared/combos.js'] %}<link rel="modulepreload" href="{{ url_for('static', filename='js/' ~ m) }}">
 {% endfor %}
 
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
@@ -83,7 +83,7 @@
                     <i class="bi bi-calendar-check me-1"></i> 訂位/候位
                 </a>
                 {% endif %}
-                <a href="{{ url_for('timeclock.punch') }}" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
+                <a href="{{ url_for('timeclock.punch', shop=g.tenant.slug if g.tenant else None) }}" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
                     <i class="bi bi-person-badge me-1"></i> 打卡
                 </a>
                 <a href="/kitchen" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
@@ -92,9 +92,22 @@
                 <a href="/pickup" target="_blank" class="btn btn-outline-light btn-sm fw-bold">
                     <i class="bi bi-person-check text-success me-1"></i> 取餐核銷
                 </a>
-                <a href="/counter" target="_blank" class="btn btn-outline-info btn-sm fw-bold">
+                <a href="{{ url_for('pickup.counter_display', shop=g.tenant.slug if g.tenant else None) }}" target="_blank" class="btn btn-outline-info btn-sm fw-bold">
                     <i class="bi bi-display me-1"></i> 叫號看板
                 </a>
+                <a href="{{ url_for('dispatch.board') }}" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-scooter me-1"></i> 外送派車
+                </a>
+                {% if sync_role != 'hub' %}
+                <a href="{{ url_for('group_orders.admin') }}" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-people me-1"></i> 團體預購
+                </a>
+                {% endif %}
+                {% if current_user.has_permission('feedback') %}
+                <a href="{{ url_for('support.index') }}" class="btn btn-outline-light btn-sm fw-bold">
+                    <i class="bi bi-headset me-1"></i> 客服對話
+                </a>
+                {% endif %}
                 <a href="/admin" class="btn btn-outline-secondary btn-sm fw-bold text-white">
                     <i class="bi bi-gear-fill me-1"></i> 後台管理
                 </a>
@@ -657,6 +670,7 @@
                             <div class="d-flex justify-content-between"><span>商品小計：</span><span>$<span id="rcpt-subtotal">0</span></span></div>
                             <div class="d-flex justify-content-between"><span>折扣折抵：</span><span>-$<span id="rcpt-discount">0</span></span></div>
                             <div class="d-flex justify-content-between d-none" id="rcpt-service-row"><span>服務費：</span><span>+$<span id="rcpt-service">0</span></span></div>
+                            <div class="d-flex justify-content-between d-none" id="rcpt-delivery-row"><span>外送費：</span><span>+$<span id="rcpt-delivery">0</span></span></div>
                             <div class="d-flex justify-content-between fw-bold fs-5 mt-1 pt-1 border-top border-dark">
                                 <span>應付總額：</span><span>$<span id="rcpt-total">0</span></span>
                             </div>

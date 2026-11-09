@@ -24,11 +24,16 @@
 
     const signature = (orders) => orders.map((o) => o.id).join(',');
 
+    // 瀏覽器在使用者第一次點擊頁面前會忽略 speechSynthesis.speak()：掛牆的看板沒人點就不會出聲，
+    // 所以未解鎖前顯示「待啟用」與提示，點一下畫面任何地方 (含語音按鈕) 才算開啟
+    let speechUnlocked = Boolean(navigator.userActivation && navigator.userActivation.hasBeenActive);
+    let unlockHint = null;
+
     // ---------------------------------------------------------------- 語音叫號
     function speak(text, times = 1) {
         if (!speechEnabled || !window.speechSynthesis) return;
         try {
-            window.speechSynthesis.cancel();
+            // 不先 cancel()：前一號還沒唸完時新號碼排在後面接著唸 (cancel 會截斷並清掉重複播報)
             for (let i = 0; i < times; i += 1) {
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.lang = 'zh-TW';
@@ -52,11 +57,38 @@
             <span class="badge bg-info text-dark fs-4 px-3 py-2">${w.label} (${w.party_size} 位)</span>`));
     }
 
-    function toggleSpeech() {
-        speechEnabled = !speechEnabled;
-        speechStatusText.textContent = speechEnabled ? '已開啟' : '已靜音';
+    function renderSpeechStatus() {
+        speechStatusText.textContent = !speechEnabled ? '已靜音' : (speechUnlocked ? '已開啟' : '待啟用 (點一下畫面)');
         speechToggleBtn.classList.toggle('btn-outline-warning', speechEnabled);
         speechToggleBtn.classList.toggle('btn-outline-secondary', !speechEnabled);
+        if (unlockHint) unlockHint.classList.toggle('d-none', speechUnlocked || !speechEnabled);
+    }
+
+    function showUnlockHint() {
+        if (speechUnlocked || !window.speechSynthesis) return;
+        unlockHint = document.createElement('div');
+        unlockHint.className = 'alert alert-warning fw-bold shadow position-fixed bottom-0 start-50 translate-middle-x mb-3 z-3 text-center';
+        unlockHint.setAttribute('role', 'status');
+        unlockHint.textContent = '點一下畫面任何地方即可啟用語音叫號';
+        document.body.appendChild(unlockHint);
+    }
+
+    function unlockSpeech() {
+        if (speechUnlocked) return;
+        speechUnlocked = true;
+        renderSpeechStatus();
+        speak('系統語音叫號已開啟');   // 試念一句：確認有聲音
+    }
+
+    function toggleSpeech() {
+        if (!speechUnlocked && speechEnabled) {   // 第一下是啟用語音，不是切成靜音
+            unlockSpeech();
+            return;
+        }
+        speechUnlocked = true;
+        speechEnabled = !speechEnabled;
+        if (!speechEnabled && window.speechSynthesis) window.speechSynthesis.cancel();   // 靜音：停止正在唸的叫號
+        renderSpeechStatus();
         if (speechEnabled) speak('系統語音叫號已開啟');
     }
 
@@ -116,8 +148,11 @@
         }
     }
 
-    speechStatusText.textContent = speechEnabled ? '已開啟' : '已靜音';
+    showUnlockHint();
+    renderSpeechStatus();
     Kiosk.on(document, 'click', { 'toggle-speech': () => toggleSpeech() });
+    // 點畫面任何地方即解鎖語音 (語音按鈕由 toggleSpeech 處理，這裡之後再執行時已解鎖、不會重複)
+    document.addEventListener('click', unlockSpeech, { once: true });
     Kiosk.startClock(document.getElementById('counter-clock'));
     loadBoard();
     Kiosk.onOrdersChanged(loadBoard);

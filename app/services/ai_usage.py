@@ -2,13 +2,15 @@
 雲端 AI 的用量、估計費用、每月預算上限，以及各模型最近的成功率 (呼叫順序依此調整)。
 
 - 用量：每次呼叫記下廠商 / 模型 / token 數 (含提示快取讀寫)，先累積在記憶體，背景執行緒每分鐘併入資料庫
-  (sync_state 的 ai_usage:{店家}:{年-月}，各行程各自併入、以列鎖避免互相覆蓋)，不拖慢呼叫，也不會動到呼叫端的交易。
+  (sync_state 的 ai_usage:{店家}:{年-月}，各行程各自併入、以列鎖避免互相覆蓋)，不拖慢呼叫，也不會動到呼叫端的交易；
+  行程結束時 (atexit) 再寫入一次，重啟 / 部署前最後不到一分鐘的用量不會遺失。
 - 估計費用：依模型系列的公開牌價概算 (PRICES，美元 / 百萬 token)，實際以各家帳單為準。
 - 預算：系統設定「AI 服務」的「每月預算上限」(美元，0 = 不限)；本月估計費用達上限後不再呼叫雲端 AI，
   改用本機模型 / 規則字典，下個月自動恢復。
 - 模型健康：每組金鑰 × 模型最近 HEALTH_SIZE 次的成敗與耗時 (有 Redis 時各行程共用)；最近常失敗的模型排到後面先試別的，
   恢復後 (HEALTH_WINDOW 內沒有再失敗) 自動回到原本的順序。
 """
+import atexit
 import json
 import logging
 import re
@@ -49,6 +51,7 @@ HEALTH_WINDOW = 600   # 秒：這段時間內的失敗才算數
 _pending: dict = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))   # (tid, 月) -> 模型鍵 -> 欄位 -> 值
 _pending_lock = threading.Lock()
 _flusher = None
+_exit_hook = False   # 已註冊 atexit 寫入
 _month_cache: dict = {}   # (tid, 月) -> (查詢時間, 資料庫裡的用量)
 _health: dict = defaultdict(lambda: deque(maxlen=HEALTH_SIZE))   # (金鑰 id, 模型) -> deque[(時間, 成功, 秒)]
 
@@ -94,7 +97,7 @@ def record(tenant_id, provider, model, ok, usage=None, seconds=0.0, cred_id=''):
 
 
 def _ensure_flusher():
-    global _flusher
+    global _flusher, _exit_hook
     if _flusher is not None and _flusher.is_alive():
         return
     try:
@@ -106,19 +109,27 @@ def _ensure_flusher():
         return   # 測試直接呼叫 flush()
     _flusher = threading.Thread(target=_flush_forever, args=(app,), name='ai-usage-flush', daemon=True)
     _flusher.start()
+    if not _exit_hook:   # 行程結束 (關閉單機程式、gunicorn worker 退出) 時把最後不到一分鐘的用量也寫進去，預算才不會少算
+        _exit_hook = True
+        atexit.register(flush_now, app)
+
+
+def flush_now(app):
+    """在自己的 app context 寫入一次 (背景執行緒、行程結束時用)；失敗只記 log"""
+    with app.app_context():
+        try:
+            flush()
+        except Exception:  # noqa: BLE001
+            logger.exception('AI 用量寫入資料庫失敗 (下次再試)')
+        finally:
+            from app.extensions import db
+            db.session.remove()
 
 
 def _flush_forever(app):
     while True:
         time.sleep(FLUSH_SECONDS)
-        with app.app_context():
-            try:
-                flush()
-            except Exception:  # noqa: BLE001
-                logger.exception('AI 用量寫入資料庫失敗 (下次再試)')
-            finally:
-                from app.extensions import db
-                db.session.remove()
+        flush_now(app)
 
 
 def flush():

@@ -62,5 +62,8 @@ def require_approval(perm, data, action_label):
     if not approver.has_permission(perm):
         raise AppError(f'核准失敗：{approver.username} 沒有「{PERMISSIONS.get(perm, perm)}」權限', 403,
                        need_approval=True, permission=perm)
-    auth_throttle.clear_keys(keys['device'], keys['account'])
+    if not approver.totp_enabled:
+        # 比照後台登入 / 打卡：啟用兩步驟驗證的帳號不在密碼正確時清除錯誤次數 (與 2FA 驗證碼共用同一組鍵，
+        # 否則知道主管密碼的人可用一次核准把驗證碼的猜錯次數歸零，繞過鎖定)
+        auth_throttle.clear_keys(keys['device'], keys['account'])
     return approver.username

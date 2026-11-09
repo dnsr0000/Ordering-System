@@ -57,19 +57,22 @@
   作廢 / 退款 / 單品作廢、加急、開錢櫃、客顯、呼叫服務、接單控制。
 - 廚房 KDS (/kitchen，可分工作站)、取餐核銷 (/pickup)、叫號看板 (/counter，公開、會員姓名遮罩、語音叫號)：SSE 即時更新。
 - 數位看板 (/signage，公開)：門市大螢幕的菜單，售完 / 供應時段 / 特價即時同步，底部輪播促銷標語與取餐 / 候位叫號。
-- 員工打卡 (/timeclock)、可排時段、訂位 / 候位看板 (/reservations)、外送派車 (/admin/dispatch)、外送員手機頁 (/driver/<憑證>)。
+- 員工打卡 (/timeclock)、訂位 / 候位看板 (/reservations)、外送派車 (/admin/dispatch)、外送員手機頁 (/driver/<憑證>)。
 - 店家後台 (/admin)：菜單、會員、行銷、報表、人員、系統設定等，各頁說明見 docs/FEATURES.txt。
 
 
 三、快速開始 (Windows 門市 / 單機)
 --------------------------------------------------------------------
-1. 安裝 Python 3.10 以上 (目前以 3.13 / 3.14 測試)。
+1. 安裝 Python 3.12 以上 (建議 3.13，與 docs/DEPLOY.txt 一致；目前以 3.13 / 3.14 測試。程式用到 3.11 才有的
+   enum.StrEnum，requirements-store.txt 釘選的 numpy 需要 3.12 以上)。
 2. 建立虛擬環境並安裝套件 (專案資料夾中只保留一個虛擬環境 .venv)：
      python -m venv .venv
      .venv\Scripts\activate                        (PowerShell；Linux / macOS：source .venv/bin/activate)
      pip install -r requirements-store.txt          (門市：核心 + 人臉辨識；開發 / 測試改用 requirements-dev.txt)
 3. 設定：複製 .env.example 為 .env，至少填 ADMIN_USERNAME / ADMIN_PASSWORD (負責人帳號，只在第一次建立時使用)。
-   未填會自動產生一組隨機帳密並只在啟動畫面顯示一次。其他環境變數見 docs/CONFIG.txt 三。
+   未填會自動產生一組隨機帳密，密碼只印在啟動畫面 (主控台)，不寫入 database/logs/app.log；以
+   deploy/windows/start_store.cmd 背景啟動時，主控台輸出會寫到 database\server.log，請登入後立即修改密碼。
+   其他環境變數見 docs/CONFIG.txt 三。
 4. 啟動：python run.py (Waitress，預設 0.0.0.0:5000，區網內的看板與 POS 可連線；啟動成功會印出前台與後台網址)。
    開發除錯時在 .env 設 FLASK_DEBUG=1，同一個指令改用 Flask 開發伺服器 (只監聽本機)。
 5. 啟動時會自動建立 / 更新資料庫結構 (AUTO_MIGRATE=1)；第一次啟動會在背景下載人臉模型檔 (docs/CONFIG.txt 二)。

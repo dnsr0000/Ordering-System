@@ -11,6 +11,38 @@ from app.extensions import db
 from app.utils import is_platform_admin, platform_admin_required, role_required
 
 system_bp = Blueprint('system', __name__)
+EVENT_LIMIT = 150
+BACKLOG_SINCE = '2000-01-01'   # 清單預設只查近 30 天；待處理計數不限日期，連結帶上最早可查詢日才對得上
+
+
+def _visible_events():
+    """事件檔為整台主機共用，訊息常含店家顧客資料 (姓名、手機、簡訊驗證碼等)：
+    平台管理者看全部；其他店家只看標記為本店的事件，未標記店家的事件 (系統層級 / 舊紀錄) 僅在主機只有一個店家時顯示"""
+    if is_platform_admin():
+        return monitor_service.recent_events(EVENT_LIMIT)
+    from app.models.tenant import Tenant
+    events = monitor_service.recent_events(monitor_service.KEEP_LINES)
+    single = Tenant.query.count() <= 1
+    return [e for e in events if e.get('tenant_id') == g.tenant_id
+            or (single and e.get('tenant_id') is None)][:EVENT_LIMIT]
+
+
+def _backlog():
+    """待處理磁磚：退款拆成「需人工退款 (manual)」與「退款失敗 (failed)」，各自連到對應狀態的清單"""
+    from app.models.payment import Invoice, InvoiceStatus, Refund
+    from app.services import einvoice_ecpay
+    tiles = []
+    for label, model, status, endpoint in (('待開立發票', Invoice, InvoiceStatus.PENDING, 'invoices.list_invoices'),
+                                           ('開立失敗發票', Invoice, InvoiceStatus.FAILED, 'invoices.list_invoices'),
+                                           ('需人工退款', Refund, 'manual', 'refunds.list_refunds'),
+                                           ('退款失敗', Refund, 'failed', 'refunds.list_refunds')):
+        q = model.query.filter(model.status == status)
+        if model is Invoice:
+            local = einvoice_ecpay._local_invoice_clause()   # 線上端：分店上傳的發票由分店處理，不列入待處理
+            if local is not None:
+                q = q.filter(local)
+        tiles.append((label, q.count(), url_for(endpoint, status=status, start=BACKLOG_SINCE)))
+    return tiles
 
 
 @system_bp.route('/admin/system', endpoint='status')
@@ -27,7 +59,7 @@ def status():
             update = {**update_service.current_version(), 'latest': None, 'error': str(exc), 'update_available': False,
                       'downloaded': '', 'can_apply': False, 'repo': update_service.repo()}
     return render_template('admin_system.html', health=maintenance_service.health(g.tenant_id), update=update,
-                           events=monitor_service.recent_events(150),
+                           events=_visible_events(), backlog=_backlog(),
                            backups=maintenance_service.list_backups() if is_platform_admin() else [],
                            is_platform_admin=is_platform_admin(),
                            clock=monitor_service.clock_status(g.tenant_id, force=request.args.get('clock') == '1'),
@@ -59,9 +91,13 @@ def download_backup(name):
 @system_bp.route('/admin/system/test_alert', methods=['POST'], endpoint='test_alert')
 @role_required(*MANAGER_ROLES)
 def test_alert():
-    sent = monitor_service.send_alert_now(g.tenant_id, 'info', '這是一則測試通知 (系統監控頁)。')
-    flash(f"已送出：{', '.join(sent)}" if sent else '尚未設定任何通知管道 (系統設定 → 監控與錯誤通知)',
-          'success' if sent else 'warning')
+    errors = []
+    sent = monitor_service.send_alert_now(g.tenant_id, 'info', '這是一則測試通知 (系統監控頁)。', errors=errors)
+    if errors:
+        flash('通知送出失敗：' + '；'.join(errors) + (f"；已送出：{', '.join(sent)}" if sent else ''), 'danger')
+    else:
+        flash(f"已送出：{', '.join(sent)}" if sent else '尚未設定任何通知管道 (系統設定 → 監控與錯誤通知)',
+              'success' if sent else 'warning')
     return redirect(url_for('system.status'))
 
 

@@ -11,11 +11,18 @@ const cfg = posCfg;
 // 作廢 / 部分退款
 // ======================================================================
 let refundOrder = null;
+let refundSubmitting = false;   // 送出中：連點兩下「確認」不會退款 / 作廢兩次
+let refundRequestId = '';       // 每次開窗一個 request_id，逾時重送時伺服器可辨識為同一筆
 
 function openRefund(orderId, mode) {
     refundOrder = (state.liveOrders || []).find((o) => Number(o.id) === Number(orderId));
     if (!refundOrder) return;
+    refundRequestId = Kiosk.newOrderId();
     const unpaid = refundOrder.payment_status === 'unpaid';
+    // 已取餐的訂單：角色不能作廢時 (後端直接回 403、不走主管核准) 停用「作廢整單」，改用部分退款
+    const noVoid = refundOrder.status === 'PickedUp' && cfg.canVoidPickedUp === false;
+    const voidLabel = document.querySelector('label[for="posRefundVoid"]');
+    if (voidLabel) voidLabel.title = noVoid ? '已取餐的訂單需由店長 / 負責人作廢；可改用部分退款 (主管核准)' : '';
     $('posRefundOrderId').textContent = refundOrder.id;
     $('posRefundMethod').textContent = refundOrder.payment_method;
     $('posRefundMax').textContent = num(refundOrder.refundable);
@@ -27,8 +34,8 @@ function openRefund(orderId, mode) {
     const tenders = Object.entries(refundOrder.tenders || {});
     setHtml($('posRefundTender'), tenders.map(([m, amt]) => html`<option value="${m}">退回：${m} (可退 $${num(amt)})</option>`));
     $('posRefundPartial').disabled = unpaid;
-    $('posRefundVoid').disabled = unpaid;   // 桌邊未結帳的整單取消用訂單卡片上的「取消」
-    (mode === 'item' || unpaid ? $('posRefundItem') : $('posRefundVoid')).checked = true;
+    $('posRefundVoid').disabled = unpaid || noVoid;   // 桌邊未結帳的整單取消用訂單卡片上的「取消」
+    (mode === 'item' || unpaid ? $('posRefundItem') : $(noVoid ? 'posRefundPartial' : 'posRefundVoid')).checked = true;
     onRefundModeChange();
     modalOf('posRefundModal').show();
 }
@@ -46,20 +53,24 @@ document.querySelectorAll('input[name="posRefundMode"]').forEach((r) => r.addEve
 
 $('posRefundForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    if (!refundOrder) return;
+    if (!refundOrder || refundSubmitting) return;
     const partial = $('posRefundPartial').checked;
     const reason = $('posRefundReason').value.trim();
     const id = refundOrder.id;
+    const request_id = refundRequestId;
+    const submitBtn = $('posRefundForm').querySelector('button[type="submit"]');
+    refundSubmitting = true;
+    if (submitBtn) submitBtn.disabled = true;
     try {
         let message;
         const method = $('posRefundTender').classList.contains('d-none') ? '' : $('posRefundTender').value;
         if ($('posRefundItem').checked) {
-            const body = { item_id: num($('posRefundItemSel').value), quantity: num($('posRefundItemQty').value), reason, method };
+            const body = { item_id: num($('posRefundItemSel').value), quantity: num($('posRefundItemQty').value), reason, method, request_id };
             const res = await withApproval((extra) => api(`/api/pos/orders/${id}/void_item`, { json: { ...body, ...extra } }));
             message = `訂單 #${id}：${res.message}`;
         } else if (partial) {
             const amount = num($('posRefundAmount').value);
-            const res = await withApproval((extra) => api(`/api/pos/orders/${id}/refund`, { json: { amount, reason, method, ...extra } }));
+            const res = await withApproval((extra) => api(`/api/pos/orders/${id}/refund`, { json: { amount, reason, method, request_id, ...extra } }));
             message = res.message;
         } else {
             await withApproval((extra) => api(`/api/orders/${id}/status`, { json: { status: 'Cancelled', reason, ...extra } }));
@@ -68,7 +79,12 @@ $('posRefundForm').addEventListener('submit', async (ev) => {
         modalOf('posRefundModal').hide();
         alert(`✅ ${message}`);
     } catch (err) {
-        if (!err.cancelled) alert(`❌ ${err.message}`);
+        const pickedUp = err.status === 403 && !(err.data && err.data.need_approval) && $('posRefundVoid').checked
+            && refundOrder && refundOrder.status === 'PickedUp';
+        if (!err.cancelled) alert(`❌ ${err.message}${pickedUp ? '\n已取餐的訂單可改用「部分退款」(經主管核准)' : ''}`);
+    } finally {
+        refundSubmitting = false;
+        if (submitBtn) submitBtn.disabled = false;
     }
     syncLiveState();
 });
@@ -130,6 +146,8 @@ async function openSplit(tableId) {
     if (!splitTable) return;
     $('posSplitTable').textContent = splitTable.name;
     $('posSplitMsg').textContent = '';
+    if ($('posSplitInvoiceType')) $('posSplitInvoiceType').value = '';   // 不沿用上一桌的統編 / 載具
+    if ($('posSplitInvoiceValue')) $('posSplitInvoiceValue').value = '';
     setHtml($('posSplitOrders'), splitTable.orders.map((o) => html`
         <div class="form-check">
             <input class="form-check-input split-order" type="checkbox" value="${o.id}" id="split-o-${o.id}" checked>
@@ -145,6 +163,31 @@ async function openSplit(tableId) {
             .map((t) => html`<option value="${t.id}">${t.name}</option>`));
     } catch (err) { /* 換桌清單載入失敗不影響結帳 */ }
     modalOf('posSplitModal').show();
+}
+
+/** LINE Pay 付款碼視窗完全關閉 (淡出動畫結束) 後才 resolve；Bootstrap 在淡出期間會忽略再次 show() */
+function linePayModalHidden() {
+    const el = $('posLinePayModal');
+    if (!el || !el.style.display || el.style.display === 'none') return Promise.resolve();
+    return new Promise((resolve) => el.addEventListener('hidden.bs.modal', () => resolve(), { once: true }));
+}
+
+/**
+ * 桌位結帳 (整桌結帳 live.js 與分開結帳共用)：顧客正在手機線上結帳 (綠界付款中) 時後端回 409 online_pay_pending，
+ * 店員按確定後帶 force 重送 (這個 409 在 LINE Pay 扣款之前，授權碼 / 付款碼可原樣重送)；按取消時錯誤帶 cancelled。
+ */
+export async function settleTableApi(tableId, json) {
+    const url = `/api/pos/tables/${encodeURIComponent(tableId)}/settle`;
+    try {
+        return await api(url, { json });
+    } catch (err) {
+        if (!(err.data && err.data.online_pay_pending)) throw err;
+        if (!confirm(err.message)) {
+            err.cancelled = true;
+            throw err;
+        }
+        return api(url, { json: { ...json, force: true } });
+    }
 }
 
 function splitEqual(n) {
@@ -174,20 +217,24 @@ $('posSplitForm').addEventListener('submit', async (ev) => {
         const method = row.querySelector('.split-method').value;
         const amount = num(row.querySelector('.split-amount').value);
         const p = { method, amount, received: method === 'Cash' ? num(row.querySelector('.split-received').value) : 0 };
+        await linePayModalHidden();   // 上一位的付款碼視窗還在淡出時開不了下一個視窗，先等它關好
         const extra = await paymentDetails(method, amount);
-        if (extra === null) return;
+        if (extra === null) {
+            $('posSplitMsg').textContent = '已取消付款資料輸入 (授權碼 / 付款碼)，尚未結帳';
+            return;
+        }
         payments.push({ ...p, ...extra });
     }
     const invType = $('posSplitInvoiceType') ? $('posSplitInvoiceType').value : '';
     const invValue = $('posSplitInvoiceValue') ? $('posSplitInvoiceValue').value.trim() : '';
     const invoice = invType ? { type: invType, carrier: invValue, buyer_id: invValue, love_code: invValue } : null;
     try {
-        const res = await api(`/api/pos/tables/${splitTable.table_id}/settle`, { json: { order_ids: orderIds, payments, invoice } });
+        const res = await settleTableApi(splitTable.table_id, { order_ids: orderIds, payments, invoice });
         modalOf('posSplitModal').hide();
         const detail = res.payments.map((p) => `${p.method} $${p.amount}${p.change ? ` (找零 $${p.change})` : ''}`).join('、');
         alert(`✅ ${res.table} 桌結帳 ${res.orders.length} 張單，共 $${res.total}：${detail}`);
     } catch (err) {
-        $('posSplitMsg').textContent = err.message;
+        $('posSplitMsg').textContent = err.cancelled ? '已取消，尚未結帳' : err.message;
     }
     syncLiveState();
 });
@@ -197,6 +244,10 @@ async function moveTable() {
     const target = $('posMoveTarget').value;
     if (!target) return;
     const orderIds = selectedOrders();
+    if (!orderIds.length) {   // 送出空清單時後端會把整桌都移走，與畫面上的選擇相反
+        $('posSplitMsg').textContent = '請至少勾選一張訂單 (要整桌移動請全選)';
+        return;
+    }
     try {
         const res = await api(`/api/pos/tables/${splitTable.table_id}/move`, { json: { to_table_id: Number(target), order_ids: orderIds } });
         modalOf('posSplitModal').hide();

@@ -49,7 +49,7 @@
                 <td><code class="small user-select-all">{{ h.secret }}</code></td>
                 <td class="small">{{ h.last_status or '-' }}{% if h.fail_streak %}<div class="text-danger">連續失敗 {{ h.fail_streak }} 次</div>{% endif %}</td>
                 <td class="text-nowrap"><form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="endpoint_id" value="{{ h.id }}">
-                    <button class="btn btn-sm btn-outline-info" name="action" value="ping_hook">測試</button>
+                    {% if h.is_active %}<button class="btn btn-sm btn-outline-info" name="action" value="ping_hook">測試</button>{% endif %}
                     <button class="btn btn-sm btn-outline-light" name="action" value="toggle_hook">{{ '停用' if h.is_active else '啟用' }}</button>
                     <button class="btn btn-sm btn-outline-danger" name="action" value="delete_hook">刪除</button></form></td></tr>
             {% else %}<tr><td colspan="5" class="text-white-50">尚未設定 Webhook</td></tr>{% endfor %}

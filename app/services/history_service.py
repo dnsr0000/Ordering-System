@@ -3,7 +3,7 @@
 (後台編輯、進貨加權平均、調撥收貨、Excel 匯入、同步收到的總部改價)。以 update() 直接改的不經過這裡
 (目前原料單位成本與售價都是以 ORM 物件修改)。
 """
-from sqlalchemy import inspect, select
+from sqlalchemy import delete, inspect, select
 
 from app.models.expense import CostHistory
 from app.models.inventory import Ingredient
@@ -20,6 +20,14 @@ FIELD_LABELS = {'price': '售價', 'discount_price': '特價', 'takeout_price': 
 
 
 def _record_changes(session):
+    # 刪除的原料 / 餐點一併刪除成本歷史：SQLite 重用 id 時新資料才不會接上舊的歷史
+    for obj in list(session.deleted):
+        spec = TRACKED.get(type(obj))
+        if spec is None or obj.id is None:
+            continue
+        session.execute(delete(CostHistory).where(CostHistory.tenant_id == obj.tenant_id, CostHistory.kind == spec[0],
+                                                  CostHistory.ref_id == obj.id)
+                        .execution_options(skip_tenant_filter=True))
     for obj in list(session.dirty):
         spec = TRACKED.get(type(obj))
         if spec is None or obj.id is None:

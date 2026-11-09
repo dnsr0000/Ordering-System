@@ -5,9 +5,13 @@
 import { $, api, html, itemMap, modalOf, num, pageData, posCfg, setHtml, state } from './core.js';
 import { repriceCart, startConfigure } from './menu.js';
 import { renderCart, schedulePromotionPreview } from './cart.js';
-import { populateCouponSelect, recalcTotals, resetPromo, updateCashChange } from './totals.js';
+import { payableTotal, populateCouponSelect, recalcTotals, resetPromo, updateCashChange } from './totals.js';
 import { syncLiveState } from './live.js';
+import { withApproval } from './pro.js';
 import { applyLinePrices, passRemaining } from '../shared/cartline.js';
+
+// 寄杯售出的請求序號：每次開啟售出視窗產生，失敗重按沿用 (後端存成 client_order_id，回應遺失重送時回傳原本那筆)
+let passRequestId = null;
 
 // ======================================================================
 // 5. 會員查詢 / 多筆候選 / PIN 設定
@@ -115,7 +119,9 @@ export function openPassSell() {
     setHtml($('posPassMethod'), methods.map((m) => html`<option value="${m}">${m}</option>`));
     $('posPassCash').value = '';
     $('posPassAuth').value = '';
+    if ($('posPassLast4')) $('posPassLast4').value = '';
     $('posPassMsg').textContent = '';
+    passRequestId = Kiosk.newOrderId();
     syncPassMethod();
     modalOf('posPassSellModal').show();
 }
@@ -124,6 +130,8 @@ export function syncPassMethod() {
     const m = $('posPassMethod').value;
     $('posPassCash').classList.toggle('d-none', m !== 'Cash');
     $('posPassAuth').classList.toggle('d-none', m !== 'Credit Card');
+    // 系統設定「刷卡需輸入卡號末四碼」時，選信用卡才顯示末四碼欄位
+    if ($('posPassLast4')) $('posPassLast4').classList.toggle('d-none', !(m === 'Credit Card' && posCfg.cardRequireLast4));
 }
 
 export async function sellPass(ev) {
@@ -131,9 +139,13 @@ export async function sellPass(ev) {
     if (!state.member) return;
     $('posPassSellBtn').disabled = true;
     try {
+        // 刷卡：授權碼與卡號末四碼 (系統設定可要求必填，後端 validate_card_details 檢查)
+        const last4 = $('posPassLast4');
         const res = await api('/api/pos/passes/sell', { json: {
             user_id: state.member.id, product_id: num($('posPassProduct').value), payment_method: $('posPassMethod').value,
-            cash_received: num($('posPassCash').value), payment_info: { auth_code: $('posPassAuth').value.trim() } } });
+            cash_received: num($('posPassCash').value), request_id: passRequestId,
+            payment_info: { auth_code: $('posPassAuth').value.trim(), card_last4: last4 ? last4.value.trim() : '' } } });
+        passRequestId = null;
         modalOf('posPassSellModal').hide();
         alert(`✅ ${res.message}${res.cash_change ? `，找零 $${res.cash_change}` : ''}`);
         await refreshBoundMember(false);
@@ -150,7 +162,7 @@ export function applyServerPrices(data, cartKey) {
     applyLinePrices(state.cart, data.line_prices, { skip: (l) => l.override_price !== undefined });   // 改過價的品項不動
     renderCart({ revalidate: false });
     state.acceptedTotal = state.finalTotal === num(data.server_total) ? null : { key: cartKey, total: num(data.server_total) };
-    if (state.acceptedTotal) $('posFinalTotal').textContent = state.acceptedTotal.total;
+    $('posFinalTotal').textContent = payableTotal();   // 伺服器金額與本地相同時清掉先前記住的金額，畫面回到本地值
     updateCashChange();
 }
 
@@ -215,12 +227,13 @@ export async function submitPin(ev) {
     const btn = $('posPinSubmitBtn');
     btn.disabled = true;
     try {
-        const res = await api('/api/pos/set_member_pin', { json: { user_id: state.member.id, pin } });
+        // 會員已有 PIN 時，重設需「免驗證會員身分」權限或主管核准 (後端回 403 need_approval)
+        const res = await withApproval((extra) => api('/api/pos/set_member_pin', { json: { user_id: state.member.id, pin, ...extra } }));
         state.member.has_pin = true;
         modalOf('posPinModal').hide();
         alert(res.message || '設定成功');
     } catch (err) {
-        msg.textContent = err.message;
+        if (!err.cancelled) msg.textContent = err.message;
     } finally {
         btn.disabled = false;
     }

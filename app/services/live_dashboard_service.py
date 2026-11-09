@@ -9,11 +9,19 @@ from flask import current_app
 
 from app.models.enums import OrderStatus
 from app.models.sync import SyncNode
-from app.services.report_service import is_revenue, orders_between, revenue_orders
+from app.services.report_service import avg_ticket, is_revenue, orders_between, revenue_orders
 from app.sync import runtime as sync_runtime
 from app.utils import day_bounds
 
 LOCAL = '本店'
+# 與廚房看板一致：尚未完成付款的線上訂單 (待付款、LINE Pay 扣款中、付款逾時) 還沒送廚房，不算「製作中」
+KITCHEN_HIDDEN_PAYMENT_STATUSES = ('pending', 'authorizing', 'expired')
+
+
+def _in_kitchen(order):
+    """製作中：廚房看板上看得到的未完成訂單 (含桌邊掃碼點餐後才結帳的 unpaid 單)"""
+    return (order.status == OrderStatus.PENDING
+            and (order.payment_status or '') not in KITCHEN_HIDDEN_PAYMENT_STATUSES)
 
 
 def snapshot(tenant_id, now=None):
@@ -26,31 +34,34 @@ def snapshot(tenant_id, now=None):
     names = {n.uuid: n.name for n in nodes}
     offline_after = current_app.config.get('SYNC_NODE_OFFLINE_AFTER', 120)
 
-    by_node = defaultdict(lambda: {'revenue': 0, 'orders': 0, 'pending': 0, 'cancelled': 0, 'online': 0})
+    by_node = defaultdict(lambda: {'revenue': 0, 'orders': 0, 'paid': 0, 'pending': 0, 'cancelled': 0, 'online': 0})
     for o in orders:
-        key = names.get(o.node_uuid, LOCAL if not is_hub else (o.node_uuid and '其他' or '線上端'))
+        # 以分店 uuid 為鍵 (分店名稱可能重複)；不屬於任何分店的訂單用固定的名稱鍵 (不會與 uuid 撞名)
+        key = o.node_uuid if o.node_uuid in names else (LOCAL if not is_hub else (o.node_uuid and '其他' or '線上端'))
         row = by_node[key]
         if o.status == OrderStatus.CANCELLED:
             row['cancelled'] += 1
             continue
+        if _in_kitchen(o):
+            row['pending'] += 1
         if not is_revenue(o):
             continue
         row['orders'] += 1
+        if (o.total_price or 0) > 0:
+            row['paid'] += 1
         row['revenue'] += o.total_price or 0
-        if o.status == OrderStatus.PENDING:
-            row['pending'] += 1
         if o.order_source == 'Online':
             row['online'] += 1
     stores = []
     for n in nodes:
-        row = by_node.pop(n.name, {'revenue': 0, 'orders': 0, 'pending': 0, 'cancelled': 0, 'online': 0})
+        row = by_node.pop(n.uuid, {'revenue': 0, 'orders': 0, 'paid': 0, 'pending': 0, 'cancelled': 0, 'online': 0})
         stores.append(dict(row, name=n.name, connected=n.is_online(offline_after) if n.is_active else False,
                            active=n.is_active,
                            last_seen=n.last_seen_at.strftime('%H:%M') if n.last_seen_at else '-',
-                           avg_ticket=round(row['revenue'] / row['orders']) if row['orders'] else 0))
+                           avg_ticket=round(row['revenue'] / row['paid']) if row['paid'] else 0))
     for name, row in by_node.items():
         stores.append(dict(row, name=name, connected=True, active=True, last_seen='-',
-                           avg_ticket=round(row['revenue'] / row['orders']) if row['orders'] else 0))
+                           avg_ticket=round(row['revenue'] / row['paid']) if row['paid'] else 0))
     stores.sort(key=lambda r: -r['revenue'])
 
     hourly = [0] * 24
@@ -68,8 +79,8 @@ def snapshot(tenant_id, now=None):
     y_revenue = sum(o.total_price or 0 for o in yesterday)
     return {
         'at': now.strftime('%H:%M:%S'), 'is_hub': is_hub,
-        'revenue': revenue, 'orders': len(valid), 'avg_ticket': round(revenue / len(valid)) if valid else 0,
-        'pending': sum(1 for o in valid if o.status == OrderStatus.PENDING),
+        'revenue': revenue, 'orders': len(valid), 'avg_ticket': avg_ticket(revenue, valid),
+        'pending': sum(1 for o in orders if _in_kitchen(o)),
         'cancelled': sum(1 for o in orders if o.status == OrderStatus.CANCELLED),
         'yesterday_same_time': y_revenue,
         'vs_yesterday': round((revenue - y_revenue) * 100 / y_revenue, 1) if y_revenue else None,

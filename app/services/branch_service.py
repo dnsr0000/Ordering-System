@@ -11,6 +11,7 @@
 - 調撥：出貨方直接建立並出貨，收貨方收貨。
 - 「總部 / 中央廚房」是線上端主機自己的原料庫存 (site = 'HQ')；分店間的單據經線上端同步給雙方。
 - 原料依名稱對應；收貨方沒有這項原料時自動建立 (單位沿用出貨方)。出貨方的單位成本隨單據帶到收貨方加權平均。
+  同名原料兩邊單位不同時，出貨 / 收貨一律擋下 (請先統一單位)，不以錯誤的單位增減庫存與成本。
 - 狀態以條件式 UPDATE 推進 (兩個人同時按出貨只會扣一次庫存)；同步時狀態只往前走 (見 app/sync/engine.py)。
 """
 import json
@@ -154,10 +155,11 @@ def save_overrides(tenant_id, node_uuid, rows, staff=''):
             raise AppError(f'餐點【{item.name}】的分店價格不正確')
         if price is not None and price == item.price:
             price = None   # 與總部同價：不另外設定
-        if price is not None:   # 特價 / 通路價依同一個價差加減：不可因此變成 0 元以下
+        if price is not None:   # 特價 / 通路價 / 會員價依同一個價差加減：不可因此變成 0 元以下
             delta = price - (item.price or 0)
-            others = [('特價', item.discount_price if item.is_discount else 0), ('外帶價', item.takeout_price),
-                      ('線上價', item.online_price), ('外送價', item.delivery_price)]
+            # 特價目前沒開也要檢查 (總部之後開啟特價時不會再檢查各分店的價差)
+            others = [('特價', item.discount_price), ('外帶價', item.takeout_price),
+                      ('線上價', item.online_price), ('外送價', item.delivery_price), ('會員價', item.member_price)]
             bad = [f'{label} ${v}→${v + delta}' for label, v in others if (v or 0) > 0 and v + delta <= 0]
             if bad:
                 raise AppError(f'餐點【{item.name}】分店價比總部便宜 ${-delta}，會讓 {"、".join(bad)}；請調高分店價或先修改總部價格')
@@ -273,6 +275,16 @@ def _claim(tr, expected, **values):
     db.session.refresh(tr)
 
 
+def _check_unit(ln, ing):
+    """
+    原料依名稱對應，但各主機的原料各自建立 (不同步)：同名原料的單位可能不同 (例如總部 kg、分店 g)，
+    直接以數字增減會差上千倍、單位成本也會錯，必須先統一單位。單據沒有記錄單位時不檢查。
+    """
+    unit, mine = str(ln.get('unit') or '').strip(), str(ing.unit or '').strip()
+    if unit and mine and unit.lower() != mine.lower():
+        raise AppError(f'原料【{ing.name}】單位不同：單據為「{unit}」，本店為「{mine}」；請先統一兩邊的單位再處理')
+
+
 def _deduct_for(tenant_id, tr, lines):
     """出貨：扣本店原料庫存 (數量不足時整筆失敗)"""
     from app.services import inventory_service
@@ -283,6 +295,7 @@ def _deduct_for(tenant_id, tr, lines):
         ing = Ingredient.query.filter_by(tenant_id=tenant_id, name=ln['name']).first()
         if ing is None:
             raise AppError(f'本店沒有原料【{ln["name"]}】，無法出貨')
+        _check_unit(ln, ing)
         took = db.session.execute(update(Ingredient).where(Ingredient.id == ing.id, Ingredient.stock >= qty)
                                   .values(stock=Ingredient.stock - qty).execution_options(synchronize_session=False))
         if took.rowcount != 1:
@@ -355,6 +368,7 @@ def receive(tenant_id, transfer_id, received, staff='', note=''):
             ing = Ingredient(tenant_id=tenant_id, name=ln['name'], unit=ln.get('unit') or 'g', stock=0)
             db.session.add(ing)
             db.session.flush()
+        _check_unit(ln, ing)
         inventory_service.adjust(ing, qty, 'transfer_in', note=f'{tr.number} 收自{tr.from_name}',
                                  unit_cost=ln.get('unit_cost') or None)
     if diffs:   # 提交後通知 (交易失敗則不通知)

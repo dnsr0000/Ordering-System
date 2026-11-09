@@ -39,8 +39,10 @@ def refresh_for_ingredient(ingredient):
 
 
 def refresh_all(tenant_id=None):
-    """後台一鍵重算 (匯入原料係數後)；回傳變動的餐點數"""
-    return sum(refresh_item(i) for i in MenuItem.query.filter_by(carbon_auto=True).all())
+    """後台一鍵重算 (匯入原料係數後)；回傳變動的餐點數。
+    只重算本機有配方的餐點：分店沒有總部的配方資料，否則會把同步來的碳足跡改成 0"""
+    ids = {rl.menu_item_id for rl in RecipeLine.query.all()}
+    return sum(refresh_item(i) for i in MenuItem.query.filter_by(carbon_auto=True).all() if i.id in ids)
 
 
 def label(grams):

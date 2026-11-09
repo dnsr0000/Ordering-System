@@ -34,6 +34,10 @@ export async function runPromotionPreview(isCurrent = () => true) {
     } catch (err) {
         if (isCurrent()) state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
     }
+    // 優惠券以「扣掉促銷後的金額」驗證 (門檻與百分比折扣)：促銷折扣變了就重新驗證已套用的代碼
+    if (isCurrent() && state.activePromoCode && promotionDiscount() !== promoCheckedPromotion) {
+        verifyPromo(state.activePromoCode, { silent: true });
+    }
     calculateTotal();
 }
 
@@ -77,6 +81,7 @@ export function computeTotals() {
         serviceApplies: Boolean(pro.serviceChargeDineIn && dineIn),
         deliveryFee: deliveryFee(subtotal),
         spendPerPoint: rewardConfig.spendPerPoint,
+        pointsMultiplier: pro.tierPointsMultiplier,
         earnsPoints: !isGuest,
     });
     // 輸入的點數超過上限時直接修正輸入框
@@ -163,7 +168,7 @@ export function renderCoupons(coupons) {
     const current = state.activePromoCode;
     Kiosk.setHtml(select, [
         html`<option value="">${ui.pick_coupon || '-- 選擇我的優惠券 --'}</option>`,
-        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (${ui.code_label || '代碼'}: ${c.code})${c.min_spend > 0 ? ` - ${ui.rw_min_spend || '消費滿 $'}${Math.round(c.min_spend)}${ui.rw_usable || '可用'}` : ''}</option>`),
+        list.map((c) => html`<option value="${c.code}" ${c.code === current ? 'selected' : ''}>${c.title} (${ui.code_label || '代碼'}: ${c.code})${c.min_spend > 0 ? ` - ${ui.rw_min_spend ?? '消費滿 $'}${Math.round(c.min_spend)}${ui.rw_usable ?? '可用'}` : ''}</option>`),
     ]);
     if (badge) Kiosk.setHtml(badge, html`<span class="badge bg-warning text-dark py-0">${list.length} ${ui.coupons_available || '張可用'}</span>`);
 }
@@ -186,15 +191,38 @@ export function showPromoMessage(ok, message) {
     renderPromoMessage($('promo-msg'), ok, message, 'small mt-1');
 }
 
-/** 驗證優惠碼 (shared/promo.js 帶請求序號：連續輸入時只採用最新一次的結果)；失敗或連線錯誤時清掉折扣 */
-export async function verifyPromo(code, { silent = false } = {}) {
+// 上次驗證優惠碼時採用的促銷折扣 (促銷預覽回來後折扣變了就重新驗證)
+let promoCheckedPromotion = 0;
+
+function promotionDiscount() {
+    return Number(state.promotion.discount) || 0;
+}
+
+/** 優惠碼的計算基準 = 扣掉促銷後的金額 (與後端結帳 c.remaining 相同：門檻與百分比折扣都以此計算) */
+function promoBase() {
     const subtotal = state.cart.reduce((sum, l) => sum + l.price * l.quantity, 0);
-    const res = await promo.verify({ promo_code: code, subtotal: Math.round(subtotal) });
-    if (!res) return;   // 已有更新的驗證取代
+    return Math.max(0, subtotal - Math.min(promotionDiscount(), subtotal));
+}
+
+/**
+ * 驗證優惠碼 (shared/promo.js 帶請求序號：連續輸入時只採用最新一次的結果)；代碼無效時清掉折扣。
+ * 連線 / 伺服器錯誤時保留原本套用的代碼與折扣 (不可默默取消優惠，也讓斷線暫存仍能擋下用券的訂單) 並回傳 false，
+ * 由呼叫端決定是否中止 (例如下單前確認)；其餘情況回傳 true。
+ */
+export async function verifyPromo(code, { silent = false } = {}) {
+    const promotion = promotionDiscount();
+    const res = await promo.verify({ promo_code: code, subtotal: Math.round(promoBase()) });
+    if (!res) return true;   // 已有更新的驗證取代
+    if (res.error) {
+        showPromoMessage(false, res.message);
+        return false;
+    }
+    promoCheckedPromotion = promotion;
     state.activePromoCode = res.valid ? code : '';
     state.appliedPromoDiscount = res.discount;
     if (!silent || !res.valid) showPromoMessage(res.valid, res.message);
     calculateTotal();
+    return true;
 }
 
 export function applyPromoCode() {

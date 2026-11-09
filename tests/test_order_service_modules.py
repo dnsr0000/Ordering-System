@@ -1,15 +1,16 @@
-"""order_service 拆成 order_pricing / order_stock / order_checkout / order_lifecycle 後，對外介面不變、依賴方向單純"""
+"""order_service 拆成 order_pricing / order_stock / order_validate / order_checkout / order_lifecycle 後，對外介面不變、依賴方向單純"""
 import importlib
 import os
 import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARTS = ('order_pricing', 'order_stock', 'order_checkout', 'order_lifecycle')
+PARTS = ('order_pricing', 'order_stock', 'order_validate', 'order_checkout', 'order_lifecycle')
 # 下層模組不可反向依賴上層 (避免循環匯入)
 ALLOWED = {
     'order_pricing': set(),
     'order_stock': set(),
-    'order_checkout': {'order_pricing', 'order_stock'},
+    'order_validate': {'order_pricing', 'order_stock'},
+    'order_checkout': {'order_pricing', 'order_stock', 'order_validate'},
     'order_lifecycle': {'order_stock'},
 }
 
@@ -47,7 +48,7 @@ def test_order_modules_are_small_and_layered():
 
 
 def test_todays_orders_condition_can_use_indexes():
-    """「今天的訂單」= 今天建立 OR 預約今天取餐：兩個欄位都要有索引 (PostgreSQL 才能用 BitmapOr，不必掃描整個訂單表)"""
+    """「今天的訂單」= 今天建立 OR 預約今天取餐 OR 今天才完成線上付款：這些欄位都要有索引 (PostgreSQL 才能用 BitmapOr，不必掃描整個訂單表)"""
     from app.models.order import Order
     indexed = {col.name for idx in Order.__table__.indexes for col in idx.columns}
-    assert {'created_at', 'pickup_at', 'status', 'tenant_id'} <= indexed
+    assert {'created_at', 'pickup_at', 'paid_at', 'status', 'tenant_id'} <= indexed

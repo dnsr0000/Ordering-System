@@ -9,14 +9,14 @@
         <div class="fs-5">{{ r.name }} • {{ r.party_size }} {{ ui.guests_unit }}</div>
         <div class="mt-2 fw-bold" id="reservationState">{{ ui.rs_wait_deposit if r.deposit_status == 'pending' and r.status == 'booked' else {'booked': ui.rs_booked, 'seated': ui.rs_seated, 'cancelled': ui.rs_cancelled, 'no_show': ui.rs_no_show}[r.status] }}</div>
         {% if r.deposit_status %}
-        <div class="mt-2" id="depositState">{{ ui.rs_deposit }}{{ r.deposit_amount }}：{{ r.deposit_label }}{% if r.deposit_note %}<div class="small text-white-50">{{ r.deposit_note }}</div>{% endif %}</div>
+        <div class="mt-2" id="depositState">{{ ui.rs_deposit }}{{ r.deposit_amount }}：{{ ui['rs_dep_' ~ r.deposit_status] or r.deposit_label|tr_msg }}</div>
         {% endif %}
     </div>
     {% if r.deposit_status == 'pending' and r.status == 'booked' %}
     <a class="btn btn-warning fw-bold mb-3" href="{{ url_for('reservations.deposit_pay', token=r.token) }}" id="depositPayBtn">{{ ui.rs_pay }}</a>
     {% endif %}
     <p class="small text-white-50">{{ ui.rs_keep }}{% if r.deposit_status == 'paid' %}{{ ui.rs_refund_a }} {{ refund_hours }} {{ ui.rs_refund_b }}{% endif %}</p>
-    {% if r.status == 'booked' %}
+    {% if can_cancel %}
     <form method="POST" data-confirm="{{ ui.rs_cancel_confirm }}">{{ csrf() }}<input type="hidden" name="action" value="cancel">
         <button class="btn btn-outline-danger" type="submit">{{ ui.rs_cancel }}</button></form>
     {% endif %}

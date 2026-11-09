@@ -1,8 +1,10 @@
 """廚房工作站 (分站看板、各站完成、加急排序)、網路印表機出單 (模擬 TCP 9100)、原物料配方扣料 / 回補 / 盤點 / 低庫存警示"""
+import re
+
 import pytest
 
 from app.extensions import db
-from app.models.inventory import Ingredient, StockMovement
+from app.models.inventory import Ingredient, RecipeLine, StockMovement
 from app.models.menu import MenuItem
 from app.models.order import Order
 from app.models.printing import KitchenStation, Printer, PrintJob
@@ -137,8 +139,11 @@ def test_auto_print_receipt_and_station_tickets(app, admin_client, staff_client,
     r = checkout(staff_client, [line(drink), line(rice)], url=POS, cash_received=200, note='去冰')
     oid = r.get_json()['order_id']
     hosts = [(h, p) for h, p, _ in sent]
-    assert hosts == [('192.168.1.50', 9100), ('192.168.1.51', 9101)]
+    # 廚房印表機都綁工作站時，不屬於任何工作站的品項 (主餐) 在第一台廚房印表機另出一張「未分站」單
+    assert hosts == [('192.168.1.50', 9100), ('192.168.1.51', 9101), ('192.168.1.51', 9101)]
     receipt, ticket = sent[0][2].decode('big5', 'replace'), sent[1][2].decode('big5', 'replace')
+    extra = sent[2][2].decode('big5', 'replace')
+    assert '出單燴飯' in extra and '未分站' in extra and '出單奶茶' not in extra
     assert '出單奶茶' in receipt and '出單燴飯' in receipt and '$180' in receipt
     assert '出單奶茶' in ticket and '出單燴飯' not in ticket and '去冰' in ticket and '吧台' in ticket
 
@@ -219,7 +224,9 @@ def test_recipe_consume_restore_and_block(app, admin_client, staff_client, kitch
                                                 'ingredient_id': [beef['id'], noodle['id'], ''],
                                                 'quantity': ['150', '1', '']})
     page = admin_client.get(f'/admin/inventory?item={iid}').get_data(as_text=True)
-    assert '配方牛肉麵' in page and '83' in page   # 每份成本 150*0.5 + 8 = 83
+    # 每份成本 150*0.5 + 8 = 83：比對「已設定配方」表格中這道菜的原料成本欄 (頁面的靜態檔版本雜湊也可能含 83)
+    costs = [float(v) for v in re.findall(r'<td>配方牛肉麵</td><td>\$[\d.]+</td><td>\$([\d.]+)</td>', page)]
+    assert 83 in costs, costs
 
     oid = checkout(staff_client, [line(iid, 2)], url=POS, cash_received=400).get_json()['order_id']
     assert _ing(app, '測試牛肉')['stock'] == 700 and _ing(app, '測試麵條')['stock'] == 8
@@ -262,17 +269,20 @@ def test_recipe_consume_restore_and_block(app, admin_client, staff_client, kitch
     assert staff_client.get('/admin/inventory').status_code == 403
 
 
-def test_inventory_disabled_does_not_consume(app, staff_client, store_settings):
+def test_inventory_disabled_does_not_consume(app, admin_client, staff_client, store_settings):
+    # 自己建立原料與配方 (不依賴前一個測試)：先開啟原物料設定好配方，再關閉
+    store_settings('inventory', enabled=True, block_when_short=False)
+    admin_client.post('/admin/inventory', data={'action': 'add', 'name': '停用扣料豬肉', 'unit': 'g', 'stock': '1000',
+                                                'low_threshold': '0', 'unit_cost': '0.5'})
+    pork = _ing(app, '停用扣料豬肉')
+    iid = make_item(app, '停用扣料便當', price=120, stock=100)
+    admin_client.post('/admin/inventory', data={'action': 'recipe', 'menu_item_id': iid,
+                                                'ingredient_id': [pork['id'], ''], 'quantity': ['100', '']})
+    with app.app_context():
+        assert RecipeLine.query.filter_by(menu_item_id=iid).count() == 1, '配方應已建立'
     store_settings('inventory', enabled=False)
+    r = checkout(staff_client, [line(iid)], url=POS, cash_received=120)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _ing(app, '停用扣料豬肉')['stock'] == pork['stock']
     with app.app_context():
-        item = MenuItem.query.filter_by(name='配方牛肉麵').first()
-        iid = item.id if item else make_item(app, '配方牛肉麵', price=180, stock=100)
-    before = _ing(app, '測試牛肉')['stock'] if _ing_exists(app, '測試牛肉') else None
-    assert checkout(staff_client, [line(iid)], url=POS, cash_received=180).status_code == 200
-    if before is not None:
-        assert _ing(app, '測試牛肉')['stock'] == before
-
-
-def _ing_exists(app, name):
-    with app.app_context():
-        return Ingredient.query.filter_by(name=name).first() is not None
+        assert StockMovement.query.filter_by(order_id=r.get_json()['order_id']).count() == 0

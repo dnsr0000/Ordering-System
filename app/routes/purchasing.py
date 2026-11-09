@@ -83,6 +83,19 @@ def index():
                            labels=purchasing_service.STATUS_LABELS)
 
 
+def _apply_draft_edits(order, f):
+    """草稿編輯表單的欄位：品項數量 / 單價、加入原料、預計到貨、備註、供應商"""
+    qty = {ln.id: safe_float(f.get(f'qty__{ln.id}'), ln.quantity) for ln in order.lines}
+    cost = {ln.id: safe_float(f.get(f'cost__{ln.id}'), None) for ln in order.lines}
+    purchasing_service.update_lines(order, qty, cost, safe_int(f.get('add_ingredient_id'), 0),
+                                    safe_float(f.get('add_qty'), 0))
+    if order.status == 'draft':
+        order.expected_on = parse_date(f.get('expected_on'), '預計到貨日')
+        order.note = (f.get('note') or '').strip()[:200]
+        if 'supplier_id' in f:
+            order.supplier_id = _supplier(f.get('supplier_id')).id if f.get('supplier_id') else None
+
+
 @purchasing_bp.route('/admin/purchasing/po/<int:po_id>', methods=['GET', 'POST'], endpoint='po')
 @permission_required('inventory')
 def po(po_id):
@@ -91,17 +104,13 @@ def po(po_id):
         f = request.form
         action = f.get('action')
         if action == 'save':
-            qty = {ln.id: safe_float(f.get(f'qty__{ln.id}'), ln.quantity) for ln in order.lines}
-            cost = {ln.id: safe_float(f.get(f'cost__{ln.id}'), None) for ln in order.lines}
-            purchasing_service.update_lines(order, qty, cost, safe_int(f.get('add_ingredient_id'), 0),
-                                            safe_float(f.get('add_qty'), 0))
-            if order.status == 'draft':
-                order.expected_on = parse_date(f.get('expected_on'), '預計到貨日')
-                order.note = (f.get('note') or '').strip()[:200]
-                if 'supplier_id' in f:
-                    order.supplier_id = _supplier(f.get('supplier_id')).id if f.get('supplier_id') else None
+            _apply_draft_edits(order, f)
             flash('已儲存', 'success')
         elif action == 'send':
+            # 草稿編輯表單上的「送出採購單」會一起帶上畫面上的欄位：先套用未儲存的修改再送出，
+            # 避免以舊數量送出 (Email) 給供應商；只帶 action=send 的舊版表單不含欄位，維持直接送出
+            if order.status == 'draft' and 'expected_on' in f:
+                _apply_draft_edits(order, f)
             emailed = purchasing_service.send(order, current_user.username)
             record_staff_audit('PO_SEND', details=f'送出採購單 {order.number}')
             flash(f'採購單已送出{"，並寄給供應商" if emailed else ""}', 'success')
@@ -109,7 +118,9 @@ def po(po_id):
             received = {}
             for ln in order.lines:
                 exp = parse_date(f.get(f'exp__{ln.id}'), '有效期限')
-                received[ln.id] = (safe_float(f.get(f'recv__{ln.id}'), ln.quantity), exp)
+                raw = f.get(f'recv__{ln.id}')
+                # 欄位完全沒送出才以訂購量收貨；有送出但清空 = 沒到貨 (0)，避免清空的品項被當成全數入庫
+                received[ln.id] = (ln.quantity if raw is None else safe_float(raw, 0), exp)
             purchasing_service.receive(order, received, current_user.username)
             record_staff_audit('PO_RECEIVE', details=f'採購單 {order.number} 收貨入庫')
             flash('已收貨入庫 (已建立批號)', 'success')
@@ -139,5 +150,7 @@ def forecast():
         target = date.fromisoformat(request.args.get('date') or '')
     except ValueError:
         target = date.today() + timedelta(days=1)
+    if not 2000 <= target.year <= 2100:
+        raise AppError('日期超出範圍')
     weeks = min(12, max(1, request.args.get('weeks', 4, type=int) or 4))
     return render_template('admin_forecast.html', f=forecast_service.forecast(target, weeks), weeks=weeks)

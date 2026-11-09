@@ -57,10 +57,14 @@ def index():
             if action == 'toggle_hook':
                 ep.is_active = not ep.is_active
                 ep.fail_streak = 0
+                if ep.is_active:
+                    _resume_deliveries(ep)
             elif action == 'delete_hook':
                 record_staff_audit('WEBHOOK', details=f'刪除 Webhook「{ep.name}」')
                 db.session.delete(ep)
             else:
+                if not ep.is_active:   # 停用中的端點不會送出 (原本顯示「約 15 秒內送出」，數小時後再轉為失敗並發警示)
+                    raise AppError('端點已停用，請先啟用再測試')
                 webhook_service.queue_ping(ep)
                 flash('已排入測試通知 (約 15 秒內送出)', 'success')
             db.session.commit()
@@ -73,6 +77,19 @@ def index():
             raise AppError('不支援的操作')
         return redirect(url_for('integrations.index'))
     return _integrations_page()
+
+
+def _resume_deliveries(ep, now=None):
+    """端點重新啟用：停用期間待送的事件立即送出；因「端點已停用」而轉為失敗的事件改回待送 (不必逐筆按「重送」)"""
+    from sqlalchemy import update
+    now = now or datetime.now()
+    base = (WebhookDelivery.tenant_id == ep.tenant_id, WebhookDelivery.endpoint_id == ep.id)
+    db.session.execute(update(WebhookDelivery).where(*base, WebhookDelivery.status == 'pending')
+                       .values(next_attempt_at=now).execution_options(synchronize_session=False))
+    db.session.execute(update(WebhookDelivery).where(*base, WebhookDelivery.status == 'failed',
+                                                     WebhookDelivery.last_error == '端點已停用')
+                       .values(status='pending', attempts=0, next_attempt_at=now)
+                       .execution_options(synchronize_session=False))
 
 
 def _integrations_page(new_key=None):
@@ -119,7 +136,9 @@ def admin():
             d = device_service.create(g.tenant_id, f.get('name'), f.get('kind'), f.get('note'))
             record_staff_audit('DEVICE', details=f'新增裝置「{d.name}」({d.kind_label})')
             db.session.commit()
-            flash(f'已新增「{d.name}」，請在該裝置開啟 /device/pair 輸入配對碼 {d.pair_code} (15 分鐘內有效)', 'success')
+            # 配對網址帶店家代號：全新瀏覽器 (沒有員工登入、沒開過 /shop/<代號>) 才不會在預設店家底下查配對碼
+            flash(f'已新增「{d.name}」，請在該裝置開啟 {url_for("devices.pair", shop=g.tenant.slug)} '
+                  f'輸入配對碼 {d.pair_code} (15 分鐘內有效)', 'success')
         else:
             d = get_own(Device, f.get('device_id'), '裝置')
             if action == 'lock':
@@ -135,7 +154,8 @@ def admin():
                 flash(f'「{d.name}」下次回報時會重新整理頁面', 'success')
             elif action == 'pair':
                 code = device_service.new_pair_code(d)
-                flash(f'「{d.name}」的新配對碼：{code} (15 分鐘內有效；配對後舊的瀏覽器失效)', 'success')
+                flash(f'「{d.name}」的新配對碼：{code} (在該裝置開啟 {url_for("devices.pair", shop=g.tenant.slug)}；'
+                      f'15 分鐘內有效；配對後舊的瀏覽器失效)', 'success')
             elif action == 'delete':
                 record_staff_audit('DEVICE', details=f'刪除裝置「{d.name}」')
                 db.session.delete(d)

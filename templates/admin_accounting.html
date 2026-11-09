@@ -21,8 +21,8 @@
     <div class="d-flex flex-wrap gap-2 mb-3" id="accountingDownloads">
         <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='journal') }}">傳票 CSV</a>
         <a class="btn btn-outline-warning btn-sm" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='journal', format='xlsx') }}">傳票 Excel</a>
-        <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.accounting', start=start, end=end, export='invoices') }}">發票明細 CSV ({{ invoice_count }} 張)</a>
-        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('reports.accounting', start=start, end=end, export='invoices', format='xlsx') }}">發票明細 Excel</a>
+        <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='invoices') }}">發票明細 CSV ({{ invoice_count }} 張)</a>
+        <a class="btn btn-outline-warning btn-sm" href="{{ url_for('reports.accounting', start=start, end=end, node=node, export='invoices', format='xlsx') }}">發票明細 Excel</a>
     </div>
     {% for v in vouchers %}
     <section class="card rounded-4 p-3 mb-3" data-voucher="{{ v.no }}">
@@ -33,7 +33,7 @@
         </tbody></table>
     </section>
     {% else %}<div class="text-white-50" id="accountingEmpty">此期間沒有收款紀錄</div>{% endfor %}
-    <div class="small text-white-50">說明：儲值與禮物卡售出記為預收款項，以儲值金 / 禮物卡付款時沖減預收；外送平台代收記為應收帳款，待平台撥款後由會計沖帳。
+    <div class="small text-white-50">說明：儲值與禮物卡售出記為預收款項，以儲值金 / 禮物卡付款時沖減預收；儲值加值贈送的金額借記「儲值贈送 (行銷費用)」、貸記預收款項-儲值金；外送平台代收記為應收帳款，待平台撥款後由會計沖帳。
         匯出檔為通用格式，匯入前請對照會計軟體的欄位。</div>
 </main>
 {% endblock %}

@@ -3,6 +3,7 @@ import io
 import os
 import sqlite3
 import zipfile
+from contextlib import closing
 
 import pytest
 
@@ -145,7 +146,10 @@ def _schema(conn):
 
 
 def older_revision_backup_zip(folder):
-    """把目前的資料庫複製一份，執行最新遷移的 downgrade() 退回上一版結構，當作「舊版本的備份」(新增遷移後不必改這裡)"""
+    """
+    把目前的資料庫複製一份，由最新遷移往前執行 downgrade()，直到資料表結構與目前不同 (最新幾支可能只回填資料、
+    不改結構)，當作「舊版本的備份」(新增遷移後不必改這裡)
+    """
     import sqlalchemy as sa
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
@@ -162,12 +166,20 @@ def older_revision_backup_zip(folder):
     dst.close()
     cfg = AlembicConfig()
     cfg.set_main_option('script_location', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'migrations'))
-    head = ScriptDirectory.from_config(cfg).get_revision(head_revision())
+    script = ScriptDirectory.from_config(cfg)
+    rev = script.get_revision(head_revision())
+    with closing(sqlite3.connect(path)) as conn:
+        current = _schema(conn)
     engine = sa.create_engine(f'sqlite:///{path}')
-    with engine.begin() as conn:
-        with Operations.context(MigrationContext.configure(conn)):
-            head.module.downgrade()
-        conn.execute(sa.text('UPDATE alembic_version SET version_num = :v'), {'v': head.down_revision})
+    for _ in range(10):
+        with engine.begin() as conn:
+            with Operations.context(MigrationContext.configure(conn)):
+                rev.module.downgrade()
+            conn.execute(sa.text('UPDATE alembic_version SET version_num = :v'), {'v': rev.down_revision})
+            changed = _schema(conn.connection.driver_connection) != current
+        if changed:
+            break
+        rev = script.get_revision(rev.down_revision)
     engine.dispose()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as zf:
@@ -180,7 +192,8 @@ def older_revision_backup_zip(folder):
 @pytest.mark.skipif(not IS_SQLITE, reason='整庫還原只支援本機 SQLite')
 def test_restore_older_backup_upgrades_immediately(app, monkeypatch, file_locked):
     db_dir = app.config['DATABASE_DIR']
-    with sqlite3.connect(os.path.join(db_dir, 'menu.db')) as live:
+    # sqlite3 連線的 with 只負責 commit / rollback 不會關閉：沒關的話 Windows 上 -wal 無法刪除，換檔路徑根本測不到
+    with closing(sqlite3.connect(os.path.join(db_dir, 'menu.db'))) as live:
         expected_schema = _schema(live)
     backup = older_revision_backup_zip(db_dir)
     probe_path = os.path.join(db_dir, 'older_probe.db')
@@ -200,12 +213,17 @@ def test_restore_older_backup_upgrades_immediately(app, monkeypatch, file_locked
                 raise PermissionError(5, '存取被拒', str(dst))
             return real_replace(src, dst, *a, **k)
         monkeypatch.setattr(os, 'replace', locked_replace)
+    from app.services import backup_service
+    real_install, installed = backup_service._install_restored_database, []
+    monkeypatch.setattr(backup_service, '_install_restored_database',
+                        lambda *a, **k: installed.append(real_install(*a, **k)) or installed[-1])
 
     admin = login_staff(app, 'admin_test')  # 前一次還原已換掉資料庫，重新登入
     r = admin.post('/admin/restore_backup', content_type='multipart/form-data',
                    data={'restore_db': '1', 'backup_zip': (io.BytesIO(backup), 'older.zip')})
     assert r.status_code == 302, r.get_data(as_text=True)[:300]
     assert_flash(admin, '還原完成')
+    assert installed == ['in-place' if file_locked else 'replace'], installed
 
     conn = sqlite3.connect(os.path.join(db_dir, 'menu.db'))
     try:

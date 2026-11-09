@@ -58,9 +58,39 @@ def _snapshot_database(src_path, dest_path):
         src.close()
 
 
+_ARCHIVE_DB_RE = re.compile(r'^archive_t\d{1,9}\.db$')
+
+
+def archive_db_dir():
+    """舊資料封存檔所在資料夾 (database/archive，檔名 archive_t<店家>.db)"""
+    return os.path.join(current_app.config['DATABASE_DIR'], 'archive')
+
+
+def _archive_db_files():
+    folder = archive_db_dir()
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if _ARCHIVE_DB_RE.match(n)]
+
+
+def write_archive_snapshots(zf, tmp_dir):
+    """把每個封存檔的一致性快照 (Online Backup API) 寫進備份包的 archive/ 目錄；沒有封存資料夾就略過"""
+    for src in _archive_db_files():
+        name = os.path.basename(src)
+        snap = os.path.join(tmp_dir, name)
+        _snapshot_database(src, snap)
+        try:
+            zf.write(snap, arcname='archive/' + name)
+        finally:
+            try:
+                os.remove(snap)
+            except OSError:
+                pass
+
+
 def create_full_backup_zip():
     """
-    建立完整系統備份包（SQLite 資料庫一致性快照 + 會員照片 + 菜單照片）。
+    建立完整系統備份包（SQLite 資料庫一致性快照 + 舊資料封存檔快照 + 會員照片 + 菜單照片）。
     注意：此備份包含「所有店家」的資料，路由層僅允許平台管理者使用。
     """
     require_sqlite()
@@ -73,6 +103,7 @@ def create_full_backup_zip():
                 snapshot_path = os.path.join(tmp_dir, 'menu.db')
                 _snapshot_database(db_path, snapshot_path)
                 zf.write(snapshot_path, arcname='menu.db')
+            write_archive_snapshots(zf, tmp_dir)
 
             if os.path.exists(current_app.config['UPLOAD_FOLDER_MEMBER']):
                 for root, _, files in os.walk(current_app.config['UPLOAD_FOLDER_MEMBER']):
@@ -207,14 +238,100 @@ def _run_post_restore_upgrade(app):
         try:
             with app.app_context():
                 upgrade_database()
-        except Exception as e:  # noqa: BLE001
+        except BaseException as e:  # noqa: BLE001  含 SystemExit (遷移工具遇錯 sys.exit)：執行緒內會被靜默吞掉、誤報成功
             errors.append(e)
 
     t = threading.Thread(target=_worker, name='post-restore-migration')
     t.start()
     t.join()
     if errors:
-        raise RuntimeError(f'資料庫已還原，但自動升級失敗，請重新啟動系統後再確認：{errors[0]}')
+        err = errors[0]
+        detail = f'{type(err).__name__} (exit {err.code})' if isinstance(err, SystemExit) else str(err)
+        raise RuntimeError(f'資料庫已還原，但自動升級失敗，請重新啟動系統後再確認：{detail}')
+
+
+def _check_backup_revision(path):
+    """
+    備份內資料庫的結構版本 (alembic_version) 必須是目前程式認得的版本：較新版本主機的備份還原到舊版程式，
+    升級會失敗、重開機後伺服器也起不來。認不得就拒絕還原 (丟出 ValueError，現有資料庫不會被更動)。
+    """
+    conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+    try:
+        try:
+            rows = [r[0] for r in conn.execute('SELECT version_num FROM alembic_version')]
+        except sqlite3.DatabaseError:
+            return   # 沒有版本表 (很舊的備份)：維持原本行為，交給還原後的升級處理
+    finally:
+        conn.close()
+    try:
+        from alembic.script import ScriptDirectory
+        script = ScriptDirectory.from_config(current_app.extensions['migrate'].migrate.get_config())
+    except Exception:  # noqa: BLE001  遷移設定無法載入 (例如未初始化 Flask-Migrate)：無從比對，不擋
+        logger.warning('無法載入資料庫遷移設定，略過備份版本檢查', exc_info=True)
+        return
+    for rev in rows:
+        try:
+            known = script.get_revision(rev) is not None
+        except Exception:  # noqa: BLE001  alembic：Can't locate revision (ResolutionError / CommandError)
+            known = False
+        if not known:
+            raise ValueError(f'備份的資料庫版本 ({rev}) 比目前程式新或無法辨識，請先把程式更新到與備份相同或更新的版本再還原！')
+
+
+def _extract_db_entry(zf, info, folder, prefix):
+    """把備份包內的一個資料庫檔解壓到 folder 的暫存檔 (限制大小並驗證)；回傳暫存檔路徑，不合格時刪除暫存檔並丟出 ValueError"""
+    if info.file_size > current_app.config['MAX_RESTORE_DB_SIZE']:
+        raise ValueError('備份包內的資料庫檔案超過大小上限，已拒絕還原！')
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=prefix, suffix='.tmp', dir=folder)
+    try:
+        with os.fdopen(fd, 'wb') as out, zf.open(info) as src:
+            written = 0
+            while True:
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > current_app.config['MAX_RESTORE_DB_SIZE']:
+                    raise ValueError('備份包內的資料庫檔案超過大小上限，已拒絕還原！')
+                out.write(chunk)
+        _validate_sqlite_file(tmp_path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+    return tmp_path
+
+
+def _archive_entries(zf):
+    """備份包內的封存檔 (archive/archive_t<店家>.db)；舊版備份沒有 archive/ 時回傳空清單"""
+    out = []
+    for info in zf.infolist():
+        parts = [p for p in info.filename.replace('\\', '/').split('/') if p not in ('', '.')]
+        if len(parts) == 2 and parts[0].lower() == 'archive' and _ARCHIVE_DB_RE.match(parts[1]):
+            out.append((info, parts[1]))
+    return out
+
+
+def _install_archive_files(planned):
+    """資料庫還原後把封存檔放回 database/archive (覆蓋前另存 .bak-<時間>)；單一檔案失敗只記錄，不中斷還原"""
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    restored = 0
+    for tmp_path, dest in planned:
+        try:
+            if os.path.exists(dest):
+                _snapshot_database(dest, f'{dest}.bak-{stamp}')
+            _install_restored_database(tmp_path, dest)
+            restored += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning('還原封存檔失敗，已略過：%s (%s)', os.path.basename(dest), e)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+    return restored
 
 
 def restore_system_backup(file_storage, restore_db=True, restore_photos=True, restore_menu_photos=True, overwrite_photos=True):
@@ -238,6 +355,7 @@ def restore_system_backup(file_storage, restore_db=True, restore_photos=True, re
         photo_plan = _plan_photo_restore(zf, restore_photos, restore_menu_photos)
 
         tmp_db_path = None
+        archive_plan = []   # [(暫存檔, 目的地)]：封存檔與 menu.db 一起還原 (舊版備份沒有 archive/ 時保留現有封存檔)
         db_path = _resolve_live_db_path()
         if restore_db:
             db_entry = next(
@@ -245,27 +363,19 @@ def restore_system_backup(file_storage, restore_db=True, restore_photos=True, re
                 None
             )
             if db_entry is not None:
-                if db_entry.file_size > current_app.config['MAX_RESTORE_DB_SIZE']:
-                    raise ValueError('備份包內的資料庫檔案超過大小上限，已拒絕還原！')
-                os.makedirs(os.path.dirname(db_path), exist_ok=True)
-                fd, tmp_db_path = tempfile.mkstemp(prefix='menu.db.restore-', suffix='.tmp', dir=os.path.dirname(db_path))
+                tmp_db_path = _extract_db_entry(zf, db_entry, os.path.dirname(db_path), 'menu.db.restore-')
                 try:
-                    with os.fdopen(fd, 'wb') as out, zf.open(db_entry) as src:
-                        written = 0
-                        while True:
-                            chunk = src.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            written += len(chunk)
-                            if written > current_app.config['MAX_RESTORE_DB_SIZE']:
-                                raise ValueError('備份包內的資料庫檔案超過大小上限，已拒絕還原！')
-                            out.write(chunk)
-                    _validate_sqlite_file(tmp_db_path)
+                    _check_backup_revision(tmp_db_path)
+                    archive_folder = archive_db_dir()
+                    for info, name in _archive_entries(zf):
+                        tmp = _extract_db_entry(zf, info, archive_folder, f'{name}.restore-')
+                        archive_plan.append((tmp, os.path.join(archive_folder, name)))
                 except Exception:
-                    try:
-                        os.remove(tmp_db_path)
-                    except OSError:
-                        pass
+                    for leftover in [tmp_db_path] + [t for t, _ in archive_plan]:
+                        try:
+                            os.remove(leftover)
+                        except OSError:
+                            pass
                     raise
 
         # ---------- 階段 2：替換資料庫 ----------
@@ -279,11 +389,13 @@ def restore_system_backup(file_storage, restore_db=True, restore_photos=True, re
                 _install_restored_database(tmp_db_path, db_path)
                 restored_db_status = True
             except Exception as e:  # noqa: BLE001
-                try:
-                    os.remove(tmp_db_path)
-                except OSError:
-                    pass
+                for leftover in [tmp_db_path] + [t for t, _ in archive_plan]:
+                    try:
+                        os.remove(leftover)
+                    except OSError:
+                        pass
                 raise RuntimeError(f'替換資料庫檔案失敗 (現有資料庫未被更動)：{e}')
+            _install_archive_files(archive_plan)
 
         # ---------- 階段 3：還原相片 ----------
         for info, kind, sub_dir, safe_name in photo_plan:
@@ -294,16 +406,25 @@ def restore_system_backup(file_storage, restore_db=True, restore_photos=True, re
                 continue
             if os.path.exists(dest_path) and not overwrite_photos:
                 continue
-            data = zf.read(info)
+            try:
+                # 資料庫可能已經替換：單張相片損毀 (CRC 不符) 或無法寫入只略過該檔，不中斷還原 (後面還要執行升級)
+                data = zf.read(info)
+            except Exception as e:  # noqa: BLE001  BadZipFile / zlib.error
+                logger.warning("還原略過無法讀取的相片：%s (%s)", safe_name, e)
+                continue
             try:
                 # 內容必須真的是圖片，避免把 .jpg 檔名偽裝的網頁/腳本寫進可被公開存取的 static 目錄
                 Image.open(io.BytesIO(data)).verify()
             except Exception:
                 logger.warning("還原略過非圖片內容的檔案：%s", safe_name)
                 continue
-            os.makedirs(target_dir, exist_ok=True)
-            with open(dest_path, 'wb') as f_out:
-                f_out.write(data)
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                with open(dest_path, 'wb') as f_out:
+                    f_out.write(data)
+            except OSError as e:
+                logger.warning("還原相片寫入失敗，已略過：%s (%s)", safe_name, e)
+                continue
             if kind == 'member':
                 restored_photo_count += 1
             else:

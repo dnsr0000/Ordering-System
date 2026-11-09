@@ -14,6 +14,25 @@ from app.utils import find_own, get_own
 gift_cards_bp = Blueprint('gift_cards', __name__)
 
 
+def _search(query, digits):
+    """
+    卡號搜尋只比對畫面上看得到的部分：完整 16 碼 (精確比對)、前 4 碼 / 末 4 碼，或前 4 碼 + 末 4 碼 (8 碼)。
+    16 碼卡號就是付款憑證，任意子字串比對可以「已知前綴 + 0~9」逐位還原被遮罩的中間 8 碼。
+    其他長度不搜尋 (回傳 None)。
+    """
+    code = GiftCard.code
+    if not digits:
+        return query
+    if len(digits) == giftcard_service.CODE_LENGTH:
+        return query.filter(code == digits)
+    if len(digits) == 4:
+        return query.filter(code.startswith(digits, autoescape=True) | code.endswith(digits, autoescape=True))
+    if len(digits) == 8:
+        return query.filter(code.startswith(digits[:4], autoescape=True), code.endswith(digits[4:], autoescape=True))
+    flash('卡號搜尋請輸入完整 16 碼，或卡號前 4 碼 / 末 4 碼 (前 4 + 末 4 共 8 碼也可以)', 'warning')
+    return None
+
+
 @gift_cards_bp.route('/admin/gift_cards', methods=['GET', 'POST'], endpoint='index')
 @permission_required('coupons')
 def index():
@@ -28,11 +47,8 @@ def index():
         flash(f'已作廢禮物卡 {card.masked_code}，餘額 ${left} 歸零', 'info')
         return redirect(url_for('gift_cards.index'))
     q = (request.args.get('q') or '').strip()
-    query = GiftCard.query
-    digits = giftcard_service.normalize_code(q)
-    if digits:
-        query = query.filter(GiftCard.code.like(f'%{digits}%'))
-    cards = query.order_by(GiftCard.id.desc()).limit(200).all()
+    query = _search(GiftCard.query, giftcard_service.normalize_code(q))
+    cards = query.order_by(GiftCard.id.desc()).limit(200).all() if query is not None else []
     balances = dict(db.session.query(GiftCardLedger.gift_card_id, func.coalesce(func.sum(GiftCardLedger.delta), 0))
                     .filter(GiftCardLedger.gift_card_id.in_([c.id for c in cards]))
                     .group_by(GiftCardLedger.gift_card_id).all()) if cards else {}

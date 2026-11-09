@@ -37,6 +37,23 @@
         if (day.selectedOptions[0] && day.selectedOptions[0].disabled) day.value = '';
     }
 
+    /**
+     * 生日為選填，但要填就三欄全填 (同後端 parse_birthday)：只選一部分時，在第一個空白的下拉選單設定驗證訊息，
+     * 瀏覽器在送出前就會擋下並提示，不必送到後端被擋、整份表單 (含照片、驗證碼) 清空。
+     * report=true 時立即顯示提示 (改年月使已選的日 / 月失效而被清空時，讓使用者知道要重選)。
+     */
+    function validate(year, month, day, report) {
+        const parts = [year, month, day];
+        parts.forEach((select) => select.setCustomValidity(''));
+        const empty = parts.filter((select) => !select.value);
+        if (!empty.length || empty.length === parts.length) return;
+        const msg = typeof Kiosk !== 'undefined' && Kiosk.t
+            ? Kiosk.t('reg_birthday_incomplete', '請完整選擇生日的年、月、日')
+            : '請完整選擇生日的年、月、日';
+        empty[0].setCustomValidity(msg);
+        if (report && typeof empty[0].reportValidity === 'function') empty[0].reportValidity();
+    }
+
     document.querySelectorAll('[data-birthday-select]').forEach((group) => {
         const part = (name) => group.querySelector(`select[data-part="${name}"]`);
         const year = part('year');
@@ -47,7 +64,13 @@
         fill(year, thisYear, thisYear - YEARS);
         fill(month, 1, 12);
         fill(day, 1, 31);
-        group.addEventListener('change', () => sync(year, month, day));
+        group.addEventListener('change', () => {
+            const before = [month.value, day.value];
+            sync(year, month, day);
+            const cleared = (before[0] && !month.value) || (before[1] && !day.value);
+            validate(year, month, day, cleared);
+        });
         sync(year, month, day);
+        validate(year, month, day, false);
     });
 })();

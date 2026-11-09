@@ -23,20 +23,25 @@
                 <h2 class="h5 fw-bold text-warning">會員等級</h2>
                 <p class="small text-white-50">累積消費達門檻自動升級 (只升不降)。贈點倍數套用在結帳贈點；會員折扣在優惠券之後、點數折抵之前計算。</p>
                 {% for t in tiers %}
-                <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="tier_id" value="{{ t.id }}">
+                <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
+                <form method="POST" class="d-flex flex-wrap gap-1 align-items-center">{{ csrf() }}<input type="hidden" name="tier_id" value="{{ t.id }}">
                     <span class="badge bg-{{ t.color }} {{ 'text-dark' if t.color in ('warning', 'info', 'light') }}">{{ t.name }}</span>
-                    <input class="form-control form-control-sm" name="name" value="{{ t.name }}" aria-label="名稱" style="width: 6rem">
-                    <input class="form-control form-control-sm" type="number" name="min_spend" value="{{ t.min_spend }}" aria-label="累積消費門檻" title="累積消費門檻" style="width: 7rem">
+                    <input class="form-control form-control-sm" name="name" value="{{ t.name }}" aria-label="名稱" maxlength="30" required style="width: 6rem">
+                    <input class="form-control form-control-sm" type="number" name="min_spend" value="{{ t.min_spend }}" min="0" max="{{ max_tier_spend }}" aria-label="累積消費門檻" title="累積消費門檻" style="width: 7rem">
                     <input class="form-control form-control-sm" type="number" step="0.1" name="points_multiplier" value="{{ t.points_multiplier }}" aria-label="贈點倍數" title="贈點倍數" style="width: 5rem">
                     <input class="form-control form-control-sm" type="number" name="discount_percent" value="{{ t.discount_percent }}" aria-label="折扣%" title="會員折扣 %" style="width: 4.5rem">
                     <select class="form-select form-select-sm" name="color" aria-label="顏色" style="width: 6.5rem">{% for c in colors %}<option value="{{ c }}" {{ 'selected' if t.color == c }}>{{ c }}</option>{% endfor %}</select>
                     <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit_tier">儲存</button>
-                    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete_tier" aria-label="刪除"><i class="bi bi-trash"></i></button>
                 </form>
+                <form method="POST" class="d-inline" data-confirm="確定要刪除等級「{{ t.name }}」？目前有 {{ tier_counts.get(t.id, 0) }} 位會員屬於此等級，刪除後會全部改為無等級 (手動指定的等級也無法復原)。">{{ csrf() }}
+                    <input type="hidden" name="action" value="delete_tier"><input type="hidden" name="tier_id" value="{{ t.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" aria-label="刪除等級 {{ t.name }}"><i class="bi bi-trash"></i></button>
+                </form>
+                </div>
                 {% else %}<div class="small text-white-50 mb-2">尚未設定等級</div>{% endfor %}
                 <form method="POST" class="row g-1 align-items-end mt-2" id="addTierForm">{{ csrf() }}<input type="hidden" name="action" value="add_tier">
                     <div class="col-3"><label class="form-label small mb-0" for="tier-name">名稱</label><input class="form-control form-control-sm" id="tier-name" name="name" placeholder="金卡" required></div>
-                    <div class="col-3"><label class="form-label small mb-0" for="tier-min">累積消費</label><input class="form-control form-control-sm" id="tier-min" type="number" name="min_spend" value="0"></div>
+                    <div class="col-3"><label class="form-label small mb-0" for="tier-min">累積消費</label><input class="form-control form-control-sm" id="tier-min" type="number" name="min_spend" value="0" min="0" max="{{ max_tier_spend }}"></div>
                     <div class="col-2"><label class="form-label small mb-0" for="tier-mul">贈點倍數</label><input class="form-control form-control-sm" id="tier-mul" type="number" step="0.1" name="points_multiplier" value="1"></div>
                     <div class="col-2"><label class="form-label small mb-0" for="tier-disc">折扣%</label><input class="form-control form-control-sm" id="tier-disc" type="number" name="discount_percent" value="0"></div>
                     <div class="col-2"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
@@ -59,7 +64,8 @@
             <div class="card rounded-4 p-3 mb-4" id="birthdayCard">
                 <h2 class="h5 fw-bold">生日禮</h2>
                 <div class="small text-white-50 mb-2">{% if cfg.birthday_enabled %}已啟用：每天自動送給本月壽星 (點數 {{ cfg.birthday_points }}{% if cfg.birthday_coupon_code %}、優惠券 {{ cfg.birthday_coupon_code }}{% endif %})；分店主機不執行，由總店 / 單機送出。{% else %}尚未啟用生日禮。{% endif %}</div>
-                <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="birthday_now"><button class="btn btn-outline-warning btn-sm" type="submit" {{ 'disabled' if not cfg.birthday_enabled }}>立即送出本月生日禮</button></form>
+                {% if is_node %}<div class="small text-warning">這台是分店主機：生日禮由總店 / 線上端送出，這裡無法手動送出。</div>
+                {% else %}<form method="POST">{{ csrf() }}<input type="hidden" name="action" value="birthday_now"><button class="btn btn-outline-warning btn-sm" type="submit" {{ 'disabled' if not cfg.birthday_enabled }}>立即送出本月生日禮</button></form>{% endif %}
             </div>
             <div class="card rounded-4 p-3" id="walletLedgerCard">
                 <h2 class="h6 fw-bold">最近儲值金異動</h2>
@@ -145,7 +151,7 @@
                                     <button class="btn btn-outline-warning btn-sm me-1" type="button" data-bs-toggle="collapse" data-bs-target="#member-pro-{{ u.id }}" aria-expanded="false" aria-controls="member-pro-{{ u.id }}">
                                         <i class="bi bi-sliders"></i> 進階
                                     </button>
-                                    <form action="{{ url_for('admin.delete_user', id=u.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？">
+                                    <form action="{{ url_for('admin.delete_user', id=u.id) }}" method="POST" class="d-inline" data-confirm="確定要刪除會員【{{ u.name }}】及其所有點數與紀錄嗎？{% if (u.wallet_balance or 0) > 0 %}此會員儲值金尚有 ${{ u.wallet_balance }} 餘額，{% endif %}儲值金有餘額或寄杯尚未兌換完時無法刪除，請先辦理退費。刪除後訂單會保留但去識別化 (移除姓名)，客服對話會一併刪除，無法復原。">
                                         {{ csrf() }}
                                         <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> 刪除</button>
                                     </form>
@@ -163,7 +169,7 @@
                                     </form>
                                     {% if current_user.role == 'owner' and cfg.wallet_enabled %}
                                     <form method="POST" class="d-flex gap-1 align-items-center">{{ csrf() }}<input type="hidden" name="action" value="wallet_adjust"><input type="hidden" name="user_id" value="{{ u.id }}">
-                                        <input class="form-control form-control-sm" type="number" name="delta" placeholder="儲值金 ±" aria-label="儲值金調整" style="width: 6rem">
+                                        <input class="form-control form-control-sm" type="number" name="delta" min="-{{ max_wallet_adjust }}" max="{{ max_wallet_adjust }}" placeholder="儲值金 ±" aria-label="儲值金調整" style="width: 6rem">
                                         <input class="form-control form-control-sm" name="note" placeholder="調整原因" aria-label="調整原因">
                                         <button class="btn btn-sm btn-outline-warning text-nowrap" type="submit">調整儲值金</button></form>
                                     {% endif %}

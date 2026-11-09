@@ -3,7 +3,7 @@
  * 顧客在視窗裡確認數量後才加入購物車 (價格由 makeLine 依菜單計算，與手動點選完全相同)。
  * 沒有語音辨識 (Firefox、非 HTTPS) 時仍可用文字輸入。
  */
-import { $, html, menuItems, modal, pageData, ui } from './core.js';
+import { $, html, isItemAvailable, menuItems, modal, pageData, ui } from './core.js';
 import { addLine, makeLine } from './cart.js';
 
 const LANGS = { zh: 'zh-TW', en: 'en-US', ja: 'ja-JP' };
@@ -114,7 +114,10 @@ async function parse() {
     $('voiceParseBtn').disabled = true;
     try {
         const res = await Kiosk.api('/api/voice/parse', { json: { text } });
-        parsed = (res.lines || []).map((l) => ({ ...l, quantity: Math.max(1, Number(l.quantity) || 1) }));
+        // 解析結果的 available 沒算到原料不足 / 線上端分店庫存：以點餐頁的即時菜單 (menuItems) 一併判斷
+        parsed = (res.lines || []).map((l) => ({
+            ...l, available: Boolean(l.available) && isItemAvailable(l.menu_item_id), quantity: Math.max(1, Number(l.quantity) || 1),
+        }));
         $('voiceHeard').textContent = `${t('voice_heard', '聽到：')}${res.text || text}`;
         $('voiceHeard').classList.remove('d-none');
         // 規則以外 (雲端 AI 或本機模型) 解析的結果要提醒顧客確認
@@ -140,10 +143,16 @@ function changeQty(idx, delta) {
 }
 
 function addAll() {
+    // 解析後才售完 (live.js 輪詢更新 menuItems) 的品項：標成不可點並重畫，留在視窗讓顧客看到提示後再確認
+    let changed = false;
+    parsed.forEach((line) => {
+        if (line.available && !isItemAvailable(line.menu_item_id)) { line.available = false; changed = true; }
+    });
+    if (changed) { render(); return; }
     let added = 0;
     parsed.forEach((line) => {
         const item = menuItems.get(Number(line.menu_item_id));
-        if (!item || !line.available || line.quantity <= 0) return;
+        if (!item || !line.available || !item.is_available || line.quantity <= 0) return;   // 解析後才售完 (live.js 更新) 的也不加入
         const texts = [];
         if (item.modifiers === 'ice_sugar') texts.push(`${line.ice || '正常冰'}/${line.sugar || '全糖'}`);
         if (item.modifiers === 'spicy' && line.spicy) texts.push(line.spicy);

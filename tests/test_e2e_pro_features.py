@@ -10,7 +10,7 @@ from app.models.order import Order
 from app.models.shift import CashShift
 from app.services import settings_service
 from tests.conftest import ADMIN_PASSWORD, ADMIN_USERNAME
-from tests.support import browser_staff_login, checkout, line, login_staff, seed_demo
+from tests.support import E2E_STAFF_PASSWORD, browser_staff_login, checkout, line, login_staff, seed_demo
 
 pytestmark = pytest.mark.e2e
 
@@ -44,14 +44,16 @@ def test_pro_admin_pages_load(page, path):
     page.wait_for_load_state('networkidle')
 
 
-def test_every_settings_section_renders(page):
+def test_every_settings_section_renders(page, store_settings):
     browser_staff_login(page, ADMIN_USERNAME, ADMIN_PASSWORD)
     for key in settings_service.SECTIONS:
         assert page.goto(f'/admin/settings/{key}').ok, key
         page.wait_for_load_state('networkidle')
-    # 金鑰欄位不回填到頁面
+    # 金鑰欄位不回填到頁面 (先存入金鑰，否則欄位本來就是空的，斷言驗不到任何東西)
+    store_settings('linepay', channel_secret='e2e-secret-xyz')
     assert page.goto('/admin/settings/linepay').ok
     expect(page.locator('input[type="password"]').first).to_have_value('')
+    assert 'e2e-secret-xyz' not in page.content()
 
 
 def test_public_pro_pages_load(app, page, store_settings):
@@ -185,7 +187,7 @@ def test_pos_live_orders_refund_modal(app, page):
     expect(page.locator('#posRefundModal')).to_be_visible()
 
 
-def test_customer_page_languages_and_invoice(app, page, store_settings):
+def test_customer_page_languages_and_invoice(app, page, store_settings, demo_data):
     store_settings('menu', languages=['en', 'ja'])
     store_settings('einvoice', enabled=True)
     assert page.goto('/?shop=default').ok
@@ -199,6 +201,19 @@ def test_customer_page_languages_and_invoice(app, page, store_settings):
     assert page.goto('/?lang=zh').ok
     page.wait_for_load_state('networkidle')
 
+    # 電子發票欄位：加入購物車 → 結帳確認視窗出現發票類型選單，選手機條碼後顯示載具輸入欄
+    page.locator(f'#menuList .menu-row[data-id="{demo_data["示範雞塊"]}"] [data-action="add"]').click()
+    page.locator('[data-bs-target="#cart-sidebar"]').click()
+    page.locator('#cart-sidebar.show').wait_for()
+    page.locator('[data-action="preview"]').click()
+    page.locator('#confirmModal.show').wait_for()
+    invoice_type = page.locator('#confirmModal #invoiceType')
+    expect(invoice_type).to_be_visible()
+    expect(page.locator('#invoiceValue')).to_be_hidden()
+    invoice_type.select_option('mobile')
+    expect(page.locator('#invoiceValue')).to_be_visible()
+    expect(page.locator('#invoiceValue')).to_have_attribute('placeholder', re.compile('手機條碼'))
+
 
 def test_admin_issue_coupon_and_split_ticket_view(app, page, admin_client):
     """後台：建立會員專屬券 → 按「發放」以手機清單發券 → 會員的票券視窗分成未使用 / 已使用 (近 7 天)"""
@@ -206,7 +221,8 @@ def test_admin_issue_coupon_and_split_ticket_view(app, page, admin_client):
 
     from app.models.coupon import Coupon, UserCoupon
     from tests.support import make_member
-    make_member(app, 'E2E 發券會員', '0968800001')
+    # 專屬號段 096881xxxx：避免與單元測試 (test_coupon_points_race_all_channels 的 0968800001) 合併執行時撞唯一索引
+    make_member(app, 'E2E 發券會員', '0968810001')
     admin_client.post('/admin/add_coupon', data={'title': 'E2E 專屬券', 'code': 'E2EGIFT', 'discount_type': 'fixed',
                                                  'discount_value': '20', 'reward_points': '0', 'member_only': '1',
                                                  'valid_days': '30'})
@@ -220,7 +236,7 @@ def test_admin_issue_coupon_and_split_ticket_view(app, page, admin_client):
     expect(page.locator('#issue-coupon-period')).to_contain_text('領取後 30 天')
     page.select_option('#issue-target', 'phones')
     expect(page.locator('#issue-phones-row')).to_be_visible()
-    page.fill('#issue-phones', '0968800001')
+    page.fill('#issue-phones', '0968810001')
     page.fill('#issue-quantity', '2')
     page.locator('#issueCouponForm button[type="submit"]').click()
     page.wait_for_load_state('networkidle')
@@ -233,7 +249,7 @@ def test_admin_issue_coupon_and_split_ticket_view(app, page, admin_client):
         db.session.commit()
     assert page.goto('/admin/members').ok
     page.wait_for_load_state('networkidle')
-    page.locator('tr', has_text='0968800001').locator('[data-action="user-coupons"]').click()
+    page.locator('tr', has_text='0968810001').locator('[data-action="user-coupons"]').click()
     body = page.locator('#userCouponsModalBody')
     expect(body).to_contain_text('未使用 (1)')
     expect(body).to_contain_text('已使用 / 已過期 (近 7 天，1)')
@@ -288,6 +304,7 @@ def test_security_page_2fa_setup_and_member_search(app, page):
     page.wait_for_load_state('networkidle')
     expect(page.locator('img.totp-qr')).to_be_visible()
     secret = page.locator('#totpSecret').inner_text().strip()
+    page.fill('#confirmTotpPassword', E2E_STAFF_PASSWORD)
     page.fill('#confirmTotpCode', security_service.totp_now(secret))
     page.locator('#confirmTotpForm button[type="submit"]').click()
     page.wait_for_load_state('networkidle')

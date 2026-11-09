@@ -2,8 +2,8 @@
  * 顧客自助點餐 (Kiosk) 頁面 (customer.js 的模組)：桌邊呼叫服務、套餐 / 客製化 / 加購視窗、寄杯、菜單篩選與排序。
  * 由 static/js/customer.js 載入 (ES module)；共用狀態與工具在 core.js，客製化視窗的 HTML / 讀回與套餐卡片版面在 static/js/shared/。
  */
-import { $, api, availableAddons, html, isItemAvailable, menuItems, modal, modifierOptions, pageData, state, ui } from './core.js';
-import { addLine, makeLine, remainingAddonQuota } from './cart.js';
+import { $, api, availableAddons, channelPrice, html, isItemAvailable, menuItems, modal, modifierOptions, pageData, state, ui } from './core.js';
+import { addLine, itemName, makeLine, remainingAddonQuota } from './cart.js';
 import * as mods from '../shared/modifiers.js';
 import { comboAvailable, comboCardHtml } from '../shared/combos.js';
 import { passRemaining } from '../shared/cartline.js';
@@ -13,7 +13,7 @@ export async function callService(btn) {
     btn.disabled = true;
     try {
         const res = await api('/api/table/call', { json: { kind: btn.dataset.kind } });
-        alert(`🔔 ${res.message}`);
+        alert(`🔔 ${res.message_i18n || res.message}`);
     } catch (err) {
         alert(`❌ ${err.message}`);
     } finally {
@@ -23,6 +23,12 @@ export async function callService(btn) {
 // ================================================================ 套餐 / 客製化
 /** 配餐 / 任選選項目前可點：以菜單的即時供應狀態為準 (live.js 會更新)，不在菜單裡的品項依後端標示 */
 const sideAvailable = (id, side) => isItemAvailable(id, side.is_available !== false);
+/**
+ * 套餐的 is_available 是頁面載入時依配餐庫存算出的靜態值 (live.js 不會更新)：配餐 / 任選選項都在菜單裡時
+ * 改以即時的 sideAvailable 判斷 (載入時配餐售完、之後補貨也能選)；有不在菜單裡的配餐時仍參考後端標示
+ */
+const liveCombo = (c) => ([...(c.sides || []), ...(c.choices || []).flatMap((g) => g.options || [])]
+    .every((s) => menuItems.has(Number(s.menu_item_id))) ? { ...c, is_available: true } : c);
 
 export function startAdd(itemId) {
     const item = menuItems.get(Number(itemId));
@@ -42,20 +48,22 @@ const COMBO_FOOTER = 'mt-3 pt-2 border-top border-secondary text-end';
 
 /** 單點 / 升級套餐卡片 (版面在 shared/combos.js；配餐或任選全部售完的套餐不能選) */
 export function renderComboCards(item) {
-    $('comboModalTitle').textContent = `【${item.name}】${ui.enjoy_how || '享用方式'}`;
+    $('comboModalTitle').textContent = `【${itemName(item.id, item.name)}】${ui.enjoy_how || '享用方式'}`;
+    // 與加入購物車 (makeLine) 相同：依價格通路 (內用 / 外帶 / 線上) 與會員價顯示
+    const base = channelPrice(item);
     const single = comboCardHtml({
         cardCls: COMBO_CARD,
         attrs: html`data-action="pick-combo" data-combo-id="" role="button" tabindex="0"`,
         headerCls: COMBO_HEADER,
         badge: html`<span class="badge bg-secondary">${ui.single_main || '單點主餐'}</span>`,
-        price: html`<span class="text-success fw-bold fs-5">$${item.price}</span>`,
-        title: html`<h5 class="fw-bold text-white mb-1">${item.name}${ui.single_suffix || ' (單點)'}</h5>`,
+        price: html`<span class="text-success fw-bold fs-5">$${base}</span>`,
+        title: html`<h5 class="fw-bold text-white mb-1">${itemName(item.id, item.name)}${ui.single_suffix || ' (單點)'}</h5>`,
         desc: html`<p class="text-white-50 small mb-0">${ui.single_desc || '僅單點本品項，不搭配任何附餐或飲品。'}</p>`,
         footerCls: COMBO_FOOTER,
         footer: html`<span class="btn btn-outline-light btn-sm fw-bold px-3">${ui.choose_single || '選擇單點'} <i class="bi bi-chevron-right"></i></span>`,
     });
     const combos = item.combos.map((c) => {
-        const sold = !comboAvailable(c, sideAvailable);
+        const sold = !comboAvailable(liveCombo(c), sideAvailable);
         return comboCardHtml({
             cardCls: `${COMBO_CARD} ${sold ? 'card-sold-out' : ''}`,
             attrs: sold ? '' : html`data-action="pick-combo" data-combo-id="${c.id}" role="button" tabindex="0"`,
@@ -63,7 +71,7 @@ export function renderComboCards(item) {
             badge: html`<span class="badge ${sold ? 'bg-secondary' : 'bg-warning text-dark fw-bold'}">${sold ? (ui.combo_sold_out || '配餐售罄') : (ui.combo_upgrade || '升級超值套餐')}</span>`,
             price: html`<div>
                             <span class="${sold ? 'text-white-50' : 'text-danger fw-bold fs-5'}">+$${c.price}</span>
-                            <small class="text-white-50 ms-1">(${ui.combo_total || '總價 $'}${Number(item.price) + Number(c.price)})</small>
+                            <small class="text-white-50 ms-1">(${ui.combo_total || '總價 $'}${base + Number(c.price)})</small>
                         </div>`,
             title: html`<h5 class="fw-bold ${sold ? 'text-white-50 text-decoration-line-through' : 'text-warning'} mb-1 combo-name">${c.name}</h5>`,
             desc: html`<p class="text-white-50 small mb-0">${c.description || ui.combo_desc_default || '含特選附餐與指定飲品組合'}</p>`,
@@ -79,6 +87,8 @@ export function renderComboCards(item) {
 export function pickCombo(comboId) {
     const item = state.pendingItem;
     if (!item) return;
+    // 立即取走：視窗淡出期間再點一次 (觸控連點) 不會重複加入
+    state.pendingItem = null;
     const combo = comboId ? (item.combos || []).find((c) => String(c.id) === String(comboId)) : null;
     // 等套餐視窗完全關閉後再開客製化視窗，避免兩個 Modal 的轉場互相干擾
     Kiosk.hideModalThen($('comboModal'), () => proceedToModifiers(item, combo, false));
@@ -111,13 +121,14 @@ export function proceedToModifiers(item, combo, isAddon, passId = 0) {
         return;
     }
     state.pendingSelection = { item, combo, isAddon, sides, choices, passId };
+    const name = itemName(item.id, item.name);   // 顯示用品名 (依語言)；makeLine 送後端的仍是中文原名
     let title;
-    if (isAddon) title = `${ui.addon_customize || '加購客製化 - '}${item.name}`;
-    else title = combo ? `${ui.customize_for || '客製化選擇 - '}${item.name} ${ui.combo_prefix || '[套餐: '}${combo.name}]` : `${ui.customize_for || '客製化選擇 - '}${item.name}`;
+    if (isAddon) title = `${ui.addon_customize || '加購客製化 - '}${name}`;
+    else title = combo ? `${ui.customize_for || '客製化選擇 - '}${name} ${ui.combo_prefix || '[套餐: '}${combo.name}]` : `${ui.customize_for || '客製化選擇 - '}${name}`;
     $('modifierModalTitle').textContent = title;
 
     const isComboMode = Boolean(combo || sides.length);
-    const mainTitle = isAddon ? `${ui.addon_prefix || '加購：'}${item.name}` : (isComboMode ? `${ui.main_prefix || '主餐：'}${item.name}` : item.name);
+    const mainTitle = isAddon ? `${ui.addon_prefix || '加購：'}${name}` : (isComboMode ? `${ui.main_prefix || '主餐：'}${name}` : name);
     Kiosk.setHtml($('modifierModalBody'), [
         hasSizes ? mods.sizeSectionHtml(MODIFIER_SCHEME, item.sizes) : '',
         hasMain ? mods.modifierSectionHtml(MODIFIER_SCHEME, 'main', mainTitle, item.modifiers) : '',
@@ -140,6 +151,8 @@ export function confirmModifiers() {
         alert(`⚠️ ${(ui.pick_one_in || '請在「{g}」中選擇一項！').replace('{g}', r.missing.group)}`);
         return;
     }
+    // 立即清掉 (不等 hidden.bs.modal)：視窗淡出期間再按一次「確認加入」不會重複加入
+    state.pendingSelection = null;
     addLine(makeLine(sel.item, { combo: sel.combo, isAddon: sel.isAddon, customization: r.texts.join('、'), modifierIds: r.modifierIds,
         size: r.size, choiceIds: r.choiceIds, passId: sel.passId || 0 }));
     modal('modifierModal').hide();
@@ -151,6 +164,11 @@ export function usePass(passId) {
     const item = p ? menuItems.get(Number(p.menu_item_id)) : null;
     if (!p || !item) {
         alert(`⚠️ ${ui.pass_item_missing || '找不到可兌換的餐點'}`);
+        return;
+    }
+    // 與 startAdd 相同：售完 / 不在供應時段 / 原料不足的餐點不能兌換 (否則要到送出後才被後端擋下)
+    if (!item.is_available) {
+        alert(`⚠️ ${item.name} - ${ui.sold_out || '已售完'}`);
         return;
     }
     if (passRemaining(state.cart, p) <= 0) {

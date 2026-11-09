@@ -23,7 +23,8 @@
             {% elif setting_source == 'local' %}<i class="bi bi-shop me-1"></i>目前為<strong>本店自訂</strong> (不受總部設定影響)。
             {% else %}<i class="bi bi-info-circle me-1"></i>總部尚未下發此設定，目前使用預設值。{% endif %}
         </div>
-        {% if setting_source == 'local' %}
+        {# 總部從未下發過此區塊 (has_hq 為假) 時改回只會退回預設值，不顯示按鈕；舊版路由未傳 has_hq 時維持原行為 #}
+        {% if setting_source == 'local' and (has_hq is not defined or has_hq) %}
         <form method="POST" class="m-0" data-confirm="改回使用總部設定？本店自訂的內容會刪除。">
             {{ csrf() }}<input type="hidden" name="action" value="revert_hq">
             <button type="submit" class="btn btn-sm btn-outline-dark">改回總部設定</button>
@@ -38,10 +39,13 @@
     <form method="POST" class="card rounded-4 p-4" id="settingForm" data-setting-key="{{ section.key }}" autocomplete="off">
         {{ csrf() }}
         {% for f in section.fields %}
+        {# 只顯示的執行期狀態 (例如接單控制的暫停狀態)：伺服器端儲存時忽略，這裡停用避免誤以為可改 #}
+        {% set f_readonly = readonly_fields is defined and f.name in (readonly_fields or ()) %}
+        {% set f_maxlen = max_lens.get(f.name) if max_lens is defined and max_lens else none %}
         <div class="mb-3 setting-field" data-field="{{ f.name }}">
             {% if f.type == 'bool' %}
             <div class="form-check form-switch">
-                <input class="form-check-input" type="checkbox" role="switch" id="f-{{ f.name }}" name="{{ f.name }}" value="1" {{ 'checked' if values[f.name] }}>
+                <input class="form-check-input" type="checkbox" role="switch" id="f-{{ f.name }}" name="{{ f.name }}" value="1" {{ 'checked' if values[f.name] }}{% if f_readonly %} disabled{% endif %}>
                 <label class="form-check-label fw-bold" for="f-{{ f.name }}">{{ f.label }}</label>
             </div>
             {% elif f.type == 'multi' %}
@@ -61,7 +65,7 @@
                 {% for val, text in f.options %}<option value="{{ val }}" {{ 'selected' if values[f.name] == val }}>{{ text }}</option>{% endfor %}
             </select>
             {% elif f.type == 'textarea' %}
-            <textarea class="form-control" id="f-{{ f.name }}" name="{{ f.name }}" rows="3" placeholder="{{ f.placeholder }}">{{ values[f.name] or '' }}</textarea>
+            <textarea class="form-control" id="f-{{ f.name }}" name="{{ f.name }}" rows="3" placeholder="{{ f.placeholder }}"{% if f_maxlen %} maxlength="{{ f_maxlen }}"{% endif %}{% if f_readonly %} readonly disabled{% endif %}>{{ values[f.name] or '' }}</textarea>
             {% elif f.type == 'secret' %}
             <input class="form-control" type="password" id="f-{{ f.name }}" name="{{ f.name }}" autocomplete="new-password"
                    placeholder="{{ '已設定 (留空保持不變)' if values[f.name] else (f.placeholder or '尚未設定') }}">
@@ -76,6 +80,9 @@
                    type="{{ 'number' if f.type in ('int', 'float') else ('time' if f.type == 'time' else ('email' if f.type == 'email' else 'text')) }}"
                    {% if f.type == 'float' %}step="any"{% endif %}
                    {% if f.min is not none %}min="{{ f.min }}"{% endif %} {% if f.max is not none %}max="{{ f.max }}"{% endif %}
+                   {# 網址欄位伺服器端另有 500 字規則，不套一般文字上限 #}
+                   {% if f_maxlen and f.type not in ('int', 'float', 'time', 'url') %}maxlength="{{ f_maxlen }}"{% endif %}
+                   {% if f_readonly %}readonly disabled{% endif %}
                    value="{{ values[f.name] if values[f.name] is not none else '' }}" placeholder="{{ f.placeholder }}">
             {% endif %}
             {% endif %}

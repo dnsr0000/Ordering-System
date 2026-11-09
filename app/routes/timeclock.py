@@ -13,9 +13,30 @@ from app.models.tenant import StaffAccount
 from app.services import auth_throttle
 from app.services.audit import record_staff_audit
 from app.services.settings_service import TIME_RE
-from app.utils import day_bounds, get_own, parse_date_range, role_required, safe_int, send_xlsx
+from app.utils import day_bounds, get_own, parse_date_range, role_required, safe_int, send_xlsx, store_only
 
 timeclock_bp = Blueprint('timeclock', __name__)
+MAX_FORM_ROWS = 2000   # 排班建議 / 自動排班一次套用的班別上限 (表單的 count 決定迴圈次數)
+
+
+@timeclock_bp.before_request
+@store_only
+def only_on_store_servers():
+    """打卡、班表與排班是門市本機資料 (不同步)：線上端整個 blueprint 404
+    (線上端的訂單是各分店加總，排班需求會變成 N 倍；打卡紀錄門市也看不到)"""
+
+
+def _parse_day(raw, default):
+    """'YYYY-MM-DD' → date (空白用 default)；限制 2000~2100 年 (太早的日期往前推算會溢位)"""
+    if not raw:
+        return default
+    try:
+        day = date.fromisoformat(raw)
+    except ValueError:
+        raise AppError('日期格式不正確')
+    if not 2000 <= day.year <= 2100:
+        raise AppError('日期超出範圍')
+    return day
 
 
 def _open_record(staff_id):
@@ -34,12 +55,16 @@ def punch():
         staff = StaffAccount.query.filter_by(username=username).first()
         if staff is None:
             auth_throttle.spend_hash_time(password)
-        if staff is None or staff.tenant_id != g.tenant_id or not staff.can_login or not staff.check_password(password):
+        # 先比對密碼再檢查店家 / 停用：每條失敗路徑都剛好做一次雜湊，回應時間無法用來判斷帳號是否存在 (與後台登入相同)
+        ok = staff is not None and staff.check_password(password)
+        if not ok or staff.tenant_id != g.tenant_id or not staff.can_login:
             auth_throttle.record_staff_failure(keys)
             db.session.commit()
             raise AppError('帳號或密碼錯誤', 401)
         if not staff.totp_enabled:   # 兩步驟驗證的帳號：打卡只驗密碼，不可藉此把驗證碼的錯誤次數歸零
             auth_throttle.clear_keys(keys['device'], keys['account'])
+        from app.services.db_locks import lock_tenant
+        lock_tenant(g.tenant_id)   # 同一員工同時送出兩次上班打卡：依序處理，新增後再數一次
         open_rec = _open_record(staff.id)
         now = datetime.now()
         if request.form.get('action') == 'out':
@@ -47,10 +72,24 @@ def punch():
                 raise AppError(f'{staff.username} 目前沒有上班打卡紀錄')
             open_rec.clock_out = now
             msg = f'✅ {staff.username} 下班打卡 {now:%H:%M}，本次工時 {open_rec.hours:.2f} 小時'
+            from app.services.report_service import MAX_SHIFT_HOURS
+            if now - open_rec.clock_in > timedelta(hours=MAX_SHIFT_HOURS):
+                # 多半是忘了打下班卡、隔天才補打：仍記下班 (員工才能再上班打卡)，但標記待店長修正下班時間
+                # (報表把超過 MAX_SHIFT_HOURS 的紀錄列在 labor_review)
+                tag = f'[待店長修正] 超過 {MAX_SHIFT_HOURS} 小時才下班打卡'
+                open_rec.note = f'{tag} {open_rec.note or ""}'.strip()[:200]
+                db.session.commit()
+                flash(f'⚠️ {staff.username} 下班打卡 {now:%H:%M}，距上班打卡 ({open_rec.clock_in:%m-%d %H:%M}) '
+                      f'已超過 {MAX_SHIFT_HOURS} 小時，已標記待店長修正下班時間', 'warning')
+                return redirect(url_for('timeclock.punch'))
         else:
             if open_rec is not None:
                 raise AppError(f'{staff.username} 已於 {open_rec.clock_in:%m-%d %H:%M} 上班打卡，請先下班打卡')
             db.session.add(TimeClock(tenant_id=g.tenant_id, staff_account_id=staff.id, clock_in=now))
+            db.session.flush()
+            if TimeClock.query.filter_by(staff_account_id=staff.id, clock_out=None).count() > 1:
+                db.session.rollback()
+                raise AppError(f'{staff.username} 已經上班打卡，請勿重複送出', 409)
             msg = f'✅ {staff.username} 上班打卡 {now:%H:%M}'
         db.session.commit()
         flash(msg, 'success')
@@ -58,7 +97,9 @@ def punch():
     today = date.today()
     start, _ = day_bounds(today)
     records = TimeClock.query.filter(TimeClock.clock_in >= start).order_by(TimeClock.clock_in.desc()).all()
-    schedules = WorkSchedule.query.filter_by(work_date=today).order_by(WorkSchedule.start_time).all()
+    from app.services.staffing_service import active_schedules
+    schedules = active_schedules(g.tenant_id).filter(WorkSchedule.work_date == today) \
+        .order_by(WorkSchedule.start_time).all()   # 停用 / 已刪除員工的班不列出
     # 打卡頁不需登入：帳號名稱只在已登入員工或已註冊的店內裝置上完整顯示，其他人看到遮罩 (帳號名稱可被拿來猜密碼 / 鎖帳號)
     from app.services import device_service
     from app.utils import mask_name
@@ -92,10 +133,21 @@ def admin():
         action = f.get('action')
         if action == 'edit_record':
             rec = get_own(TimeClock, f.get('record_id'), '紀錄')
+            # 表單帶了載入當下的原值 (orig_clock_in / orig_clock_out) 時先比對：開著舊頁面期間員工才下班打卡，
+            # 整張表單覆寫會把剛記下的下班時間清掉
+            def shown(v):
+                return v.strftime('%Y-%m-%dT%H:%M') if v else ''
+            for field, current in (('orig_clock_in', rec.clock_in), ('orig_clock_out', rec.clock_out)):
+                if field in f and f.get(field) != shown(current):
+                    raise AppError('這筆出勤紀錄在你開啟頁面後已有變更 (例如員工剛下班打卡)，請重新整理後再修正', 409)
+            def parse_local(raw):
+                # 帶時區的輸入 (例如 2026-01-01T09:00+08:00) 換成本機無時區時間：與無時區時間比較才不會丟 TypeError
+                v = datetime.fromisoformat(raw)
+                return v.astimezone().replace(tzinfo=None) if v.tzinfo is not None else v
             try:
-                rec.clock_in = datetime.fromisoformat(f.get('clock_in'))
-                rec.clock_out = datetime.fromisoformat(f.get('clock_out')) if f.get('clock_out') else None
-            except (TypeError, ValueError):
+                rec.clock_in = parse_local(f.get('clock_in'))
+                rec.clock_out = parse_local(f.get('clock_out')) if f.get('clock_out') else None
+            except (TypeError, ValueError, OverflowError):
                 raise AppError('時間格式不正確')
             if rec.clock_out and rec.clock_out < rec.clock_in:
                 raise AppError('下班時間不可早於上班時間')
@@ -133,8 +185,11 @@ def admin():
     grid = {}
     for s in schedules:
         grid.setdefault((s.staff_account_id, s.work_date), []).append(s)
+    # 已停用 / 刪除員工留下的班 (班表格只畫在職員工的列)：另外列出讓店長刪除
+    active_ids = {s.id for s in staff}
+    inactive_schedules = [s for s in schedules if s.staff_account_id not in active_ids]
     return render_template('admin_timeclock.html', records=records, schedules=schedules, staff=staff, start=start, end=end,
-                           days=days, grid=grid, summary=_summary(records))
+                           days=days, grid=grid, summary=_summary(records), inactive_schedules=inactive_schedules)
 
 
 @timeclock_bp.route('/admin/timeclock/export', endpoint='export')
@@ -193,15 +248,11 @@ def availability():
 def auto_schedule():
     """一鍵生成一週班表 (預覽 → 套用)，說明見 app/services/scheduling_service.py"""
     from app.services import scheduling_service
-    raw = request.values.get('week') or ''
-    try:
-        week = date.fromisoformat(raw) if raw else date.today() + timedelta(days=7 - date.today().weekday())
-    except ValueError:
-        raise AppError('日期格式不正確')
+    week = _parse_day(request.values.get('week') or '', date.today() + timedelta(days=7 - date.today().weekday()))
     if request.method == 'POST':
         f = request.form
         assignments = []
-        for i in range(safe_int(f.get('count'), 0)):
+        for i in range(min(MAX_FORM_ROWS, max(0, safe_int(f.get('count'), 0)))):
             try:
                 d = date.fromisoformat(f.get(f'date_{i}') or '')
             except ValueError:
@@ -226,15 +277,11 @@ def auto_schedule():
 def staffing():
     """排班建議 (說明見 app/services/staffing_service.py)"""
     from app.services import staffing_service
-    try:
-        target = date.fromisoformat(request.values.get('date') or '') if request.values.get('date') \
-            else date.today() + timedelta(days=1)
-    except ValueError:
-        raise AppError('日期格式不正確')
+    target = _parse_day(request.values.get('date') or '', date.today() + timedelta(days=1))
     if request.method == 'POST':
         f = request.form
         assignments = []
-        for i in range(safe_int(f.get('count'), 0)):
+        for i in range(min(MAX_FORM_ROWS, max(0, safe_int(f.get('count'), 0)))):
             staff_id = safe_int(f.get(f'staff_{i}'), 0)
             st, en = (f.get(f'start_{i}') or '').strip(), (f.get(f'end_{i}') or '').strip()
             if not staff_id:
@@ -244,6 +291,8 @@ def staffing():
             assignments.append((staff_id, st, en))
         if not assignments:
             raise AppError('請為建議的班別選擇員工')
+        from app.services.db_locks import lock_tenant
+        lock_tenant(g.tenant_id)   # 連點兩次「加入班表」：依序處理，第二次會看到第一次新增的班而略過
         n = staffing_service.apply_shifts(g.tenant_id, target, assignments)
         record_staff_audit('SCHEDULE_SUGGEST', details=f'依排班建議新增 {target} 班表 {n} 筆')
         db.session.commit()

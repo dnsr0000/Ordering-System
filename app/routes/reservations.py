@@ -1,21 +1,25 @@
 """訂位 / 候位：店員看板 (/reservations) 與顧客頁 (/reserve 線上訂位、/waitlist 取號、/waitlist/<代碼> 查看進度)"""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template, request, url_for
+from flask_login import current_user
 
 from app.errors import AppError
 from app.extensions import csrf, db, limiter
 from app.models.reservation import Reservation, WaitlistEntry
 from app.models.table import DiningTable
+from app.models.tenant import Tenant
 from app.services import deposit_service, payment_ecpay, reservation_service, settings_service
 from app.services.approval_service import permission_required
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
+from app.services.order_service import todays_range
 from app.sync import runtime as sync_runtime
-from app.tenant_context import tenant_bypass
+from app.tenant_context import _use_tenant, tenant_bypass
 from app.utils import get_own, safe_int
 
 reservations_bp = Blueprint('reservations', __name__)
+MIN_PAY_SECONDS = 120   # 訂金付款期限剩不到這麼久時不再產生付款表單 (來不及在綠界完成付款)
 
 
 @reservations_bp.before_request
@@ -49,9 +53,23 @@ def board():
             flash(f'已新增訂位：{r.name} {r.party_size} 位', 'success')
         elif action == 'reservation_status':
             r = get_own(Reservation, f.get('reservation_id'), '訂位')
-            msg = reservation_service.set_reservation_status(r, f.get('status'), f.get('table_name'))
+            # 看板只對「已訂位」提供操作：畫面過期 (已被顧客取消 / 其他店員入座) 時拒絕，不把已取消改成未到
+            # by_store=1 (店家因素取消)：不論距訂位時間多久一律全額退訂金 (只對取消有意義)
+            msg = reservation_service.set_reservation_status(r, f.get('status'), f.get('table_name'),
+                                                             expected=f.get('expected_status') or 'booked',
+                                                             by_store=(f.get('by_store') == '1'))
             if msg:
                 flash(f'{r.name}：{msg}', 'info')
+        elif action == 'deposit_retry':   # 訂金退款失敗後重試退刷
+            r = get_own(Reservation, f.get('reservation_id'), '訂位')
+            status = deposit_service.retry_refund(r)
+            record_staff_audit('RESERVATION', details=f'訂金重試退款：{r.name} ${r.deposit_amount} → {status}')
+            flash(f'{r.name}：訂金' + ('已退還' if status == 'refunded' else '重試退款仍失敗，請到綠界後台退款'), 'info')
+        elif action == 'deposit_manual':   # 店家已在綠界後台人工退款
+            r = get_own(Reservation, f.get('reservation_id'), '訂位')
+            deposit_service.mark_refunded_manually(r, current_user.username)
+            record_staff_audit('RESERVATION', details=f'訂金標記人工退款完成：{r.name} ${r.deposit_amount}')
+            flash(f'{r.name}：已標記為人工退款完成', 'success')
         elif action == 'waitlist_add':
             e = reservation_service.join_waitlist(g.tenant_id, f.get('name'), f.get('phone'), safe_int(f.get('party_size'), 0))
             flash(f'候位號碼 {e.label}', 'success')
@@ -69,9 +87,10 @@ def board():
     start, end = reservation_service.day_bounds(day)
     reservations = Reservation.query.filter(Reservation.reserved_at >= start, Reservation.reserved_at < end) \
         .order_by(Reservation.reserved_at, Reservation.id).all()
-    waitlist = WaitlistEntry.query.filter_by(business_date=date.today()) \
+    business_date = todays_range()[0].date()   # 營業日 (跨午夜營業的店換日時間前仍是前一天)，與取號相同
+    waitlist = WaitlistEntry.query.filter_by(business_date=business_date) \
         .filter(WaitlistEntry.status.in_(('waiting', 'called'))).order_by(WaitlistEntry.number).all()
-    done = WaitlistEntry.query.filter_by(business_date=date.today()) \
+    done = WaitlistEntry.query.filter_by(business_date=business_date) \
         .filter(WaitlistEntry.status.in_(('seated', 'cancelled'))).order_by(WaitlistEntry.number.desc()).limit(20).all()
     tables = DiningTable.query.filter_by(is_active=True).order_by(DiningTable.sort_order, DiningTable.id).all()
     return render_template('reservations.html', day=day, reservations=reservations, waitlist=waitlist, done=done,
@@ -104,10 +123,11 @@ def public_reserve():
             return redirect(url_for('reservations.deposit_pay', token=r.token))
         return redirect(url_for('reservations.reservation_status', token=r.token))
     day = _day()
-    if day < date.today():
-        day = date.today()
+    today = date.today()
+    max_day = today + timedelta(days=cfg.get('days_ahead') or 30)   # 與 create_reservation 的可預訂天數相同
+    day = min(max(day, today), max_day)
     return render_template('reserve.html', day=day, slots=reservation_service.slots_for(day), cfg=cfg,
-                           tenant=g.tenant, today=date.today())
+                           tenant=g.tenant, today=today, max_day=max_day)
 
 
 def _by_token(token):
@@ -125,12 +145,16 @@ def deposit_pay(token):
     r = _by_token(token)
     if r.deposit_status != 'pending':
         return redirect(url_for('reservations.reservation_status', token=r.token))
+    # 付款期限從建立訂位起算 (expire_pending)，重開付款頁不會延長：顯示實際剩餘時間；剩不到能完成付款的時間就不產生付款表單
+    left = (r.created_at + timedelta(minutes=deposit_service.PENDING_MINUTES) - datetime.now()).total_seconds()
+    if left < MIN_PAY_SECONDS:
+        raise AppError('訂金付款期限已過，此訂位將自動取消，請重新訂位', 410)
     payment_ecpay.require_keys_allowed()
     with tenant_bypass():   # 每次開啟付款頁都換新的交易編號 (綠界不接受重複編號；重新整理 / 付款失敗再試都可以)
         deposit_service.new_attempt(r)
         db.session.commit()
     return payment_ecpay.render_checkout_page('reservation_pay.html', r=r, fields=deposit_service.form_fields(r),
-                                              minutes=deposit_service.PENDING_MINUTES)
+                                              minutes=max(1, int(left // 60)))
 
 
 @reservations_bp.route('/payment/ecpay/reservation_notify', methods=['POST'], endpoint='deposit_notify')
@@ -159,21 +183,43 @@ def deposit_result():
 @limiter.limit('30/minute')
 def reservation_status(token):
     r = _by_token(token)
+    with tenant_bypass():
+        shop = db.session.get(Tenant, r.tenant_id)
+    if shop is not None:   # 顯示語言等依紀錄所屬店家 (網址不含店家時，目前 session 可能是別家店)
+        _use_tenant(shop, remember=False)
     if request.method == 'POST' and request.form.get('action') == 'cancel' and r.status == 'booked':
+        if r.reserved_at <= datetime.now():   # 訂位時間已過：由店家處理 (入座 / 未到)，顧客不能改成取消來避開未到紀錄
+            raise AppError('訂位時間已過，如需取消請洽店家',
+                           redirect_to=url_for('reservations.reservation_status', token=r.token))
         with tenant_bypass():
-            msg = reservation_service.set_reservation_status(r, 'cancelled', by_customer=True)
+            msg = reservation_service.set_reservation_status(r, 'cancelled', by_customer=True, expected='booked')
             db.session.commit()
         flash('已取消訂位' + (f'；{msg}' if msg else ''), 'info')
         return redirect(url_for('reservations.reservation_status', token=r.token))
     cfg = settings_service.get('reservation', r.tenant_id)
-    return render_template('reservation_status.html', r=r, refund_hours=int(cfg.get('deposit_refund_hours') or 0))
+    return render_template('reservation_status.html', r=r, refund_hours=int(cfg.get('deposit_refund_hours') or 0),
+                           can_cancel=r.status == 'booked' and r.reserved_at > datetime.now())
 
 
 # ------------------------------------------------------------------------------
 # 顧客：現場取號候位
 # ------------------------------------------------------------------------------
+def _trusted_waitlist_client():
+    """
+    門口取號平板 (已在「裝置管理」註冊的本店裝置) 或已登入的本店員工：不受取號頻率限制。
+    同一台平板 / 店內 Wi-Fi 共用同一個對外 IP，尖峰時段一小時遠超過 20 組。
+    """
+    from flask_login import current_user
+    from app.models.enums import ALL_STAFF_ROLES
+    from app.services import device_service
+    if device_service.current() is not None:
+        return True
+    return bool(current_user.is_authenticated and getattr(current_user, 'role', '') in ALL_STAFF_ROLES
+                and getattr(current_user, 'tenant_id', None) == getattr(g, 'tenant_id', None))
+
+
 @reservations_bp.route('/waitlist', methods=['GET', 'POST'], endpoint='public_waitlist')
-@limiter.limit('20/hour', methods=['POST'])
+@limiter.limit('60/hour', methods=['POST'], exempt_when=_trusted_waitlist_client)
 def public_waitlist():
     if not settings_service.get('reservation').get('waitlist_public', True):
         abort(404)
@@ -183,7 +229,7 @@ def public_waitlist():
         db.session.commit()
         order_event_bus.notify(g.tenant_id)
         return redirect(url_for('reservations.waitlist_status', token=e.token))
-    waiting = WaitlistEntry.query.filter_by(business_date=date.today(), status='waiting').count()
+    waiting = WaitlistEntry.query.filter_by(business_date=todays_range()[0].date(), status='waiting').count()
     return render_template('waitlist_join.html', waiting=waiting, tenant=g.tenant)
 
 
@@ -195,6 +241,9 @@ def waitlist_status(token):
         if e is None:
             abort(404)
         ahead = reservation_service.waiting_ahead(e)
+        shop = db.session.get(Tenant, e.tenant_id)
+    if shop is not None:   # 顯示語言等依紀錄所屬店家 (網址不含店家時，目前 session 可能是別家店)
+        _use_tenant(shop, remember=False)
     if request.args.get('format') == 'json':
         return jsonify({'success': True, 'label': e.label, 'status': e.status, 'ahead': ahead})
     return render_template('waitlist_status.html', e=e, ahead=ahead)

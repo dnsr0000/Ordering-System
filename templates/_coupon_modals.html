@@ -29,7 +29,7 @@
     </div>
     <div class="mb-3">
         <label class="form-label small fw-bold" for="{{ prefix }}-min-spend">最低消費門檻 (NT$)</label>
-        <input type="number" min="0" class="form-control" name="min_spend" id="{{ prefix }}-min-spend" placeholder="例如：滿 200 元可用" value="0">
+        <input type="number" min="0" max="1000000" class="form-control" name="min_spend" id="{{ prefix }}-min-spend" placeholder="例如：滿 200 元可用" value="0">
     </div>
     <div class="mb-3 text-start">
         <label class="form-label small fw-bold text-white" for="{{ prefix }}-per-user-limit">每位會員可兌換次數上限</label>
@@ -40,11 +40,11 @@
     <div class="row g-2 mb-3">
         <div class="col-6">
             <label class="form-label small fw-bold" for="{{ prefix }}-reward-points">兌換所需點數</label>
-            <input type="number" min="0" class="form-control" name="reward_points" id="{{ prefix }}-reward-points" placeholder="例如：45" required>
+            <input type="number" min="0" max="100000000" class="form-control" name="reward_points" id="{{ prefix }}-reward-points" placeholder="例如：45" required>
         </div>
         <div class="col-6">
             <label class="form-label small fw-bold" for="{{ prefix }}-reward-discount">限時特惠點數 (無填 0)</label>
-            <input type="number" min="0" class="form-control" name="reward_discount_points" id="{{ prefix }}-reward-discount" placeholder="0" value="0">
+            <input type="number" min="0" max="100000000" class="form-control" name="reward_discount_points" id="{{ prefix }}-reward-discount" placeholder="0" value="0">
         </div>
     </div>
     <div class="form-check form-switch mb-3">

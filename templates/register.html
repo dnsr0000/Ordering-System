@@ -51,10 +51,11 @@
                     </button>
                 </li>
             </ul>
-            {% else %}
+            {% elif sync_role == 'hub' %}
             <div class="alert alert-info small py-2" id="online-login-hint">
                 <i class="bi bi-info-circle-fill me-1"></i>{{ ui.reg_online_hint }}
             </div>
+            {# 門市人臉辨識暫不可用 (未安裝 opencv / 模型)：face_login 已以 flash 說明，這裡不再顯示「線上點餐」的提示 #}
             {% endif %}
 
             <div class="tab-content" id="loginTabContent">
@@ -127,6 +128,18 @@
                 </div>
             </div>
 
+            {% set mf = member_features() %}
+            {% if mf.line_pending %}
+            {# 剛才有人以 LINE 授權但尚未綁定：須由註冊者勾選確認才綁定 (共用點餐機上不會把別人的 LINE 綁到下一位顧客) #}
+            <div class="alert alert-success small py-2 mb-3 d-flex justify-content-between align-items-center" id="linePendingHint">
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="checkbox" form="registerForm" name="bind_line_token" value="{{ mf.line_pending_token }}" id="bindLineToken">
+                    <label class="form-check-label text-dark" for="bindLineToken">{{ ui.reg_line_bind_register or '完成註冊時同時綁定 LINE：' }}{{ mf.line_pending_name }}</label>
+                </div>
+                <form method="post" action="{{ url_for('member_auth.line_pending_discard') }}" class="ms-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="register"><button class="btn btn-outline-danger btn-sm" type="submit" id="linePendingDiscard">{{ ui.reg_unbind }}</button></form>
+            </div>
+            {% endif %}
+
             <form id="registerForm" action="{{ url_for('auth.register') }}" method="POST" enctype="multipart/form-data" data-otp-purpose="register">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="mb-3 text-start">
@@ -135,7 +148,6 @@
                 </div>
                 <div class="mb-3 text-start">
                     <label class="form-label fw-bold small text-white" for="regPhone">{{ ui.reg_phone_label }}</label>
-                    {% set mf = member_features() %}
                     {% if mf.otp_register %}
                     <div class="input-group">
                         <input type="tel" class="form-control form-input" id="regPhone" name="phone" placeholder="{{ ui.reg_phone_ph }}" pattern="09[0-9]{8}" autocomplete="tel" required data-otp-phone>
@@ -201,7 +213,8 @@
 
             <div class="d-flex justify-content-between mt-3">
                 <a href="{{ url_for('customer.customer_index') }}" class="text-warning text-decoration-none small"><i class="bi bi-arrow-left"></i> {{ ui.back_home }}</a>
-                <a href="{{ url_for('auth.face_login') }}" class="text-info text-decoration-none small">{{ ui.reg_goto_login }} <i class="bi bi-arrow-right"></i></a>
+                {# 線上端 (face_enabled=False) 沒有人臉登入：直接連到手機 + PIN 登入頁，不經 face_login 轉址與提示 #}
+                <a href="{{ url_for('auth.face_login') if face_enabled else url_for('auth.member_login') }}" class="text-info text-decoration-none small" id="regGotoLogin">{{ ui.reg_goto_login }} <i class="bi bi-arrow-right"></i></a>
             </div>
             {% endif %}
         </div>

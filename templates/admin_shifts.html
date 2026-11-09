@@ -6,7 +6,13 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
 <main class="container-fluid px-4 py-4" id="shifts-page">
+    {# 只有錢櫃權限的櫃檯員工沒有系統設定權限，返回鈕改回 POS 以免 403 #}
+    {% if current_user.has_permission('settings') %}
     {{ page_header('交班與日結', 'bi-cash-coin', '開班 / 關班在 POS 右上角「交班」操作；這裡查看歷史班別與每日日結') }}
+    {% else %}
+    {{ page_header('交班與日結', 'bi-cash-coin', '開班 / 關班在 POS 右上角「交班」操作；這裡查看歷史班別與每日日結',
+                   back_url=url_for('pos.pos_terminal'), back_label='POS') }}
+    {% endif %}
     <section class="card rounded-4 p-3 mb-4">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
             <h2 class="h5 fw-bold text-info mb-0">日結報表 {{ daily.date }}</h2>
@@ -17,15 +23,16 @@
             </form>
         </div>
         <div class="row g-3 mb-3">
-            {% for label, value in [('營業額', daily.net_sales), ('商品小計', daily.gross), ('折扣', daily.discounts), ('服務費', daily.service_charge), ('退款', daily.refund_total), ('未收款', daily.unpaid)] %}
+            {% for label, value in [('營業額', daily.net_sales), ('商品小計', daily.gross), ('折扣', daily.discounts), ('服務費', daily.service_charge), ('外送費', daily.delivery_fee or 0), ('退款', daily.refund_total), ('未收款', daily.unpaid)] %}
             {{ stat_tile(label, '$' ~ '{:,}'.format(value), col='col-6 col-md-2') }}
             {% endfor %}
         </div>
         <div class="row g-3">
             <div class="col-md-4">
                 <h3 class="h6 fw-bold">付款方式</h3>
-                <table class="table table-dark table-sm"><thead><tr><th>方式</th><th>收款</th><th>退款</th><th>淨額</th></tr></thead><tbody>
-                {% for m, v in daily.by_method.items() %}<tr><td>{{ m }}</td><td>${{ v.sales + v.topups }}</td><td>${{ v.refunds }}</td><td class="fw-bold">${{ v.net }}</td></tr>{% endfor %}
+                <table class="table table-dark table-sm"><thead><tr><th>方式</th><th>收款</th><th>退款</th><th>零用金</th><th>淨額</th></tr></thead><tbody>
+                {% for m, v in daily.by_method.items() %}<tr><td>{{ m }}</td><td>${{ v.sales + v.topups }}</td><td>${{ v.refunds }}</td>
+                    <td>{{ ('-$' ~ (0 - v.movements)) if v.movements < 0 else ('$' ~ v.movements) }}</td><td class="fw-bold">${{ v.net }}</td></tr>{% endfor %}
                 </tbody></table>
                 <h3 class="h6 fw-bold">點餐管道</h3>
                 <table class="table table-dark table-sm"><tbody>
@@ -59,7 +66,10 @@
             {% for s in shifts %}
             <tr><td>{{ s.id }}</td><td class="small">{{ s.opened_at.strftime('%m-%d %H:%M') }} {{ s.opened_by }}</td>
                 <td class="small">{% if s.closed_at %}{{ s.closed_at.strftime('%m-%d %H:%M') }} {{ s.closed_by }}{% else %}{{ status_badge('開班中', 'success') }}{% endif %}</td>
-                <td>${{ s.opening_cash }}</td><td>${{ s.expected_cash }}</td><td>${{ s.counted_cash }}</td>
+                <td>${{ s.opening_cash }}</td>
+                {% if s.status == 'closed' %}<td>${{ s.expected_cash }}</td><td>${{ s.counted_cash }}</td>
+                {% else %}{# 開班中尚未結算：應有現金改用即時值 (目前班別)，實點未點 #}
+                <td>{{ '$' ~ current_report.expected_cash if current_report and current and current.id == s.id else '-' }}</td><td>-</td>{% endif %}
                 <td class="{{ 'text-danger' if s.difference < 0 else ('text-warning' if s.difference > 0 else '') }} fw-bold">{{ '%+d' % s.difference if s.status == 'closed' else '' }}</td>
                 <td><a class="btn btn-sm btn-outline-light" href="{{ url_for('shifts.shift_detail', shift_id=s.id) }}">報表</a></td></tr>
             {% else %}<tr><td colspan="8" class="text-center text-white-50">尚無班別紀錄</td></tr>{% endfor %}

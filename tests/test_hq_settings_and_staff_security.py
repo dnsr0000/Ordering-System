@@ -72,15 +72,21 @@ def test_hq_settings_reach_branches_and_can_be_overridden(env):
 
 def test_branch_cannot_push_hq_settings(env):
     from app.models.settings import HqSetting
+    # 自己先讓總部存一次 POS 設定並下發 (不依賴前一個測試建立的 HqSetting 列，可單獨執行)
+    env.sync_all()
+    hub_owner = login_staff(env.hub, 'hq_owner', 'owner')
+    r = hub_owner.post('/admin/settings/pos', data={'service_charge_percent': '7', 'service_charge_scope': 'pos_dine_in'})
+    assert r.status_code == 302
+    env.sync_all()
     with tenant_ctx(env.a) as t:
         row = HqSetting.query.filter_by(tenant_id=t.id, key='pos').first()
+        assert row is not None, '總部存檔並同步後分店應有 HqSetting(pos)'
         row.value = '{"service_charge_percent": 99}'
         db.session.commit()
     env.sync(env.a)
     with tenant_ctx(env.hub) as t:
         assert '99' not in HqSetting.query.filter_by(tenant_id=t.id, key='pos').first().value
     # 分店本機被改的內容在下一次總部下發時會被覆蓋
-    hub_owner = login_staff(env.hub, 'hq_owner')
     hub_owner.post('/admin/settings/pos', data={'service_charge_percent': '8', 'service_charge_scope': 'pos_dine_in'})
     env.sync_all()
     assert _get(env.a, 'pos')[0]['service_charge_percent'] == 8
@@ -144,9 +150,10 @@ def test_enable_2fa_and_login_with_code_and_backup(app):
     page = c.get('/admin/security').get_data(as_text=True)
     secret = re.search(r'id="totpSecret">([A-Z2-7]+)<', page).group(1)
     assert 'data:image/svg+xml;base64' in page
-    c.post('/admin/security', data={'action': 'confirm_2fa', 'code': '000000'})
+    c.post('/admin/security', data={'action': 'confirm_2fa', 'current_password': PASSWORD, 'code': '000000'})
     assert_flash(c, '驗證碼不正確')
-    page = c.post('/admin/security', data={'action': 'confirm_2fa', 'code': security_service.totp_now(secret)}).get_data(as_text=True)
+    page = c.post('/admin/security', data={'action': 'confirm_2fa', 'current_password': PASSWORD,
+                                           'code': security_service.totp_now(secret)}).get_data(as_text=True)
     codes = re.findall(r'<div class="col">(\d{4}-\d{4})</div>', page)
     assert len(codes) == 10
     assert _secret(app, 'tfa_mgr') == secret

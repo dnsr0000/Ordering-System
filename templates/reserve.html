@@ -7,7 +7,7 @@
     <h1 class="h4 fw-bold mb-1">{{ tenant.name }} {{ ui.rv_title }}</h1>
     <p class="small text-white-50">{{ ui.rv_hint_a }} {{ cfg.days_ahead }} {{ ui.rv_hint_b }} {{ cfg.max_party_size }} {{ ui.rv_hint_c }}</p>
     <form method="GET" class="d-flex gap-2 mb-3">
-        <input class="form-control" type="date" name="day" value="{{ day }}" min="{{ today }}" aria-label="{{ ui.rv_date }}">
+        <input class="form-control" type="date" name="day" value="{{ day }}" min="{{ today }}" max="{{ max_day }}" aria-label="{{ ui.rv_date }}">
         <button class="btn btn-outline-info text-nowrap" type="submit">{{ ui.rv_search }}</button>
     </form>
     <form method="POST" class="card rounded-4 p-3" id="publicReserveForm">{{ csrf() }}

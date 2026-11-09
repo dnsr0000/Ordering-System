@@ -14,6 +14,7 @@
 
     let currentId = 0;
     let lastId = 0;
+    let generation = 0;   // 每次 openChat 遞增；之前送出的讀取回應一律丟棄
     let knownWaiting = null;
     const listEl = $('supportList');
     const box = $('supportMessages');
@@ -78,9 +79,12 @@
     async function loadChat() {
         if (!currentId) return;
         const id = currentId;
+        const gen = generation;
+        const after = lastId;
         try {
-            const res = await Kiosk.api(`/api/admin/support/chats/${id}?after=${lastId}`);
-            if (id !== currentId) return;   // 讀取期間已切到別的對話
+            const res = await Kiosk.api(`/api/admin/support/chats/${id}?after=${after}`);
+            // 讀取期間已切換 / 重新點開對話，或其他讀取已先推進 lastId：丟棄，避免跳過較舊的訊息
+            if (id !== currentId || gen !== generation || after !== lastId) return;
             renderHeader(res.chat);
             appendMessages(res.messages);
         } catch (err) {
@@ -91,6 +95,7 @@
     function openChat(id) {
         currentId = Number(id);
         lastId = 0;
+        generation += 1;
         box.textContent = '';
         $('supportEmpty').classList.add('d-none');
         $('supportConversation').classList.remove('d-none');

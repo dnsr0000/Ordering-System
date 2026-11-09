@@ -1,5 +1,6 @@
 """Kiosk 會員：註冊、人臉登入、手機 + PIN 登入、訪客、登出 (線上端只提供手機 + PIN 登入與訪客)"""
 import os
+import re
 import uuid
 
 from functools import wraps
@@ -10,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.user import User
-from app.services import auth_throttle, privacy_service
+from app.services import auth_throttle, cv_service, privacy_service
 from app.services.customer_session import close_customer_session, login_guest, login_member
 from app.services.cv_service import extract_feature, find_best_match_vectorized, save_and_fix_image
 from app.services.menu_service import remove_file_quietly
@@ -37,6 +38,15 @@ def face_required(fn):
     return wrapped
 
 
+FACE_UNAVAILABLE_REGISTER = '本店人臉辨識暫不可用，請改用手機號碼 + PIN 註冊'
+FACE_UNAVAILABLE_LOGIN = '本店人臉辨識暫不可用，請改用手機號碼 + PIN 登入'
+
+
+def face_available():
+    """門市沒裝 opencv 或缺少人臉模型檔時不提供人臉註冊 / 登入 (測試以假特徵取代模型時可改寫此函式)"""
+    return cv_service.face_status()[0]
+
+
 def member_login_url():
     """會員登入頁：線上端為手機 + PIN 登入頁，其他角色為人臉 / 手機登入頁"""
     return url_for('auth.member_login') if sync_runtime.is_hub() else url_for('auth.face_login')
@@ -60,7 +70,7 @@ def register():
     加入會員：姓名、手機、PIN 為必填，並須同意隱私權告知；人臉辨識另行勾選同意才拍照 (可不提供)。
     線上端沒有門市相機，只提供手機 + PIN 註冊。
     """
-    face_enabled = not sync_runtime.is_hub()
+    face_enabled = not sync_runtime.is_hub() and face_available()
     from app.services import loyalty_service
     referral_enabled = bool(loyalty_service.referral_config(g.tenant_id).get('referral_enabled'))
     if request.method == 'GET':
@@ -68,9 +78,12 @@ def register():
                                privacy=privacy_service.notice_context(g.tenant_id), referral_enabled=referral_enabled,
                                referral_code=(request.args.get('ref') or '')[:12])
 
-    name = (request.form.get('name') or '').strip()
+    # 去掉控制字元 (\x0b 等)：會員姓名會進收據、通知與 Excel 匯出
+    name = re.sub(r'[\x00-\x1f\x7f]', '', request.form.get('name') or '').strip()
     phone = (request.form.get('phone') or '').strip()
     pin = (request.form.get('pin') or '').strip()
+    if request.form.get('face_consent') and not face_enabled and not sync_runtime.is_hub():
+        raise AppError(FACE_UNAVAILABLE_REGISTER)
     use_face = face_enabled and bool(request.form.get('face_consent'))
     photo = request.files.get('photo') if use_face else None
     if not request.form.get('agree_privacy'):
@@ -87,14 +100,16 @@ def register():
         raise AppError(WEAK_PIN_MESSAGE)
     referrer = loyalty_service.find_referrer(g.tenant_id, request.form.get('referral_code')) if referral_enabled else None
     duplicate_phone = AppError('❌ 此手機號碼已註冊過本店會員，請直接登入！', 409)
-    if User.query.filter_by(phone=phone).first():
-        raise duplicate_phone
     from app.services import settings_service, sms_service
     sms_cfg = settings_service.get('sms')
     phone_verified = False
     if sms_cfg.get('provider', 'none') != 'none' and sms_cfg.get('otp_on_register'):
+        # 先確認手機簡訊驗證，再告知是否已註冊：沒有收到驗證碼的人無法拿這裡查詢某支手機是不是會員
+        # (驗證碼的使用標記與註冊同一交易，手機重複時一併回滾，可直接改去登入)
         sms_service.consume_verified(phone, 'register', request.form.get('otp_code'))
         phone_verified = True
+    if User.query.filter_by(phone=phone).first():
+        raise duplicate_phone
     birthday = parse_birthday(request.form)
 
     filename, filepath, feature = '', None, None
@@ -122,7 +137,8 @@ def register():
         user.referred_by_uuid = referrer.uuid
     user.set_pin(pin)
     from app.routes.member_auth import bind_pending_line
-    bind_pending_line(user)
+    # 只有顧客在註冊表單勾選「同時綁定 LINE」(勾選框帶回一次性權杖) 才綁定：共用點餐機上不知情的下一位顧客不會被綁上別人的 LINE
+    bind_pending_line(user, token=request.form.get('bind_line_token') or '')
     privacy_service.record_consent(user, face=use_face)
     db.session.add(user)
     try:
@@ -140,8 +156,14 @@ def register():
 @face_required
 @limiter.limit('15/minute', methods=['POST'])
 def face_login():
+    face_enabled = face_available()
     if request.method == 'GET':
-        return render_template('register.html', login_mode=True, face_enabled=True)
+        # 人臉辨識不可用時只顯示手機 + PIN 登入分頁 (不導去 member_login：門市的 member_login 會再轉回這裡)
+        if not face_enabled:
+            flash(f'{FACE_UNAVAILABLE_LOGIN}。', 'info')
+        return render_template('register.html', login_mode=True, face_enabled=face_enabled)
+    if not face_enabled:
+        raise AppError(FACE_UNAVAILABLE_LOGIN, 503)
     photo = request.files.get('photo')
     if not photo:
         raise AppError('未接收到拍攝照片')
@@ -184,16 +206,18 @@ def phone_login():
         minutes = max(1, int((remaining.total_seconds() + 59) // 60))
         raise AppError(f'⚠️ PIN 碼錯誤次數過多，此帳號或裝置已暫時鎖定，請於 {minutes} 分鐘後再試，或改用人臉辨識登入！', 429)
 
+    # 先預扣裝置與帳號層級的額度再驗證：同時送出的一批請求不會都通過上面的鎖定檢查
+    remaining = auth_throttle.reserve_pin_attempt(keys)
+    if remaining:
+        minutes = max(1, int((remaining.total_seconds() + 59) // 60))
+        raise AppError(f'⚠️ PIN 碼錯誤次數過多，此帳號或裝置已暫時鎖定，請於 {minutes} 分鐘後再試，或改用人臉辨識登入！', 429)
+
     user = User.query.filter_by(phone=phone).first()
-    if user is not None and not user.pin_hash:
-        # 會員尚未設定 PIN (例如由 Excel 匯入)：提示改用人臉或洽櫃檯 (仍計入 IP 層級失敗次數，避免被拿來列舉會員)
-        auth_throttle.record_pin_failure(keys, ip_only=True)
-        raise AppError('此會員帳號尚未設定安全 PIN 碼，請改用人臉辨識登入，或洽詢櫃檯人員協助設定！', 403)
-    if user is None:
+    if user is None or not user.pin_hash:
         auth_throttle.spend_hash_time(pin)  # 回應時間與手機已註冊時相同，無法藉此列舉會員
-    if user is None or not user.check_pin(pin):
-        # 不論手機是否存在都同樣計數，「空號」與「已註冊」的鎖定行為一致
-        auth_throttle.record_pin_failure(keys)
+    if user is None or not user.pin_hash or not user.check_pin(pin):
+        # 空號、尚未設定 PIN (例如由 Excel 匯入) 與 PIN 錯誤：同樣計數、同樣的回應，無法藉此列舉會員
+        auth_throttle.record_pin_failure(keys, ip_only=True)   # 裝置與帳號層級已在上面預扣
         raise AppError('手機號碼或安全 PIN 碼不正確！', 401)
 
     # 登入成功只清除裝置與帳號層級 (IP 層級不清，避免攻擊者穿插自己的正確登入洗掉計數)

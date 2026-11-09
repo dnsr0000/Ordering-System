@@ -141,15 +141,40 @@ def face_status():
     return True, ''
 
 
+def _model_buffer(path):
+    """模型檔讀成 bytes 再交給 OpenCV：Windows 上 OpenCV 以路徑開檔不支援中文等非 ASCII 路徑"""
+    with open(path, 'rb') as fh:
+        return np.frombuffer(fh.read(), dtype=np.uint8)
+
+
+def _create_recognizer(path):
+    try:
+        return cv2.FaceRecognizerSF.create('onnx', _model_buffer(path), np.empty(0, dtype=np.uint8))
+    except (cv2.error, TypeError):   # 舊版 OpenCV 沒有 buffer 版本：改用路徑
+        return cv2.FaceRecognizerSF.create(path, "")
+
+
+def _create_detector(path):
+    try:
+        return cv2.FaceDetectorYN.create('onnx', _model_buffer(path), np.empty(0, dtype=np.uint8), (320, 320), 0.6, 0.3, 5000)
+    except (cv2.error, TypeError):
+        return cv2.FaceDetectorYN.create(path, "", (320, 320), 0.6, 0.3, 5000)
+
+
+def _read_image(image_path):
+    """cv2.imread 在 Windows 上開不了非 ASCII 路徑 (會員照片放在中文資料夾時一律回 None)：先以 Python 讀檔再解碼"""
+    return cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+
 def get_face_models():
     global _detector, _recognizer
     if not FACE_AVAILABLE:
         return None, None
     with CV_LOCK:
         if _recognizer is None and os.path.exists(Config.SFACE_MODEL):
-            _recognizer = cv2.FaceRecognizerSF.create(Config.SFACE_MODEL, "")
+            _recognizer = _create_recognizer(Config.SFACE_MODEL)
         if _detector is None and os.path.exists(Config.YUNET_MODEL):
-            _detector = cv2.FaceDetectorYN.create(Config.YUNET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+            _detector = _create_detector(Config.YUNET_MODEL)
         return _detector, _recognizer
 
 def save_and_fix_image(file_storage, dest_path):
@@ -188,7 +213,7 @@ def extract_feature(image_path):
     if detector is None or recognizer is None:
         return None
     try:
-        img = cv2.imread(image_path)
+        img = _read_image(image_path)
         if img is None or img.size == 0 or img.shape[0] < 20 or img.shape[1] < 20:
             return None
         # setInputSize → detect → alignCrop → feature 必須在同一把鎖內完成 (中途不可被其他執行緒改寫輸入尺寸)

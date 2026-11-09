@@ -104,7 +104,9 @@ def heartbeat(d, version='', path='', now=None):
             'version_ok': d.app_version == app_version(), 'server_version': app_version()}
 
 
-ALLOWED_WHEN_LOCKED = ('devices.heartbeat', 'devices.pair', 'admin.admin_dashboard', 'static')   # 員工仍可登入後台
+# 員工仍可登入後台 (含兩步驟驗證的第二步)，也一律可以登出 (不讓登入狀態被困在鎖定的裝置上)
+ALLOWED_WHEN_LOCKED = ('devices.heartbeat', 'devices.pair', 'admin.admin_dashboard', 'security.two_factor',
+                       'admin.admin_logout', 'static')
 
 
 def enforce_lock():

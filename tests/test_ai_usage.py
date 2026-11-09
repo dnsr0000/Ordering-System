@@ -80,10 +80,21 @@ def test_gemini_cooldown_is_per_key(app, monkeypatch):
     monkeypatch.setattr(lp, 'resolve', lambda c, force=False: _resolved('gemini', ['gemini-x']))
     ai_service._set_cooldown(first.id, 60)
     calls = []
-    monkeypatch.setattr(ai_service, 'gemini_generate', lambda prompt, api_key=None, **k: calls.append(api_key) or (
-        None if ai_service.cooldown_left(ai_service.key_id(api_key)) else '第二組回答'))
+
+    class Resp:   # 只假造最底層的 HTTP 請求：冷卻判斷走真正的 gemini_generate
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {'candidates': [{'content': {'parts': [{'text': '第二組回答'}]}}]}
+
+    def fake_post(url, headers=None, **kw):
+        calls.append(headers['x-goog-api-key'])
+        return Resp()
+    monkeypatch.setattr(ai_service.requests, 'post', fake_post)
     with app.app_context():
         assert ai_service.cloud_generate('hi', creds=[first, second]) == ('第二組回答', 'gemini'), '第一組冷卻不影響第二組'
+    assert calls == ['AIza-second'], '冷卻中的第一組金鑰不發出請求，只有第二組送出'
 
 
 # ---------------------------------------------------------------- 用量、費用、預算
@@ -106,7 +117,7 @@ def test_usage_is_recorded_flushed_and_budget_stops_cloud_calls(app, store_setti
         ai_service.cloud_generate('hi', creds=[cred], tenant_id=tid)   # 累計 $1.62 ≥ 預算 $1
         assert ai_usage.month_summary(tid)['over_budget']
         assert ai_service.cloud_generate('hi', creds=[cred], tenant_id=tid) == (None, ''), '超過預算：不再呼叫雲端 AI'
-        assert '預算上限' in ai_service.last_ai_error()
+        assert '預算上限' in ai_service.last_ai_error(tid)
         ai_usage.flush()
     owner = login_staff(app, 'ai_usage_owner', 'owner')
     page = owner.get('/admin/system').get_data(as_text=True)

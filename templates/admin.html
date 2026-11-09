@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import modal_head %}
 {% block title %}店家管理後台 - 自助點餐系統{% endblock %}
 {% block body_class %}admin-page{% endblock %}
 {% block head %}
@@ -98,9 +99,13 @@
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-receipt me-1"></i>今日訂單</div>
                         <div class="fs-3 fw-bold text-warning" id="stat-today-orders">{{ analytics.today_orders }}</div></div></div>
+                    {# 營收 / 客單價 / 熱銷金額 / AI 營運建議屬於「營運報表」權限 (與 /api/admin_live_orders 一致) #}
+                    {% set show_reports = 'reports' in tabs %}
+                    {% if show_reports %}
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-cash-coin me-1"></i>今日營收</div>
                         <div class="fs-3 fw-bold text-success" id="stat-today-revenue">${{ analytics.today_revenue }}</div></div></div>
+                    {% endif %}
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-fire me-1"></i>待製作</div>
                         <div class="fs-3 fw-bold {{ 'text-danger' if analytics.pending_count >= 5 else '' }}" id="stat-pending-count">{{ analytics.pending_count }}</div>
@@ -109,32 +114,41 @@
                         <div class="text-white-50 small"><i class="bi bi-hourglass-split me-1"></i>預估等候</div>
                         <div class="fs-3 fw-bold" id="stat-eta-minutes">{{ analytics.eta_minutes }} 分鐘</div>
                         <div class="small text-white-50" id="stat-eta-basis">{% if analytics.eta_based_on_samples %}依今日實際平均 {{ analytics.eta_per_order_minutes }} 分鐘/單 (已排除極端值){% else %}今日尚無出餐紀錄，暫以 {{ analytics.eta_per_order_minutes }} 分鐘/單估算{% endif %}</div></div></div>
+                    {% if show_reports %}
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-graph-up-arrow me-1"></i>客單價 (排除純點數訂單)</div>
                         <div class="fs-3 fw-bold">$<span id="stat-avg-order-value">{{ analytics.avg_order_value | round(0) | int }}</span></div></div></div>
+                    {% endif %}
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-stopwatch me-1"></i>平均每單時間</div>
                         <div class="fs-3 fw-bold text-info"><span id="stat-avg-order-time">{{ analytics.avg_order_time if analytics.avg_order_time else '-' }}</span> <span class="fs-6 text-white-50">分鐘</span></div></div></div>
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-check2-circle me-1"></i>今日已出餐</div>
                         <div class="fs-3 fw-bold text-info" id="stat-completed-today">{{ analytics.completed_today }}</div></div></div>
+                    {% if show_reports %}
                     <div class="col-6 col-md-4 col-xl-3"><div class="card card-custom p-3 h-100">
                         <div class="text-white-50 small"><i class="bi bi-robot me-1 text-info"></i>智慧營運建議 (AI)</div>
                         <div class="small text-white-50 ai-advice" id="stat-ai-advice">{{ analytics.ai_advice or '今日尚無足夠資料' }}</div></div></div>
+                    {% endif %}
                 </div>
                 <div class="row g-3 mb-3">
                     <div class="col-lg-5"><div class="card card-custom p-3 h-100" id="homePending">
                         <h2 class="h6 fw-bold mb-3"><i class="bi bi-exclamation-circle text-warning me-1"></i>待處理事項</h2>
+                        {# 只列出目前角色 / 權限點得進去的項目 (POS、外送派車限櫃檯以上；發票、列印、退款限店長以上)；
+                           發票 / 退款的計數不限日期，連結帶上最早可查詢日 (2000-01-01)，避免列表預設只查近 30 天而對不上 #}
+                        {% set is_pos = current_user.role in ('owner', 'manager', 'staff') %}
+                        {% set is_manager = current_user.role in ('owner', 'manager') %}
+                        {% set since = '2000-01-01' %}
                         {% set rows = [] %}
                         {% if analytics.stale_pending_count %}{% set _ = rows.append(('超過預估時間仍未出餐', analytics.stale_pending_count, url_for('admin.admin_dashboard', tab='orders'), 'text-danger')) %}{% endif %}
-                        {% if d.unpaid_tables %}{% set _ = rows.append(('桌邊點餐尚未結帳', d.unpaid_tables, url_for('pos.pos_terminal'), 'text-warning')) %}{% endif %}
-                        {% if d.deliveries_active %}{% set _ = rows.append(('外送到府進行中', d.deliveries_active, url_for('dispatch.board'), 'text-info')) %}{% endif %}
-                        {% if d.low_stock %}{% set _ = rows.append(('原物料低於安全量', d.low_stock, url_for('inventory.manage'), 'text-warning')) %}{% endif %}
-                        {% if d.health.invoice_failed %}{% set _ = rows.append(('電子發票開立失敗', d.health.invoice_failed, url_for('invoices.list_invoices', status='failed'), 'text-danger')) %}{% endif %}
-                        {% if d.health.invoice_pending %}{% set _ = rows.append(('待開立發票', d.health.invoice_pending, url_for('invoices.list_invoices', status='pending'), '')) %}{% endif %}
-                        {% if d.health.print_failed %}{% set _ = rows.append(('列印失敗', d.health.print_failed, url_for('printing.manage'), 'text-danger')) %}{% endif %}
-                        {% if d.health.refund_manual %}{% set _ = rows.append(('需人工退款', d.health.refund_manual, url_for('refunds.list_refunds', status='manual'), 'text-danger')) %}{% endif %}
-                        {% if d.reservations_today %}{% set _ = rows.append(('今日訂位', d.reservations_today, url_for('reservations.board'), '')) %}{% endif %}
+                        {% if d.unpaid_tables and is_pos %}{% set _ = rows.append(('桌邊點餐尚未結帳', d.unpaid_tables, url_for('pos.pos_terminal'), 'text-warning')) %}{% endif %}
+                        {% if d.deliveries_active and is_pos %}{% set _ = rows.append(('外送到府進行中', d.deliveries_active, url_for('dispatch.board'), 'text-info')) %}{% endif %}
+                        {% if d.low_stock and current_user.has_permission('inventory') %}{% set _ = rows.append(('原物料低於安全量', d.low_stock, url_for('inventory.manage'), 'text-warning')) %}{% endif %}
+                        {% if d.health.invoice_failed and is_manager %}{% set _ = rows.append(('電子發票開立失敗', d.health.invoice_failed, url_for('invoices.list_invoices', status='failed', start=since), 'text-danger')) %}{% endif %}
+                        {% if d.health.invoice_pending and is_manager %}{% set _ = rows.append(('待開立發票', d.health.invoice_pending, url_for('invoices.list_invoices', status='pending', start=since), '')) %}{% endif %}
+                        {% if d.health.print_failed and is_manager %}{% set _ = rows.append(('列印失敗', d.health.print_failed, url_for('printing.manage'), 'text-danger')) %}{% endif %}
+                        {% if d.health.refund_manual and is_manager %}{% set _ = rows.append(('需人工退款 / 退款失敗', d.health.refund_manual, url_for('refunds.list_refunds', status='manual,failed', start=since), 'text-danger')) %}{% endif %}
+                        {% if d.reservations_today and current_user.has_permission('reservations') %}{% set _ = rows.append(('今日訂位', d.reservations_today, url_for('reservations.board'), '')) %}{% endif %}
                         {% if rows %}
                         <ul class="list-group list-group-flush">
                             {% for label, count, url, cls in rows %}
@@ -162,7 +176,7 @@
                                         <div class="fw-bold">{{ loop.index }}. {{ item.name }}</div>
                                         <small class="text-white-50">已售 {{ item.quantity }} 份</small>
                                     </div>
-                                    <span class="badge bg-warning text-dark">${{ item.revenue | default(0) }}</span>
+                                    {% if show_reports %}<span class="badge bg-warning text-dark">${{ item.revenue | default(0) }}</span>{% endif %}
                                 </div>
                                 <div class="top-item-bar mt-1" aria-hidden="true"><span style="width: {{ ((item.quantity / top_max * 100) if top_max else 0) | round(1) }}%"></span></div>
                             </div>
@@ -185,7 +199,7 @@
                             ('原物料與配方', url_for('inventory.manage'), 'bi-box-seam', current_user.has_permission('inventory')),
                             ('打卡與排班', url_for('timeclock.admin'), 'bi-person-badge', current_user.role in ('owner', 'manager')),
                             ('交班與日結', url_for('shifts.list_shifts'), 'bi-cash-coin', current_user.has_permission('cash_drawer')),
-                            ('外送派車', url_for('dispatch.board'), 'bi-scooter', True),
+                            ('外送派車', url_for('dispatch.board'), 'bi-scooter', current_user.role in ('owner', 'manager', 'staff')),
                             ('稽核紀錄', url_for('audit.index'), 'bi-shield-check', current_user.role in ('owner', 'manager')),
                             ('系統設定', url_for('settings_admin.index'), 'bi-sliders', current_user.has_permission('settings')),
                             ('系統監控與備份', url_for('system.status'), 'bi-activity', current_user.role in ('owner', 'manager')),
@@ -444,6 +458,32 @@
         </div>
     </div>
 
+    {% if 'reports' in tabs %}
+    <!-- 實時訂單看板：作廢 (取消) 訂單的確認視窗 (需填原因；已收款訂單沒有退款權限時由主管輸入帳密核准)，由 admin.js 控制 -->
+    <div class="modal fade" id="adminVoidModal" tabindex="-1" aria-hidden="true" aria-labelledby="adminVoidTitle">
+        <div class="modal-dialog modal-dialog-centered">
+            <form class="modal-content card-custom text-white shadow-lg" id="adminVoidForm" autocomplete="off">
+                {{ modal_head('作廢訂單', 'bi-exclamation-octagon', color='text-danger', title_id='adminVoidTitle') }}
+                <div class="modal-body">
+                    <p class="mb-2">確定要作廢訂單 <span class="fw-bold text-warning" id="adminVoidOrderLabel"></span> 嗎？</p>
+                    <p class="small text-white-50 mb-3">作廢後庫存與紅利點數會回補；已收款的訂單會建立退款紀錄 (LINE Pay / 儲值金等自動退款)，並作廢發票，無法復原。</p>
+                    <label class="form-label small" for="adminVoidReason">作廢原因 (必填)</label>
+                    <input type="text" class="form-control mb-2" id="adminVoidReason" maxlength="200" required>
+                    <div id="adminVoidApproval" hidden>
+                        <p class="small text-warning mb-2" id="adminVoidApprovalMsg">此操作需要主管核准</p>
+                        <input type="text" class="form-control mb-2" id="adminVoidApproverUser" placeholder="主管帳號" autocomplete="off" aria-label="主管帳號">
+                        <input type="password" class="form-control" id="adminVoidApproverPass" placeholder="主管密碼" autocomplete="new-password" aria-label="主管密碼">
+                    </div>
+                    <div class="small text-danger mt-2" id="adminVoidMsg"></div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="submit" class="btn btn-danger fw-bold" id="adminVoidSubmit">確定作廢</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
     {% if 'coupons' in tabs %}{% include "_coupon_modals.html" %}{% endif %}
     {% if current_user.has_permission('menu') %}{% include "_data_modals.html" %}{% endif %}
 {% endif %}

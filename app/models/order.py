@@ -1,11 +1,13 @@
+import math
 from datetime import date, datetime
 
 from app.extensions import db
-from app.models.enums import OrderSource, OrderStatus, ORDER_STATUS_LABELS
+from app.models.enums import OrderSource, OrderStatus, ORDER_STATUS_LABELS, PaymentMethod
 from app.models.member import mask_code
 from app.models.mixins import TenantScoped
 
 REWARD_LABEL = '[點數兌換]'
+GIFT_CODE_LENGTH = 16   # 禮物卡卡號長度 (giftcard_service.CODE_LENGTH)
 
 
 class Order(TenantScoped, db.Model):
@@ -25,7 +27,7 @@ class Order(TenantScoped, db.Model):
     payment_method = db.Column(db.String(50), default='Cash')
     order_type = db.Column(db.String(50), default='內用')
     order_source = db.Column(db.String(30), default=OrderSource.KIOSK)
-    cashier_username = db.Column(db.String(100), default='')
+    cashier_username = db.Column(db.String(120), default='')   # 與 staff_account.username 同長
     cash_received = db.Column(db.Integer, default=0)
     cash_change = db.Column(db.Integer, default=0)
     need_cutlery = db.Column(db.Boolean, default=True)
@@ -44,14 +46,18 @@ class Order(TenantScoped, db.Model):
     node_uuid = db.Column(db.String(36), nullable=True, index=True)
     # 前端送單時產生的去重識別 (同店唯一；沒有帶時為 NULL)
     client_order_id = db.Column(db.String(36), nullable=True)
-    __table_args__ = (db.Index('ix_order_tenant_client_order_id', 'tenant_id', 'client_order_id', unique=True),)
+    # 本機專用的異動序號：本機提交與套用同步資料時都會更新，供對外 API cursor 使用
+    feed_rev = db.Column(db.BigInteger, nullable=False, default=0, server_default='0')
+    __table_args__ = (db.Index('ix_order_tenant_client_order_id', 'tenant_id', 'client_order_id', unique=True),
+                      db.Index('ix_order_tenant_feed_rev', 'tenant_id', 'feed_rev', 'id'))
     # 付款狀態：'' 已在點餐時處理 (點餐機 / POS) / unpaid 掃碼點餐尚未結帳 / settled 已於櫃檯結帳 /
     # 線上付款 (線上端的線上點餐)：pending 待付款 / paid 已付款 / expired 逾時未付 /
     # refund_required 已付款但訂單取消 (需人工退款)。待付款的訂單不會送到分店。
     payment_status = db.Column(db.String(20), nullable=False, default='', server_default='')
-    paid_at = db.Column(db.DateTime, nullable=True)
+    paid_at = db.Column(db.DateTime, nullable=True, index=True)   # 「今天的訂單」條件會用到 (今天才完成線上付款)，需索引
     payment_trade_no = db.Column(db.String(30), nullable=True)   # 金流商交易編號 (綠界 TradeNo)
     payment_ref = db.Column(db.String(20), nullable=True, index=True)  # 最近一次送到金流商的特店訂單編號
+    payment_refs = db.Column(db.Text, nullable=False, default='', server_default='')   # 本訂單歷次產生的綠界特店訂單編號 (逗號分隔，逾時查詢逐一查詢)
     # ATM 轉帳 / 超商代碼等非即時付款：繳費期限 (期限前不會因逾時被取消) 與繳費資訊 (銀行代碼帳號、超商繳費代碼)
     payment_due_at = db.Column(db.DateTime, nullable=True)
     payment_note = db.Column(db.String(120), nullable=False, default='', server_default='')
@@ -78,6 +84,8 @@ class Order(TenantScoped, db.Model):
     promotion_discount = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     member_discount = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     promotion_names = db.Column(db.String(200), nullable=False, default='', server_default='')
+    # 各促銷活動的折扣明細 (JSON：活動名稱與金額，滿額贈為 0)；報表依此逐項計次與累計金額
+    promotion_details = db.Column(db.Text, nullable=False, default='', server_default='')
     approved_by = db.Column(db.String(120), nullable=False, default='', server_default='')  # 改價 / 折扣的核准主管
     # ---- 付款細節：刷卡授權碼或 LINE Pay 交易序號、卡號末四碼、儲值金扣款、已退款金額 ----
     payment_reference = db.Column(db.String(60), nullable=False, default='', server_default='')
@@ -101,6 +109,35 @@ class Order(TenantScoped, db.Model):
         """商品小計 = 應付 + 折扣 - 服務費 - 外送費"""
         return (self.total_price or 0) + (self.discount_amount or 0) - (self.service_charge or 0) - (self.delivery_fee or 0)
 
+    def reduce_unpaid_total(self, amount, removed_subtotal, before_subtotal):
+        """
+        桌邊未結帳的訂單作廢品項：應付金額降低 amount (已依比例分攤折扣與服務費)，
+        服務費與各項折扣也依「剩下的商品小計 / 作廢前的商品小計」等比例調降，
+        讓 subtotal (應付 + 折扣 - 服務費 - 外送費) 仍等於剩下品項的小計 (收據、交班與營運報表的毛額 / 折扣 / 服務費)。
+        """
+        new_subtotal = max(0, self.subtotal - (removed_subtotal or 0))
+        self.total_price = (self.total_price or 0) - (amount or 0)
+        if not before_subtotal or before_subtotal <= 0:
+            return
+        ratio = max(0, before_subtotal - (removed_subtotal or 0)) / before_subtotal
+
+        def scale(value):
+            return int(math.floor((value or 0) * ratio + 0.5))
+        self.service_charge = scale(self.service_charge)
+        discount = new_subtotal + self.service_charge + (self.delivery_fee or 0) - self.total_price
+        if discount < 0 and self.service_charge > 0:   # 服務費四捨五入少算：差額補回服務費 (沒有折扣時)
+            self.service_charge -= discount
+        self.discount_amount = max(0, discount)
+        parts = {'promotion_discount': scale(self.promotion_discount), 'member_discount': scale(self.member_discount),
+                 'manual_discount': scale(self.manual_discount)}
+        over = sum(parts.values()) - self.discount_amount   # 四捨五入後細項合計不可超過折扣總額
+        for key in ('manual_discount', 'member_discount', 'promotion_discount'):
+            cut = min(max(over, 0), parts[key])
+            parts[key] -= cut
+            over -= cut
+        for key, value in parts.items():
+            setattr(self, key, value)
+
     @property
     def is_paid(self):
         """已收款 (點餐機 / POS 當場付款、桌位已結帳、線上已付款)"""
@@ -115,6 +152,11 @@ class Order(TenantScoped, db.Model):
         return self.pickup_number if (self.pickup_number or 0) > 0 else self.id
 
     @property
+    def pickup_pending(self):
+        """線上點餐尚未由取餐分店編號 (display_pickup_number 這時退回訂單 id，不可當成取餐號碼給顧客)"""
+        return self.order_source == OrderSource.ONLINE and not (self.pickup_number or 0) > 0
+
+    @property
     def status_label(self):
         return ORDER_STATUS_LABELS.get(self.status, self.status)
 
@@ -125,9 +167,14 @@ class Order(TenantScoped, db.Model):
 
     @property
     def masked_payment_reference(self):
-        """收據 / 列表顯示的付款參考：禮物卡卡號遮罩 (完整卡號只留在訂單供退款)"""
+        """收據 / 列表顯示的付款參考：禮物卡卡號遮罩 (完整卡號只留在訂單供退款)；
+        混合付款含禮物卡時 payment_reference 也是完整卡號 (16 位數字)，同樣遮罩"""
         ref = self.payment_reference or ''
-        return mask_code(ref) if self.payment_method == '禮物卡' else ref
+        if self.payment_method == PaymentMethod.GIFT_CARD:
+            return mask_code(ref)
+        if self.payment_method == PaymentMethod.SPLIT and len(ref) == GIFT_CODE_LENGTH and ref.isdigit():
+            return mask_code(ref)
+        return ref
 
     @property
     def eta_label(self):
@@ -188,13 +235,26 @@ class Order(TenantScoped, db.Model):
             'remaining_points': remaining_points if remaining_points is not None else (self.user.points if self.user else 0),
         }
 
-    def invoice_summary(self):
-        """最近一張電子發票 (收據顯示用)"""
+    def invoice_summary(self, settlement_invoices=None):
+        """
+        最近一張電子發票 (收據顯示用)。桌位合併結帳的發票只以 settlement_id 對應 (order_id 為空)：
+        這張訂單沒有自己的發票時改找所屬結帳單最新的一張 (combined=True：整桌合併開立)。
+        列表一次顯示多張訂單時，呼叫端可傳入預先查好的 {settlement_id: Invoice} 避免每張訂單各查一次。
+        """
         inv = max(self.invoices, key=lambda i: i.id) if self.invoices else None
+        combined = False
+        if inv is None and self.settlement_id:
+            if settlement_invoices is not None:
+                inv = settlement_invoices.get(self.settlement_id)
+            else:
+                from app.models.payment import Invoice
+                inv = Invoice.query.filter_by(tenant_id=self.tenant_id, settlement_id=self.settlement_id, order_id=None) \
+                    .execution_options(skip_tenant_filter=True).order_by(Invoice.id.desc()).first()
+            combined = inv is not None
         if inv is None:
             return None
         return {'id': inv.id, 'status': inv.status, 'invoice_no': inv.invoice_no, 'carrier': inv.carrier_label,
-                'random_number': inv.random_number, 'amount': inv.amount}
+                'random_number': inv.random_number, 'amount': inv.amount, 'combined': combined}
 
 
 class OrderItem(TenantScoped, db.Model):
@@ -218,6 +278,8 @@ class OrderItem(TenantScoped, db.Model):
     voided_qty = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     void_note = db.Column(db.String(120), nullable=False, default='', server_default='')
     prepared_at = db.Column(db.DateTime, nullable=True)     # 廚房工作站完成時間 (本機)
+    # 工作站完成紀錄 (JSON 工作站 id 清單，本機)：套餐主餐與配餐分屬不同工作站時，各站分別記錄完成
+    prepared_stations = db.Column(db.Text, nullable=False, default='', server_default='')
 
     @property
     def display_name(self):

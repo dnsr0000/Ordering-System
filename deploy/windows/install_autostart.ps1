@@ -1,4 +1,4 @@
-# 門市主機：開機自動啟動點餐系統 + 每日校時
+﻿# 門市主機：開機自動啟動點餐系統 + 每日校時
 # 以「系統管理員身分」開啟 PowerShell，在專案資料夾執行：
 #   powershell -ExecutionPolicy Bypass -File deploy\windows\install_autostart.ps1
 # 移除：Unregister-ScheduledTask -TaskName "KioskPOS-Server" -Confirm:$false
@@ -7,7 +7,10 @@ $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $cmd = Join-Path $root "deploy\windows\start_store.cmd"
 
-# 1. 開機啟動 (不需登入；失敗時每分鐘重試，最多 999 次)
+# 本檔必須存成 UTF-8 with BOM：Windows PowerShell 5.1 讀沒有 BOM 的 .ps1 會用系統字碼頁 (繁中 950) 解碼，中文字串解析失敗、整個腳本不會執行。
+#
+# 1. 開機啟動 (不需登入)。重試設定只在工作「無法啟動」時生效 (每分鐘重試，最多 999 次)；
+#    伺服器啟動後才結束 (當機、5000 埠被占用、資料庫遷移失敗) 不會自動重啟，需要自動復原請改用 NSSM (docs/DEPLOY.txt 二-2 (A))。
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$cmd`"" -WorkingDirectory $root
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `

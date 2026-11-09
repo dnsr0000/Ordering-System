@@ -6,6 +6,7 @@
 - 取消：訂位前 N 小時以前取消自動退還；之後取消或未到 (no-show) 訂金不退。
 - 退款以綠界 DoAction 退刷；失敗時標記「退款失敗」並通知店家到綠界後台處理。訂金狀態以條件式 UPDATE 推進，
   同時取消 / 入座只會退一次。
+- 收款紀錄 (不綁訂單)：付款成功記一筆預收款 (deposit)、退款記負數；沒收記 deposit_forfeit (預收轉收入)、撤銷沒收記負數。
 - 未到次數：同一支手機近 180 天未到達設定次數時暫停線上訂位 (請來電)。
 - 提醒：訂位前 N 小時以簡訊 (有設定) 或 LINE (同手機的會員已綁定) 提醒一次。
 訂位屬門市本機資料 (不同步)；綠界通知回到門市主機 (需 PUBLIC_BASE_URL 對外 HTTPS)。
@@ -20,6 +21,7 @@ from sqlalchemy import update
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import PaymentMethod
+from app.models.payment import PaymentKind, PaymentRecord
 from app.models.reservation import Reservation
 from app.services import payment_ecpay, settings_service
 
@@ -88,6 +90,33 @@ def _claim(r, expected, **values):
     return bool(ok)
 
 
+# 訂金付款頁只開放信用卡 (aio_form 預設 ChoosePayment=Credit)，退款也以信用卡退刷
+DEPOSIT_METHOD = PaymentMethod.CREDIT_CARD
+
+
+def _net(tenant_id, trade_no, kind):
+    return int(db.session.query(db.func.coalesce(db.func.sum(PaymentRecord.amount), 0)).filter(
+        PaymentRecord.tenant_id == tenant_id, PaymentRecord.order_id.is_(None), PaymentRecord.kind == kind,
+        PaymentRecord.reference == trade_no).execution_options(skip_tenant_filter=True).scalar() or 0)
+
+
+def _record(tenant_id, trade_no, kind, amount, note, staff=None):
+    """
+    訂金的收款紀錄 (不綁訂單，以付款交易編號為 reference，與狀態轉換在同一個交易)：收款 / 退款寫 DEPOSIT (預收款)，
+    沒收 / 撤銷沒收寫 DEPOSIT_FORFEIT (預收轉收入)。退款、沒收、撤銷沒收只在已有對應紀錄時才寫：
+    更新前就已付款 / 已沒收的舊訂位沒有收款紀錄，不可沖出負的預收款或收入。
+    """
+    from app.services import payment_service
+    if not trade_no or not amount:
+        return None
+    if amount < 0 or kind == PaymentKind.DEPOSIT_FORFEIT:
+        basis = kind if amount < 0 else PaymentKind.DEPOSIT
+        if _net(tenant_id, trade_no, basis) < abs(amount):
+            return None
+    return payment_service.record_payment(None, kind, DEPOSIT_METHOD, amount, reference=trade_no, note=note[:200],
+                                          staff=staff, tenant_id=tenant_id)
+
+
 def mark_paid(trade_no, provider_no, amount, custom=''):
     """
     綠界付款成功：回傳 'paid' / 'already' / 'duplicate' (同一筆訂位付了兩次，通知退款) /
@@ -109,10 +138,12 @@ def mark_paid(trade_no, provider_no, amount, custom=''):
     values = dict(deposit_status='paid', deposit_provider_no=str(provider_no or '')[:30], deposit_paid_at=datetime.now(),
                   deposit_trade_no=str(trade_no or '')[:20])   # 記下實際付款的交易編號 (退刷用)
     if _claim(r, 'pending', **values):
+        _paid_record(r, provider_no)
         db.session.commit()
         return 'paid'
     if r.deposit_status == 'expired' and _claim(r, 'expired', **values):
-        # 逾時已自動取消後才付款成功：立即退還
+        # 逾時已自動取消後才付款成功：記下收款後立即退還
+        _paid_record(r, provider_no)
         refund(r, '訂位已逾時取消，退還訂金')
         db.session.commit()
         return 'refunded_late'
@@ -123,6 +154,11 @@ def mark_paid(trade_no, provider_no, amount, custom=''):
                               level='warning', source='payment')
         return 'duplicate'
     return 'already'
+
+
+def _paid_record(r, provider_no):
+    _record(r.tenant_id, r.deposit_trade_no, PaymentKind.DEPOSIT, r.deposit_amount,
+            f'訂位訂金 {r.name} {r.reserved_at:%m/%d %H:%M} (綠界 {provider_no or "-"})', staff='ecpay')
 
 
 def mark_paid_from(params):
@@ -139,30 +175,72 @@ def handle_notification(form):
 # 退款 / 不退
 # ---------------------------------------------------------------------------
 def refund(r, reason):
-    """訂金狀態須已由呼叫端以 _claim 取得 (paid → refunding)；退刷成功 → refunded，失敗 → refund_failed 並通知"""
+    """
+    訂金狀態須已由呼叫端以 _claim 取得 (paid → refunding)；退刷成功 → refunded，失敗 → refund_failed 並通知。
+    呼叫綠界前先提交 (訂位狀態與 refunding 一起提交)：退刷的網路往返 (最長數十秒) 不佔住 SQLite 寫入鎖；
+    結果由呼叫端提交。
+    """
     from app.services import monitor_service
     if r.deposit_status != 'refunding':
         if not _claim(r, 'paid', deposit_status='refunding'):
             return r.deposit_status
+    rid, tenant_id = r.id, r.tenant_id
     ns = SimpleNamespace(payment_method=PaymentMethod.CREDIT_CARD, payment_ref=r.deposit_trade_no,
                          payment_trade_no=r.deposit_provider_no, total_price=r.deposit_amount)
+    amount, name, reserved_at, provider_no = r.deposit_amount, r.name, r.reserved_at, r.deposit_provider_no
+    trade_no = r.deposit_trade_no
+    db.session.commit()
+    error = None
     try:
-        text = payment_ecpay.refund(ns, r.deposit_amount)
-        r.deposit_status, r.deposit_note = 'refunded', f'{reason}：{text}'[:200]
+        text = payment_ecpay.refund(ns, amount)
     except payment_ecpay.EcpayRefundError as exc:
-        r.deposit_status, r.deposit_note = 'refund_failed', f'{reason}；{exc.message}'[:200]
-        monitor_service.alert(f'訂位 {r.name} {r.reserved_at:%m/%d %H:%M} 的訂金 ${r.deposit_amount} 退款失敗：{exc.message}，'
-                              f'請到綠界後台退款 (交易 {r.deposit_provider_no})', key=f'deposit-refund-{r.id}',
-                              tenant_id=r.tenant_id, level='warning', source='payment')
+        error = exc.message
+    except Exception as exc:  # noqa: BLE001  已提交 refunding：任何錯誤都要標記退款失敗，不可停在「退款中」
+        logger.exception('訂位 %s 訂金退款發生錯誤', rid)
+        error = f'退款發生錯誤：{exc}'
+    if error is None:
+        r.deposit_status, r.deposit_note = 'refunded', f'{reason}：{text}'[:200]
+        _record(tenant_id, trade_no, PaymentKind.DEPOSIT, -amount, f'退還訂位訂金：{reason}')
+    else:
+        r.deposit_status, r.deposit_note = 'refund_failed', f'{reason}；{error}'[:200]
+        monitor_service.alert(f'訂位 {name} {reserved_at:%m/%d %H:%M} 的訂金 ${amount} 退款失敗：{error}，'
+                              f'請到綠界後台退款 (交易 {provider_no})', key=f'deposit-refund-{rid}',
+                              tenant_id=tenant_id, level='warning', source='payment')
     return r.deposit_status
 
 
-def on_status(r, new_status, now=None, by_customer=False):
-    """訂位狀態改變時處理訂金；回傳給顧客 / 店員看的說明 (沒有訂金時為空字串)"""
+def retry_refund(r):
+    """退款失敗 (refund_failed) 後重試退刷 (由呼叫端提交)；回傳新的訂金狀態"""
+    if not _claim(r, 'refund_failed', deposit_status='refunding'):
+        raise AppError('此訂位的訂金不是「退款失敗」狀態，請重新整理', 409)
+    return refund(r, '重試退款')
+
+
+def mark_refunded_manually(r, staff=''):
+    """店家已在綠界後台人工退款：refund_failed → refunded 並記下處理人 (由呼叫端提交)"""
+    note = f'已於綠界後台人工退款 ({staff or "-"} {datetime.now():%m/%d %H:%M})'
+    if not _claim(r, 'refund_failed', deposit_status='refunded', deposit_note=note[:200]):
+        raise AppError('此訂位的訂金不是「退款失敗」狀態，請重新整理', 409)
+    _record(r.tenant_id, r.deposit_trade_no, PaymentKind.DEPOSIT, -r.deposit_amount, '訂位訂金已於綠界後台人工退款',
+            staff=staff or None)
+    return r.deposit_status
+
+
+def on_status(r, new_status, now=None, by_customer=False, by_store=False):
+    """
+    訂位狀態改變時處理訂金；回傳給顧客 / 店員看的說明 (沒有訂金時為空字串)。
+    by_store=True：店家因素取消，不論時間一律全額退款。誤標未到 / 取消而沒收的訂金，改回入座 / 預約中時恢復為已付款。
+    """
     now = now or datetime.now()
     if r.deposit_status == 'pending' and new_status in ('cancelled', 'no_show'):
         _claim(r, 'pending', deposit_status='expired', deposit_note='付款前已取消')
         return ''
+    if r.deposit_status == 'forfeited' and new_status in ('seated', 'booked'):
+        if not _claim(r, 'forfeited', deposit_status='paid', deposit_note='狀態改回，撤銷訂金沒收'):
+            return ''
+        _forfeit_record(r, -r.deposit_amount, '撤銷訂位訂金沒收')
+        if new_status == 'booked':
+            return f'已撤銷訂金沒收，訂金 ${r.deposit_amount} 恢復為已付款'
     if r.deposit_status != 'paid':
         return ''
     cfg = settings_service.get('reservation', r.tenant_id)
@@ -175,15 +253,21 @@ def on_status(r, new_status, now=None, by_customer=False):
     if new_status == 'cancelled':
         hours = (r.reserved_at - now).total_seconds() / 3600
         limit = int(cfg.get('deposit_refund_hours') or 0)
-        if hours >= limit:
-            status = refund(r, '顧客取消' if by_customer else '取消訂位')
+        if hours >= limit or by_store:
+            status = refund(r, '顧客取消' if by_customer else ('店家因素取消' if by_store else '取消訂位'))
             return f'訂金 ${r.deposit_amount} ' + ('將退回原信用卡' if status == 'refunded' else '退款處理中，店家將與您聯繫')
-        _claim(r, 'paid', deposit_status='forfeited', deposit_note=f'訂位前 {limit} 小時內取消，訂金不退')
+        if _claim(r, 'paid', deposit_status='forfeited', deposit_note=f'訂位前 {limit} 小時內取消，訂金不退'):
+            _forfeit_record(r, r.deposit_amount, '訂位訂金沒收 (訂位前取消)')
         return f'訂位前 {limit} 小時內取消，訂金 ${r.deposit_amount} 不退還'
     if new_status == 'no_show':
-        _claim(r, 'paid', deposit_status='forfeited', deposit_note='未到，訂金不退')
+        if _claim(r, 'paid', deposit_status='forfeited', deposit_note='未到，訂金不退'):
+            _forfeit_record(r, r.deposit_amount, '訂位訂金沒收 (未到)')
         return f'未到，訂金 ${r.deposit_amount} 不退'
     return ''
+
+
+def _forfeit_record(r, amount, note):
+    _record(r.tenant_id, r.deposit_trade_no, PaymentKind.DEPOSIT_FORFEIT, amount, note)
 
 
 # ---------------------------------------------------------------------------
@@ -258,11 +342,13 @@ def run_due(tenant_id, now=None):
 
 
 def month_stats(tenant_id, today=None):
-    """本月：未到次數、訂金不退金額、退款失敗筆數 (看板顯示)"""
+    """本月 (訂位時間在本月內)：未到次數、訂金不退金額；退款失敗為目前待處理的筆數 (不限月份) (看板顯示)"""
     from datetime import date
     today = today or date.today()
-    start = datetime.combine(today.replace(day=1), datetime.min.time())
-    q = Reservation.query.filter(Reservation.reserved_at >= start)
+    first = today.replace(day=1)
+    start = datetime.combine(first, datetime.min.time())
+    end = datetime.combine((first + timedelta(days=32)).replace(day=1), datetime.min.time())
+    q = Reservation.query.filter(Reservation.reserved_at >= start, Reservation.reserved_at < end)
     return {'no_show': q.filter(Reservation.status == 'no_show').count(),
             'forfeited': sum(r.deposit_amount for r in q.filter(Reservation.deposit_status == 'forfeited').all()),
             'refund_failed': Reservation.query.filter(Reservation.deposit_status == 'refund_failed').count()}

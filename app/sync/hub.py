@@ -1,12 +1,15 @@
 """
 線上端 (hub) 的同步 API：/api/sync/v1/*，以分店權杖 (Authorization: Bearer ...) 驗證。
 
-- POST /hello   分店第一次連線：回傳分店與店家資訊
-- POST /push    分店上傳變更 (含庫存快照)；回傳拒收的資料、合併的重複資料、線上缺少的餐點圖片
+- POST /hello   分店第一次連線：回傳分店與店家資訊、線上端接受上傳的資料表與欄位 (schema)
+- POST /push    分店上傳變更 (含庫存快照；版本落差後可帶 backfill 補上新欄位)；
+                回傳拒收的資料、合併的重複資料、線上缺少的餐點圖片、schema_hash
 - GET  /pull    分店下載變更 (只含該分店需要的資料)，可長輪詢 (wait 秒) 等待新的線上訂單
 - GET/PUT /media/menu/<路徑>  餐點圖片
 """
+import hashlib
 import io
+import json
 import os
 import time
 from datetime import datetime
@@ -26,11 +29,17 @@ from app.services.points_service import recompute_points
 from app.services.upload_paths import is_valid_menu_image, upload_file_path
 from app.sync import tracking
 from app.sync.engine import Applier, collect_changes
-from app.sync.registry import SPECS
+from app.sync.engine import _decode_value
+from app.sync.registry import BY_NAME, SPECS, references, synced_columns
 from app.tenant_context import tenant_bypass
 
 PROTOCOL = 1
 UNPAID = ('pending', 'expired')
+# 帶有 order_id、可能與待付款的線上訂單在同一個結帳交易建立的資料表 (見 payment_ecpay._touch_order_rows)
+ORDER_LINKED = frozenset({'reward_redemption', 'point_ledger', 'wallet_ledger', 'stamp_ledger', 'gift_card_ledger',
+                          'pass_ledger'})
+# 不會再出餐的付款狀態 (逾時未付 / 已取消需退款 / 已退款)：不佔分店庫存
+NOT_SERVED = ('expired', 'refund_required', 'refunded')
 PULL_SPECS = tuple(s for s in SPECS if s.direction in ('both', 'down'))
 PUSH_SPECS = SPECS
 MAX_PAGE = 1000
@@ -76,7 +85,21 @@ def hello():
         'success': True, 'protocol': PROTOCOL, 'server_time': datetime.now().isoformat(),
         'node': {'uuid': node.uuid, 'name': node.name},
         'tenant': {'uuid': tenant.uuid, 'name': tenant.name, 'slug': tenant.slug},
+        # 線上端接受上傳的資料表與欄位：分店先升級、線上端仍是舊版時，新欄位在線上端被略過 (分店游標照樣前進)；
+        # 分店比對到線上端升級後多了欄位 / 資料表，會從頭重新上傳一次並帶 backfill (見 push)
+        'schema': push_schema(), 'schema_hash': push_schema_hash(),
     })
+
+
+def push_schema():
+    """線上端接受上傳的資料表與欄位 {資料表: [欄位]}"""
+    return {s.name: synced_columns(s) for s in SPECS if s.direction != 'down'}
+
+
+def push_schema_hash():
+    """push_schema 的摘要：每次 push 回應都附上，分店發現改變 (線上端已升級) 時再呼叫 /hello 取得完整結構"""
+    raw = json.dumps(push_schema(), sort_keys=True).encode()
+    return hashlib.sha256(raw).hexdigest()[:16]
 
 
 def _order_filter(node_uuid):
@@ -88,6 +111,11 @@ def _order_filter(node_uuid):
             orders = db.metadata.tables['order']
             return table.c.order_id.in_(db.select(orders.c.id).where(
                 orders.c.node_uuid == node_uuid, orders.c.payment_status.notin_(UNPAID)))
+        if spec.name in ORDER_LINKED:
+            # 建單時一併寫入的兌換憑證 / 異動帳：待付款期間先送到分店時找不到訂單，order_id 會被存成空值，
+            # 分店之後取消這張訂單就找不到要退回的點數 / 寄杯次數。等付款完成 (mark_paid 會重新標記這些列) 再跟著訂單送出
+            orders = db.metadata.tables['order']
+            return ~db.exists().where(orders.c.id == table.c.order_id, orders.c.payment_status.in_(UNPAID))
         if spec.name == 'sync_tombstone':
             return table.c.table_name.in_([s.name for s in PULL_SPECS])
         if spec.name == 'branch_menu_override':   # 分店價格 / 上下架：只送給該分店
@@ -143,19 +171,24 @@ def push():
     stock = payload.get('stock')
     if isinstance(stock, list) and len(stock) > MAX_STOCK_ROWS:
         raise AppError('庫存回報筆數過多', 413)
+    _lock_stock_rows(node, stock)
+    refunded_before = _online_refunded(node, changes.get('order'))
     applier = Applier(node.tenant_id, 'hub', source_node_uuid=node.uuid)
     result = applier.apply(changes)
+    _backfill(node, applier, changes, payload.get('backfill'))
     recompute_points(result.touched_users)
     fixed = _undo_duplicate_referrals(node, result.touched_users) | _true_up_points_expiry(node, result.touched_users)
+    fixed |= _claw_back_reused_vouchers(node, result.reused_vouchers)
     if fixed:
         recompute_points(fixed)
     from app.services import pass_service
     for mp in pass_service.recompute(result.touched_passes):   # 寄杯在兩家分店同步前同時用完
         from app.services import monitor_service
-        monitor_service.alert(f'會員 {mp.user.name if mp.user else mp.user_id} 的寄杯「{mp.name}」在不同分店同時兌換後剩 '
-                              f'{mp.remaining} 次 (同步前同時使用)；請確認是否補收差額', key=f'pass-negative-{mp.uuid}',
+        monitor_service.alert(pass_service.negative_alert_message(mp), key=f'pass-negative-{mp.uuid}',
                               tenant_id=node.tenant_id, level='warning', source='sync')
-    _reconcile_coupon_use(node, [r.get('uuid') for r in changes.get('order') or () if isinstance(r, dict)])
+    order_uuids = [r.get('uuid') for r in changes.get('order') or () if isinstance(r, dict)]
+    _reconcile_coupon_use(node, order_uuids)
+    _reconcile_public_code_use(node, order_uuids)
     _alert_negative_balances(node, set(result.touched_users) | fixed,
                              [r.get('gift_card_id') for r in changes.get('gift_card_ledger') or () if isinstance(r, dict)])
     for transfer, message in result.transfer_alerts:
@@ -164,14 +197,132 @@ def push():
                               source='sync')
     for order in result.cancelled_orders:  # 分店取消了已線上付款的訂單：線上端標記需退款
         flag_refund_if_paid(order.id)
+    _adjust_online_invoices(refunded_before, result.cancelled_orders)
     _save_stock_snapshot(node, stock)
     _save_intake(node, payload.get('intake'))
+    _save_own_delivery(node, payload.get('own_delivery'))
     db.session.commit()
     if result.orders_changed:
         order_event_bus.notify(node.tenant_id)
     missing = sorted(p for p in result.menu_images if not _menu_image_exists(p))
     return jsonify({'success': True, 'applied': result.applied, 'conflicts': result.conflicts,
-                    'aliases': result.aliases, 'missing_media': missing})
+                    'aliases': result.aliases, 'missing_media': missing, 'schema_hash': push_schema_hash()})
+
+
+# 版本落差補值 (push 的 backfill)：安全相關的資料表 / 由專用合併規則控制的欄位不可經由補值直接覆寫
+BACKFILL_DENIED_TABLES = frozenset({'staff_account', 'sync_tombstone'})
+BACKFILL_PROTECTED = frozenset({'id', 'uuid', 'tenant_id', 'sync_rev', 'created_at', 'updated_at', 'node_uuid',
+                                'status', 'payment_status', 'refunded_amount', 'total_price', 'quantity', 'voided_qty'})
+
+
+def _backfill_allowed(node, spec_name, obj):
+    """補值只能改本分店有權修改的列：訂單 / 明細限本分店的訂單，叫貨 / 調撥單限本分店是出貨或收貨方"""
+    if spec_name == 'order':
+        return obj.node_uuid == node.uuid
+    if spec_name == 'order_item':
+        return db.session.execute(db.select(Order.node_uuid).where(Order.id == obj.order_id)).scalar() == node.uuid
+    if spec_name == 'stock_transfer':
+        return node.uuid in (obj.from_site, obj.to_site)
+    return True
+
+
+def _backfill(node, applier, changes, columns):
+    """
+    分店先升級、線上端較晚升級：線上端舊版時略過的新欄位 (分店游標已前進，不會再送)。
+    分店比對到線上端結構多了欄位後從頭重新上傳一次，並以 backfill = {資料表: [欄位]} 指出要補值的欄位；
+    一般套用時 updated_at 相同會略過，這裡把這些欄位的值補進線上端既有的列 (線上端在這之後又改過的列不覆蓋)。
+    補上的值會標記 sync_rev，其他分店之後也會收到。
+    """
+    if not isinstance(columns, dict) or not columns:
+        return
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm.attributes import flag_modified
+    rejected = {(c.get('table'), c.get('uuid')) for c in applier.result.conflicts}
+    for name, cols in columns.items():
+        spec, rows = BY_NAME.get(name), changes.get(name)
+        if spec is None or spec.direction == 'down' or name in BACKFILL_DENIED_TABLES \
+                or not isinstance(cols, list) or not rows:
+            continue
+        allowed = set(synced_columns(spec)) - BACKFILL_PROTECTED
+        cols = [c for c in cols if isinstance(c, str) and c in allowed]
+        if not cols:
+            continue
+        model, table, refs = spec.model, spec.model.__table__, references(spec)
+        for data in rows:
+            if not isinstance(data, dict) or not data.get('uuid'):
+                continue
+            uuid = applier.resolve(name, data['uuid'])
+            if (name, uuid) in rejected or (name, data['uuid']) in rejected:
+                continue
+            values = {}
+            for col in cols:
+                if col not in data:
+                    continue
+                raw = data[col]
+                if col in refs and raw is not None:
+                    local = applier.local_id(refs[col], raw)
+                    if local is None:
+                        continue
+                    values[col] = local
+                else:
+                    values[col] = None if col in refs else _decode_value(table.c[col], raw)
+            if not values:
+                continue
+            obj = db.session.execute(db.select(model).where(model.uuid == uuid, model.tenant_id == node.tenant_id)
+                                     .execution_options(skip_tenant_filter=True)).scalar_one_or_none()
+            if obj is None or not _backfill_allowed(node, name, obj):
+                continue
+            if 'updated_at' in table.c and obj.updated_at is not None and data.get('updated_at'):
+                if _decode_value(table.c.updated_at, data['updated_at']) < obj.updated_at:
+                    continue   # 線上端在這之後又改過這一列：以線上端為準
+            if applier._rejected(spec, obj, values):
+                continue
+            values = {k: v for k, v in values.items() if getattr(obj, k) != v}
+            if not values:
+                continue
+            try:
+                with db.session.begin_nested():
+                    for key, value in values.items():
+                        setattr(obj, key, value)
+                    if 'updated_at' in table.c:
+                        flag_modified(obj, 'updated_at')   # 保留原本的 updated_at
+                    db.session.flush()
+            except IntegrityError:
+                applier.conflict(spec, uuid, '補上新欄位的值時與其他資料重複，未套用')
+
+
+def _online_refunded(node, rows):
+    """
+    這次上傳的訂單中，由線上端收款 (發票由線上端開立) 的線上點餐訂單 {order_id: 套用前的已退款金額}。
+    到店付款的線上訂單 (unpaid → 分店結帳 settled) 由分店收款、開發票並自行作廢，不在此列。
+    """
+    uuids = [str(r.get('uuid')) for r in rows or () if isinstance(r, dict) and r.get('uuid')]
+    if not uuids:
+        return {}
+    return {oid: refunded or 0 for oid, refunded in db.session.execute(
+        db.select(Order.id, Order.refunded_amount).where(
+            Order.tenant_id == node.tenant_id, Order.uuid.in_(uuids), Order.node_uuid == node.uuid,
+            Order.order_source == OrderSource.ONLINE, Order.payment_status.notin_(('unpaid', 'settled'))))}
+
+
+def _adjust_online_invoices(refunded_before, cancelled_orders):
+    """
+    線上點餐的發票由線上端開立 (發票只上傳不下發，分店沒有這張發票)：分店取消或部分退款後同步上來時，
+    由線上端作廢 / 折讓 (與本機取消、部分退款相同：payment_service._void_invoices / _refund_order_invoices)。
+    """
+    if not refunded_before:
+        return
+    from app.services import payment_service
+    cancelled = {o.id for o in cancelled_orders}
+    for order_id in sorted(refunded_before):
+        order = db.session.get(Order, order_id)
+        if order is None:
+            continue
+        delta = max(0, (order.refunded_amount or 0) - refunded_before[order_id])
+        if order_id in cancelled:
+            payment_service._void_invoices(order, delta)
+        elif delta > 0:
+            payment_service._refund_order_invoices(order, delta, '分店退款')
 
 
 def _reconcile_coupon_use(node, order_uuids):
@@ -207,6 +358,82 @@ def _reconcile_coupon_use(node, order_uuids):
             monitor_service.alert(f"優惠券「{uc.code}」被重複使用：會員 {member.name if member else uc.user_id} 的同一張券"
                                   f"在同步前同時用於訂單 {detail}；請確認是否補收差額或取消其中一張",
                                   key=f'coupon-dup-{uc.uuid}', tenant_id=node.tenant_id, level='warning', source='sync')
+
+
+def _reconcile_public_code_use(node, order_uuids):
+    """
+    公開優惠代碼的「每位會員限用 N 次」在各主機只能看到本機的訂單：線上端下發給分店的訂單只限該分店出餐的，
+    同一位會員在其他分店 (或線上點餐取餐選其他分店) 的使用次數，分店永遠算不到。
+    線上端看得到所有分店上傳的訂單：收到使用公開代碼的會員訂單時比對未取消的次數，超過上限就通知店家。
+    """
+    from app.models.coupon import Coupon
+    uuids = [u for u in order_uuids if u]
+    if not uuids:
+        return
+    pairs = sorted(set(db.session.execute(db.select(Order.user_id, Order.coupon_code).where(
+        Order.tenant_id == node.tenant_id, Order.uuid.in_(uuids), Order.user_id.isnot(None),
+        Order.coupon_code.isnot(None), Order.coupon_code != '', Order.applied_user_coupon_id.is_(None))).all()))
+    if not pairs:
+        return
+    places = None
+    for user_id, code in pairs:
+        coupon = Coupon.query.filter_by(tenant_id=node.tenant_id, code=code).first()
+        if coupon is None or coupon.requires_holding or not coupon.uses_per_member:
+            continue
+        used = Order.query.filter(Order.tenant_id == node.tenant_id, Order.user_id == user_id,
+                                  Order.coupon_code == code, Order.status != OrderStatus.CANCELLED,
+                                  Order.applied_user_coupon_id.is_(None)) \
+            .execution_options(skip_tenant_filter=True).order_by(Order.created_at, Order.id).all()
+        if len(used) <= coupon.uses_per_member:
+            continue
+        from app.models.user import User
+        from app.services import monitor_service
+        if places is None:
+            places = {n.uuid: n.name for n in SyncNode.query.filter_by(tenant_id=node.tenant_id)
+                      .execution_options(skip_tenant_filter=True)}
+        member = db.session.get(User, user_id)
+        detail = '、'.join(f"#{o.id} ({'線上點餐' if o.order_source == OrderSource.ONLINE else places.get(o.node_uuid, '分店')})"
+                          for o in used)
+        monitor_service.alert(f"優惠代碼「{code}」每位會員限用 {coupon.uses_per_member} 次，會員 "
+                              f"{member.name if member else user_id} 已在 {detail} 使用 {len(used)} 次；請確認是否補收差額",
+                              key=f'promo-overuse-{code}-{user_id}', tenant_id=node.tenant_id, level='warning',
+                              source='sync')
+
+
+def _claw_back_reused_vouchers(node, vouchers):
+    """
+    紅利兌換憑證在兩台主機同步前一邊退點、一邊核銷 (合併後以已使用為準)：會員拿到商品，退回的點數也還在。
+    由線上端扣回退回的點數 (最多扣到 0) 並通知店家。以訂單上已有的 voucher_reuse 異動判斷是否處理過
+    (上傳回應遺失而重送同一頁時不重複扣點)。回傳點數有變動的會員 ID。
+    """
+    from app.models.sync import PointLedger
+    from app.models.user import User
+    from app.services import monitor_service
+    from app.services.points_service import change_points
+    seen, groups = set(), {}
+    for v in vouchers:
+        if v is None or v.uuid in seen or not v.user_id or not (v.points_cost or 0) > 0:
+            continue
+        seen.add(v.uuid)
+        groups.setdefault((v.user_id, v.order_id), []).append(v)
+    changed = set()
+    for (user_id, order_id), items in sorted(groups.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
+        done = db.session.execute(db.select(PointLedger.id).where(
+            PointLedger.tenant_id == node.tenant_id, PointLedger.user_id == user_id,
+            PointLedger.reason == 'voucher_reuse',
+            (PointLedger.order_id == order_id) if order_id else PointLedger.order_id.is_(None)).limit(1)).first()
+        if done is not None:
+            continue
+        member = db.session.get(User, user_id)
+        for v in sorted(items, key=lambda x: x.id or 0):
+            taken = change_points(node.tenant_id, user_id, -(v.points_cost or 0), 'voucher_reuse', order_id=order_id,
+                                  clamp=True) or 0
+            changed.add(user_id)
+            monitor_service.alert(f'會員 {member.name if member else user_id} 的紅利兌換憑證在同步前於兩處同時退點與核銷，'
+                                  f'已追回退回的 {-taken} 點'
+                                  + (f' (應追回 {v.points_cost} 點，會員點數不足)' if -taken < v.points_cost else ''),
+                                  key=f'voucher-reuse-{v.uuid}', tenant_id=node.tenant_id, level='warning', source='sync')
+    return changed
 
 
 def _undo_duplicate_referrals(node, user_ids):
@@ -307,11 +534,12 @@ def _in_flight_demands(node):
     """
     已在線上端成立 (含待付款)、但分店還沒收到的線上訂單佔用的份數 {menu_item_id: 份數}。
     分店收到訂單時才扣本機庫存並編取餐號 (取餐號同步回來前，線上端的取餐號為 0)。
+    到店付款 (ONLINE_PAYMENT=0) 的訂單付款狀態不是 pending / paid，同樣佔用份數：只排除不會再出餐的狀態。
     """
     from app.services.order_service import order_stock_demands
     orders = Order.query.filter(Order.tenant_id == node.tenant_id, Order.node_uuid == node.uuid,
                                 Order.order_source == OrderSource.ONLINE, Order.status != OrderStatus.CANCELLED,
-                                Order.payment_status.in_(('pending', 'paid')),
+                                Order.payment_status.notin_(NOT_SERVED),
                                 db.or_(Order.pickup_number.is_(None), Order.pickup_number == 0)) \
         .execution_options(skip_tenant_filter=True).all()
     held = {}
@@ -334,6 +562,80 @@ def _save_intake(node, intake):
             until = None
     node.paused_until = until
     node.paused_message = str(intake.get('message') or '')[:200] if until else ''
+    # 分店生效中的自有外送設定摘要 (node._intake_snapshot 的 'delivery')；舊版分店不帶 = 維持原值 (未回報則沿用線上端設定)
+    _save_own_delivery(node, _intake_delivery(intake.get('delivery')))
+
+
+def _intake_delivery(delivery):
+    """
+    把 intake['delivery'] ({'enabled', 'online', 'zones': [{'name', 'fee', 'min_spend'}], 'free_over'})
+    轉成 _save_own_delivery 的格式 (channels 清單、zones 為「名稱:外送費:最低消費」多行文字)；不是 dict 時回傳 None
+    """
+    if not isinstance(delivery, dict):
+        return None
+    lines = []
+    for z in delivery.get('zones') if isinstance(delivery.get('zones'), list) else ():
+        if not isinstance(z, dict):
+            continue
+        name = str(z.get('name') or '').replace(':', ' ').replace('：', ' ').replace('\r', ' ').replace('\n', ' ')
+        name = name.strip()[:30]
+        if not name:
+            continue
+        lines.append(f"{name}:{_bounded_int(z.get('fee'), 0, 100000, 0)}:"
+                     f"{_bounded_int(z.get('min_spend'), 0, 100000, 0)}")
+        if len(lines) >= 20:
+            break
+    return {'enabled': bool(delivery.get('enabled')), 'channels': ['online'] if delivery.get('online') else [],
+            'zones': '\n'.join(lines), 'free_over': delivery.get('free_over')}
+
+
+def _bounded_int(value, low, high, default):
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _save_own_delivery(node, info):
+    """
+    分店回報的本店生效「自有外送」設定 (分店可存成本店自訂：關閉外送或改配送區域 / 費率)：
+    存到 SyncNode.own_delivery_json，線上點餐選到該分店時依此驗證外送到府與計算外送費。
+    只在有變動時回報 (未帶 = 維持上次的回報)。
+    """
+    if not isinstance(info, dict):
+        return
+    channels = info.get('channels')
+    summary = {
+        'enabled': bool(info.get('enabled')),
+        'channels': [c for c in ('online', 'pos') if isinstance(channels, list) and c in channels],
+        'zones': str(info.get('zones') or '')[:2000],
+        'free_over': _bounded_int(info.get('free_over'), 0, 100000, 0),
+        'eta_minutes': _bounded_int(info.get('eta_minutes'), 10, 240, 45),
+    }
+    node.own_delivery_json = json.dumps(summary, ensure_ascii=False, sort_keys=True)
+
+
+def _stock_item_ids(node, stock):
+    """分店回報的庫存中，本店家餐點的 {uuid: menu_item_id}"""
+    uuids = [str(s.get('uuid')) for s in stock if isinstance(s, dict) and s.get('uuid')]
+    return dict(db.session.execute(db.select(MenuItem.uuid, MenuItem.id).where(
+        MenuItem.tenant_id == node.tenant_id, MenuItem.uuid.in_(uuids))).all())
+
+
+def _lock_stock_rows(node, stock):
+    """
+    回報庫存前先鎖住這家分店要覆蓋的庫存快照列 (依品項排序，與結帳扣庫存的順序相同)：
+    之後才算「還沒送達分店的線上訂單」佔用份數並以絕對值覆蓋，同時結帳的線上訂單不會夾在中間被蓋掉預扣。
+    在套用其他變更 (會鎖會員等列) 之前執行，鎖的順序與結帳相同 (庫存 → 會員)，避免交叉鎖死。
+    (SQLite 只有單一寫入者，FOR UPDATE 會被忽略)
+    """
+    if not isinstance(stock, list) or not stock:
+        return
+    item_ids = sorted(set(_stock_item_ids(node, stock).values()))
+    if item_ids:
+        db.session.execute(db.select(NodeStock.menu_item_id).where(
+            NodeStock.node_id == node.id, NodeStock.menu_item_id.in_(item_ids))
+            .order_by(NodeStock.menu_item_id).with_for_update()).all()
 
 
 def _save_stock_snapshot(node, stock):
@@ -344,10 +646,8 @@ def _save_stock_snapshot(node, stock):
     """
     if not isinstance(stock, list) or not stock:
         return
-    uuids = [str(s.get('uuid')) for s in stock if isinstance(s, dict) and s.get('uuid')]
-    ids = dict(db.session.execute(db.select(MenuItem.uuid, MenuItem.id).where(
-        MenuItem.tenant_id == node.tenant_id, MenuItem.uuid.in_(uuids))).all())
-    held = _in_flight_demands(node)
+    ids = _stock_item_ids(node, stock)
+    held = _in_flight_demands(node)   # 庫存快照列已在 push 開頭鎖住 (_lock_stock_rows)
     now = datetime.now()
     for s in stock:
         item_id = ids.get(str(s.get('uuid'))) if isinstance(s, dict) else None

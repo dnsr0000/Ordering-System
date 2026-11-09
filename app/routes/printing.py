@@ -1,4 +1,7 @@
 """後台：網路熱感印表機、廚房工作站、列印紀錄"""
+import ipaddress
+import re
+
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
 from app.models.enums import MANAGER_ROLES
@@ -11,14 +14,25 @@ from app.services.audit import record_staff_audit
 from app.utils import get_own, role_required, safe_int
 
 printing_bp = Blueprint('printing', __name__)
+_HOST_LABEL = re.compile(r'[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?')
+
+
+def _valid_host(host):
+    """IP 位址，或每段 1~63 字英數 / 連字號 (首尾不是連字號) 的主機名稱：192.168..50 這類空標籤連線時 socket 會拋 UnicodeError"""
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return all(_HOST_LABEL.fullmatch(label) for label in host.split('.'))
 
 
 def _printer_form(p, form):
-    name = (form.get('name') or '').strip()[:50]
+    # 名稱會印在測試頁上：換行 / 控制字元一律換成空白 (不可拿來在送出的內容中組出獨立的一行指令)
+    name = ''.join(c if c.isprintable() else ' ' for c in (form.get('name') or '')).strip()[:50]
     host = (form.get('host') or '').strip()[:100]
     if not name or not host:
         raise AppError('請輸入印表機名稱與 IP 位址')
-    if any(c in host for c in ' /\\'):
+    if any(c in host for c in ' /\\') or not host.isprintable() or not _valid_host(host):
         raise AppError('IP 位址格式不正確 (例如 192.168.1.50)')
     from app.services.webhook_service import check_public_host_on_hub
     check_public_host_on_hub(host)   # 線上端沒有門市印表機：不可拿印表機設定連線上端內網

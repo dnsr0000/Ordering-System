@@ -11,6 +11,7 @@ import secrets
 from datetime import datetime, timedelta
 
 import requests
+from sqlalchemy import update
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import AppError
@@ -50,7 +51,7 @@ def send_sms(tenant_id, phone, text):
     if provider == 'none':
         raise AppError('尚未設定簡訊服務')
     if provider == 'log':
-        monitor_service.record_event('info', f'[簡訊測試 → {phone}] {text}', 'sms')
+        monitor_service.record_event('info', f'[簡訊測試 → {phone}] {text}', 'sms', tenant_id=tenant_id)
         return 'logged'
     try:
         if provider == 'mitake':
@@ -118,9 +119,14 @@ def verify_otp(phone, purpose, code):
                                OtpCode.expires_at >= now).order_by(OtpCode.id.desc()).first()
     if otp is None:
         raise AppError('驗證碼已過期或不存在，請重新發送', 400)
-    if otp.attempts >= OTP_MAX_ATTEMPTS:
+    # 條件式遞增嘗試次數並先提交 (同時送出多次也不會漏計)，再比對雜湊
+    counted = db.session.execute(
+        update(OtpCode).where(OtpCode.id == otp.id, OtpCode.attempts < OTP_MAX_ATTEMPTS)
+        .values(attempts=OtpCode.attempts + 1).execution_options(synchronize_session=False)).rowcount
+    db.session.commit()
+    if not counted:
         raise AppError('驗證碼錯誤次數過多，請重新發送', 429)
-    otp.attempts += 1
+    db.session.refresh(otp)
     if not check_password_hash(otp.code_hash, str(code or '').strip()):
         db.session.commit()
         raise AppError('驗證碼不正確', 400)

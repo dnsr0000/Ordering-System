@@ -158,24 +158,27 @@
     }
 
     // 表單送出前確認：<form data-confirm="確定刪除？"> (取代 onsubmit="return confirm(...)"，訊息不會被當成程式碼)
+    //   <button data-confirm> 只在按這顆按鈕送出時確認 (優先於 form 上的 data-confirm)
     document.addEventListener('submit', (ev) => {
         const form = ev.target;
-        if (form instanceof HTMLFormElement && form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
-            ev.preventDefault();
-        }
+        if (!(form instanceof HTMLFormElement)) return;
+        const msg = (ev.submitter && ev.submitter.dataset && ev.submitter.dataset.confirm) || form.dataset.confirm;
+        if (msg && !window.confirm(msg)) ev.preventDefault();
     }, true);
 
     // ---------------------------------------------------------------- 即時更新的統一做法
     // 員工畫面與店內看板 (後台、POS、KDS、取餐、叫號、數位看板…)：訂單資料一律用 onOrdersChanged (SSE)，
     //   斷線期間自動改為輪詢 (預設 SSE_FALLBACK_MS)；不另外寫定時器重抓訂單。
     // 「依時間變化」、SSE 不會通知的資料 (供應時段、AI 建議、暫停接單自動恢復…) 與顧客頁 (我的訂單、出餐進度、候位、
-    //   售完狀態)：一律用 poll()。顧客頁不用 SSE：每條 SSE 連線占用伺服器一條執行緒 (公開連線每店上限 25 條)，
+    //   售完狀態)：一律用 poll()。顧客頁不用 SSE：每條 SSE 連線占用伺服器一條執行緒 (公開連線每個伺服器行程所有店家合計上限 25 條，超過時優先淘汰連線最多的那家店)，
     //   且 SSE 是整店的廣播，不適合給個別顧客。
     const SSE_FALLBACK_MS = 5000;
+    const SSE_HIDDEN_CLOSE_MS = 15000;
 
     /**
      * 訂單有變動時呼叫 callback (建立、狀態變更、取消)。
      * EventSource 斷線會自動重連；切回分頁時也會重新整理一次，避免背景期間漏掉更新。
+     * 分頁在背景一段時間後關閉 SSE、改為每 fallbackMs 輪詢，切回時重新連線 (回傳物件只提供 close / addEventListener)。
      * fallbackMs：斷線期間 (或瀏覽器不支援 EventSource、伺服器拒絕連線而不再重連時) 每隔這麼久輪詢一次，連線恢復後停止；
      *   預設 SSE_FALLBACK_MS，重新整理代價高的頁面 (例如整頁 reload) 可傳較長的值。
      * onStatus(ok)：連線 / 斷線時回呼 (畫面上的狀態點)。
@@ -193,22 +196,55 @@
                 callback();
             }, Math.max(150, last + minIntervalMs - Date.now()));
         };
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) trigger(); });
         let fallbackTimer = null;
         const startFallback = () => { if (fallbackMs && !fallbackTimer) fallbackTimer = setInterval(callback, fallbackMs); };
         const stopFallback = () => { clearInterval(fallbackTimer); fallbackTimer = null; };
         if (!global.EventSource) {
+            document.addEventListener('visibilitychange', () => { if (!document.hidden) trigger(); });
             if (onStatus) onStatus(false);
             startFallback();
             return { close: stopFallback, addEventListener() {} };
         }
-        const source = new EventSource('/api/orders_stream');
-        source.onmessage = trigger;
-        source.addEventListener('open', () => { stopFallback(); if (onStatus) onStatus(true); });
-        source.addEventListener('error', () => { startFallback(); if (onStatus) onStatus(false); });
-        const close = source.close.bind(source);
-        source.close = () => { stopFallback(); close(); };
-        return source;
+        // 分頁在背景超過 SSE_HIDDEN_CLOSE_MS 就關閉 SSE、改為輪詢，切回時重新連線：門市主機是 HTTP/1.1，
+        // 瀏覽器對同一主機最多 6 條連線 (所有分頁共用)，每個看板分頁常駐一條 SSE 會占滿連線，其他請求都會卡住
+        let source = null;
+        let hideTimer = null;
+        let closed = false;
+        const extra = [];
+        const connect = () => {
+            if (source || closed) return;
+            source = new EventSource('/api/orders_stream');
+            source.onmessage = trigger;
+            source.addEventListener('open', () => { stopFallback(); if (onStatus) onStatus(true); });
+            source.addEventListener('error', () => { startFallback(); if (onStatus) onStatus(false); });
+            extra.forEach(([type, fn]) => source.addEventListener(type, fn));
+        };
+        const sleep = () => { if (source) { source.close(); source = null; } startFallback(); };
+        const onVisibility = () => {
+            clearTimeout(hideTimer);
+            if (closed) return;
+            if (document.hidden) {
+                hideTimer = setTimeout(sleep, SSE_HIDDEN_CLOSE_MS);
+                return;
+            }
+            connect();   // 連線成功 (open) 時停止背景期間的輪詢
+            trigger();
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        connect();
+        if (document.hidden) hideTimer = setTimeout(sleep, SSE_HIDDEN_CLOSE_MS);
+        return {
+            close() {
+                closed = true;
+                clearTimeout(hideTimer);
+                stopFallback();
+                if (source) { source.close(); source = null; }
+            },
+            addEventListener(type, fn) {
+                extra.push([type, fn]);
+                if (source) source.addEventListener(type, fn);
+            },
+        };
     }
 
     /**
@@ -260,18 +296,50 @@
         document.querySelectorAll('[data-clock]').forEach(startClock);   // 後台頂欄時鐘
     });
 
-    /** Kiosk 無人操作一段時間後自動登出 (預設 120 秒)；beforeLogout 可用來清除本機暫存 (例如購物車) */
-    function idleLogout({ timeoutMs = 120000, url = '/logout', next = '/', beforeLogout = null } = {}) {
+    /**
+     * Kiosk 無人操作一段時間後自動登出 (預設 120 秒)；beforeLogout 可用來清除本機暫存 (例如購物車)。
+     * 登出請求沒有成功 (斷線、伺服器 5xx) 時不跳頁：顯示鎖定畫面並持續重試，成功後才回首頁
+     * (顧客登入狀態存在 cookie 的 session，伺服器沒收到登出就不會清掉，跳回首頁會直接進到上一位會員的點餐頁)。
+     */
+    function idleLogout({ timeoutMs = 120000, url = '/logout', next = '/', beforeLogout = null, retryMs = 5000 } = {}) {
         let timer = null;
+        let loggingOut = false;
+        let lock = null;
+        const showLock = () => {
+            if (lock) return;
+            lock = document.createElement('div');
+            lock.id = 'kiosk-logout-lock';
+            lock.className = 'device-lock';
+            lock.setAttribute('role', 'alert');
+            const text = document.createElement('div');
+            text.className = 'device-lock-text';
+            text.textContent = t('logout_retrying', '正在登出上一位顧客，網路恢復後會自動完成，請稍候');
+            lock.appendChild(text);
+            document.body.appendChild(lock);
+        };
+        const attempt = () => {
+            const timeout = global.AbortSignal && AbortSignal.timeout ? { signal: AbortSignal.timeout(15000) } : {};
+            // 登出只接受 POST (避免其他網站以連結或圖片讓顧客被登出)
+            fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken() }, credentials: 'same-origin', ...timeout })
+                // 4xx (例如 CSRF 無效：頁面所屬的 session 已不存在) 重試也不會成功，視同完成；5xx / 429 / 連不上才重試
+                .then((resp) => resp.status < 500 && resp.status !== 429, () => false)
+                .then((done) => {
+                    if (done) {
+                        window.location.href = next;
+                        return;
+                    }
+                    showLock();
+                    setTimeout(attempt, retryMs);
+                });
+        };
         const reset = () => {
+            if (loggingOut) return;
             clearTimeout(timer);
             timer = setTimeout(() => {
+                loggingOut = true;
                 try { if (beforeLogout) beforeLogout(); } catch (err) { /* 不影響登出 */ }
                 setA11y(false);   // 下一位顧客回到一般字體
-                // 登出只接受 POST (避免其他網站以連結或圖片讓顧客被登出)
-                fetch(url, { method: 'POST', headers: { 'X-CSRFToken': csrfToken() }, credentials: 'same-origin' })
-                    .catch(() => {})
-                    .finally(() => { window.location.href = next; });
+                attempt();
             }, timeoutMs);
         };
         ['click', 'touchstart', 'keydown', 'mousemove', 'scroll'].forEach((e) => document.addEventListener(e, reset, { passive: true }));
@@ -359,11 +427,13 @@
     });
 
     // ---------------------------------------------------------------- 斷線提示
-    // 網路中斷時在畫面底部顯示提示 (點餐、結帳需要連線)；恢復後自動隱藏
+    // 網路中斷時在畫面底部顯示提示 (點餐、結帳需要連線；門市點餐機的現金單會先暫存，見 kiosk-offline.js)；恢復後自動隱藏。
+    // 提示條的高度記在 --offline-banner-h，讓左下角的「暫存單」按鈕移到提示條上方 (theme.css)
     function updateOnlineBanner() {
         let banner = document.getElementById('kiosk-offline-banner');
         if (navigator.onLine) {
             if (banner) banner.remove();
+            document.documentElement.style.removeProperty('--offline-banner-h');
             return;
         }
         if (!banner) {
@@ -371,12 +441,16 @@
             banner.id = 'kiosk-offline-banner';
             banner.className = 'offline-banner';
             banner.setAttribute('role', 'alert');
-            banner.textContent = t('offline_banner', '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳');
+            banner.textContent = global.KioskOffline
+                ? t('offline_banner_queue', '⚠️ 網路已中斷：現金訂單會先暫存，恢復連線後自動送出')
+                : t('offline_banner', '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳');
             document.body.appendChild(banner);
         }
+        document.documentElement.style.setProperty('--offline-banner-h', `${banner.offsetHeight}px`);
     }
     window.addEventListener('online', updateOnlineBanner);
     window.addEventListener('offline', updateOnlineBanner);
+    window.addEventListener('resize', () => { if (!navigator.onLine) updateOnlineBanner(); });
     document.addEventListener('DOMContentLoaded', updateOnlineBanner);
 
     // ---------------------------------------------------------------- DOM 小工具
@@ -397,7 +471,10 @@
     }
 
     // ---------------------------------------------------------------- localStorage (隱私模式或空間不足時不會拋錯)
-    const CART_KEY = 'kiosk_cart';
+    // 顧客購物車依店家分開 (同一網域以 /shop/<slug> 切換店家時不會帶到別家的品項)；預設店家沿用舊鍵 (升級前的購物車不受影響)
+    const shopMeta = document.querySelector('meta[name="shop"]');
+    const shopSlug = shopMeta ? shopMeta.getAttribute('content') || '' : '';
+    const CART_KEY = shopSlug && shopSlug !== 'default' ? `kiosk_cart_${shopSlug}` : 'kiosk_cart';
     const store = {
         get(key, fallback = null) {
             try {
@@ -459,12 +536,16 @@
         return style === 'dark' ? 'bg-dark border border-secondary text-white-50' : 'bg-success';
     }
 
-    /** 外帶單的餐具與備註區塊 (後台 / 廚房訂單卡共用) */
+    /**
+     * 訂單的餐具與備註區塊 (後台 / 廚房訂單卡共用)：備註不分單型都顯示 (內用、外送平台單也有整單備註)；
+     * 餐具只有外帶與外送到府 (顧客有選) 才顯示，外送平台單沒有提供餐具需求
+     */
     function takeoutBlock(o, noteClass = '') {
-        if (o.order_type !== '外帶') return '';
+        const cutlery = o.order_type === '外帶' || o.order_type === '外送到府';
+        if (!cutlery && !o.note) return '';
         return html`
         <div class="mb-2">
-            <span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'}">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>
+            ${cutlery ? html`<span class="badge ${o.need_cutlery ? 'bg-success' : 'bg-secondary'}">${o.need_cutlery ? '要餐具' : '不用餐具'}</span>` : ''}
             ${o.note ? html`<div class="small text-warning mt-1 ${noteClass}">備註：${o.note}</div>` : ''}
         </div>`;
     }

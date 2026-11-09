@@ -7,6 +7,8 @@ from typing import Any
 import re
 
 from app.models.menu import MenuItem, ModifierOption
+from app.services.order_pricing import _price_channel
+from app.sync import runtime as sync_runtime
 
 MOD_RE = re.compile(r'^(.+?)\(\+(\d+)\)$')
 SKIP_PREFIXES = ('[套餐:', '[寄杯]', '紅利免費兌換', '改價 $')
@@ -33,8 +35,15 @@ def _combo_choice_ids(combo: Any, parts: list[str]) -> tuple[list[int], set[str]
     return ids, used
 
 
+def _main_candidate(it: Any) -> bool:
+    """可能是加購品搭配的正價品項 (排除紅利兌換、促銷贈品、寄杯兌換)"""
+    return (it.quantity or 0) > 0 and not it.is_reward and not it.is_gift \
+        and not (it.customization or '').startswith('[寄杯]')
+
+
 def lines_for(order: Any, tenant_id: int) -> tuple[list[dict], list[str]]:
     """回傳 (購物車列清單, 略過的品項名稱清單)"""
+    channel = _price_channel(order.order_source, order.order_type, sync_runtime.is_hub())
     modifiers = {m.name: m for m in ModifierOption.query.filter_by(is_active=True).all()}
     modifiers_by_id = {m.id: m for m in modifiers.values()}
     lines, skipped = [], []
@@ -76,6 +85,14 @@ def lines_for(order: Any, tenant_id: int) -> tuple[list[dict], list[str]]:
         extra = sum(modifiers_by_id[m].price for m in modifier_ids)
         is_add_on = bool(item.can_be_add_on) and combo is None and (it.price - extra) == (item.add_on_price or 0) \
             and (item.add_on_price or 0) < item.unit_price
+        if is_add_on:
+            # 訂單明細沒有存加購身分，只能用價格反推：一般單點的價格 (會員價 / 通路價) 剛好等於加購價時會誤判成加購品，
+            # 被購物車的加購名額規則移除。同一筆訂單沒有可搭配的其他正價品項 (加購必須搭主餐)，
+            # 或以這筆訂單的通路 / 會員身分算出的正價也等於這個價格時，一律當成一般品項 (價格相同，不佔加購名額)
+            size_delta = next((d for n, d in item.sizes if n == size), 0) if size else 0
+            regular = max(0, item.price_for(channel, member=order.user_id is not None) + size_delta)
+            if (it.price - extra) == regular or not any(_main_candidate(o) for o in order.items if o is not it):
+                is_add_on = False
         lines.append({
             'menu_item_id': item.id, 'quantity': qty, 'combo_option_id': combo.id if combo else None,
             'combo_choices': combo_choices, 'size': size, 'modifier_ids': modifier_ids,

@@ -28,12 +28,21 @@ class _QuietHandler(WSGIRequestHandler):
 
 @pytest.fixture(scope='module')
 def live_url(app):
-    limiter.enabled = False
     server = make_server('127.0.0.1', 0, app, threaded=True, request_handler=_QuietHandler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f'http://127.0.0.1:{server.server_port}'
     server.shutdown()
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit(_per_test_isolation):
+    """
+    壓力測試量的是點餐與搶購本身，不含頻率限制：必須是 function scope 且排在 conftest 的 _per_test_isolation 之後
+    (它每個測試前都會 limiter.enabled = True；在 module scope 的 live_url 裡關閉會被它蓋回去)
+    """
+    limiter.enabled = False
+    yield
     limiter.enabled = True
 
 

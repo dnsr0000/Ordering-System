@@ -13,6 +13,7 @@ from app.models.inventory import Ingredient, PurchaseOrder, PurchaseOrderLine, S
 from app.services import inventory_service, settings_service
 
 OPEN_STATUSES = ('draft', 'sent')
+MAX_LINE_VALUE = 10_000_000   # 品項數量 / 單價上限：極大值 (例如 1e308) 相乘溢位，採購列表與採購單頁會 500
 STATUS_LABELS = {'draft': ('草稿', 'secondary'), 'sent': ('已送出', 'info'), 'received': ('已收貨', 'success'),
                  'cancelled': ('已取消', 'dark')}
 
@@ -27,10 +28,10 @@ def _claim(po, allowed, message, **values):
     db.session.refresh(po)
 
 
-def suggest_qty(ing):
-    """建議採購量：補到目標庫存 (未設定時為安全量的 2 倍)，進位到採購單位"""
+def suggest_qty(ing, pending=0):
+    """建議採購量：補到目標庫存 (未設定時為安全量的 2 倍)，先扣掉已在未收貨採購單中的量，再進位到採購單位"""
     target = ing.par_level or (ing.low_threshold or 0) * 2
-    need = target - (ing.stock or 0)
+    need = target - (ing.stock or 0) - (pending or 0)
     if need <= 0:
         return 0
     pack = ing.pack_size if (ing.pack_size or 0) > 0 else 1
@@ -55,9 +56,7 @@ def suggestions():
     for ing in Ingredient.query.filter_by(is_active=True).order_by(Ingredient.name).all():
         if not ing.is_low:
             continue
-        qty = suggest_qty(ing)
-        if pending.get(ing.id):
-            qty = max(0, qty - pending[ing.id])
+        qty = suggest_qty(ing, pending.get(ing.id, 0))
         if qty > 0:
             out.append((ing, qty))
     return out
@@ -65,9 +64,14 @@ def suggestions():
 
 def create_suggested_orders(tenant_id, staff):
     """依供應商建立建議採購單 (草稿)；回傳建立的採購單"""
+    from app.services.db_locks import lock_tenant
+    lock_tenant(tenant_id)   # 連按兩下 / 兩人同時按：依序處理 (PostgreSQL)，後到的看得到前一筆建立的草稿
+    before = pending_qty()
     groups = {}
     for ing, qty in suggestions():
-        groups.setdefault(ing.supplier_id, []).append((ing, qty))
+        # 預設供應商已停用：歸到「未指定」，不建立指向停用供應商的草稿 (送出時也不會寄給停用的供應商)
+        sup_id = ing.supplier_id if (ing.supplier is not None and ing.supplier.is_active) else None
+        groups.setdefault(sup_id, []).append((ing, qty))
     created = []
     for supplier_id, rows in groups.items():
         supplier = db.session.get(Supplier, supplier_id) if supplier_id else None
@@ -80,28 +84,52 @@ def create_suggested_orders(tenant_id, staff):
         db.session.add(po)
         created.append(po)
     db.session.flush()
+    if created:   # 新增後再數一次 (SQLite 在 flush 時才取得寫入鎖)：同時有另一個請求建立了採購單就整筆取消
+        mine = {}
+        for po in created:
+            for ln in po.lines:
+                mine[ln.ingredient_id] = mine.get(ln.ingredient_id, 0) + ln.quantity
+        after = pending_qty()
+        if any(abs(after.get(i, 0) - q - before.get(i, 0)) > 1e-6 for i, q in mine.items()):
+            db.session.rollback()
+            raise AppError('另一個請求剛建立了採購單，請重新整理後確認', 409)
     return created
+
+
+def _check_max(value, label):
+    if value > MAX_LINE_VALUE:
+        raise AppError(f'{label}過大 (上限 {MAX_LINE_VALUE:,})')
 
 
 def update_lines(po, quantities, costs, add_ingredient_id=None, add_qty=0):
     """草稿編修：{line_id: 數量} (0 = 刪除)、{line_id: 單價}；可加入一項原料"""
     if po.status != 'draft':
         raise AppError('只有草稿可以修改')
+    # 條件式 UPDATE 鎖住這張採購單並重新確認仍是草稿：與送出 / 收貨同時進行時，不會改到已送出或已收貨的品項
+    _claim(po, ('draft',), '此採購單已送出或已收貨，無法修改', status='draft')
     for line in list(po.lines):
         if line.id in quantities:
             qty = max(0.0, float(quantities[line.id] or 0))
             if qty == 0:
                 po.lines.remove(line)
                 continue
+            _check_max(qty, '數量')
             line.quantity = round(qty, 4)
         if line.id in costs and costs[line.id] is not None:
+            _check_max(float(costs[line.id]), '單價')
             line.unit_cost = max(0.0, round(float(costs[line.id]), 4))
     if add_ingredient_id and add_qty and add_qty > 0:
+        _check_max(add_qty, '數量')
         ing = db.session.get(Ingredient, add_ingredient_id)
         if ing is None or ing.tenant_id != po.tenant_id:
             raise AppError('查無此原料', 404)
-        po.lines.append(PurchaseOrderLine(tenant_id=po.tenant_id, ingredient_id=ing.id, quantity=round(add_qty, 4),
-                                          unit_cost=round(ing.unit_cost or 0, 4)))
+        same = next((ln for ln in po.lines if ln.ingredient_id == ing.id), None)
+        if same is not None:   # 已有這項原料：加到原本那一列 (同一原料兩列會讓收貨的加權平均成本難以對帳)
+            _check_max((same.quantity or 0) + add_qty, '數量')
+            same.quantity = round((same.quantity or 0) + add_qty, 4)
+        else:
+            po.lines.append(PurchaseOrderLine(tenant_id=po.tenant_id, ingredient_id=ing.id, quantity=round(add_qty, 4),
+                                              unit_cost=round(ing.unit_cost or 0, 4)))
 
 
 def po_text(po, shop_name=''):

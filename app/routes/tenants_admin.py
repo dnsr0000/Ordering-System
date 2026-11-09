@@ -18,6 +18,7 @@ from app.models.sync import SyncNode
 from app.models.tenant import StaffAccount, Tenant
 from app.models.user import User
 from app.services.audit import record_staff_audit
+from app.services.report_service import REVENUE_STATUSES
 from app.tenant_context import tenant_bypass
 from app.utils import platform_admin_required, role_required, safe_int
 
@@ -35,12 +36,15 @@ def tenant_overview(days=30):
     since = datetime.now() - timedelta(days=days)
     with tenant_bypass():
         tenants = Tenant.query.order_by(Tenant.id).all()
-        staff = _counts(StaffAccount)
+        staff = {tid: n for tid, n in db.session.query(StaffAccount.tenant_id, func.count())
+                 .filter(StaffAccount.deleted_at.is_(None)).group_by(StaffAccount.tenant_id).all()}   # 不含已刪除的帳號
         members = _counts(User)
         node_rows = SyncNode.query.all()
+        # 與店家報表的營業額同一口徑 (report_service.is_revenue)：未取消且已收款 (或免付款)
         order_rows = (db.session.query(Order.tenant_id, func.count(), func.coalesce(func.sum(Order.total_price), 0),
                                        func.max(Order.created_at))
-                      .filter(Order.created_at >= since, Order.status != OrderStatus.CANCELLED)
+                      .filter(Order.created_at >= since, Order.status != OrderStatus.CANCELLED,
+                              func.coalesce(Order.payment_status, '').in_(REVENUE_STATUSES))
                       .group_by(Order.tenant_id).all())
         last_any = {tid: at for tid, at in db.session.query(Order.tenant_id, func.max(Order.created_at))
                     .group_by(Order.tenant_id).all()}

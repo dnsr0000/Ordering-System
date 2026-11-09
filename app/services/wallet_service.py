@@ -16,6 +16,7 @@ from app.models.member import MemberTier, WalletLedger
 from app.models.user import User
 from app.services import settings_service
 from app.services.points_service import atomic_change, change_points
+from app.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -49,30 +50,51 @@ def bonus_for(amount, tenant_id=None):
     return 0
 
 
-def topup(tenant_id, user, amount, method, staff, payment_info=None):
-    """POS 加值：收款紀錄 + 儲值金異動 (含加值贈送)。回傳 (加值金額, 贈送)"""
+TOPUP_METHODS = ('Cash', 'Credit Card', 'Line Pay', '街口支付', 'Apple Pay')   # 加值可收的付款方式 (實際收款)
+
+
+def topup(tenant_id, user, amount, method, staff, payment_info=None, request_id=None):
+    """
+    POS 加值：收款紀錄 + 儲值金異動 (含加值贈送)。回傳 (加值金額, 贈送)。
+    request_id：前端產生的冪等鍵 (同內容重送時相同)；同一個 request_id 已加值過時不再收款 / 加值，直接回傳第一次的結果。
+    """
     from app.models.enums import PaymentMethod, normalize_payment_method
-    from app.models.payment import PaymentKind
+    from app.models.payment import PaymentKind, PaymentRecord
     from app.services import payment_service
     cfg = settings_service.get('member', tenant_id)
     if not cfg.get('wallet_enabled'):
         raise AppError('尚未啟用儲值金 (系統設定 → 會員等級 / 生日禮 / 儲值金)')
-    amount = int(amount or 0)
+    amount = safe_int(amount, 0)
     if amount <= 0 or amount > 100000:
         raise AppError('加值金額需介於 1 ~ 100,000 元')
     method = normalize_payment_method(method)
-    if method is None or method in (PaymentMethod.STORED_VALUE, PaymentMethod.PLATFORM):
+    if method not in TOPUP_METHODS:   # 禮物卡 / ATM / 超商代碼 / 混合付款 / 儲值金 / 平台代收 都不是實際收款
         raise AppError('加值的付款方式不正確')
+    if payment_service.open_shift_id(tenant_id, lock=True) is None \
+            and settings_service.get('pos', tenant_id).get('require_shift'):
+        raise AppError('尚未開班：請先在 POS 按「交班」輸入開班零用金後再收款', 409, need_shift=True)
     bonus = bonus_for(amount, tenant_id)
     limit = cfg.get('wallet_max_balance') or 0
+    # 先鎖住會員資料列再讀餘額：兩台 POS 同時加值時依序檢查上限 (PostgreSQL；SQLite 寫入本來就依序)
+    db.session.execute(select(User.id).where(User.id == user.id).with_for_update())
     db.session.refresh(user, ['wallet_balance'])
+    # 冪等：已鎖住會員資料列，同一個 request_id 的重送 (連點 / 逾時重按) 依序到這裡時看得到第一次的收款紀錄
+    rid = str(request_id or '').strip()[:64]
+    rid_col = getattr(PaymentRecord, 'request_id', None) if rid else None   # 欄位由遷移新增；舊結構時略過冪等檢查
+    if rid_col is not None:
+        done = PaymentRecord.query.filter(PaymentRecord.tenant_id == tenant_id, PaymentRecord.kind == PaymentKind.TOPUP,
+                                          rid_col == rid).execution_options(skip_tenant_filter=True).first()
+        if done is not None:
+            return done.amount, bonus_for(done.amount, tenant_id)
     if limit and (user.wallet_balance or 0) + amount + bonus > limit:
         raise AppError(f'加值後餘額將超過上限 ${limit:,}')
     reference, last4 = '', ''
     if method == PaymentMethod.CREDIT_CARD:
         reference, last4 = payment_service.validate_card_details(payment_info, True)
-    payment_service.record_payment(None, PaymentKind.TOPUP, method, amount, reference=reference, card_last4=last4,
-                                   note=f'會員 {user.name} 儲值加值', staff=staff, tenant_id=tenant_id)
+    rec = payment_service.record_payment(None, PaymentKind.TOPUP, method, amount, reference=reference, card_last4=last4,
+                                         note=f'會員 {user.name} 儲值加值', staff=staff, tenant_id=tenant_id)
+    if rid_col is not None:
+        rec.request_id = rid
     change_balance(tenant_id, user.id, amount, 'topup', note=f'{method} 加值', staff=staff)
     if bonus:
         change_balance(tenant_id, user.id, bonus, 'bonus', note=f'加值 ${amount} 贈送', staff=staff)
@@ -144,10 +166,19 @@ def grant_birthday_gifts(tenant_id, today=None):
     if cfg.get('birthday_coupon_code'):
         coupon = Coupon.query.filter_by(tenant_id=tenant_id, code=cfg['birthday_coupon_code'].strip().upper()) \
             .execution_options(skip_tenant_filter=True).first()
+    coupon_err = coupon.period_error(today) if coupon is not None else None
+    if coupon_err:
+        # 券不在活動期間 (已結束 / 尚未開始)：不發一張不能用的券，通知店家延長活動
+        from app.services import monitor_service
+        monitor_service.alert(f'生日禮優惠券「{coupon.code}」{coupon_err}，今天未發券；請到行銷活動調整券的活動期間',
+                              key=f'birthday-coupon-{tenant_id}', tenant_id=tenant_id, level='warning', source='member')
+        coupon = None
+        if not cfg.get('birthday_points'):
+            return 0   # 只設定了券：先不佔用今年的生日禮，券修好後還能補發
     shop = db.session.get(Tenant, tenant_id)
     users = User.query.filter(User.tenant_id == tenant_id, User.birthday.isnot(None),
                               User.birthday_gift_year < today.year).execution_options(skip_tenant_filter=True).all()
-    sent = 0
+    sent, pushes = 0, []
     for u in users:
         if u.birthday.month != today.month:
             continue
@@ -163,10 +194,14 @@ def grant_birthday_gifts(tenant_id, today=None):
             db.session.add(UserCoupon(tenant_id=tenant_id, user_id=u.id, coupon_id=coupon.id, code=coupon.code,
                                       created_at=now, expires_at=coupon.expires_for(now), source='birthday'))
         sent += 1
-        if u.line_user_id and cfg.get('birthday_message'):
+        # 生日點數 / 券是會員權益照發；店家自訂的生日文字屬行銷推播，拒絕行銷的會員不推
+        if u.line_user_id and not u.marketing_opt_out and cfg.get('birthday_message'):
             text = cfg['birthday_message'].replace('{name}', u.name).replace('{shop}', shop.name if shop else '')
-            line_service.push_text(tenant_id, u.line_user_id, text)
+            pushes.append((u.line_user_id, text))
     db.session.commit()
+    # 提交後才推播：呼叫 LINE API 期間不持有未提交的寫入 (SQLite 寫入鎖)
+    for line_user_id, text in pushes:
+        line_service.push_text(tenant_id, line_user_id, text)
     if sent:
         logger.info('店家 %s 送出 %d 份生日禮', tenant_id, sent)
     return sent

@@ -48,7 +48,7 @@
         </div>
         <div class="col-6">
             <label class="form-label small fw-bold" for="{{ prefix }}-addon-price">加購專屬價 (NT$)</label>
-            <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="{{ prefix }}-addon-price" placeholder="例如：30" value="0">
+            <input type="number" min="0" class="form-control form-control-sm" name="add_on_price" id="{{ prefix }}-addon-price" max="1000000" placeholder="例如：30" value="0">
         </div>
         <div class="col-12 mt-2 pt-2 border-top border-secondary" id="{{ prefix }}-addon-rules" style="display: none;">
             <label class="form-label small fw-bold text-white-50 mb-1"><i class="bi bi-funnel"></i> 解鎖加購條件</label>
@@ -81,11 +81,11 @@
     <div class="row g-2 mb-3">
         <div class="col-8">
             <label class="form-label small fw-bold" for="{{ prefix }}-name">套餐名稱 (Combo Name)</label>
-            <input type="text" class="form-control" name="name" id="{{ prefix }}-name" placeholder="例如：超值A餐" required>
+            <input type="text" class="form-control" name="name" id="{{ prefix }}-name" maxlength="100" placeholder="例如：超值A餐" required>
         </div>
         <div class="col-4">
             <label class="form-label small fw-bold" for="{{ prefix }}-price">加購價 (NT$)</label>
-            <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="{{ prefix }}-price" placeholder="60" min="0" required>
+            <input type="number" class="form-control text-warning fw-bold" name="additional_price" id="{{ prefix }}-price" placeholder="60" min="0" max="1000000" required>
         </div>
     </div>
     <div class="p-3 mb-3 rounded border border-secondary panel-dim">
@@ -107,7 +107,7 @@
     </div>
     <div class="mb-2">
         <label class="form-label small fw-bold" for="{{ prefix }}-desc">自訂文字描述 (Description)</label>
-        <textarea class="form-control" name="description" id="{{ prefix }}-desc" rows="2" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
+        <textarea class="form-control" name="description" id="{{ prefix }}-desc" rows="2" maxlength="200" placeholder="若留空，將自動顯示上方選擇的配餐品名"></textarea>
     </div>
 {%- endmacro %}
 
@@ -121,31 +121,31 @@
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold" for="add-name">餐點名稱</label>
-                            <input type="text" class="form-control" name="name" id="add-name" placeholder="例如：招牌牛肉漢堡" required>
+                            <input type="text" class="form-control" name="name" id="add-name" maxlength="100" placeholder="例如：招牌牛肉漢堡" required>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="add-category">分類</label>
-                                <input type="text" class="form-control" name="category" id="add-category" list="menu-category-list" required>
+                                <input type="text" class="form-control" name="category" id="add-category" list="menu-category-list" maxlength="50" required>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="add-price">原單價 (NT$)</label>
-                                <input type="number" min="0" class="form-control" name="price" id="add-price" required>
+                                <input type="number" min="0" max="1000000" class="form-control" name="price" id="add-price" required>
                             </div>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="add-stock">剩餘數量 (庫存)</label>
-                                <input type="number" min="0" class="form-control" name="stock" id="add-stock" value="50" required>
+                                <input type="number" min="0" max="100000" class="form-control" name="stock" id="add-stock" value="50" required>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="add-total-stock">總量 (初始庫存)</label>
-                                <input type="number" min="0" class="form-control" name="total_stock" id="add-total-stock" value="50" required>
+                                <input type="number" min="0" max="100000" class="form-control" name="total_stock" id="add-total-stock" value="50" required>
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning" for="add-discount-price">特價金額 (NT$)</label>
-                            <input type="number" min="0" class="form-control" name="discount_price" id="add-discount-price" placeholder="無特價填 0" value="0">
+                            <input type="number" min="0" max="1000000" class="form-control" name="discount_price" id="add-discount-price" placeholder="無特價填 0" value="0">
                         </div>
                         {{ addon_block('add') }}
                         <div class="mb-3">
@@ -189,38 +189,41 @@
                     <div class="modal-body p-4">
                         <div class="mb-3">
                             <label class="form-label small fw-bold" for="edit-name">餐點名稱</label>
-                            <input type="text" class="form-control" name="name" id="edit-name" required>
+                            <input type="text" class="form-control" name="name" id="edit-name" maxlength="100" required>
                         </div>
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="edit-category">分類</label>
-                                <input type="text" class="form-control" name="category" id="edit-category" list="menu-category-list" required>
+                                <input type="text" class="form-control" name="category" id="edit-category" list="menu-category-list" maxlength="50" required>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="edit-price">原單價 (NT$)</label>
-                                <input type="number" min="0" class="form-control" name="price" id="edit-price" required>
+                                <input type="number" min="0" max="1000000" class="form-control" name="price" id="edit-price" required>
                             </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold text-warning" for="edit-discount-price">特價金額 (NT$)</label>
-                            <input type="number" min="0" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
+                            <input type="number" min="0" max="1000000" class="form-control" name="discount_price" id="edit-discount-price" placeholder="無特價填 0" value="0">
                         </div>
                         {{ addon_block('edit') }}
                         <div class="row g-2 mb-3">
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="edit-stock">剩餘數量 (庫存)</label>
-                                <input type="number" min="0" class="form-control" name="stock" id="edit-stock" required>
+                                <input type="number" min="0" max="100000" class="form-control" name="stock" id="edit-stock" required>
                                 <!-- 開啟視窗當下的庫存：後端只套用「差額」，編輯期間被顧客買走的數量不會被蓋掉 -->
                                 <input type="hidden" name="loaded_stock" id="edit-loaded-stock">
+                                <!-- 開啟視窗當下的售完勾選：沒改勾選時後端保留資料庫目前的售完狀態 -->
+                                <input type="hidden" name="loaded_sold_out" id="edit-loaded-sold-out">
                             </div>
                             <div class="col-6">
                                 <label class="form-label small fw-bold" for="edit-total-stock">總量 (初始庫存)</label>
-                                <input type="number" min="0" class="form-control" name="total_stock" id="edit-total-stock" required>
+                                <input type="number" min="0" max="100000" class="form-control" name="total_stock" id="edit-total-stock" required>
                                 <input type="hidden" name="loaded_total_stock" id="edit-loaded-total-stock">
                             </div>
                         </div>
 
-                        <!-- 紅利商城設定 -->
+                        <!-- 紅利商城設定 (需「優惠券」權限；沒有權限時後端不變更紅利設定) -->
+                        {% if current_user.has_permission('coupons') %}
                         <div class="card bg-dark border-warning mb-3">
                             <div class="card-header border-warning text-warning fw-bold small">
                                 <i class="bi bi-gift-fill me-1"></i> 紅利商城設定
@@ -242,6 +245,7 @@
                                 </div>
                             </div>
                         </div>
+                        {% endif %}
 
                         <div class="mb-3">
                             <label class="form-label small fw-bold" for="edit-modifiers">客製化群組</label>

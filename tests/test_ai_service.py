@@ -49,7 +49,7 @@ def test_gemini_retries_503_then_uses_fallback_model(app, gemini):
         assert ai_service.gemini_generate('hi') == '備援回答'
     assert calls == ['gemini-main', 'gemini-main', 'gemini-backup'], '主要模型重試一次後換備援'
     assert ai_service.cooldown_left(ai_service.key_id('test-key-123')) == 0, '成功就不冷卻'
-    assert ai_service._gemini_last['model'] == 'gemini-backup' and ai_service._gemini_last['error'] == ''
+    assert ai_service._gemini_state()['model'] == 'gemini-backup' and ai_service._gemini_state()['error'] == ''
 
 
 def test_gemini_retries_on_timeout_and_cools_down_when_all_fail(app, gemini, monkeypatch):
@@ -60,7 +60,7 @@ def test_gemini_retries_on_timeout_and_cools_down_when_all_fail(app, gemini, mon
         assert calls == ['gemini-main', 'gemini-main', 'gemini-backup', 'gemini-backup']
         remaining = ai_service.cooldown_left(ai_service.key_id('test-key-123'))
         assert 15 < remaining <= ai_service.COOLDOWN['overload'], '過載冷卻 20 秒'
-        assert '503' in ai_service._gemini_last['error']
+        assert '503' in ai_service._gemini_state()['error']
         # 冷卻期間不再打 API
         assert ai_service.gemini_generate('hi') is None and len(calls) == 4
         status = ai_service.ai_status()

@@ -7,7 +7,11 @@ Web Push 推播：顧客在出餐進度頁 (/track) 按「開啟完成通知」�
   公鑰給瀏覽器 (/api/push/vapid)。
 - 只在 HTTPS (或 localhost) 的頁面可用：門市 Wi-Fi 以 http://IP 開啟時瀏覽器不提供 pushManager，前端自動退回頁面內通知。
 - 送出在交易提交後的背景工作 (deferred)；推播伺服器回 404 / 410 (訂閱失效) 時刪除訂閱，其他錯誤記在 last_error。
-- 每個訂閱綁一張訂單 (order_uuid)；通知送出後或訂單結束 7 天後清除 (maintenance 每日工作)。
+- 每個訂閱綁一張訂單 (order_uuid)；送出後保留 (之後的外送員出發、店家回覆評價也要通知)，訂閱 7 天後清除 (maintenance 每日工作)。
+- endpoint 只接受瀏覽器廠商的推播服務網域 (PUSH_SERVICE_HOSTS)，送出時不跟隨轉址：
+  避免匿名顧客把 endpoint 填成自己的伺服器，讓門市主機 / 線上端對內網或雲端中繼資料位址發出請求 (SSRF)。
+- 線上端 + 分店：顧客的訂閱通常存在線上端 (HTTPS)，出餐卻在分店；線上端套用分店同步上來的訂單狀態時
+  由 notify_synced_order 補發推播。
 """
 from typing import Any
 import base64
@@ -30,6 +34,9 @@ logger = logging.getLogger(__name__)
 TTL_SECONDS = 3600
 MAX_PER_ORDER = 5
 KEEP_DAYS = 7
+# 瀏覽器廠商的推播服務 (Chrome / Edge (Chromium) / Opera / Samsung → FCM、Firefox → Mozilla、舊版 Edge → WNS、Safari → Apple)
+PUSH_SERVICE_HOSTS = ('fcm.googleapis.com', 'android.googleapis.com', 'push.services.mozilla.com',
+                      'notify.windows.com', 'push.apple.com')
 
 
 config = settings_service.reader('push')
@@ -80,6 +87,8 @@ def subscribe(order: Any, info: Any, user_id: int | None = None) -> Any:
         raise AppError('訂閱資料不完整')
     if not _valid_keys(p256dh, auth):
         raise AppError('訂閱資料格式錯誤')
+    if not _allowed_endpoint(endpoint):
+        raise AppError('不支援此瀏覽器的推播服務')
     ensure_keys(order.tenant_id)   # 正常流程瀏覽器已先取公鑰；這裡再保證金鑰存在
     sub = PushSubscription.query.filter_by(tenant_id=order.tenant_id, endpoint=endpoint, order_uuid=order.uuid) \
         .execution_options(skip_tenant_filter=True).first()
@@ -104,6 +113,19 @@ def _valid_keys(p256dh: str, auth: str) -> bool:
     return len(key) == 65 and key[0] == 4 and len(secret) == 16
 
 
+def _allowed_endpoint(endpoint: Any) -> bool:
+    """endpoint 必須是瀏覽器廠商推播服務的 https 網址 (預設埠、不含帳密)"""
+    try:
+        parsed = urlparse(str(endpoint or ''))
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or '').lower().rstrip('.')
+    if parsed.scheme != 'https' or port not in (None, 443) or parsed.username or parsed.password or not host:
+        return False
+    return any(host == h or host.endswith('.' + h) for h in PUSH_SERVICE_HOSTS)
+
+
 def _send_one(sub: Any, payload: dict, private_pem: str, contact: str) -> tuple[bool, bool, str]:
     """送一則推播。回傳 (ok, 是否應刪除訂閱, 錯誤訊息)"""
     import http_ece
@@ -120,10 +142,13 @@ def _send_one(sub: Any, payload: dict, private_pem: str, contact: str) -> tuple[
                                 version='aes128gcm')
     except Exception as exc:  # noqa: BLE001  金鑰壞掉的訂閱：刪除，不影響同一張訂單的其他裝置
         return False, True, f'訂閱金鑰無效：{exc}'[:200]
+    if not _allowed_endpoint(sub.endpoint):   # 舊版存進去的非推播服務網址：刪除，不送出
+        return False, True, '不是瀏覽器推播服務的網址'
     headers.update({'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream', 'TTL': str(TTL_SECONDS),
                     'Urgency': 'high'})
     try:
-        resp = requests.post(sub.endpoint, data=body, headers=headers, timeout=10)
+        # 不跟隨轉址：推播服務不會轉址，跟隨的話可能被導向內網位址
+        resp = requests.post(sub.endpoint, data=body, headers=headers, timeout=10, allow_redirects=False)
     except requests.RequestException as exc:
         return False, False, str(exc)[:200]
     if resp.status_code in (200, 201, 202):
@@ -132,7 +157,8 @@ def _send_one(sub: Any, payload: dict, private_pem: str, contact: str) -> tuple[
 
 
 def send_to_order(order_uuid: str, payload: dict, tenant_id: int) -> int:
-    """背景工作：推播給該訂單的所有訂閱；成功或訂閱失效都刪除訂閱 (一張訂單只通知一次)"""
+    """背景工作：推播給該訂單的所有訂閱；訂閱失效 (404 / 410) 時刪除。
+    送出成功的訂閱保留：同一張訂單之後還有外送員出發、店家回覆評價等通知 (由每日 cleanup 依 KEEP_DAYS 清除)"""
     cfg = config(tenant_id)
     if not cfg.get('enabled'):
         return 0
@@ -145,9 +171,11 @@ def send_to_order(order_uuid: str, payload: dict, tenant_id: int) -> int:
     sent = 0
     for sub in subs:
         ok, gone, error = _send_one(sub, payload, private_pem, contact)
-        if ok or gone:
+        if ok:
+            sub.last_error = ''
+            sent += 1
+        elif gone:
             db.session.delete(sub)
-            sent += int(ok)
         else:
             sub.last_error = error
             logger.warning('Web Push 失敗 (%s)：%s', sub.endpoint[:60], error)
@@ -156,6 +184,7 @@ def send_to_order(order_uuid: str, payload: dict, tenant_id: int) -> int:
 
 
 def _deferred_send(order_id: int, kind: str) -> int:
+    from app.models.enums import OrderStatus, OrderType
     from app.models.order import Order
     from app.models.tenant import Tenant
     order = db.session.get(Order, order_id)
@@ -167,6 +196,13 @@ def _deferred_send(order_id: int, kind: str) -> int:
         title, body = '外送員已出發', f'取餐號 #{number} 的餐點正在配送中，請留意電話'
     elif kind == 'feedback_reply':
         title, body = '店家回覆了您的評價', f'訂單 #{order.id}：打開查看店家的回覆'
+    elif order.order_type == OrderType.HOME_DELIVERY:
+        # 外送到府：不叫顧客到櫃檯取餐；派車頁直接按「已送達」(尚未出餐的先標記出餐) 時已送達，不再通知出餐
+        if order.status == OrderStatus.PICKED_UP or order.delivery_status in ('delivered', 'failed'):
+            return 0
+        title = '餐點已完成'
+        body = f'取餐號 #{number} 的餐點正在配送中，請留意電話' if order.delivery_status == 'out' \
+            else f'取餐號 #{number} 的餐點已完成，外送員即將出發'
     else:
         title, body = '餐點已完成', f'取餐號 #{number}，請至櫃檯取餐'
     payload = {'title': f'{shop.name if shop else ""}：{title}'.strip('：'), 'body': body,
@@ -182,6 +218,19 @@ def notify_order(order: Any, kind: str = 'ready') -> None:
         .execution_options(skip_tenant_filter=True).first() is not None
     if has:
         deferred.defer(_deferred_send, order.id, kind)
+
+
+def notify_synced_order(order: Any, old_status: str | None, old_delivery_status: str | None) -> None:
+    """線上端套用分店同步上來的訂單變更後呼叫 (同步請求的交易中，old_* 為套用前的值)：
+    出餐在分店，訂閱卻存在線上端 (Web Push 只在 HTTPS 頁面可用)，由線上端補發「餐點已完成」/「外送員已出發」。
+    分店本機沒有這筆訂閱，所以不會重複通知。"""
+    from app.models.enums import OrderStatus
+    if order is None:
+        return
+    if (order.delivery_status or '') == 'out' and (old_delivery_status or '') != 'out':
+        notify_order(order, 'delivery_out')   # 同一批同步裡出餐又出發：只通知出發
+    elif order.status == OrderStatus.COMPLETED and old_status != OrderStatus.COMPLETED:
+        notify_order(order, 'ready')
 
 
 def cleanup(now: datetime | None = None) -> int:

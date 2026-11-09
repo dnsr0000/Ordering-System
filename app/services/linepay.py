@@ -29,6 +29,21 @@ class LinePayError(Exception):
         self.code = code
 
 
+class LinePayUncertain(LinePayError):
+    """請求可能已送達 LINE Pay，但回應讀取失敗 (連線中途中斷、回應不是 JSON)：結果不確定，扣款時須查詢確認"""
+
+
+def _not_sent(exc):
+    """確定請求沒有送出去 (連線建立失敗：找不到主機、連線被拒)"""
+    from urllib3.exceptions import NewConnectionError
+    if isinstance(exc, requests.ConnectTimeout):
+        return True
+    if not isinstance(exc, requests.ConnectionError):
+        return False
+    reason = exc.args[0] if exc.args else None
+    return isinstance(getattr(reason, 'reason', reason), NewConnectionError)
+
+
 def is_enabled(tenant_id=None):
     cfg = settings_service.get('linepay', tenant_id)
     return bool(cfg.get('enabled') and cfg.get('channel_id') and cfg.get('channel_secret'))
@@ -54,8 +69,12 @@ def _call(cfg, method, path, body=None, timeout=25):
         return _request(method, base + path, _headers(cfg), body, timeout)
     except requests.Timeout as exc:
         raise TimeoutError(str(exc)) from exc
-    except (requests.RequestException, ValueError) as exc:
-        raise LinePayError(f'無法連線到 LINE Pay：{exc}') from exc
+    except requests.RequestException as exc:
+        if _not_sent(exc):
+            raise LinePayError(f'無法連線到 LINE Pay：{exc}') from exc
+        raise LinePayUncertain(f'無法連線到 LINE Pay：{exc}') from exc
+    except ValueError as exc:   # 回應不是 JSON (例如代理伺服器回 HTML)：請求已送達
+        raise LinePayUncertain(f'LINE Pay 回應格式錯誤：{exc}') from exc
 
 
 def normalize_one_time_key(value):
@@ -66,13 +85,16 @@ def normalize_one_time_key(value):
 
 
 def pay(tenant_id, order_id, amount, one_time_key):
-    """扣款，成功回傳 transactionId；失敗拋 LinePayError。逾時時以查詢確認結果。"""
+    """
+    扣款，成功回傳 transactionId；失敗拋 LinePayError。逾時或回應讀取失敗 (請求可能已送達，
+    例如連線中途被重設、回應不是 JSON) 時以查詢確認結果，查詢也失敗時拋 UNKNOWN。
+    """
     cfg = settings_service.get('linepay', tenant_id)
     body = {'productName': (cfg.get('product_name') or '餐點')[:100], 'amount': int(amount), 'currency': 'TWD',
             'orderId': str(order_id), 'oneTimeKey': one_time_key}
     try:
         result = _call(cfg, 'POST', '/v2/payments/oneTimeKeys/pay', body, timeout=40)
-    except TimeoutError:
+    except (TimeoutError, LinePayUncertain):
         status = check(tenant_id, order_id)
         if status.get('paid'):
             return status.get('transaction_id', '')

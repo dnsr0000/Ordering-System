@@ -9,7 +9,8 @@ from app.models.tenant import StaffAccount
 from app.services import scheduling_service
 from tests.support import default_tenant_id, other_shop_owner_client
 
-SHOP = 'sched-shop'   # 第一個測試用獨立店家，不受其他測試在預設店家留下的訂單 / 班表影響
+SHOP = 'sched-shop'   # 兩個測試各用獨立店家，不受其他測試在預設店家留下的訂單 / 班表影響
+RULES_SHOP = 'sched-rules'
 
 NEXT_MONDAY = date(2026, 11, 16)   # 固定的未來一週 (週一)
 
@@ -113,26 +114,32 @@ def test_availability_page_and_generate_apply(app):
     assert c
 
 
-def test_labor_rules_weekly_cap_and_consecutive_days(app, store_settings):
-    tid = default_tenant_id(app)
-    store_settings('staffing', orders_per_staff_hour=12, min_staff=0, shift_hours=4, weeks=4, max_hours_day=8, max_hours_week=12,
-                   max_consecutive_days=2)
-    a = _staff(app, 'rules_a')
+def test_labor_rules_weekly_cap_and_consecutive_days(app):
+    # 獨立店家：預設店家有其他測試以「現在」建立的訂單，執行日落在歷史日 (約 2026-12-25 ~ 2027-01-21) 時會多出班別
+    from app.models.tenant import Tenant
+    from app.services import settings_service
+    other_shop_owner_client(app, RULES_SHOP)
+    with app.app_context():
+        tid = Tenant.query.filter_by(slug=RULES_SHOP).first().id
+        settings_service.put('staffing', {'orders_per_staff_hour': 12, 'min_staff': 0, 'shift_hours': 4, 'weeks': 4,
+                                          'max_hours_day': 8, 'max_hours_week': 12, 'max_consecutive_days': 2}, tenant_id=tid)
+        db.session.commit()
+    a = _staff(app, 'rules_a', tid=tid)
     with app.app_context():
         StaffAvailability.query.filter_by(staff_account_id=a).delete(synchronize_session=False)
         for w in range(1, 8):
             db.session.add(StaffAvailability(tenant_id=tid, staff_account_id=a, weekday=w, start_time='09:00', end_time='20:00'))
-        # 其他測試員工本測試不參與：暫時取消可排時段
-        StaffAvailability.query.filter(StaffAvailability.staff_account_id != a).delete(synchronize_session=False)
+        # 本店其他員工本測試不參與 (只動本店，不影響其他店家)
+        StaffAvailability.query.filter(StaffAvailability.tenant_id == tid,
+                                       StaffAvailability.staff_account_id != a).delete(synchronize_session=False)
         db.session.commit()
     base = NEXT_MONDAY + timedelta(days=70)   # 離第一個測試的歷史資料夠遠，週別不重疊
     today = base - timedelta(days=3)
     history = [base - timedelta(days=7 * k) + timedelta(days=off) for k in range(1, 5) for off in range(7)]
-    _seed_orders(app, history, [12, 13, 14, 15], per_hour=12)   # 每天 12~16 點各需要 1 人 → 每天一個 4 小時班
+    _seed_orders(app, history, [12, 13, 14, 15], per_hour=12, tid=tid)   # 每天 12~16 點各需要 1 人 → 每天一個 4 小時班
     with app.test_request_context('/'):
-        from app.models.tenant import Tenant
         from app.tenant_context import _use_tenant
-        _use_tenant(Tenant.query.filter_by(slug='default').first(), remember=False)
+        _use_tenant(Tenant.query.filter_by(slug=RULES_SHOP).first(), remember=False)
         plan = scheduling_service.generate(tid, base, today=today)
     worked = [d['shifts'][0]['username'] == 'rules_a' for d in plan['days'] if d['shifts']]
     assert len(worked) == 7

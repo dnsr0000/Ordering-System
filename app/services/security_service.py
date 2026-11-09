@@ -22,6 +22,7 @@ import urllib.parse
 from datetime import datetime, timedelta
 
 from flask import request, session
+from sqlalchemy import func
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.errors import AppError
@@ -35,6 +36,9 @@ SESSION_KEY = 'staff_sid'
 PENDING_KEY = 'pending_2fa'
 PENDING_TTL = 300           # 輸入密碼後 5 分鐘內要完成兩步驟驗證
 TOUCH_INTERVAL = 60         # 最後活動時間每分鐘最多寫入一次
+ACTIVE_KEY = 'staff_active_at'   # 最後一次「使用者操作」的時間 (閒置自動登出依此判斷；存在簽章的 session 內)
+# 背景自動送出的 POST (不代表有人在操作)
+BACKGROUND_ENDPOINTS = frozenset({'devices.heartbeat'})
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +152,7 @@ def start_session(staff):
     db.session.add(StaffSession(staff_account_id=staff.id, token_hash=sha256_hex(token), created_at=now, last_seen=now,
                                 ip_address=(request.remote_addr or '')[:50], user_agent=ua, device=_device_label(ua)))
     session[SESSION_KEY] = token
-    session['staff_sid_seen'] = time.time()
+    session['staff_sid_seen'] = session[ACTIVE_KEY] = time.time()
 
 
 def current_session_row():
@@ -168,15 +172,36 @@ def session_is_valid(staff):
     if row is None or row.revoked_at is not None or row.staff_account_id != staff.id:
         return False
     idle = idle_minutes(staff)
-    if idle and row.last_seen and datetime.now() - row.last_seen > timedelta(minutes=idle):
-        row.revoked_at, row.revoked_reason = datetime.now(), f'閒置超過 {idle} 分鐘'
-        db.session.commit()
-        return False
-    if time.time() - float(session.get('staff_sid_seen') or 0) > TOUCH_INTERVAL:
-        session['staff_sid_seen'] = time.time()
+    now = time.time()
+    if idle:
+        # 閒置判斷看「使用者操作」的時間：畫面背景的輪詢 / SSE / 裝置心跳也會更新 last_seen (代表連線還在)，
+        # 只看 last_seen 的話開著後台總覽或 POS 的電腦永遠不會逾時。兩者取較早的 (舊版登入沒有 ACTIVE_KEY 時只看 last_seen)
+        stamps = [float(session[ACTIVE_KEY])] if session.get(ACTIVE_KEY) else []
+        if row.last_seen:
+            stamps.append(row.last_seen.timestamp())
+        if stamps and now - min(stamps) > idle * 60:
+            row.revoked_at, row.revoked_reason = datetime.now(), f'閒置超過 {idle} 分鐘'
+            db.session.commit()
+            return False
+    if is_user_activity():
+        session[ACTIVE_KEY] = now
+    if now - float(session.get('staff_sid_seen') or 0) > TOUCH_INTERVAL:
+        session['staff_sid_seen'] = now
         row.last_seen = datetime.now()
         db.session.commit()
     return True
+
+
+def is_user_activity():
+    """
+    這次請求是否為有人在操作：頁面導覽 (GET 要 HTML) 與送出的操作 (POST 等) 算；
+    畫面背景的輪詢 / SSE (GET 要 JSON 或 event-stream)、靜態檔與裝置心跳不算。
+    """
+    if request.endpoint in BACKGROUND_ENDPOINTS:
+        return False
+    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        return True
+    return 'text/html' in (request.headers.get('Accept') or '')
 
 
 def idle_minutes(staff):
@@ -195,8 +220,20 @@ def end_current_session(reason='登出'):
 
 
 def active_sessions(staff):
+    """
+    登入中的裝置。關閉瀏覽器或超過有效期沒有任何請求的登入不會被標記為登出 (Cookie 自己失效)，
+    以最後活動時間排除：超過 session 有效期 (PERMANENT_SESSION_LIFETIME，有設閒置登出時取較短者)
+    沒有任何請求的工作階段已無法再使用 (最後活動時間每 TOUCH_INTERVAL 才寫入一次，多留這段寬限)。
+    """
+    from flask import current_app
     from app.models.tenant import StaffSession
-    return StaffSession.query.filter_by(staff_account_id=staff.id, revoked_at=None) \
+    alive = current_app.permanent_session_lifetime
+    idle = idle_minutes(staff)
+    if idle:
+        alive = min(alive, timedelta(minutes=idle))
+    since = datetime.now() - alive - timedelta(seconds=TOUCH_INTERVAL)
+    return StaffSession.query.filter(StaffSession.staff_account_id == staff.id, StaffSession.revoked_at.is_(None),
+                                     func.coalesce(StaffSession.last_seen, StaffSession.created_at) >= since) \
         .order_by(StaffSession.last_seen.desc()).all()
 
 

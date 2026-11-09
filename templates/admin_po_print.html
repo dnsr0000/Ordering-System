@@ -11,7 +11,7 @@
     <table class="table table-bordered table-sm">
         <thead><tr><th>#</th><th>品名</th><th>數量</th><th>單位</th><th>單價</th><th>小計</th></tr></thead>
         <tbody>{% for ln in po.lines %}<tr><td>{{ loop.index }}</td><td>{{ ln.ingredient.name }}</td><td>{{ '%g' % ln.quantity }}</td>
-            <td>{{ ln.ingredient.unit }}</td><td>{{ '%g' % ln.unit_cost }}</td><td>{{ '{:,}'.format((ln.quantity * ln.unit_cost)|round|int) }}</td></tr>{% endfor %}
+            <td>{{ ln.ingredient.unit }}</td><td>{{ '%g' % ln.unit_cost }}</td><td>{{ '{:,}'.format(ln.amount) }}</td></tr>{% endfor %}
         <tr class="fw-bold"><td colspan="5" class="text-end">合計</td><td>{{ '{:,}'.format(po.total) }}</td></tr></tbody>
     </table>
     {% if po.note %}<p>備註：{{ po.note }}</p>{% endif %}

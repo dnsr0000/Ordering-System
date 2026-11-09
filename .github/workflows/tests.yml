@@ -54,7 +54,9 @@ jobs:
       # 3.13 另外計算涵蓋率 (app/ 的行數涵蓋率低於門檻就失敗；報告在工作摘要)
       - run: pytest -q
         if: matrix.python != '3.13'
+      # 指定 shell: bash 才會啟用 pipefail：否則管線的結束狀態是 tee 的 0，測試失敗或涵蓋率不足都不會擋
       - run: pytest -q --cov=app --cov-report=term-missing:skip-covered --cov-fail-under=85 | tee coverage.txt
+        shell: bash
         if: matrix.python == '3.13'
       - run: |
           { echo '### 測試涵蓋率 (app/)'; echo '```'; tail -n 25 coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

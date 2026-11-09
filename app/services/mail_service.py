@@ -12,15 +12,37 @@ def is_configured(tenant_id=None):
     return bool(cfg.get('host') and (cfg.get('sender') or cfg.get('username')))
 
 
+class _PinnedMixin:
+    """連線固定到已檢查過的 IP；TLS (SNI 與憑證驗證) 仍用原本的主機名稱 (smtplib 以 self._host 包 TLS)"""
+
+    def __init__(self, *args, pinned_ip=None, **kwargs):
+        self._pinned_ip = pinned_ip
+        super().__init__(*args, **kwargs)
+
+    def _get_socket(self, host, port, timeout):
+        return super()._get_socket(self._pinned_ip or host, port, timeout)
+
+
+class _PinnedSMTP(_PinnedMixin, smtplib.SMTP):
+    pass
+
+
+class _PinnedSMTPSSL(_PinnedMixin, smtplib.SMTP_SSL):
+    pass
+
+
 def _connect(cfg):
     """建立 SMTP 連線 (測試時以 monkeypatch 取代)"""
-    from app.services.webhook_service import check_public_host_on_hub
-    check_public_host_on_hub(cfg['host'])   # 線上端：不可拿寄信設定連內網
+    from app.services.webhook_service import check_public_host
+    from app.sync import runtime as sync_runtime
+    # 線上端：不可拿寄信設定連內網；連線固定到檢查過的 IP (檢查後 DNS 被換成內網位址 (rebinding) 也無效)。
+    # 門市主機連自己區網內的寄信伺服器是正常的，不檢查
+    ip = check_public_host(cfg['host']) if sync_runtime.is_hub() else None
     port = int(cfg.get('port') or 587)
     if port == 465:
-        server = smtplib.SMTP_SSL(cfg['host'], port, timeout=20, context=ssl.create_default_context())
+        server = _PinnedSMTPSSL(cfg['host'], port, timeout=20, context=ssl.create_default_context(), pinned_ip=ip)
     else:
-        server = smtplib.SMTP(cfg['host'], port, timeout=20)
+        server = _PinnedSMTP(cfg['host'], port, timeout=20, pinned_ip=ip)
         if cfg.get('use_tls', True):
             server.starttls(context=ssl.create_default_context())
     if cfg.get('username'):
@@ -50,7 +72,7 @@ def send_mail(tenant_id, recipients, subject, body, attachments=()):
             server.send_message(msg)
         finally:
             server.quit()
-    except (OSError, smtplib.SMTPException) as exc:
+    except (OSError, smtplib.SMTPException, ValueError) as exc:   # ValueError：'a..b' 這類主機名稱 smtplib 會丟 UnicodeError
         raise AppError(f'寄信失敗：{exc}')
     return len(recipients)
 

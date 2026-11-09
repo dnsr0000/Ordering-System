@@ -121,6 +121,8 @@ def nodes_action():
     elif action == 'toggle_active':
         node.is_active = not node.is_active
         record_staff_audit('SYNC_NODE_TOGGLE_ACTIVE', details=f"{'啟用' if node.is_active else '停用'}分店：{node.name}")
+        if not node.is_active:
+            _warn_undelivered_orders(node)
     elif action == 'rename':
         name = (request.form.get('name') or '').strip()[:100]
         if not name:
@@ -133,6 +135,29 @@ def nodes_action():
     branch_service.refresh_sites(g.tenant_id)   # 分店名單 (叫貨 / 調撥選擇對象) 下發給各分店
     db.session.commit()
     return redirect(back)
+
+
+def _warn_undelivered_orders(node):
+    """
+    停用分店：分店停用期間無法同步，還沒送達該分店的線上訂單 (含待付款、之後才完成 ATM / 超商代碼繳費的) 都收不到，
+    直到重新啟用為止。列出這些訂單提醒負責人處理 (取消並退款，或重新啟用分店)，並記錄通知。
+    """
+    from app.models.enums import OrderSource, OrderStatus
+    from app.models.order import Order
+    orders = Order.query.filter(Order.tenant_id == node.tenant_id, Order.node_uuid == node.uuid,
+                                Order.order_source == OrderSource.ONLINE, Order.status != OrderStatus.CANCELLED,
+                                Order.payment_status.notin_(('expired', 'refund_required', 'refunded')),
+                                db.or_(Order.pickup_number.is_(None), Order.pickup_number == 0)) \
+        .order_by(Order.id).all()
+    if not orders:
+        return
+    ids = '、'.join(f'#{o.id}' for o in orders[:20]) + (f' 等 {len(orders)} 張' if len(orders) > 20 else '')
+    message = (f'分店【{node.name}】已停用，但還有 {len(orders)} 張線上訂單尚未送達該分店 ({ids})；'
+               f'停用期間分店收不到這些訂單 (含之後才完成繳費的)，請取消並退款，或重新啟用分店')
+    flash(message, 'warning')
+    from app.services import monitor_service
+    monitor_service.alert(message, key=f'node-disabled-orders-{node.uuid}', tenant_id=node.tenant_id,
+                          level='warning', source='sync')
 
 
 # ==============================================================================

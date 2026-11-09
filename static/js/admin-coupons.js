@@ -7,11 +7,17 @@
     const showModal = (id) => Kiosk.modal(id).show();
 
     // ---------------------------------------------------------------- 優惠券折扣輸入
+    /** 與 Python round() 相同的銀行家捨入 (剛好 .5 時取偶數)：82.5 → 82、83.5 → 84 (Math.round 會把 82.5 進位成 83) */
+    function roundHalfEven(x) {
+        const r = Math.round(x);
+        return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r;
+    }
+
     /** 與後端 parse_discount_value 相同的折數換算：0.85 / 8.5 / 85 都代表 85 折 (應付百分比) */
     function toPercent(val) {
-        if (val <= 1) return Math.round(val * 100);
-        if (val <= 10) return Math.round(val * 10);
-        return Math.round(val);
+        if (val <= 1) return roundHalfEven(val * 100);
+        if (val <= 10) return roundHalfEven(val * 10);
+        return roundHalfEven(val);
     }
 
     /** 與後端 Coupon.discount_label 相同的顯示：90 → 9 折、85 → 85 折、5 → 0.5 折 */
@@ -27,6 +33,7 @@
         if (!type || !input || !hint) return;
         const raw = input.value.trim();
         const val = Number(raw);
+        input.setCustomValidity('');
         if (!raw || Number.isNaN(val)) {
             hint.style.display = 'none';
             return;
@@ -36,11 +43,16 @@
         if (val <= 0) {
             cls = 'text-danger';
             content = html`<i class="bi bi-exclamation-circle me-1"></i> 請輸入大於 0 的數值`;
+            input.setCustomValidity('請輸入大於 0 的數值');
         } else if (type.value === 'percent') {
             const pct = toPercent(val);
-            if (pct >= 100) {
+            if (pct >= 100 || pct < 1) {
+                // 後端換算後不在 1~99 折會拒絕：這裡直接擋下送出 (只顯示提示時表單仍會送出)
                 cls = 'text-danger';
-                content = html`<i class="bi bi-x-circle me-1"></i> 折扣不可大於等於全額 (無折扣)`;
+                content = pct >= 100
+                    ? html`<i class="bi bi-x-circle me-1"></i> 折扣不可大於等於全額 (無折扣)`
+                    : html`<i class="bi bi-x-circle me-1"></i> 折數太小 (最低 0.1 折)`;
+                input.setCustomValidity(pct >= 100 ? '折扣不可大於等於全額 (無折扣)' : '折數太小 (最低 0.1 折)');
             } else {
                 cls = 'text-info';
                 content = html`<i class="bi bi-magic me-1"></i> 系統將辨識為：<strong>${percentLabel(pct)}</strong> (結帳金額 × ${pct}%)`;
@@ -65,7 +77,7 @@
         } else {
             label.textContent = '折抵金額 (NT$)';
             input.placeholder = '50';
-            input.removeAttribute('max');
+            input.max = '1000000';   // 與後端 coupon.MAX_FIXED_DISCOUNT 一致
             input.step = '1';
         }
         updateDiscountHint(prefix);
@@ -99,7 +111,9 @@
         $('edit-coupon-code').value = d.code || '';
         const type = d.discountType === 'percent' ? 'percent' : 'fixed';
         $('edit-coupon-disc-type').value = type;
-        $('edit-coupon-disc-val').value = d.discountValue || 0;
+        // 存檔的折數 1~10 (0.1~1 折) 若原樣填回，送出時後端會再當成「8.5 折」寫法乘 10 而被拒絕：改填 0.01~0.1 的寫法
+        const stored = Number(d.discountValue);
+        $('edit-coupon-disc-val').value = type === 'percent' && stored >= 1 && stored <= 10 ? stored / 100 : (d.discountValue || 0);
         setDiscountMode('edit-coupon', type);
         $('edit-coupon-min-spend').value = Math.round(Number(d.minSpend) || 0);
         $('edit-coupon-reward-points').value = d.rewardPoints || 0;

@@ -27,6 +27,7 @@
         {% endfor %}
     </div>
     {% if not cur.labor_available %}<div class="alert alert-info small py-2" id="pnlNoLabor">人事成本未列入：打卡紀錄與員工時薪只在各門市主機 (線上端或依分店檢視時淨利會偏高，請到各門市的損益表查看人事成本)。</div>{% endif %}
+    {% if not cur.cogs_available %}<div class="alert alert-info small py-2" id="pnlCogsLocal">銷貨成本只依線上端的配方 / 餐點單位成本估算：原物料與配方是各門市主機的本機資料 (不同步)，分店的銷貨成本可能偏低甚至為 0，毛利與淨利會偏高，請到各門市的損益表查看。</div>{% endif %}
     {% if cur.labor_missing_wage %}<div class="alert alert-warning small py-2">以下員工沒有設定時薪，人事成本會低估：{{ cur.labor_missing_wage|join('、') }}</div>{% endif %}
     <div class="row g-4">
         <section class="col-lg-7"><div class="card rounded-4 p-3">

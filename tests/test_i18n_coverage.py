@@ -123,21 +123,11 @@ def test_customer_js_uses_ui_dictionary_for_visible_text():
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def i18n_shop(app, store_settings):
-    """開啟英 / 日文、線上訂位、團購；一位會員與一筆訂單"""
-    from app.extensions import db
-    from app.services import settings_service
-    from tests.support import default_tenant_id
+    """開啟英 / 日文、線上訂位、團購；一位會員與一筆訂單 (設定一律經 store_settings，測試結束後還原)"""
     store_settings('menu', languages=['en', 'ja'])
     store_settings('reservation', online_enabled=True, open_time='11:00', close_time='13:00', slot_minutes=60,
                    capacity_per_slot=6, max_party_size=4)
-    with app.app_context():
-        tid = default_tenant_id(app)
-        with app.test_request_context('/'):
-            from flask import g
-            g.tenant_id = tid
-            cfg = dict(settings_service.get('group_order', tid), enabled=True, min_lead_minutes=60)
-            settings_service.put('group_order', cfg, tenant_id=tid)
-            db.session.commit()
+    store_settings('group_order', enabled=True, min_lead_minutes=60)   # put 會與現有值合併
     item = make_item(app, 'i18n Burger', price=100)
     with app.app_context():
         from app.models.user import User
@@ -151,7 +141,7 @@ def i18n_shop(app, store_settings):
 
 
 def _store_content(app):
-    """店家自己填的文字 (店名、品名 / 分類 / 說明、優惠券名稱)：沒有翻譯時維持中文，不算介面文字"""
+    """店家自己填的文字 (店名、品名 / 分類 / 說明 / 規格、優惠券名稱)：沒有翻譯時維持中文，不算介面文字"""
     from app.models.coupon import Coupon
     from app.models.menu import MenuItem
     from app.models.tenant import Tenant
@@ -160,6 +150,7 @@ def _store_content(app):
     with app.app_context(), tenant_bypass():
         for item in MenuItem.query.all():
             words.update(filter(None, (item.name, item.category, item.description)))
+            words.update(name for name, _delta in item.sizes)   # 店家自訂的規格名稱 (中杯 / 大杯…)
         for cp in Coupon.query.all():
             words.add(cp.title)
         words.update(t.name for t in Tenant.query.all())
@@ -179,7 +170,12 @@ def _group_pages(app, c):
     manage_path = manage_path[manage_path.index('/'):]
     with app.app_context():
         token = GroupOrder.query.filter_by(title='i18n group').first().token
-    return created, c.get(f'/shop/default/group/{token}').get_data(as_text=True), c.get(manage_path).get_data(as_text=True)
+    joined = c.get(f'/shop/default/group/{token}')
+    # 管理連結帶 ?k=：記下金鑰後 302 導回乾淨網址，要跟著轉址才會真的渲染 group_manage.html
+    manage = c.get(manage_path, follow_redirects=True)
+    assert joined.status_code == 200 and manage.status_code == 200, (joined.status_code, manage.status_code)
+    assert manage.request.path.endswith('/manage') and 'k=' not in manage.request.query_string.decode(), manage.request.url
+    return created, joined.get_data(as_text=True), manage.get_data(as_text=True)
 
 
 @pytest.mark.parametrize('lang, expect', (('en', 'Online reservation'), ('ja', 'オンライン予約')))
@@ -201,9 +197,26 @@ def test_every_customer_page_renders_without_chinese_ui(app, i18n_shop, monkeypa
     r = c.post('/waitlist', data={'name': 'Wait', 'phone': '', 'party_size': '2'})
     pages['/waitlist/<token>'] = c.get(r.headers['Location']).get_data(as_text=True)
     pages['group_created'], pages['group_join'], pages['group_manage'] = _group_pages(app, c)
-    monkeypatch.setitem(app.config, 'SYNC_ROLE', 'hub')   # 付款頁只有線上端
-    pages['/payment/return'] = c.get(f'/payment/return/{i18n_shop["uuid"]}').get_data(as_text=True)
-    pages['/pay'] = c.get(f'/pay/{i18n_shop["uuid"]}').get_data(as_text=True)
+    monkeypatch.setitem(app.config, 'SYNC_ROLE', 'hub')   # 付款頁只有線上端 (測試設定允許綠界公開測試金鑰)
+    r = c.get(f'/payment/return/{i18n_shop["uuid"]}')
+    assert r.status_code == 200, r.status_code
+    pages['/payment/return'] = r.get_data(as_text=True)
+    # /pay 只對待付款的訂單渲染付款頁 (其他狀態 302 轉到結果頁)：暫時把這張會員訂單改成待付款
+    from app.extensions import db
+    from app.models.order import Order
+    with app.app_context():
+        order = Order.query.filter_by(uuid=i18n_shop['uuid']).one()
+        old_payment_status, order.payment_status = order.payment_status, 'pending'
+        db.session.commit()
+    try:
+        r = c.get(f'/pay/{i18n_shop["uuid"]}')
+    finally:
+        with app.app_context():
+            Order.query.filter_by(uuid=i18n_shop['uuid']).one().payment_status = old_payment_status
+            db.session.commit()
+    assert r.status_code == 200, r.status_code
+    pages['/pay'] = r.get_data(as_text=True)
+    assert 'payment-stage.ecpay.com.tw' in pages['/pay'], '應渲染送往綠界的付款頁'
     problems = {path: _chinese_ui_lines(html, lang, allow) for path, html in pages.items()}
     problems = {k: v for k, v in problems.items() if v}
     assert problems == {}, f'{lang} 頁面仍出現中文介面文字：{problems}'

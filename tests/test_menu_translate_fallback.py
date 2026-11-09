@@ -22,7 +22,7 @@ def test_dictionary_common_dishes_prefixes_and_sizes():
     assert lookup('蚵仔煎') == ('Oyster omelette', '牡蠣オムレツ')
     assert lookup('臭豆腐') == ('Stinky tofu', '臭豆腐')
     assert lookup('招牌滷肉飯') == ('Signature braised pork rice', '看板ルーローハン')
-    assert lookup('冰美式咖啡') == ('Iced americano', 'アイスアメリカーノ')
+    assert lookup('冰美式咖啡') == ('Iced Americano', 'アイスアメリカーノ')
     assert lookup(' 珍珠奶茶（大） ') == ('Bubble milk tea (Large)', 'タピオカミルクティー（大）')
     assert lookup('經典牛肉漢堡 (小)') == ('Classic beef burger (Small)', '定番ビーフバーガー（小）')
     assert lookup('招牌和牛堡') is None and lookup('') is None and lookup('炙燒起司牛肉堡') is None, '認不得整個名稱就不翻'

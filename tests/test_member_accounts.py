@@ -37,16 +37,15 @@ def test_register_and_logout(app):
 
 
 def test_legacy_member_without_pin_and_enumeration(app):
-    """沒有 PIN 的舊會員回 403；空號與錯誤 PIN 一律 401 (無法列舉會員)"""
+    """沒有 PIN 的舊會員、空號與錯誤 PIN 一律 401 且訊息相同 (無法列舉會員)"""
     make_member(app, '陳小美', '0912999888', points=150, photo_path='member_legacy.jpg')
     c = app.test_client()
     c.get('/?shop=default')
-    assert c.post('/phone_login', json={'phone': '0912999888', 'pin': '1234'},
-                  headers={'X-Forwarded-For': '10.20.2.1'}).status_code == 403
+    legacy = c.post('/phone_login', json={'phone': '0912999888', 'pin': '1234'}, headers={'X-Forwarded-For': '10.20.2.1'})
     no_phone = c.post('/phone_login', json={'phone': '0988777666', 'pin': '1234'}, headers={'X-Forwarded-For': '10.20.2.2'})
     wrong_pin = c.post('/phone_login', json={'phone': '0912345678', 'pin': '9999'}, headers={'X-Forwarded-For': '10.20.2.3'})
-    assert no_phone.status_code == wrong_pin.status_code == 401
-    assert no_phone.get_json()['message'] == wrong_pin.get_json()['message']
+    assert legacy.status_code == no_phone.status_code == wrong_pin.status_code == 401
+    assert legacy.get_json()['message'] == no_phone.get_json()['message'] == wrong_pin.get_json()['message']
 
 
 def test_admin_edit_and_delete_member(app, admin_client):
@@ -77,7 +76,7 @@ def test_admin_edit_and_delete_member(app, admin_client):
         assert db.session.get(User, temp_uid) is None
         assert not os.path.exists(photo_path)
         linked = db.session.get(Order, order_id)
-        assert linked.user_id is None and '已註銷會員' in linked.table_number
+        assert linked.user_id is None and linked.table_number == '已刪除會員'
         audit = StaffAuditLog.query.filter_by(action_type='DELETE_USER', target_user_id=temp_uid).first()
         assert audit.points_delta == -30
         db.session.delete(linked)

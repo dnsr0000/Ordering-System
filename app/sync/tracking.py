@@ -105,7 +105,13 @@ def _mark_bulk_updates(state):
     except (AttributeError, KeyError):  # 以 Table 建立的 update() 沒有 ORM 實體
         entity = None
     spec = BY_MODEL.get(entity)
-    if spec is None or is_suppressed(state.session):
+    if spec is None:
+        return
+    if is_suppressed(state.session):
+        # 套用線上資料 / 別名合併後的重算 (例如 recompute_points) 不標記 sync_rev，
+        # 但也不能讓 onupdate 把 updated_at 改成「現在」，否則 LWW 會誤判本機較新而忽略線上端較新的資料
+        if 'updated_at' not in _statement_columns(state.statement):
+            state.statement = state.statement.values(updated_at=entity.__table__.c.updated_at)
         return
     columns = _statement_columns(state.statement) - _IGNORED_FOR_DIRTY
     if columns - spec.local_only:
@@ -153,8 +159,10 @@ def _assign_revision(session):
     metadata = SyncClock.metadata
     for name in sorted(tables):
         table = metadata.tables[name]
-        session.execute(sa.update(table).where(table.c.sync_rev == marker)
-                        .values(sync_rev=rev, updated_at=table.c.updated_at))
+        values = {'sync_rev': rev, 'updated_at': table.c.updated_at}
+        if name == 'order':  # API v1 cursor 用的本機異動序號 (R2-182)：本機提交的訂單異動也一併更新
+            values['feed_rev'] = rev
+        session.execute(sa.update(table).where(table.c.sync_rev == marker).values(**values))
 
 
 @event.listens_for(Session, 'after_commit')

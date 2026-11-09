@@ -4,8 +4,9 @@
 - 指派外送員時在訂單上產生 driver_token；派車頁顯示外送員專用連結 / QR code (/driver/<token>)。
 - 外送員手機開啟該頁並允許定位後，每隔數秒把位置 POST 到 /api/driver/<token>/position；
   位置存在 DeliveryPosition (本機資料、不同步)，顧客追蹤頁 (/track) 從同一台主機讀最新位置。
-- 連結的主機：PUBLIC_BASE_URL / 店家設定的 QR code 網址優先；分店 (node) 沒設定時用總部 (線上端) 網址，
-  因為外送員的手機在店外連不到門市區網；訂單與 driver_token 會同步到線上端，所以線上端查得到這張訂單。
+- 連結的主機：PUBLIC_BASE_URL 優先；分店 (node) 沒設定時用總部 (線上端) 網址 (店家的桌位 QR code 網址多半是
+  店內區網，排在總部網址之後)，因為外送員的手機在店外連不到門市區網；訂單與 driver_token 會同步到線上端，
+  所以線上端查得到這張訂單。分店的線上點餐訂單一律用總部網址 (顧客在線上端看追蹤頁)。
 """
 import math
 import uuid
@@ -20,6 +21,7 @@ from app.extensions import db
 from app.models.order import DeliveryPosition, Order
 from app.services import settings_service
 from app.sync import runtime as sync_runtime
+from app.utils import safe_int
 
 ACTIVE_STATUSES = ('assigned', 'out')
 TOKEN_MIN_LEN = 30
@@ -28,6 +30,15 @@ TOKEN_MIN_LEN = 30
 def enabled(tenant_id=None):
     cfg = settings_service.get('own_delivery', tenant_id)
     return bool(cfg.get('enabled')) and bool(cfg.get('gps_tracking', True))
+
+
+def enabled_for_order(order):
+    """這張訂單可否使用外送員連結 / 顯示外送員位置。
+    線上端 (hub) 不看本機的自有外送開關：派車與 GPS 開關在出餐分店 (分店可在本店自訂啟用，線上端讀不到)，
+    分店指派外送員時才會產生 driver_token 並同步上來，所以訂單上有憑證即代表出餐分店已啟用"""
+    if sync_runtime.is_hub():
+        return bool(order.driver_token)
+    return enabled(order.tenant_id)
 
 
 def interval_seconds(tenant_id=None):
@@ -46,16 +57,21 @@ def ensure_token(order, new_driver=False):
     return order.driver_token
 
 
-def public_base():
-    """外送員手機要連到的主機網址：PUBLIC_BASE_URL / 店家 QR code 網址 → 分店時用總部網址 → 目前請求的網址"""
+def public_base(order=None):
+    """外送員手機要連到的主機網址：PUBLIC_BASE_URL → 分店時用總部網址 → 店家 QR code 網址 (多半是店內區網) →
+    目前請求的網址。分店的線上點餐訂單一律用總部網址：顧客在線上端看追蹤頁，位置要回報到線上端才看得到"""
+    from app.models.enums import OrderSource
     from app.services import table_service
-    hub_url = current_app.config.get('SYNC_HUB_URL') if sync_runtime.is_node() else ''
+    hub_url = str(current_app.config.get('SYNC_HUB_URL') or '') if sync_runtime.is_node() else ''
     local = request.url_root if has_request_context() else ''
-    return str(table_service.public_base(fallback=False) or hub_url or local).rstrip('/')
+    public = table_service.public_base(shop=False, fallback=False)
+    if hub_url and order is not None and order.order_source == OrderSource.ONLINE:
+        public = ''
+    return str(public or hub_url or table_service.public_base(fallback=False) or local).rstrip('/')
 
 
 def driver_url(order):
-    return f'{public_base()}/driver/{order.driver_token}' if order.driver_token else ''
+    return f'{public_base(order)}/driver/{order.driver_token}' if order.driver_token else ''
 
 
 def find_order(token):
@@ -90,10 +106,7 @@ def record_position(order, lat, lng, accuracy=0, age=0):
         accuracy = max(0.0, min(100000.0, float(accuracy or 0)))
     except (TypeError, ValueError):
         accuracy = 0.0
-    try:
-        age = max(0, min(MAX_FIX_AGE, int(float(age or 0))))
-    except (TypeError, ValueError):
-        age = 0
+    age = max(0, min(MAX_FIX_AGE, safe_int(age, 0)))   # 1e999 / Infinity / NaN → 0 (int(inf) 會拋 OverflowError)
     pos = DeliveryPosition(tenant_id=order.tenant_id, order_uuid=order.uuid, lat=lat, lng=lng, accuracy=accuracy,
                            recorded_at=datetime.now() - timedelta(seconds=age))
     db.session.add(pos)
@@ -140,8 +153,18 @@ def distance_km(lat1, lng1, lat2, lng2):
 
 
 def driver_payload(order):
-    """外送員頁需要的訂單資料 (不含顧客姓名以外的個資；電話只給撥號用)"""
+    """外送員頁需要的訂單資料 (不含顧客姓名以外的個資；電話只給撥號用)。
+    配送結束 (送達 / 失敗 / 取消) 後連結仍可開啟，但不再提供顧客地址、電話與訂單內容 (個資最小化)"""
     from app.models.enums import DELIVERY_STATUS_LABELS
+    if not is_active(order):
+        return {
+            'order_id': order.id, 'pickup_number': order.display_pickup_number,
+            'address': '', 'phone': '', 'zone': '', 'note': '', 'items': [], 'total': 0, 'paid': False,
+            'payment_method': '', 'driver': order.driver_name or '', 'nav_url': '',
+            'delivery_status': order.delivery_status or '',
+            'delivery_label': DELIVERY_STATUS_LABELS.get(order.delivery_status or '', ''),
+            'active': False, 'interval': interval_seconds(order.tenant_id),
+        }
     return {
         'order_id': order.id,
         'pickup_number': order.display_pickup_number,

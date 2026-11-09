@@ -1,5 +1,6 @@
 """會員優惠券：會員專屬券、批量發放 (對象、張數、每人上限、到期、LINE 通知、撤回)、使用期限與過期、
 後台核銷畫面分開未使用 / 已使用 (只顯示近 7 天)"""
+import re
 from datetime import date, datetime, time, timedelta
 
 from app.extensions import db
@@ -179,7 +180,8 @@ def test_targets_line_notify_and_revoke(app, admin_client, line_api):
         assert u1 in [u.id for u in coupon_service.resolve_targets(tid, 'birthday_month')[0]]
         assert '0961000041' not in [u.phone for u in coupon_service.resolve_targets(tid, 'birthday_month')[0]]
         assert u1 in [u.id for u in coupon_service.resolve_targets(tid, 'line')[0]]
-        assert len(coupon_service.resolve_targets(tid, 'all')[0]) == User.query.filter_by(tenant_id=tid).count()
+        assert len(coupon_service.resolve_targets(tid, 'all')[0]) == User.query.filter_by(
+            tenant_id=tid, marketing_opt_out=False).count()
 
     cid = _add_coupon(admin_client, app, 'TIERGIFT', member_only='1', valid_days='10')
     admin_client.post(f'/admin/coupons/{cid}/issue', data={'target': 'tier', 'tier_id': tier_id, 'quantity': '3',
@@ -240,8 +242,9 @@ def test_admin_view_splits_and_keeps_seven_days(app, admin_client):
         assert coupon_service.unused_count(db.session.get(User, uid)) == 2
         # 資料沒有刪除
         assert UserCoupon.query.filter_by(user_id=uid).count() == 6
-    page = admin_client.get('/admin/members').get_data(as_text=True)
-    assert '票券 (2)' in page
+    # 只列出這位會員：名冊每一列都有「票券 (N)」，前面測試的會員 (例如發券甲剩 2 張) 會讓斷言恆成立
+    page = admin_client.get('/admin/members?q=0961000050').get_data(as_text=True)
+    assert re.findall(r'票券 \((\d+)\)', page) == ['2']
     # 切換已使用 / 未使用的回應也套用同樣規則
     r = admin_client.post(f'/admin/toggle_user_coupon/{ids[4]}').get_json()
     assert r['unused'] == 1 and [c['status'] for c in r['coupons']].count('used') == 2

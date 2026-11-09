@@ -1,7 +1,8 @@
 """
 多租戶隔離：
 1. 每個請求先決定「目前店家」(g.tenant / g.tenant_id)：
-   已登入員工 → 員工所屬店家；/shop/<slug> 或 ?shop=<slug> → 指定店家；否則沿用 session 或預設店家。
+   已登入員工 → 員工所屬店家；/shop/<slug> 或任何頁面的 ?shop=<slug> → 指定店家；否則沿用 session 或預設店家
+   (session 記住的店家已停用 / 不存在時回 404，不改用預設店家)。
 2. ORM 查詢 (SELECT / UPDATE / DELETE) 自動加上 tenant_id 條件；新增資料自動填入目前店家，
    跨店修改直接拒絕。請求中找不到店家時一律 fail-closed (查不到任何資料)。
 3. 系統工作 (換日結案、遷移) 需要跨店操作時，使用 tenant_bypass()。
@@ -109,7 +110,9 @@ def install_tenant_context(app):
         slug = None
         if request.path.startswith('/shop/'):
             slug = request.path.split('/')[2]
-        elif request.endpoint == 'customer.customer_index' and request.args.get('shop'):
+        elif request.args.get('shop'):
+            # 任何頁面都可用 ?shop=<代號> 指定店家：訂位 / 候位 / 叫號看板 / 數位看板 / 打卡頁的網址與 QR code、
+            # PWA 起始頁在新瀏覽器 (或重開機、清除 Cookie) 時才不會落到預設店家
             slug = request.args['shop']
         if slug:
             tenant = _tenant_by(slug=slug.strip().lower())
@@ -118,8 +121,16 @@ def install_tenant_context(app):
             _use_tenant(tenant)
             return None
 
-        tenant = _tenant_by(id=session['tenant_id']) if session.get('tenant_id') else None
-        if not tenant or not tenant.is_active:
+        remembered = session.get('tenant_id')
+        tenant = _tenant_by(id=remembered) if remembered else None
+        if remembered and (not tenant or not tenant.is_active):
+            # 記住的店家已停用 / 已不存在：與 /shop/<停用店家> 一致回 404，不可默默改用預設店家
+            # (否則該店的點餐機、顧客手機會顯示並接收另一家店的點餐)。
+            # 停用的店家保留記憶：重新整理仍顯示暫停服務，重新啟用後自動恢復；改用其他店家請開 ?shop=<代號>
+            if not tenant:
+                session.pop('tenant_id', None)
+            abort(404)
+        if not tenant:
             tenant = _tenant_by(slug='default')
         if not tenant:
             current_app.logger.error('找不到預設店家 (default)，請確認資料庫遷移是否完成。')

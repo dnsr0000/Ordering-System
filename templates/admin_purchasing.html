@@ -15,7 +15,7 @@
             <div class="card rounded-4 p-3 mb-4">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <h2 class="h5 fw-bold text-warning mb-0">建議採購</h2>
-                    <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="suggest">
+                    <form method="POST" data-confirm="依低庫存建立採購單草稿？">{{ csrf() }}<input type="hidden" name="action" value="suggest">
                         <button class="btn btn-warning btn-sm fw-bold text-dark" type="submit" id="suggestBtn" {{ 'disabled' if not suggestions }}>建立採購單草稿</button></form>
                 </div>
                 <table class="table table-dark table-sm mb-0" id="suggestTable">
@@ -23,7 +23,7 @@
                     <tbody>{% for ing, qty in suggestions %}
                     <tr><td>{{ ing.name }}</td><td class="text-danger">{{ '%g' % ing.stock }} / {{ '%g' % ing.low_threshold }} {{ ing.unit }}</td>
                         <td class="fw-bold">{{ '%g' % qty }} {{ ing.unit }}</td><td>{{ ing.supplier.name if ing.supplier else '(未指定)' }}</td></tr>
-                    {% else %}<tr><td colspan="4" class="text-center text-white-50">目前沒有低於安全量的原料</td></tr>{% endfor %}</tbody>
+                    {% else %}<tr><td colspan="4" class="text-center text-white-50">目前沒有需要補貨的原料 (或低於安全量的已在未收貨的採購單中)</td></tr>{% endfor %}</tbody>
                 </table>
             </div>
             <div class="card rounded-4 p-3">

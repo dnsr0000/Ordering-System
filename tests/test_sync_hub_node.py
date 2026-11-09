@@ -8,6 +8,7 @@
 import os
 import shutil
 import tempfile
+import warnings
 from contextlib import contextmanager
 
 import pytest
@@ -99,7 +100,25 @@ class Env:
             self.sync(self.b)
 
     def close(self):
-        shutil.rmtree(self.root, ignore_errors=True)
+        remove_app_dirs(self.root, self.hub, self.a, self.b)
+
+
+def remove_app_dirs(root, *apps):
+    """
+    先關掉每個 app 的資料庫連線池再刪暫存資料夾：Windows 上 SQLite 檔案仍被開著時刪不掉
+    (只用 ignore_errors 會靜默失敗，%TEMP% 累積 kiosk_sync_*)；刪不掉時發出警告而不是靜默略過。
+    """
+    from app.extensions import db
+    for application in apps:
+        try:
+            with application.app_context():
+                db.session.remove()
+                db.engine.dispose()
+        except Exception:
+            pass
+    shutil.rmtree(root, ignore_errors=True)
+    if os.path.exists(root):
+        warnings.warn(f'測試暫存資料夾無法刪除：{root}', stacklevel=2)
 
 
 @pytest.fixture(scope='module')
@@ -160,7 +179,8 @@ def _checkout(app, items, pay=True, **kw):
         order, _ = process_checkout(tenant_id=tenant.id, items=items, **kw)
         result = dict(id=order.id, uuid=order.uuid, pickup=order.pickup_number, total=order.total_price,
                       node_uuid=order.node_uuid, status=order.status, payment_status=order.payment_status)
-    if is_hub and pay:
+    # 應付 $0 的訂單 (寄杯兌換、點數全額折抵) 不經綠界、建立時就已成立 (付款狀態不是 pending)，沒有付款通知可模擬
+    if is_hub and pay and result['payment_status'] == 'pending':
         _pay(app, result)
     return result
 

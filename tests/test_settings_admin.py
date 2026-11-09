@@ -70,7 +70,12 @@ def test_settings_are_per_tenant(app, store_settings):
     other = other_shop_owner_client(app)
     other.post('/admin/settings/pos', data={'service_charge_percent': '5'})
     with app.app_context():
+        from app.models.tenant import Tenant
+        other_tid = Tenant.query.filter_by(slug='other-shop').one().id
         assert settings_service.get('pos', default_tenant_id(app))['service_charge_percent'] == 10
-        rows = StoreSetting.query.filter_by(key='pos').all()
-        assert len({r.tenant_id for r in rows}) == 2
+        assert settings_service.get('pos', other_tid)['service_charge_percent'] == 5
+        # 兩家各存一列 (其他測試建立的店家也可能有自己的 pos 設定，所以只檢查這兩家)
+        rows = StoreSetting.query.filter(StoreSetting.key == 'pos',
+                                         StoreSetting.tenant_id.in_((default_tenant_id(app), other_tid))).all()
+        assert sorted(r.tenant_id for r in rows) == sorted((default_tenant_id(app), other_tid))
         db.session.rollback()

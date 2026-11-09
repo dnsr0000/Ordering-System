@@ -8,7 +8,6 @@
 """
 import json
 import re
-import shutil
 import tempfile
 import threading
 from types import SimpleNamespace
@@ -17,7 +16,7 @@ import pytest
 
 from tests.conftest import IS_SQLITE
 from tests.support import flashes, line, login_staff
-from tests.test_sync_hub_node import ClientTransport, _make_app, tenant_ctx
+from tests.test_sync_hub_node import ClientTransport, _make_app, remove_app_dirs, tenant_ctx
 
 TOKEN_RE = re.compile(r'kn_[A-Za-z0-9_\-]{20,}')
 PAGE_DATA_RE = re.compile(r'<script type="application/json" id="page-data">(.*?)</script>', re.S)
@@ -39,7 +38,7 @@ class Env:
         self.hub_staff = login_staff(self.hub, 'ui_hub_staff', 'staff')
 
     def close(self):
-        shutil.rmtree(self.root, ignore_errors=True)
+        remove_app_dirs(self.root, self.hub, self.node)
 
 
 @pytest.fixture(scope='module')

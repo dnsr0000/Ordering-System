@@ -157,7 +157,7 @@ def test_pnl_statement_numbers_fees_tax_trend_and_excel(app):
     owner.get('/admin/pnl?start=2026-13-01&end=2026-01-01')
     assert_flash(owner, '日期格式錯誤')
     owner.get('/admin/pnl?start=0001-01-01&end=0001-01-31')
-    assert_flash(owner, '2000 ~ 2100')
+    assert_flash(owner, '超出可查詢範圍')   # app.utils.parse_date 先擋下 2000-01-01 ~ 2100-12-31 以外的日期
     assert owner.get('/admin/pnl?month=9999-12').status_code == 200
     assert 'pnlNoLabor' not in page   # 單機有打卡紀錄：人事成本列入
     x = owner.get(f'/admin/pnl?month={month}&format=xlsx')

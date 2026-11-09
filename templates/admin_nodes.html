@@ -114,7 +114,7 @@ SYNC_NODE_TOKEN={{ new_token.token }}</pre>
                                     </button>
                                 </form>
                                 <form method="POST" action="{{ url_for('sync_admin.nodes_action') }}" class="d-inline"
-                                      data-confirm="{{ '停用後此分店的權杖無法再同步，線上也不能選它取餐。確定停用？' if n.is_active else '確定重新啟用此分店？' }}">
+                                      data-confirm="{{ '停用後此分店的權杖無法再同步，線上也不能選它取餐；尚未送達此分店的線上訂單 (含之後才完成繳費的) 在停用期間都收不到。確定停用？' if n.is_active else '確定重新啟用此分店？' }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="toggle_active">
                                     <input type="hidden" name="node_id" value="{{ n.id }}">

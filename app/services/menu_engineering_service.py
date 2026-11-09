@@ -28,7 +28,7 @@ ORDER = ('star', 'plowhorse', 'puzzle', 'dog')
 
 
 def classify(qty, unit_cm, pop_threshold, cm_threshold):
-    high_pop, high_cm = qty >= pop_threshold, unit_cm >= cm_threshold
+    high_pop, high_cm = qty > 0 and qty >= pop_threshold, unit_cm >= cm_threshold   # 零銷售一律算低人氣
     if high_pop:
         return 'star' if high_cm else 'plowhorse'
     return 'puzzle' if high_cm else 'dog'
@@ -62,6 +62,16 @@ def analyze(tenant_id, start, end, node_uuid=None, category=''):
             row['qty'] += qty
             row['revenue'] += (it.price or 0) * qty
             row['cost'] += unit_cost * qty
+    # 期間內零銷售的菜單品項 (最該檢討的瘦狗) 也要列出，人氣門檻的 N 才是菜單品項數；
+    # 紅利專用 (不在點餐菜單上)、期間開始前已停售或期間結束後才開賣的不算
+    for m in menu.values():
+        if m.id in rows or m.is_reward or (m.sale_until and m.sale_until < start) or (m.sale_from and m.sale_from > end):
+            continue
+        cat = (m.category or '未分類').strip()
+        if category and cat != category:
+            continue
+        rows[m.id] = {'id': m.id, 'name': m.name, 'category': cat, 'qty': 0, 'revenue': 0, 'cost': 0.0,
+                      'no_cost': costs.get(m.id, 0.0) <= 0, 'price': m.price or 0, 'unit_cost': costs.get(m.id, 0.0)}
     items = list(rows.values())
     total_qty = sum(r['qty'] for r in items)
     total_cm = sum(r['revenue'] - r['cost'] for r in items)
@@ -71,12 +81,23 @@ def analyze(tenant_id, start, end, node_uuid=None, category=''):
     for r in items:
         r['cost'] = round(r['cost'], 2)
         r['cm'] = round(r['revenue'] - r['cost'])
-        r['unit_cm'] = round((r['revenue'] - r['cost']) / r['qty'], 1)
-        r['avg_price'] = round(r['revenue'] / r['qty'], 1)
-        r['food_cost_pct'] = round(r['cost'] / r['revenue'] * 100, 1) if r['revenue'] else 0
+        if r['qty']:
+            r['unit_cost'] = round(r['cost'] / r['qty'], 1)
+            r['unit_cm'] = round((r['revenue'] - r['cost']) / r['qty'], 1)
+            r['avg_price'] = round(r['revenue'] / r['qty'], 1)
+            r['food_cost_pct'] = round(r['cost'] / r['revenue'] * 100, 1) if r['revenue'] else 0
+        else:   # 零銷售：每份數字依目前菜單售價與成本估算
+            price = r.pop('price')
+            r['unit_cost'] = round(r['unit_cost'], 1)
+            r['unit_cm'] = round(price - r['unit_cost'], 1)
+            r['avg_price'] = price
+            r['food_cost_pct'] = round(r['unit_cost'] / price * 100, 1) if price else 0
+        r['zero_sales'] = not r['qty']
         r['mix_pct'] = round(r['qty'] / total_qty * 100, 1) if total_qty else 0
         r['cls'] = classify(r['qty'], r['unit_cm'], pop_threshold, cm_threshold)
         r['label'], r['icon'], r['advice'] = (CLASSES[r['cls']][k] for k in ('label', 'icon', 'advice'))
+        if r['zero_sales']:
+            r['advice'] = f"期間內零銷售；{r['advice']}"
     items.sort(key=lambda r: (ORDER.index(r['cls']), -r['cm']))
     # 散佈圖座標 (0~100)：x = 銷售份數、y = 每份毛利
     max_qty = max((r['qty'] for r in items), default=0) or 1
@@ -109,5 +130,5 @@ def to_excel(result, shop_name=''):
         c.font = Font(bold=True)
     for r in result['items']:
         ws.append([r['category'], r['name'], r['label'], r['qty'], r['mix_pct'], r['avg_price'],
-                   round(r['cost'] / r['qty'], 1) if r['qty'] else 0, r['unit_cm'], r['cm'], r['food_cost_pct'], r['advice']])
+                   r['unit_cost'], r['unit_cm'], r['cm'], r['food_cost_pct'], r['advice']])
     return workbook_bytes(wb)

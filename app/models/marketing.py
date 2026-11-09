@@ -29,6 +29,7 @@ class MarketingCampaign(CreatedAtMixin, KindLabelMixin, TenantScoped, db.Model):
     message = db.Column(db.String(500), nullable=False, default='')
     send_at = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(10), nullable=False, default='active', index=True)
+    previous_status = db.Column(db.String(10), nullable=False, default='', server_default='')   # 執行 (running) 前的狀態，中斷後恢復用
     created_by = db.Column(db.String(120), nullable=False, default='')
     last_run_at = db.Column(db.DateTime, nullable=True)
     sent_count = db.Column(db.Integer, nullable=False, default=0)

@@ -170,9 +170,10 @@ def test_table_online_payment_conflicts_are_flagged(app, admin_client, store_set
     phone.post('/api/table/pay')
     with app.app_context():
         trade_no = TablePayment.query.filter_by(dining_table_id=table_id).one().trade_no
-    # 顧客在付款頁時，櫃檯已經結帳了
+    # 顧客在付款頁時，櫃檯已經結帳了 (顧客付款中櫃檯結帳會先回 409，櫃檯確認後帶 force 才結帳)
     assert admin_client.post(f'/api/pos/tables/{table_id}/settle', json={'payment_method': 'Cash',
-                                                                        'cash_received': 100}).status_code == 200
+                                                                        'cash_received': 100,
+                                                                        'force': True}).status_code == 200
     assert _ecpay_post(app, app.test_client(), '/payment/ecpay/table_notify', trade_no, 100,
                        trade='2410249901').get_data(as_text=True) == '1|OK'
     with app.app_context():

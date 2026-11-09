@@ -172,7 +172,12 @@ def test_waitlist_and_counter_board(app, staff_client, kitchen_client, store_set
     assert b['ahead'] == a['ahead'] + 1 and a['status'] == 'waiting'
     num_a = int(re.sub(r'\D', '', a['label']))
     assert int(re.sub(r'\D', '', b['label'])) == num_a + 1
-    assert c.post('/waitlist', data={'name': 'x', 'party_size': '0'}).status_code == 302
+    # 人數 0：成功與失敗都是 302，要確認是帶錯誤提示導回 (不是導向候位頁) 且沒有建立候位
+    r = c.post('/waitlist', data={'name': 'x', 'party_size': '0'})
+    assert r.status_code == 302 and '/waitlist/' not in r.headers['Location']
+    assert_flash(c, '候位人數')
+    with app.app_context():
+        assert WaitlistEntry.query.filter_by(name='x').count() == 0
     assert kitchen_client.get('/reservations').status_code == 403
 
     with app.app_context():

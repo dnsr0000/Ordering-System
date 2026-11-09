@@ -78,6 +78,7 @@ def _size_hit(text, sizes):
     for name in sorted(names, key=len, reverse=True):
         if name and name in text:
             return name
+    text = _mask_option_aliases(text)   # 「大辣 / 中辣 / 小辣」等客製化字眼裡的大中小不是規格
     for word in ('大', '中', '小'):
         if word in text:
             for name in names:
@@ -126,15 +127,27 @@ def _name_index(items):
     return sorted(out, key=lambda x: len(x[0]), reverse=True)
 
 
-def _make_line(item, qty, attrs):
-    line = {'menu_item_id': item.id, 'name': item.name, 'quantity': qty,
-            'available': bool(item.is_available and item.service_status()[0])}
+def _make_line(item, qty, attrs, availability=None):
+    """availability：{餐點 id: 可否點} (呼叫端依菜單頁相同規則算好：取餐分店庫存、原料不足…)；沒提供時看餐點本身"""
+    if availability is not None and item.id in availability:
+        available = bool(availability[item.id])
+    else:
+        available = bool(item.is_available and item.service_status()[0])
+    line = {'menu_item_id': item.id, 'name': item.name, 'quantity': qty, 'available': available}
     line.update(attrs)
     return line
 
 
 _NUMERIC_ALIASES = sorted((w for w in (*SUGAR_ALIASES, *ICE_ALIASES, *SPICY_ALIASES) if re.search(_NUM_RE, w)),
                           key=len, reverse=True)
+_OPTION_ALIASES = sorted({*SUGAR_ALIASES, *ICE_ALIASES, *SPICY_ALIASES}, key=len, reverse=True)
+
+
+def _mask_option_aliases(text):
+    """甜度 / 冰塊 / 辣度字眼換成等長空白 (規格的「大 / 中 / 小」單字比對前使用)"""
+    for word in _OPTION_ALIASES:
+        text = text.replace(word, ' ' * len(word))
+    return text
 _SEP_RE = re.compile(r'[\s,.;:!?，。、；：！？]+')
 _TRAIL_QTY_RE = re.compile(rf'(?:{_NUM_RE}\s*[{UNITS}]?)?\s*(?:{"|".join(SIZE_WORDS)})?\s*$')
 
@@ -184,10 +197,13 @@ def _strip_known(text, addons):
     return [p for p in re.split(r'[\s,.;:!?，。、]+', text) if len(p) >= 2]
 
 
-def rule_parse(text, items, addons):
+def rule_parse(text, items, addons, availability=None):
     """規則比對；回 (lines, leftover 沒有對到品項的片段)"""
     text = _norm(text)
     lowered = text.lower()
+    if len(lowered) != len(text):
+        # 'İ' 等字元小寫後會變成多個字元：逐字小寫並保留這類字元，讓比對位置與原字串一致 (否則標記位置越界)
+        lowered = ''.join(ch.lower() if len(ch.lower()) == 1 else ch for ch in text)
     matches = []   # (start, end, item)
     taken = [False] * len(text)
 
@@ -236,7 +252,7 @@ def rule_parse(text, items, addons):
         posts[i], pres[i + 1] = _split_gap(text[matches[i][1]:matches[i + 1][0]])
     lines = []
     for (_start, _end, item), pre, post in zip(matches, pres, posts):
-        lines.append(_make_line(item, _quantity(pre, post), _attributes(item, pre, post, addons)))
+        lines.append(_make_line(item, _quantity(pre, post), _attributes(item, pre, post, addons), availability))
     return lines, leftover
 
 
@@ -256,7 +272,7 @@ def _llm_prompt(text, items, addons):
     return f'{_llm_prefix(items, addons)}\n顧客說：{text}'
 
 
-def llm_parse(text, items, addons):
+def llm_parse(text, items, addons, availability=None):
     """LLM 解析 (雲端 AI → 本機)；回 (lines, 沒對到菜單的名稱, 來源)"""
     data, source = ai_service.generate_json(f'顧客說：{_norm(text)}', max_tokens=500, prefix=_llm_prefix(items, addons),
                                             system='你是餐廳點餐助理，只輸出 JSON。', local_max_tokens=300, interactive=True)
@@ -276,25 +292,32 @@ def llm_parse(text, items, addons):
             if name:
                 unknown.append(name)
             continue
-        qty = _to_int(row.get('qty')) if not isinstance(row.get('qty'), int) else row.get('qty')
-        qty = min(MAX_QTY, max(1, qty or 1))
-        desc = ' '.join(str(row.get(k) or '') for k in ('size', 'sugar', 'ice', 'spicy')) + ' ' + ' '.join(
-            str(a) for a in (row.get('addons') or []) if isinstance(a, str))
-        lines.append(_make_line(item, qty, _attributes(item, desc, '', addons)))
+        try:   # 模型輸出的格式不可信 (顧客文字原樣進提示)：壞掉的一列略過，不可讓整句解析 500
+            qty = _to_int(row.get('qty')) if not isinstance(row.get('qty'), int) else row.get('qty')
+            qty = min(MAX_QTY, max(1, qty or 1))
+            raw_addons = row.get('addons')
+            if not isinstance(raw_addons, list):
+                raw_addons = []
+            desc = ' '.join(str(row.get(k) or '') for k in ('size', 'sugar', 'ice', 'spicy')) + ' ' + ' '.join(
+                a for a in raw_addons if isinstance(a, str))
+            lines.append(_make_line(item, qty, _attributes(item, desc, '', addons), availability))
+        except (TypeError, ValueError):
+            continue
     return lines, unknown, source
 
 
-def parse(text, items, addons, use_llm=True):
+def parse(text, items, addons, use_llm=True, availability=None):
     """
     解析顧客說的話。items：可點的 MenuItem；addons：[{'id', 'name'}] (加料選項)。
+    availability：{餐點 id: 可否點}，與菜單頁相同的判斷 (線上端看取餐分店庫存、門市看原料不足)；省略時只看餐點本身。
     回 {'lines': [...], 'unmatched': [...], 'source': 'rules' / 雲端廠商 (gemini / anthropic / openai…) / 'local' / 'none', 'text': 正規化後的句子}
     """
     text = _norm(text)
     if not text:
         return {'lines': [], 'unmatched': [], 'source': 'none', 'text': ''}
-    lines, leftover = rule_parse(text, items, addons)
+    lines, leftover = rule_parse(text, items, addons, availability)
     source = 'rules'
     if not lines and use_llm:
-        lines, leftover, source = llm_parse(text, items, addons)
+        lines, leftover, source = llm_parse(text, items, addons, availability)
         source = source or 'none'
     return {'lines': lines, 'unmatched': leftover[:5], 'source': source, 'text': text}

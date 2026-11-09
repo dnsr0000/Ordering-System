@@ -1,12 +1,13 @@
 import re
 from datetime import datetime
+from types import SimpleNamespace
 
 from flask import Blueprint, current_app, flash, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.extensions import db, limiter
-from app.models.enums import OrderSource, OrderStatus, OrderType
+from app.models.enums import OrderSource, OrderStatus, OrderType, PaymentMethod, normalize_payment_method
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order, OrderItem
 from app.models.sync import NodeStock, SyncNode
@@ -16,12 +17,12 @@ from app.services import (branch_service, coupon_service, eta_service, feedback_
                           intake_service, inventory_service, own_delivery_service, pass_service, payment_service,
                           pickup_service, privacy_service, receipt_service, reorder_service, settings_service,
                           table_pay_service, table_service)
-from app.services.customer_session import current_member
+from app.services.customer_session import close_customer_session, current_member, needs_pin_confirm, require_confirmed
 from app.services.menu_service import menu_categories, storefront_payload
 from app.services.order_service import find_by_client_order_id, find_promo, process_checkout
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
-from app.utils import get_json_dict, hub_only, json_etag_response, safe_int, store_only
+from app.utils import get_json_dict, hub_only, json_etag_response, safe_id, safe_int, store_only
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -52,16 +53,27 @@ def _online_nodes():
             .order_by(SyncNode.id).all() if n.is_online(offline_after)]
 
 
-def _pickup_node(nodes):
-    """目前選擇的取餐分店；只有一家時自動選取，選過的分店已停用或暫停線上點餐時清除"""
+def _pickup_node(nodes, adjust=True):
+    """
+    目前選擇的取餐分店；顧客還沒選過且只有一家時自動選取。
+    選過的分店目前不在清單 (暫時離線 / 停用 / 暫停線上點餐)：點餐頁每 30 秒的輪詢 (adjust=False) 不改 session、回傳 None
+    (菜單顯示無法供應，結帳時提示該分店目前離線)，不可靜默改選別家；重新載入點餐頁 (adjust=True) 才清除，
+    只剩一家時改選並提示顧客 (頁首同步顯示新的分店)。
+    """
     chosen = session.get(PICKUP_NODE_KEY)
     node = next((n for n in nodes if n.uuid == chosen), None)
-    if node is None and len(nodes) == 1:
-        node = nodes[0]
-    if node is None:
+    if node is not None:
+        return node
+    if chosen:
+        if not adjust:
+            return None
         session.pop(PICKUP_NODE_KEY, None)
-    elif chosen != node.uuid:
-        session[PICKUP_NODE_KEY] = node.uuid
+    if len(nodes) != 1:
+        return None
+    node = nodes[0]
+    session[PICKUP_NODE_KEY] = node.uuid
+    if chosen:
+        flash(f'您原本選擇的取餐分店目前暫停線上點餐，取餐分店已改為【{node.name}】，請確認後再結帳', 'warning')
     return node
 
 
@@ -111,10 +123,14 @@ def customer_index():
     modifiers = ModifierOption.query.filter_by(is_active=True).all()
     setting = get_or_create_reward_setting(g.tenant_id)
     member = current_member()
-    if session.get('user_id') and member is None:  # 會員已被刪除或不屬於這家店
-        session.pop('user_id', None)
+    if session.get('user_id') and member is None:
+        # 會員已被刪除或不屬於這家店：結束整組顧客工作階段 (不留姓名 / 進場紀錄 / 登入方式的半登入狀態)
+        close_customer_session()
         return redirect(url_for('customer.customer_index'))
     is_hub = sync_runtime.is_hub()
+    if member is None and not is_hub and session.get('line_pending'):
+        # 共用點餐機：授權 LINE 後沒有登入 / 註冊就回到點餐首頁 → 作廢待綁定 (不可綁到下一位註冊 / 登入的顧客)
+        session.pop('line_pending', None)
     pickup_nodes = _online_nodes() if is_hub else []
     pickup_node = _pickup_node(pickup_nodes) if is_hub else None
     # 分店價格 / 上下架 (線上端依顧客選擇的取餐分店)：下架的餐點不顯示
@@ -134,7 +150,8 @@ def customer_index():
         if data['id'] in sold_out_ids or data['id'] in unavailable:
             data['is_available'] = False
     lang = i18n_service.current_language()
-    pro = _storefront_extras(member, dining_table=None if is_hub else table_service.current_table(), is_hub=is_hub)
+    pro = _storefront_extras(member, dining_table=None if is_hub else table_service.current_table(), is_hub=is_hub,
+                             pickup_node=pickup_node)
     return render_template(
         'customer.html',
         items=items,
@@ -180,14 +197,20 @@ def _chat_widget():
     return chat_widget_config()
 
 
-def _storefront_extras(member, dining_table, is_hub):
-    """點餐頁的進階設定 (付款方式、電子發票、儲值金、服務費、會員折扣、LINE 登入、過敏原顯示)"""
+def _storefront_extras(member, dining_table, is_hub, pickup_node=None):
+    """
+    點餐頁的進階設定 (付款方式、電子發票、儲值金、服務費、會員折扣、LINE 登入、過敏原顯示)。
+    pickup_node：線上端顧客選的取餐分店 (外送到府依該分店回報的設定顯示；尚未選分店時沿用線上端設定)
+    """
     from app.services import line_service
     pos_cfg = settings_service.get('pos')
     scope = pos_cfg.get('service_charge_scope') or []
     member_cfg = settings_service.get('member')
-    methods = payment_service.allowed_methods('kiosk')
-    wallet = bool(member_cfg.get('wallet_enabled')) and member is not None
+    # 線上點餐開啟線上付款 (ONLINE_PAYMENT)：一律導向綠界付款 (付款後依實際方式記錄)，不列點餐機的付款方式 (現金等)；
+    # 儲值金 / 禮物卡不可用 (會先扣款又被要求線上付全額)
+    online_payment = is_hub and bool(current_app.config.get('ONLINE_PAYMENT', True))
+    methods = [PaymentMethod.CREDIT_CARD.value] if online_payment else payment_service.allowed_methods('kiosk')
+    wallet = bool(member_cfg.get('wallet_enabled')) and member is not None and not online_payment
     if wallet and '儲值金' not in methods:
         methods = methods + ['儲值金']
     if not wallet:
@@ -199,8 +222,10 @@ def _storefront_extras(member, dining_table, is_hub):
     if not gift_kiosk:
         methods = [m for m in methods if m != '禮物卡']
     tier = member.tier if member is not None and member_cfg.get('tiers_enabled', True) else None
+    od = own_delivery_service.node_config(pickup_node) if is_hub else None
     return {
         'methods': methods or ['Cash'],
+        'onlinePayment': online_payment,
         'invoiceEnabled': bool(settings_service.get('einvoice').get('enabled')) and dining_table is None,
         'walletBalance': member.wallet_balance if member is not None else 0,
         'walletEnabled': wallet,
@@ -208,10 +233,13 @@ def _storefront_extras(member, dining_table, is_hub):
         'serviceChargeDineIn': ('table' in scope) if dining_table is not None else ('kiosk_dine_in' in scope and not is_hub),
         'tierName': tier.name if tier else '',
         'tierDiscount': tier.discount_percent if tier else 0,
+        # 會員等級的點數倍率 (與 order_checkout 的 multiplier 算法相同)
+        'tierPointsMultiplier': (max(0, tier.points_multiplier) if tier.points_multiplier is not None else 1) if tier else 1,
         'lineLogin': line_service.login_enabled(),
         'receiptEmail': receipt_service.email_enabled(),
         'receiptLine': receipt_service.line_enabled() and bool(member and member.line_user_id),
-        'memberEmail': (member.email if member is not None else '') or '',
+        # 人臉登入 (可能誤認) 的工作階段不預填會員 Email (個資)
+        'memberEmail': (member.email if member is not None and not needs_pin_confirm() else '') or '',
         'lineBound': bool(member and member.line_user_id),
         'showAllergens': bool(settings_service.get('menu').get('show_allergens', True)),
         'showCalories': bool(settings_service.get('menu').get('show_calories', True)),
@@ -222,11 +250,9 @@ def _storefront_extras(member, dining_table, is_hub):
         'serviceCall': dining_table is not None,
         'etaEnabled': eta_service.enabled() and not is_hub,
         'a11yButton': bool(settings_service.get('menu').get('accessibility_button', True)),
-        'homeDelivery': ({'zones': own_delivery_service.zones(),
-                          'freeOver': int(own_delivery_service.config().get('free_over') or 0),
-                          'eta': int(own_delivery_service.config().get('eta_minutes') or 45),
+        'homeDelivery': ({'zones': od['zones'], 'freeOver': od['free_over'], 'eta': od['eta_minutes'],
                           'phone': member.phone if member is not None else ''}
-                         if is_hub and own_delivery_service.enabled_for('online') else None),
+                         if is_hub and od['enabled'] else None),
     }
 
 
@@ -258,7 +284,12 @@ def api_voice_parse():
     branch_service.activate_for_request(g.tenant_id)
     items = [i for i in MenuItem.query.all() if not i.is_branch_hidden and not i.is_reward]
     addons = [m.to_dict() for m in ModifierOption.query.filter_by(is_active=True, category='addons').all()]
-    result = voice_order_service.parse(text, items, addons, use_llm=bool(cfg.get('voice_llm', True)))
+    # 可否點與菜單頁相同 (線上端看取餐分店庫存、門市看原料不足)；與輪詢 API 相同不改選取餐分店 (adjust=False，不 flash)
+    is_hub = sync_runtime.is_hub()
+    pickup_node = _pickup_node(_online_nodes(), adjust=False) if is_hub else None
+    avail = _availability_map(items, is_hub, pickup_node)
+    result = voice_order_service.parse(text, items, addons, use_llm=bool(cfg.get('voice_llm', True)),
+                                       availability={k: v[0] for k, v in avail.items()})
     return jsonify(dict(result, success=True))
 
 
@@ -280,7 +311,7 @@ def verify_promo():
     result = find_promo(data.get('promo_code'), data.get('subtotal'), member.id if member else None,
                         guard=(g.tenant_id, request.remote_addr or '-'))
     db.session.commit()   # 保存無效代碼的失敗次數
-    return jsonify(result.to_dict())
+    return jsonify(dict(result.to_dict(), message_i18n=i18n_service.translate_message(result.message)))
 
 
 @customer_bp.route('/shop/<tenant_slug>', endpoint='tenant_storefront')
@@ -303,9 +334,16 @@ def submit_order():
         dining_table = table_service.current_table()
         if had_table and dining_table is None:
             raise AppError('桌位 QR code 已失效，請重新掃描桌上的 QR code 後再送出！', 409)
+    items = data.get('items')
+    if member is not None and needs_pin_confirm() and (
+            normalize_payment_method(data.get('payment_method')) == PaymentMethod.STORED_VALUE or safe_int(data.get('use_points'), 0) > 0
+            or (isinstance(items, list) and any(isinstance(i, dict) and (i.get('is_reward') or i.get('pass_id'))
+                                                for i in items))):
+        # 人臉登入 (可能誤認) 的工作階段動用儲值金 / 點數 / 紅利 / 寄杯：與會員條碼、POS 相同，需再輸入 PIN (403 need_pin)
+        require_confirmed(member, data.get('pin'), '使用儲值金、點數、紅利兌換或寄杯')
     order, replayed = process_checkout(
         tenant_id=g.tenant_id,
-        items=data.get('items'),
+        items=items,
         payment_method=data.get('payment_method', 'Cash'),
         order_type=order_type,
         need_cutlery=bool(data.get('need_cutlery', True)) and order_type in (OrderType.TAKE_OUT, OrderType.HOME_DELIVERY),
@@ -327,7 +365,9 @@ def submit_order():
         # 點餐機只收禮物卡卡號 (刷卡授權碼等仍由 POS 提供)
         payment_info={'gift_code': (data.get('payment_info') or {}).get('gift_code')} if isinstance(data.get('payment_info'), dict) else None,
     )
-    extra = {'payment_url': url_for('payment.pay', order_uuid=order.uuid)} if order.payment_status == 'pending' else {}
+    # 以 client_order_id 重送時可能回傳已取消 (付款狀態仍是 pending) 的舊訂單：不再給付款連結
+    extra = ({'payment_url': url_for('payment.pay', order_uuid=order.uuid)}
+             if order.payment_status == 'pending' and order.status != OrderStatus.CANCELLED else {})
     from app.routes.pos import track_qr
     extra['track_qr'] = track_qr(order)
     return jsonify(dict(order.to_receipt(), replayed=replayed, **_pickup_info(order, node_name_map()), **extra))
@@ -367,6 +407,7 @@ def offline_order():
     existing = find_by_client_order_id(g.tenant_id, client_order_id)
     if existing is not None:   # 斷線前其實已送達 (只是沒收到回應) 或重複補送
         return _offline_replayed(existing, code)
+    _offline_intake_check()
     order_type = payload.get('order_type') if payload.get('order_type') in (OrderType.DINE_IN, OrderType.TAKE_OUT) \
         else OrderType.DINE_IN
     note = f"[斷線暫存 {code} {queued_at:%H:%M}] {str(payload.get('note') or '')}".strip()
@@ -391,6 +432,19 @@ def offline_order():
     return jsonify(_offline_result(order, replayed, code))
 
 
+def _offline_intake_check():
+    """
+    暫停接單 / 每時段上限：只有在「裝置管理」註冊過的點餐機補送的暫存單才免檢查 (點餐機當時已收單)；
+    未註冊的用戶端 (例如顧客手機、瀏覽器直接呼叫) 無法證明當時確實離線，照常套用接單控制。
+    """
+    from app.services import device_service
+    device = device_service.current()
+    if device is not None and device.kind == 'kiosk':
+        return
+    intake_service.check(SimpleNamespace(tenant_id=g.tenant_id, is_pos=False, is_delivery=False, is_hub=False,
+                                         pickup_at=None, now=None, stock_node=None, node_uuid=None))
+
+
 def _offline_result(order, replayed, code):
     """只回傳點餐機需要的欄位 (取餐號、金額)，不含會員、付款、發票等收據內容"""
     return {'success': True, 'replayed': replayed, 'code': code, 'order_id': order.id,
@@ -398,8 +452,9 @@ def _offline_result(order, replayed, code):
 
 
 def _offline_replayed(order, code):
-    # 只有點餐機的訪客訂單可能是這張暫存單 (不可藉此查到別人的訂單)
-    if order.order_source != OrderSource.KIOSK or order.user_id is not None:
+    # 只有點餐機的訪客訂單、或本次進場 (同一位顧客，例如會員結帳時回應遺失) 的訂單可能是這張暫存單 (不可藉此查到別人的訂單)
+    same_visit = bool(order.customer_log_id) and order.customer_log_id == session.get('customer_log_id')
+    if order.order_source != OrderSource.KIOSK or (order.user_id is not None and not same_visit):
         raise AppError('這張暫存單的訂單編號已被其他訂單使用，請店員確認', 409)
     return jsonify(_offline_result(order, True, code))
 
@@ -441,36 +496,45 @@ def api_menu_availability():
     """
     import json as _json
     is_hub = sync_runtime.is_hub()
-    pickup_node = _pickup_node(_online_nodes()) if is_hub else None
+    # 輪詢不可改選取餐分店 (選的分店暫時離線時回傳 None：菜單顯示無法供應，結帳時提示該分店離線)
+    pickup_node = _pickup_node(_online_nodes(), adjust=False) if is_hub else None
     branch_service.activate(g.tenant_id, branch_service.storefront_branch(pickup_node))
     items = [i for i in MenuItem.query.all() if not i.is_branch_hidden]
     avail = _availability_map(items, is_hub, pickup_node)
+    channels = ('dine_in', 'takeout', 'online', 'delivery')
+    # member_prices：會員價 (與頁面載入時的菜單資料相同)，改價後會員的購物車也跟著更新
     payload = {str(i.id): {'available': avail[i.id][0], 'hint': i18n_service.translate_message(avail[i.id][1]), 'price': i.unit_price,
-                           'original_price': i.list_price, 'prices': {ch: i.price_for(ch) for ch in ('dine_in', 'takeout', 'online', 'delivery')}}
+                           'original_price': i.list_price, 'prices': {ch: i.price_for(ch) for ch in channels},
+                           'member_prices': {ch: i.price_for(ch, member=True) for ch in channels}}
                for i in items}
     return json_etag_response(_json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
 
 
 def _receipt_order_key():
-    """每張訂單的寄送次數上限 (避免拿自己的訂單當寄信機)"""
+    """每張訂單的寄送次數上限 (避免拿自己的訂單當寄信機 / 耗盡店家的 LINE 訊息額度)"""
     return f"receipt:{request.view_args.get('order_id')}"
+
+
+# 每張訂單每天最多寄 5 次 (Email 與 LINE 共用計數)
+_receipt_daily_limit = limiter.shared_limit('5/day', scope='receipt_send', key_func=_receipt_order_key)
 
 
 @customer_bp.route('/api/my_orders/<int:order_id>/receipt/email', methods=['POST'], endpoint='receipt_email')
 @limiter.limit('10/minute')
-@limiter.limit('5/day', key_func=_receipt_order_key)
+@_receipt_daily_limit
 def api_receipt_email(order_id):
-    """收據視窗「寄到信箱」：會員自己的或本次進場訪客的訂單；會員可記住 Email"""
+    """收據視窗「寄到信箱」：會員自己的或本次進場訪客的訂單；會員可記住 Email (人臉登入的工作階段不記住)"""
     from app.services import receipt_service
     order = _own_order(order_id)
     data = get_json_dict()
-    receipt_service.request_email(order, data.get('email'), remember=bool(data.get('remember')))
+    receipt_service.request_email(order, data.get('email'), remember=bool(data.get('remember')) and not needs_pin_confirm())
     db.session.commit()
     return jsonify({'success': True, 'message': '電子收據將寄到您的信箱', 'message_i18n': i18n_service.translate_message('電子收據將寄到您的信箱')})
 
 
 @customer_bp.route('/api/my_orders/<int:order_id>/receipt/line', methods=['POST'], endpoint='receipt_line')
 @limiter.limit('10/minute')
+@_receipt_daily_limit
 def api_receipt_line(order_id):
     from app.services import receipt_service
     order = _own_order(order_id)
@@ -508,7 +572,7 @@ def api_eta():
 def _own_order(order_id):
     """我的訂單裡的訂單：會員自己的，或本次進場 (訪客) 的"""
     member = current_member()
-    order = db.session.get(Order, safe_int(order_id, 0))
+    order = db.session.get(Order, safe_id(order_id))
     if order is None or order.tenant_id != g.tenant_id:
         raise AppError('查無此訂單', 404)
     if member is not None and order.user_id == member.id:
@@ -552,8 +616,9 @@ def my_orders():
         'payment_method': o.payment_method,
         'payment_status': o.payment_status or '',
         'payment_url': (url_for('payment.payment_return', order_uuid=o.uuid) if o.payment_note
-                        else url_for('payment.pay', order_uuid=o.uuid)) if o.payment_status == 'pending' else '',
-        'payment_note': (o.payment_note or '') if o.payment_status == 'pending' else '',
+                        else url_for('payment.pay', order_uuid=o.uuid))
+        if o.payment_status == 'pending' and o.status != OrderStatus.CANCELLED else '',
+        'payment_note': (o.payment_note or '') if o.payment_status == 'pending' and o.status != OrderStatus.CANCELLED else '',
         'order_type': o.order_type,
         'pickup_at': o.pickup_at_label,
         'eta': o.eta_label,

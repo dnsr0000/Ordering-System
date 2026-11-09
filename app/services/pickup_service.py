@@ -9,7 +9,13 @@ from app.models.menu import WEEKDAY_LABELS
 from app.services import settings_service
 from app.utils import hm_minutes, parse_local_dt
 
-MAX_SLOTS = 300
+# 只是防呆上限：合法設定的最大量 (可預約 7 天 + 跨午夜的前一天 = 9 段，5 分鐘一格每段最多 289 格) 也不會超過，
+# 不會把店家設定的後面幾天截掉
+MAX_SLOTS = 3000
+
+# 時段文字依顧客介面語言 (英 / 日文顧客才分得出今天、明天)
+DAY_WORDS = {'zh': ('今天', '明天'), 'en': ('Today', 'Tomorrow'), 'ja': ('今日', '明日')}
+WEEKDAYS = {'zh': WEEKDAY_LABELS, 'en': ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'), 'ja': '月火水木金土日'}
 
 
 config = settings_service.reader('online_order')
@@ -18,18 +24,31 @@ enabled = settings_service.flag('online_order', 'scheduled_pickup')
 
 def _windows(cfg, now):
     open_min, close_min = hm_minutes(cfg.get('open_time'), '10:00'), hm_minutes(cfg.get('close_time'), '21:00')
-    for d in range(int(cfg.get('days_ahead') or 0) + 1):
+    # 結束早於開始 = 跨午夜 (例如 17:00 ~ 01:00；最晚 00:00 = 營業到午夜)：結束時間算隔天
+    overnight = close_min < open_min
+    # 跨午夜時，今天凌晨的時段屬於「昨天」開始的營業時段
+    for d in range(-1 if overnight else 0, int(cfg.get('days_ahead') or 0) + 1):
         day = datetime.combine((now + timedelta(days=d)).date(), datetime.min.time())
-        start, end = day + timedelta(minutes=open_min), day + timedelta(minutes=close_min)   # close 24:00 = 隔天 0 點
-        if end >= start:
-            yield start, end
+        start = day + timedelta(minutes=open_min)
+        end = day + timedelta(days=1 if overnight else 0, minutes=close_min)
+        yield start, end
 
 
-def slots(tenant_id=None, now=None):
-    """可選的預約時段 [(datetime, 顯示文字)]；未開放預約時為空"""
+def _language():
+    """顧客頁的介面語言；沒有請求情境 (排程、測試) 時為中文"""
+    from flask import has_request_context
+    if not has_request_context():
+        return 'zh'
+    from app.services import i18n_service
+    return i18n_service.effective_language()
+
+
+def slots(tenant_id=None, now=None, lang=None):
+    """可選的預約時段 [(datetime, 顯示文字)]；未開放預約時為空。顯示文字依 lang (預設為目前顧客頁語言)"""
     cfg = config(tenant_id)
     if not cfg.get('scheduled_pickup'):
         return []
+    lang = lang or _language()
     now = now or datetime.now()
     step = max(5, int(cfg.get('slot_minutes') or 15))
     earliest = now + timedelta(minutes=int(cfg.get('lead_minutes') or 0))
@@ -40,15 +59,21 @@ def slots(tenant_id=None, now=None):
             steps = -(-int((earliest - start).total_seconds()) // (step * 60))   # 無條件進位到下一個時段
             t = start + timedelta(minutes=steps * step)
         while t <= end and len(out) < MAX_SLOTS:
-            out.append((t, label(t, now)))
+            out.append((t, label(t, now, lang)))
             t += timedelta(minutes=step)
     return out
 
 
-def label(t, now=None):
+def label(t, now=None, lang='zh'):
     now = now or datetime.now()
+    lang = lang if lang in DAY_WORDS else 'zh'
     days = (t.date() - now.date()).days
-    prefix = '今天' if days == 0 else ('明天' if days == 1 else f'{t:%m/%d}({WEEKDAY_LABELS[t.weekday()]})')
+    if days in (0, 1):
+        prefix = DAY_WORDS[lang][days]
+    elif lang == 'en':
+        prefix = f'{WEEKDAYS[lang][t.weekday()]} {t:%m/%d}'
+    else:
+        prefix = f'{t:%m/%d}({WEEKDAYS[lang][t.weekday()]})'
     return f'{prefix} {t:%H:%M}'
 
 

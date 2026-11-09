@@ -1,12 +1,16 @@
+from datetime import datetime
+
 from flask import Blueprint, g, jsonify, render_template, request
 from flask_login import current_user
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.errors import AppError
 from app.extensions import db, limiter
 from app.models.coupon import Coupon
-from app.models.enums import OrderSource, POS_ROLES
+from app.models.enums import OrderSource, OrderStatus, POS_ROLES
+from app.models.member import GiftCard
 from app.models.menu import MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.table import DiningTable
@@ -18,6 +22,7 @@ from app.services import (approval_service, coupon_service, giftcard_service, in
 from app.services.audit import record_staff_audit
 from app.services.auth_throttle import clear_pin_lockout
 from app.services.menu_service import menu_categories, storefront_payload
+from app.services.order_lifecycle import ROLE_TRANSITIONS
 from app.services.order_service import find_promo, process_checkout, todays_orders_condition, todays_range
 from app.services import table_service
 from app.services.reward_service import get_or_create_reward_setting
@@ -29,13 +34,15 @@ pos_bp = Blueprint('pos', __name__)
 
 def _member_dict(user):
     coupons = coupon_service.usable_coupons(user.id)
+    # 後台關閉「啟用會員等級」時結帳不折等級折扣 (order_checkout)：POS 也不顯示 / 不試算，避免前後端金額不同而 409
+    tier = user.tier if settings_service.get('member').get('tiers_enabled', True) else None
     return {
         'id': user.id, 'name': user.name, 'phone': user.phone, 'points': user.points or 0,
         'has_pin': bool(user.pin_hash),
         'coupons': [uc.to_dict() for uc in coupons if uc.coupon],
         'wallet_balance': user.wallet_balance or 0,
-        'tier': user.tier.name if user.tier else '',
-        'tier_discount': user.tier.discount_percent if user.tier else 0,
+        'tier': tier.name if tier else '',
+        'tier_discount': tier.discount_percent if tier else 0,
         'birthday': user.birthday.isoformat() if user.birthday else '',
         'line_bound': bool(user.line_user_id),
         'stamps': loyalty_service.stamp_card(user),
@@ -46,6 +53,21 @@ def _member_dict(user):
 def _approver(data):
     """給結帳流程使用的主管核准回呼 (請求內容帶 approver_username / approver_password)"""
     return lambda perm, label: approval_service.require_approval(perm, data, label)
+
+
+def _without_approver(data):
+    """移除主管帳密：主管為「會員身分驗證」輸入的帳密，不可在同一請求默默核准改價 / 整單折扣 (需重新提示主管)"""
+    return {k: v for k, v in data.items() if k not in ('approver_username', 'approver_password')}
+
+
+def _require_open_shift(action='收款'):
+    """後台開啟「必須先開班才能結帳」時，櫃檯收 / 退款 (桌位結帳、禮物卡售出、退款) 也必須有開著的班別，
+    現金才會記在班別上、交班帳不會對不上。以 FOR SHARE 讀取 (同 order_checkout)：正在關班時等關班提交後再判斷。
+    線上端 (hub) 不開班，不檢查。"""
+    if sync_runtime.is_hub() or not settings_service.get('pos').get('require_shift'):
+        return
+    if payment_service.open_shift_id(g.tenant_id, lock=True) is None:
+        raise AppError(f'尚未開班：請先在 POS 按「交班」輸入開班零用金後再{action}', 409, need_shift=True)
 
 
 def _quick_tables(pos_cfg):
@@ -97,6 +119,9 @@ def pos_settings_payload():
         'shift': {'id': shift.id, 'opened_by': shift.opened_by,
                   'opened_at': shift.opened_at.strftime('%H:%M')} if shift else None,
         'intake': intake_service.status(),
+        # 沒有「已取餐 → 取消」流轉權限的角色 (staff)：POS 退款視窗停用「作廢整單」，改選部分退款
+        'canVoidPickedUp': (OrderStatus.PICKED_UP, OrderStatus.CANCELLED)
+                           in ROLE_TRANSITIONS.get(getattr(current_user, 'role', ''), set()),
     }
 
 
@@ -151,7 +176,7 @@ def api_pos_member_lookup():
     from app.services import member_qr_service
     if member_qr_service.looks_like_token(q):   # 掃描會員手機上的動態條碼：等同會員本人出示，之後可動用儲值金 / 點數
         user = member_qr_service.resolve(q)
-        member_verify_service.mark_verified(user.id)
+        member_verify_service.mark_verified(user)
         return jsonify({'success': True, 'multiple': False, 'member': _member_dict(user), 'via_qr': True})
     exact = User.query.filter_by(phone=q).first()
     matches = [exact] if exact else (
@@ -167,7 +192,11 @@ def api_pos_member_lookup():
 @role_required(*POS_ROLES)
 @limiter.limit('15/minute')
 def api_pos_set_member_pin():
-    """店員當面核對身分後，協助會員設定/重設 PIN 並解除鎖定"""
+    """
+    店員當面核對身分後，協助會員設定/重設 PIN 並解除鎖定。
+    會員已設定過 PIN 時，重設需具備「免驗證會員身分」權限或主管核准：PIN 是 POS 動用會員儲值金 / 點數 / 寄杯的
+    身分驗證 (member_verify_service)，店員若能自行覆寫，就能用自己設的 PIN 花掉會員的資產。
+    """
     data = get_json_dict()
     pin = str(data.get('pin', '')).strip()
     if not validate_pin(pin):
@@ -175,9 +204,13 @@ def api_pos_set_member_pin():
     user = _get_member(data.get('user_id'))
     if is_weak_pin(pin, user.phone):
         raise AppError(WEAK_PIN_MESSAGE)
+    approver = ''
+    if user.pin_hash:
+        approver = approval_service.require_approval('member_verify', data, '重設會員 PIN')
     user.set_pin(pin)
     record_staff_audit('POS_SET_MEMBER_PIN', target_user_id=user.id,
-                       details=f"櫃檯協助會員 {user.name} ({user.phone}) 設定/重設安全 PIN 碼並解除鎖定")
+                       details=f"櫃檯協助會員 {user.name} ({user.phone}) 設定/重設安全 PIN 碼並解除鎖定"
+                               + (f' (核准：{approver})' if approver and approver != current_user.username else ''))
     db.session.commit()
     clear_pin_lockout(g.tenant_id, user.phone)
     return jsonify({'success': True, 'message': f'已成功為會員【{user.name}】設定安全 PIN 碼！'})
@@ -197,15 +230,22 @@ def api_pos_verify_promo():
 @limiter.limit('30/minute')
 def api_pos_checkout():
     data = get_json_dict()
+    if sync_runtime.is_hub():
+        # 線上端的結帳一律是線上點餐 (需會員登入、選取餐分店)，不是櫃檯收銀
+        raise AppError('線上端不提供櫃檯收銀結帳，請在門市 POS 結帳', 404)
+    approve_data = data
     # 動用會員儲值金 / 點數 / 寄杯：需掃過會員動態條碼、會員輸入 PIN 或主管核准 (member_verify_service)
     if safe_int(data.get('user_id'), 0) > 0 and member_verify_service.uses_member_assets(data):
-        member_verify_service.require_verified(_get_member(data.get('user_id')), data)
+        verified_by = member_verify_service.require_verified(_get_member(data.get('user_id')), data)
         db.session.commit()   # 保存 PIN 錯誤次數 / 核准稽核
+        if verified_by == 'approval':
+            # 這組主管帳密是為「會員身分驗證」輸入的：改價 / 整單折扣需要核准時重新提示主管 (會員已記為驗證過)
+            approve_data = _without_approver(data)
     order, replayed = process_checkout(
         tenant_id=g.tenant_id,
         items=data.get('items'),
         payment_method=data.get('payment_method', 'Cash'),
-        order_type=data.get('order_type', '內用'),
+        order_type=str(data.get('order_type') or '內用'),
         need_cutlery=data.get('need_cutlery', False),
         note=data.get('note', ''),
         promo_code=data.get('promo_code', ''),
@@ -214,12 +254,12 @@ def api_pos_checkout():
         cash_received=data.get('cash_received', 0),
         user_id=data.get('user_id'),
         order_source=OrderSource.POS,
-        cashier_username=current_user.username,
+        cashier_username=current_user.username[:120],
         client_ip=request.remote_addr or '',
         client_order_id=data.get('client_order_id'),
         order_discount=data.get('order_discount'),
-        approve=_approver(data),
-        payment_info=data.get('payment_info') or {},
+        approve=_approver(approve_data),
+        payment_info=data.get('payment_info') if isinstance(data.get('payment_info'), dict) else {},
         invoice_info=data.get('invoice') or None,
         expected_total=data.get('expected_total'),
         is_rush=bool(data.get('is_rush')),
@@ -236,11 +276,12 @@ def track_qr(order):
         return ''
 
 
-def _live_order_dict(o, node_names=None):
-    """POS「當日訂單」視窗與補印收據需要的欄位 (node_names：線上端顯示取餐分店名稱)"""
+def _live_order_dict(o, node_names=None, settlement_invoices=None):
+    """POS「當日訂單」視窗與補印收據需要的欄位 (node_names：線上端顯示取餐分店名稱；
+    settlement_invoices：預先查好的桌位合併結帳發票 {settlement_id: Invoice}，列表時避免每張訂單各查一次)"""
     return {
         'id': o.id, 'pickup_number': o.display_pickup_number,
-        'pickup_pending': o.order_source == OrderSource.ONLINE and not (o.pickup_number or 0) > 0,
+        'pickup_pending': o.pickup_pending,
         'pickup_node_name': (node_names or {}).get(o.node_uuid, '') if o.node_uuid else '',
         'user_name': o.user.name if o.user else (o.table_number or '非會員'),
         'table_number': o.table_number or '', 'payment_status': o.payment_status or '',
@@ -259,8 +300,10 @@ def _live_order_dict(o, node_names=None):
         'is_rush': bool(o.is_rush), 'payment_reference': o.masked_payment_reference, 'pickup_at': o.pickup_at_label,
         'delivery_status': o.delivery_status or '', 'delivery_status_label': o.delivery_status_label,
         'delivery_address': o.delivery_address or '',
-        'external_ref': o.external_ref or '', 'invoice': o.invoice_summary(),
+        'external_ref': o.external_ref or '', 'invoice': o.invoice_summary(settlement_invoices),
         'points_earned': o.points_earned or 0, 'points_used': o.points_used or 0,
+        # 到店付款 (線上點餐不收線上付款、團體預購)：未收款且不是桌邊點餐，由 POS 當日訂單收款
+        'pay_at_pickup': o.payment_status == 'unpaid' and not o.dining_table_id,
     }
 
 
@@ -276,15 +319,27 @@ def api_pos_today_orders():
               .filter(todays_orders_condition(start, end))
               .order_by(Order.id.desc()).all())
     node_names = node_name_map()
-    stock = (db.session.query(MenuItem.id, MenuItem.stock, MenuItem.is_sold_out)
-             .order_by(MenuItem.id).all())
+    # 桌位合併結帳的發票 (order_id 為空、只以 settlement_id 對應) 一次查好：依 id 排序，同一結帳單留下最新一張
+    from app.models.payment import Invoice
+    sids = {o.settlement_id for o in orders if o.settlement_id and not o.invoices}
+    settlement_invoices = {}
+    if sids:
+        for inv in Invoice.query.filter(Invoice.settlement_id.in_(sids), Invoice.order_id.is_(None)).order_by(Invoice.id).all():
+            settlement_invoices[inv.settlement_id] = inv
+    # 即時庫存與供應時段 (in_service)：POS 頁面開著跨過供應時段時，掃碼 / 配餐 / 兌換依最新狀態判斷能否加入
+    now = datetime.now()
+    menu_items = []
+    for m in MenuItem.query.order_by(MenuItem.id).all():
+        in_service, hint = m.service_status(now)
+        menu_items.append({'id': m.id, 'stock': m.stock or 0,
+                           'is_sold_out': bool(m.is_sold_out) or (m.stock is not None and m.stock <= 0),
+                           'in_service': in_service, 'service_hint': hint})
     return jsonify({
         'success': True,
-        'orders': [_live_order_dict(o, node_names) for o in orders],
+        'orders': [_live_order_dict(o, node_names, settlement_invoices) for o in orders],
         'unpaid_tables': [] if sync_runtime.is_hub() else table_service.unpaid_tables(),
         'service_calls': [] if sync_runtime.is_hub() else table_service.open_calls(),
-        'menu_items': [{'id': mid, 'stock': qty or 0, 'is_sold_out': bool(sold_out) or (qty is not None and qty <= 0)}
-                       for mid, qty, sold_out in stock],
+        'menu_items': menu_items,
     })
 
 
@@ -294,10 +349,31 @@ def api_pos_today_orders():
 def api_settle_table(table_id):
     """桌位結帳：結清該桌所有未結帳的掃碼點餐訂單"""
     data = get_json_dict()
+    _require_open_shift('結帳')
     result = table_service.settle_table(g.tenant_id, table_id, data.get('payment_method', 'Cash'),
                                         data.get('cash_received', 0), current_user, order_ids=data.get('order_ids'),
                                         payments=data.get('payments'), invoice_info=data.get('invoice') or None,
-                                        payment_info=data)
+                                        payment_info=data, expected_total=data.get('expected_total'),
+                                        force_online_pending=bool(data.get('force')))
+    return jsonify(dict(result, success=True))
+
+
+@pos_bp.route('/api/pos/orders/<int:order_id>/settle', methods=['POST'])
+@role_required(*POS_ROLES)
+@store_only
+def api_settle_order(order_id):
+    """到店付款的訂單收款 (線上點餐不收線上付款、團體預購)：參數同桌位結帳"""
+    data = get_json_dict()
+    _require_open_shift('結帳')
+    # 畫面上的應收金額 (expected_total) 與目前不符 (例如剛作廢品項) 時不收款；settle_order 以同一次讀到的金額做條件式更新
+    order = _order(order_id)
+    expected = data.get('expected_total')
+    if expected not in (None, '') and safe_int(expected, -1) != (order.total_price or 0):
+        raise AppError(f'訂單 #{order.id} 的應收金額已異動 (畫面 ${safe_int(expected, 0)}，目前 ${order.total_price or 0})，'
+                       f'請重新整理後再收款', 409)
+    result = table_service.settle_order(g.tenant_id, order_id, data.get('payment_method', 'Cash'),
+                                        data.get('cash_received', 0), current_user, payments=data.get('payments'),
+                                        invoice_info=data.get('invoice') or None, payment_info=data)
     return jsonify(dict(result, success=True))
 
 
@@ -344,17 +420,49 @@ def _order(order_id):
     return order
 
 
+def _refund_request_id(data):
+    """POS 退款 / 作廢品項的冪等鍵 (每次開窗一個，逾時重送相同)；Refund.request_id 欄位由遷移新增，舊結構時不去重"""
+    from app.models.payment import Refund
+    rid = str(data.get('request_id') or '').strip()[:64]
+    return rid if rid and getattr(Refund, 'request_id', None) is not None else ''
+
+
+def _replayed_refund(rid):
+    from app.models.payment import Refund
+    return Refund.query.filter_by(tenant_id=g.tenant_id, request_id=rid).first() if rid else None
+
+
+def _commit_refund(refund, rid):
+    """記下冪等鍵後提交：並行重送撞到唯一索引時整筆回滾 (退款、收款紀錄、背景退刷都不會成立)"""
+    if rid and refund is not None:
+        refund.request_id = rid
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        if not rid:
+            raise
+        raise AppError('此退款正在處理或已完成，請重新整理', 409)
+
+
 @pos_bp.route('/api/pos/orders/<int:order_id>/refund', methods=['POST'])
 @role_required(*POS_ROLES)
 @limiter.limit('30/minute')
 def api_partial_refund(order_id):
     data = get_json_dict()
     _order(order_id)
+    rid = _refund_request_id(data)
+    done = _replayed_refund(rid)
+    if done is not None:   # 同一個請求重送 (連點 / 逾時重按)：回傳第一次的結果，不再退款
+        return jsonify({'success': True, 'refund_id': done.id, 'status': done.status, 'replayed': True,
+                        'message': f'訂單 #{order_id} 退款 ${done.amount} 已處理過'})
     approved_by = approval_service.require_approval('refund', data, '部分退款')
+    _require_open_shift('退款')
     refund = payment_service.partial_refund(order_id, data.get('amount'), data.get('reason'), approved_by=approved_by,
                                             tenant_id=g.tenant_id, method=data.get('method') or None)
-    db.session.commit()
-    msg = {'done': '已退款', 'manual': '已登記，請在刷卡機 / 對應系統完成退款', 'pending': 'LINE Pay 退款處理中'}
+    _commit_refund(refund, rid)
+    msg = {'done': '已退款', 'manual': '已登記，請在刷卡機 / 對應系統完成退款',
+           'pending': 'LINE Pay 退款處理中' if refund.method == 'Line Pay' else '已送出綠界退刷，處理中'}
     return jsonify({'success': True, 'refund_id': refund.id, 'status': refund.status,
                     'message': f'訂單 #{order_id} 退款 ${refund.amount}：{msg.get(refund.status, refund.status)}'})
 
@@ -368,10 +476,18 @@ def api_void_item(order_id):
     order = _order(order_id)
     if not any(i.id == safe_int(data.get('item_id'), 0) for i in order.items):
         raise AppError('這張訂單沒有這個品項', 404)
+    rid = _refund_request_id(data)
+    if _replayed_refund(rid) is not None:
+        return jsonify({'success': True, 'replayed': True, 'message': '此作廢已處理過'})
     approved_by = approval_service.require_approval('refund', data, '作廢品項')
     result = order_service.void_item(g.tenant_id, data.get('item_id'), data.get('quantity'), data.get('reason'),
                                      approved_by=approved_by, refund_method=data.get('method') or None)
-    db.session.commit()
+    refund = None
+    if rid and result['refund_status']:
+        # 已收款訂單的作廢會建立一筆部分退款 (同一張訂單的作廢依序處理，最新一筆就是這次的)；未結帳訂單只降低應付，不建退款
+        from app.models.payment import Refund
+        refund = Refund.query.filter_by(order_id=order.id).order_by(Refund.id.desc()).first()
+    _commit_refund(refund, rid)
     msg = f"已作廢，退款 ${result['amount']}" if result['refund_status'] else (
         f"已作廢，應付金額改為 ${result['order_total']}" if result['amount'] else '已作廢')
     return jsonify({'success': True, 'message': msg, **result})
@@ -485,7 +601,8 @@ def api_shift_movement():
     kind = PaymentKind.PAY_IN if data.get('kind') == 'pay_in' else PaymentKind.PAY_OUT
     shift_service.cash_movement(g.tenant_id, current_user.username, data.get('amount'), kind, data.get('note'))
     db.session.commit()
-    return jsonify({'success': True, 'shift': shift_service.shift_report(shift_service.current_shift(g.tenant_id))})
+    shift = shift_service.current_shift(g.tenant_id)   # 剛好被另一台 POS 關班時為 None
+    return jsonify({'success': True, 'shift': shift_service.shift_report(shift) if shift else None})
 
 
 @pos_bp.route('/api/pos/shift/close', methods=['POST'])
@@ -513,13 +630,20 @@ def api_shift_close():
 @approval_service.permission_required('wallet')
 @limiter.limit('20/minute')
 def api_wallet_topup():
+    from app.models.payment import PaymentKind, PaymentRecord
     data = get_json_dict()
     user = _get_member(data.get('user_id'))
+    # 同一個 request_id 重送 (連點 / 逾時重按)：topup 直接回傳第一次的結果，不再加值，這裡也不重複寫稽核
+    rid = str(data.get('request_id') or '').strip()[:64]
+    rid_col = getattr(PaymentRecord, 'request_id', None) if rid else None   # 欄位由遷移新增
+    replayed = rid_col is not None and PaymentRecord.query.filter(PaymentRecord.kind == PaymentKind.TOPUP,
+                                                                  rid_col == rid).first() is not None
     amount, bonus = wallet_service.topup(g.tenant_id, user, data.get('amount'), data.get('payment_method', 'Cash'),
-                                         current_user.username, data.get('payment_info'))
-    record_staff_audit('WALLET_TOPUP', target_user_id=user.id,
-                       details=f"會員 {user.name} 儲值 ${amount}" + (f" (贈送 ${bonus})" if bonus else '')
-                               + f"，付款:{data.get('payment_method', 'Cash')}")
+                                         current_user.username, data.get('payment_info'), request_id=data.get('request_id'))
+    if not replayed:
+        record_staff_audit('WALLET_TOPUP', target_user_id=user.id,
+                           details=f"會員 {user.name} 儲值 ${amount}" + (f" (贈送 ${bonus})" if bonus else '')
+                                   + f"，付款:{data.get('payment_method', 'Cash')}")
     db.session.commit()
     db.session.refresh(user)
     return jsonify({'success': True, 'member': _member_dict(user), 'amount': amount, 'bonus': bonus,
@@ -536,11 +660,26 @@ def api_wallet_topup():
 def api_gift_card_sell():
     """售出禮物卡：回傳完整卡號 (交給顧客)；有收據印表機時可列印卡號"""
     data = get_json_dict()
+    # 冪等：同一個 request_id 重送 (逾時重按) 回傳第一次售出的卡，不再多發一張、多記一筆預收
+    rid = str(data.get('request_id') or '').strip()[:36] if getattr(GiftCard, 'request_id', None) is not None else ''
+    existing = GiftCard.query.filter_by(request_id=rid).first() if rid else None
+    if existing is not None:
+        return _gift_card_replay(existing)
+    _require_open_shift('收款')
     card = giftcard_service.sell(g.tenant_id, data.get('amount'), data.get('payment_method', 'Cash'),
                                  current_user.username, data.get('payment_info'), data.get('note'))
+    if rid:
+        card.request_id = rid
     record_staff_audit('GIFT_CARD_SELL', details=f'售出禮物卡 {card.masked_code} ${card.initial_amount}'
                                                  f'，付款:{data.get("payment_method", "Cash")}')
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing = GiftCard.query.filter_by(request_id=rid).first() if rid else None
+        if existing is None:
+            raise
+        return _gift_card_replay(existing)
     printed = False
     if data.get('print'):
         try:
@@ -551,6 +690,13 @@ def api_gift_card_sell():
         except AppError:
             db.session.rollback()
     return jsonify({'success': True, 'card': giftcard_service.summary(card), 'printed': printed,
+                    'message': f'已售出禮物卡 ${card.initial_amount:,}，卡號 {card.code}'})
+
+
+def _gift_card_replay(card):
+    if card.sold_by != current_user.username:
+        raise AppError('售出編號重複，請關閉視窗後重新操作', 409)
+    return jsonify({'success': True, 'card': giftcard_service.summary(card), 'printed': False, 'replayed': True,
                     'message': f'已售出禮物卡 ${card.initial_amount:,}，卡號 {card.code}'})
 
 
@@ -570,6 +716,8 @@ def api_gift_card_lookup():
 @approval_service.permission_required('delivery')
 @limiter.limit('30/minute')
 def api_delivery_order():
+    if sync_runtime.is_hub():
+        raise AppError('線上端不提供外送平台訂單登錄，請在門市 POS 登錄', 404)
     data = get_json_dict()
     platform = str(data.get('platform') or '').strip()[:30]
     ref = str(data.get('external_ref') or '').strip()[:60]
@@ -578,7 +726,7 @@ def api_delivery_order():
     source = {'uber eats': OrderSource.UBER_EATS, 'ubereats': OrderSource.UBER_EATS,
               'foodpanda': OrderSource.FOODPANDA}.get(platform.lower(), OrderSource.DELIVERY)
     from app.services import delivery_service
-    dup = delivery_service.find_platform_order(g.tenant_id, source, ref)
+    dup = delivery_service.find_platform_order(g.tenant_id, source, ref, platform=platform)
     if dup is not None:
         raise AppError(f'平台訂單 {ref} 已登錄過 (#{dup.id})', 409)
     try:
@@ -586,10 +734,11 @@ def api_delivery_order():
         order, replayed = process_checkout(
             tenant_id=g.tenant_id, items=data.get('items'), order_source=source, order_type='外送',
             payment_method='平台代收', table_input=f'{platform} {ref}'[:40], note=data.get('note', ''),
-            cashier_username=current_user.username, client_ip=request.remote_addr or '',
-            client_order_id=delivery_service.platform_order_uuid(g.tenant_id, source, ref), external_ref=ref)
+            cashier_username=current_user.username[:120], client_ip=request.remote_addr or '',
+            client_order_id=delivery_service.platform_order_uuid(g.tenant_id, source, ref, platform),
+            external_ref=ref)
     except AppError as exc:
-        dup = delivery_service.find_platform_order(g.tenant_id, source, ref) if exc.status == 409 else None
+        dup = delivery_service.find_platform_order(g.tenant_id, source, ref, platform=platform) if exc.status == 409 else None
         if dup is not None:
             raise AppError(f'平台訂單 {ref} 已登錄過 (#{dup.id})', 409)
         raise

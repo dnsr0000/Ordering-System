@@ -1,4 +1,5 @@
 """會員分群與自動行銷、訂位訂金 / 未到 / 提醒、員工異常偵測"""
+import re
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -147,16 +148,22 @@ def test_segments_winback_broadcast_and_admin(app, monkeypatch, alerts):
 def test_member_marketing_opt_out(app, no_rate_limit):
     make_member(app, '行銷開關', '0955200001', pin='2468')
     c = member_client(app, '0955200001', '2468')
-    assert 'id="marketingOptIn"' in c.get('/rewards').get_data(as_text=True)
+
+    def opt_in_tag():
+        """取出整個 <input id="marketingOptIn" …> 標籤 (checked 寫在下一行，不能只看同一行)"""
+        m = re.search(r'<input[^>]*id="marketingOptIn"[^>]*>', c.get('/rewards').get_data(as_text=True), re.S)
+        assert m, '找不到行銷開關'
+        return m.group(0)
+    assert 'checked' in opt_in_tag(), '預設同意行銷：開關為勾選'
     r = c.post('/api/member/marketing', json={'opt_in': False})
     assert r.get_json()['opt_in'] is False and '已關閉' in r.get_json()['message']
     with app.app_context():
         assert User.query.filter_by(phone='0955200001').one().marketing_opt_out is True
-    page = c.get('/rewards').get_data(as_text=True)
-    assert 'id="marketingOptIn"\n' in page or 'checked' not in page.split('id="marketingOptIn"')[1].split('>')[0]
+    assert 'checked' not in opt_in_tag(), '拒絕行銷後開關不可顯示為勾選'
     c.post('/api/member/marketing', json={'opt_in': True})
     with app.app_context():
         assert User.query.filter_by(phone='0955200001').one().marketing_opt_out is False
+    assert 'checked' in opt_in_tag(), '重新同意行銷後開關恢復勾選'
 
 
 # ===========================================================================
@@ -273,6 +280,7 @@ def test_no_show_forfeit_late_cancel_expiry_and_block(app, staff_client, deposit
     # 訂位前 24 小時內取消：訂金不退
     with app.app_context():
         tid = Tenant.query.filter_by(slug='default').first().id
+        deposit_service.expire_pending(tid)   # 先清掉其他測試留在本店的逾時待付款訂位，下面才能確認只取消這一筆
         late = Reservation(tenant_id=tid, name='臨時取消', phone='0966300011', party_size=4,
                            reserved_at=datetime.now() + timedelta(hours=2), source='online', deposit_amount=400,
                            deposit_status='paid', deposit_trade_no='KTESTLATE0001', deposit_provider_no='EC1')

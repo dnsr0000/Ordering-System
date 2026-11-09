@@ -3,7 +3,8 @@
  * 現金 (櫃檯付款) 的訪客訂單先存在這台點餐機的瀏覽器 (localStorage)，畫面給顧客一個暫存單號，
  * 連線恢復後自動補送到 /api/kiosk/offline_order (以 client_order_id 去重，不會重複建單)。
  * 補送結果 (取餐號 / 失敗原因) 顯示在左下角的「暫存單」按鈕，店員可點開查看。
- * 使用點數、優惠券、紅利兌換、寄杯、電子支付、外送到府的訂單不暫存 (需要即時確認)。
+ * 會員訂單 (會員價 / 贈點)、使用點數、優惠券、紅利兌換、寄杯、電子支付、外送到府的訂單，
+ * 以及電子發票資料格式不正確的訂單 (補送時會被拒) 不暫存 (需要即時確認)。
  */
 (function (global) {
     'use strict';
@@ -29,9 +30,12 @@
         render(q);
     }
 
+    /** 裝置本地時間 + 時區 (例如 2026-01-02T12:00:00+08:00)：平板時區不是台北時，伺服器仍可換算成正確的時間 */
     function localIso(d) {
         const p = (n) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        const off = -d.getTimezoneOffset();
+        const tz = `${off < 0 ? '-' : '+'}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}${tz}`;
     }
 
     /** 連線層級的失敗 (伺服器沒回應 / 閘道錯誤) 才暫存；其他錯誤 (售完、驗證) 照原本方式處理 */
@@ -39,12 +43,36 @@
         return Boolean(shop) && err && (err.status === 0 || [502, 503, 504].includes(err.status));
     }
 
-    /** 不能暫存的原因 (空字串 = 可以) */
-    function blockReason(payload) {
+    /** 統一編號檢查碼 (與後端 einvoice_ecpay.is_valid_ban 相同) */
+    function validBan(ban) {
+        if (!/^[0-9]{8}$/.test(ban)) return false;
+        const total = [1, 2, 1, 2, 1, 2, 4, 1].reduce((sum, w, i) => {
+            const p = Number(ban[i]) * w;
+            return sum + Math.floor(p / 10) + (p % 10);
+        }, 0);
+        return total % 5 === 0 || (ban[6] === '7' && (total + 1) % 5 === 0);
+    }
+
+    /** 電子發票資料格式是否正確 (與後端 normalize_invoice_info 相同的規則；補送時格式錯誤會整張被拒) */
+    function invoiceOk(inv) {
+        const kind = inv && String(inv.type || '').trim();
+        if (!kind || kind === 'print') return true;
+        const carrier = String(inv.carrier || '').trim().toUpperCase();
+        if (kind === 'mobile') return /^\/[0-9A-Z+\-.]{7}$/.test(carrier);
+        if (kind === 'citizen') return /^[A-Z]{2}[0-9]{14}$/.test(carrier);
+        if (kind === 'donate') return /^[0-9]{3,7}$/.test(String(inv.love_code || '').trim());   // 空白時依店家預設，需要連線確認
+        if (kind === 'company') return validBan(String(inv.buyer_id || '').trim());
+        return false;
+    }
+
+    /** 不能暫存的原因 (空字串 = 可以)；opts.member：已登入的會員 (補送一律以訪客建單，會員價與贈點會不見) */
+    function blockReason(payload, opts = {}) {
         if (payload.payment_method !== 'Cash') return Kiosk.t('off_only_cash', '只有「櫃檯付款 (現金)」的訂單可以暫存');
+        if (opts.member) return Kiosk.t('off_member', '會員訂單 (會員價、點數) 需要連線確認');
         if ((payload.use_points || 0) > 0 || payload.promo_code) return Kiosk.t('off_points', '使用點數或優惠券的訂單需要連線確認');
         if ((payload.items || []).some((i) => i.is_reward || i.pass_id)) return Kiosk.t('off_reward', '紅利兌換與寄杯需要連線確認');
         if (payload.delivery || payload.pickup_at) return Kiosk.t('off_delivery', '外送與預約取餐需要連線確認');
+        if (!invoiceOk(payload.invoice)) return Kiosk.t('off_invoice', '電子發票載具 / 統編 / 愛心碼格式有誤，需要連線確認');
         return '';
     }
 
@@ -80,8 +108,9 @@
                         ...timeout,
                     });
                 } catch (err) {
+                    // CSRF 失敗：英 / 日文介面的 err.message 是翻譯 (不含 CSRF 字樣)，一併看後端的原始訊息
                     const retry = err.status === 0 || err.status >= 500 || err.status === 429
-                        || (err.status === 403 && /CSRF/.test(err.message || ''));
+                        || (err.status === 403 && /CSRF/.test(`${err.message || ''} ${(err.data && err.data.message) || ''}`));
                     if (retry) break;   // 仍連不上：下次再試
                     failure = err.message || `HTTP ${err.status}`;
                 }
@@ -213,8 +242,23 @@
 
     render();
     if (onOfflinePage) {
-        // 離線頁是快取的頁面 (CSRF Token 可能過期)：恢復連線後回到點餐首頁，由新的頁面補送
-        global.addEventListener('online', () => { if (load().pending.length) global.location.href = '/'; });
+        // 離線頁是快取的頁面 (CSRF Token 可能過期)：門市主機恢復回應後重新載入原本的頁面 (網址列仍是原網址)，由新的頁面補送。
+        // 不能只靠 online 事件：主機重啟時網路沒斷 (navigator.onLine 一直是 true)，online 事件不會發生
+        let probing = false;
+        const recover = async () => {
+            if (probing) return;
+            probing = true;
+            try {
+                const resp = await fetch('/healthz', { cache: 'no-store' });
+                if (resp.ok) {
+                    if (global.location.pathname === '/offline') global.location.href = '/';
+                    else global.location.reload();
+                }
+            } catch (err) { /* 仍連不上：下次再試 */ }
+            probing = false;
+        };
+        global.addEventListener('online', () => setTimeout(recover, 1000));
+        setInterval(recover, RETRY_MS);
     } else {
         global.addEventListener('online', () => setTimeout(flush, 1000));
         setInterval(flush, RETRY_MS);

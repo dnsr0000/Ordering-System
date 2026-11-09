@@ -185,12 +185,13 @@ def test_webhook_events_signature_retry_and_ssrf_guard(app, monkeypatch, alerts)
         ep = WebhookEndpoint.query.filter_by(tenant_id=tid).one()
         item_id = _item(tid, 'Webhook 測試餐', 80)
         order = _buy(tid, item_id)
-        assert webhook_service.scan(tid) == 1
+        assert webhook_service.scan(tid) == 2                                # 現場結帳已收款：created + paid
         assert webhook_service.scan(tid) == 0                                # 沒有變化不重送
-        assert webhook_service.deliver_due(tid, post=ok_post) == 1
-        url, body, headers = sent[-1]
+        assert webhook_service.deliver_due(tid, post=ok_post) == 2
+        url, body, headers = sent[-2]
         payload = json.loads(body)
         assert url == ep.url and payload['event'] == 'order.created' and payload['data']['uuid'] == order.uuid
+        assert json.loads(sent[-1][1])['event'] == 'order.paid'
         expect = 'sha256=' + hmac.new(ep.secret.encode(), f"{headers['X-Kiosk-Timestamp']}.{body}".encode(),
                                       hashlib.sha256).hexdigest()
         assert headers['X-Kiosk-Signature'] == expect and headers['X-Kiosk-Delivery'] == payload['id']

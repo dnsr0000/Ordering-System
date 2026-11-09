@@ -1,16 +1,18 @@
 {#- 後台共用側欄 + 頂欄 (base.html 在 body_class 含 admin-page 且已登入時 include)。資料來自 admin_nav() (app/services/admin_nav.py) -#}
 {% set nav = admin_nav() %}
+{#- 店名與「點餐前台」一律讀目前請求的店家 (g.tenant)，不依賴各頁是否自行傳入 tenant -#}
+{% set cur_tenant = g.get('tenant') %}
 {% if nav %}
 <header class="admin-topbar" id="adminTopbar">
     <button class="btn btn-outline-light btn-sm d-lg-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#adminSidebar" aria-controls="adminSidebar" aria-label="開啟選單">
         <i class="bi bi-list"></i>
     </button>
-    <a class="admin-brand" href="{{ url_for('admin.admin_dashboard') }}"><i class="bi bi-speedometer2 text-warning me-2"></i>{{ (tenant.name if tenant else '') or '店家後台' }}</a>
+    <a class="admin-brand" href="{{ url_for('admin.admin_dashboard') }}"><i class="bi bi-speedometer2 text-warning me-2"></i>{{ (cur_tenant.name if cur_tenant else '') or '店家後台' }}</a>
     <div class="admin-topbar-right">
         <span class="admin-clock d-none d-md-inline" id="adminTopClock" data-clock></span>
         <span class="small text-white-50 d-none d-md-inline"><i class="bi bi-person-circle me-1"></i>{{ current_user.username }} ({{ {'owner': '負責人', 'manager': '店長', 'staff': '櫃檯', 'kitchen': '廚房'}.get(current_user.role, current_user.role) }})</span>
-        {% if tenant %}<a class="btn btn-outline-light btn-sm" href="{{ url_for('customer.tenant_storefront', tenant_slug=tenant.slug) }}" target="_blank" rel="noopener"><i class="bi bi-shop me-1"></i>點餐前台</a>{% endif %}
-        {% if current_user.role not in ('owner', 'manager') %}
+        {% if cur_tenant %}<a class="btn btn-outline-light btn-sm" href="{{ url_for('customer.tenant_storefront', tenant_slug=cur_tenant.slug) }}" target="_blank" rel="noopener"><i class="bi bi-shop me-1"></i>點餐前台</a>{% endif %}
+        {% if current_user.role not in ('owner', 'manager') and not (current_user.role == 'kitchen' and sync_role == 'hub') %}
         <a href="{{ url_for('kitchen.kitchen_display') if current_user.role == 'kitchen' else url_for('pos.pos_terminal') }}" class="btn btn-outline-info btn-sm" id="nav-back-work"><i class="bi bi-arrow-return-left me-1"></i>回工作畫面</a>
         {% endif %}
         <form method="post" action="{{ url_for('admin.admin_logout') }}" class="d-inline m-0">

@@ -73,6 +73,7 @@ def test_price_override_needs_manager_approval(app, staff_client, admin_client):
 
 def test_order_discount_threshold_and_approval(app, staff_client, store_settings):
     iid = make_item(app, '整單折扣餐', price=200, stock=20)
+    login_staff(app, 'price_mgr', 'manager')   # 核准用的主管帳號 (已存在時不重建)，單獨執行本測試也成立
     store_settings('pos', discount_approval_percent=10)
     r = checkout(staff_client, [line(iid)], url=POS, order_discount={'type': 'percent', 'value': 10})
     assert r.status_code == 200 and r.get_json()['total_price'] == 180   # 10% 以內不需核准

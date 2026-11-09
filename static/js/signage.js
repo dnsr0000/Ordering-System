@@ -21,6 +21,8 @@
     const promoText = document.getElementById('sgPromoText');
     const readyEl = document.getElementById('sgReady');
     const calledEl = document.getElementById('sgCalled');
+    const pickupEl = document.getElementById('sgPickup');
+    const headlineEl = document.getElementById('sgHeadline');
     const intakeEl = document.getElementById('sgIntake');
     const intakeText = document.getElementById('sgIntakeText');
     const placeholder = root.dataset.placeholder || '';
@@ -59,7 +61,8 @@
     }
 
     function thumb(item) {
-        if (!config.showImages || !item.image) return html`<span class="sg-thumb-blank"></span>`;
+        // 是否顯示照片由伺服器決定 (關閉時 image 為空)：後台改了設定不必重新整理看板
+        if (!item.image) return html`<span class="sg-thumb-blank"></span>`;
         return html`<img class="sg-thumb" src="${item.image}" data-fallback="${placeholder}" alt="" loading="lazy">`;
     }
 
@@ -162,7 +165,14 @@
 
     // ---------------------------------------------------------------- 取餐叫號
     function renderPickup(pickup) {
-        if (!readyEl || !pickup) return;
+        if (!readyEl) return;
+        if (pickupEl) pickupEl.classList.toggle('d-none', !pickup);
+        if (!pickup) {   // 後台關閉取餐叫號：清掉最後一次的號碼
+            lastPickupSignature = null;
+            Kiosk.setHtml(readyEl, '');
+            Kiosk.setHtml(calledEl, '');
+            return;
+        }
         const sig = `${pickup.ready.map((o) => o.id).join(',')}|${pickup.called.map((w) => w.id).join(',')}`;
         if (sig === lastPickupSignature) return;   // 沒變動就不重繪，避免號碼動畫重播
         lastPickupSignature = sig;
@@ -182,10 +192,21 @@
     }
 
     // ---------------------------------------------------------------- 載入
+    function layoutChanged(layout) {
+        if (!layout) return false;
+        return ['columns', 'pageSeconds', 'promoSeconds', 'showPickup']
+            .some((key) => key in layout && layout[key] !== config[key]);
+    }
+
     async function load() {
         try {
             const data = await Kiosk.pollJson('/api/signage', poll);
             if (!data) return;   // 304：內容沒變
+            if (layoutChanged(data.layout)) {   // 欄數 / 換頁秒數 / 取餐叫號區塊在載入時就決定：重新整理才生效
+                window.location.reload();
+                return;
+            }
+            if (headlineEl && typeof data.headline === 'string') headlineEl.textContent = data.headline;
             const menuSignature = JSON.stringify(data.categories);
             if (menuSignature !== lastMenuSignature) {
                 lastMenuSignature = menuSignature;

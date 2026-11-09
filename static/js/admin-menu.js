@@ -12,6 +12,18 @@
     const menuItemNames = allItems.map((i) => i.name).filter(Boolean);
 
     // ---------------------------------------------------------------- 加購條件
+    /**
+     * 目標下拉只在「開放作為加購品」開啟時必填：關閉時規則區塊被隱藏，
+     * 隱藏的必填欄位會讓瀏覽器靜默擋下送出 (無法聚焦、不顯示提示)
+     */
+    function syncAddonTargetRequired(prefix) {
+        const typeSel = $(`${prefix}-addon-type`);
+        const targetSel = $(`${prefix}-addon-target`);
+        const toggle = $(`${prefix}-can-addon`);
+        if (!typeSel || !targetSel) return;
+        targetSel.required = Boolean(toggle && toggle.checked) && typeSel.value !== 'any';
+    }
+
     /** 依條件類型 (any / category / item) 產生目標下拉選單；selected 為要預選的值 */
     function toggleAddonTarget(prefix, selected = '') {
         const typeSel = $(`${prefix}-addon-type`);
@@ -28,14 +40,17 @@
         const selfName = ($(`${prefix}-name`)?.value || '').trim();
         // 指定餐點時排除自己
         const options = isCategory ? menuCategories : menuItemNames.filter((name) => name !== selfName);
+        // 已存的目標不在清單中 (分類 / 餐點已改名或刪除)：保留舊值並標示，避免下拉變空白而無法送出或被默默清掉
+        const stale = selected && !options.includes(selected);
         targetSel.style.display = 'block';
-        targetSel.required = true;
         Kiosk.setHtml(targetSel, html`
             <option value="" disabled selected>${isCategory ? '-- 請選擇指定分類 --' : '-- 請選擇指定餐點 --'}</option>
+            ${stale ? html`<option value="${selected}">(已不存在) ${selected}</option>` : ''}
             ${options.length
                 ? options.map((v) => html`<option value="${v}">${v}</option>`)
                 : html`<option value="" disabled>${isCategory ? '無其他分類可選' : '無其他餐點可選'}</option>`}`);
-        if (selected && options.includes(selected)) targetSel.value = selected;
+        if (selected) targetSel.value = selected;
+        syncAddonTargetRequired(prefix);
     }
 
     /** 加購價與「開放作為加購品」開關雙向連動 */
@@ -44,7 +59,10 @@
         const toggle = $(`${prefix}-can-addon`);
         const rules = $(`${prefix}-addon-rules`);
         if (!input || !toggle) return;
-        const syncRules = () => { if (rules) rules.style.display = toggle.checked ? 'block' : 'none'; };
+        const syncRules = () => {
+            if (rules) rules.style.display = toggle.checked ? 'block' : 'none';
+            syncAddonTargetRequired(prefix);
+        };
         input.addEventListener('input', () => {
             toggle.checked = Number(input.value) > 0;
             syncRules();
@@ -157,6 +175,7 @@
         $('edit-loaded-stock').value = d.stock || 0;
         $('edit-loaded-total-stock').value = d.total_stock || 0;
         $('edit-sold-out').checked = !!d.is_sold_out;
+        $('edit-loaded-sold-out').value = d.is_sold_out ? '1' : '0';
         $('edit-discount').checked = !!d.is_discount;
         $('edit-discount-price').value = Math.round(Number(d.discount_price) || 0);
         $('edit-can-addon').checked = !!d.can_be_add_on;
@@ -164,17 +183,55 @@
         $('edit-description').value = d.description || '';
         $('edit-recommended').checked = !!d.is_recommended;
         $('edit-new').checked = !!d.is_new;
-        $('edit-is-reward').checked = !!d.is_reward;
-        $('edit-reward-points').value = d.reward_points || 0;
-        $('edit-reward-discount').value = d.reward_discount_points || 0;
+        if ($('edit-is-reward')) {   // 紅利商城區塊只在有「優惠券」權限時出現
+            $('edit-is-reward').checked = !!d.is_reward;
+            $('edit-reward-points').value = d.reward_points || 0;
+            $('edit-reward-discount').value = d.reward_discount_points || 0;
+        }
         $('edit-image-file').value = '';
         $('edit-image-preview').src = d.image_path ? data.staticMenuUrl + d.image_path : data.placeholderImg;
 
         $('edit-addon-type').value = d.addon_trigger_type || 'any';
         toggleAddonTarget('edit', d.addon_trigger_target || '');
         $('edit-addon-rules').style.display = d.can_be_add_on ? 'block' : 'none';
+        if (editImageInput) cropConfirmed.delete(editImageInput);
 
         showModal('editItemModal');
+        refreshEditStock(d);
+    }
+
+    /**
+     * 開啟編輯視窗後向伺服器取「目前」庫存：頁面上的 menuItems 只有具「報表」權限 (即時同步) 時才會更新，
+     * 否則是頁面載入當下的數字；後端只套用 (送出值 - loaded_stock) 的差額，基準過時就會存出錯誤的剩餘數量。
+     * 取得失敗時維持原本帶入的值 (與先前行為相同)。
+     */
+    let stockRequestSeq = 0;
+    async function refreshEditStock(d) {
+        const seq = ++stockRequestSeq;
+        const before = {
+            stock: $('edit-stock').value, total: $('edit-total-stock').value, soldOut: $('edit-sold-out').checked,
+        };
+        let res;
+        try {
+            res = await Kiosk.api(`/api/admin/menu_items/${encodeURIComponent(d.id)}/stock`);
+        } catch (err) {
+            return;
+        }
+        // 已改開其他品項，或回應缺欄位：不處理
+        if (seq !== stockRequestSeq || !Number.isFinite(Number(res.stock))) return;
+        const stock = Math.max(0, Math.round(Number(res.stock)));
+        const total = Math.max(0, Math.round(Number(res.total_stock) || 0));
+        const soldOut = Boolean(res.is_sold_out) || stock <= 0;
+        Object.assign(d, { stock, total_stock: total, is_sold_out: soldOut });
+        // 差額基準一律換成最新值；使用者還沒動過的欄位才一併更新顯示
+        $('edit-loaded-stock').value = stock;
+        $('edit-loaded-total-stock').value = total;
+        if ($('edit-stock').value === before.stock) $('edit-stock').value = stock;
+        if ($('edit-total-stock').value === before.total) $('edit-total-stock').value = total;
+        if ($('edit-sold-out').checked === before.soldOut && $('edit-stock').value === String(stock)) {
+            $('edit-sold-out').checked = soldOut;
+            $('edit-loaded-sold-out').value = soldOut ? '1' : '0';   // 勾選換成最新值時，比對基準一併更新
+        }
     }
 
     // ---------------------------------------------------------------- AI 文案
@@ -208,13 +265,18 @@
     // ---------------------------------------------------------------- 圖片裁切 (1:1)
     const cropModalEl = $('cropModal');
     const cropTarget = $('crop-image-target');
+    const editImageInput = $('edit-image-file');
     let cropper = null;
     let cropInput = null;
+    let cropDone = false;
+    // 每個檔案欄位上一次「完成裁切」的檔案：取消裁切時還原成它 (沒有就清空，不上傳未裁切的原圖)
+    const cropConfirmed = new WeakMap();
 
     function startCrop(input) {
         const file = input.files && input.files[0];
         if (!file) return;
         cropInput = input;
+        cropDone = false;
         const reader = new FileReader();
         reader.addEventListener('load', () => {
             cropTarget.src = reader.result;
@@ -232,6 +294,8 @@
             const transfer = new DataTransfer();
             transfer.items.add(new File([blob], `cropped_${Date.now()}.jpg`, { type: 'image/jpeg' }));
             input.files = transfer.files;
+            cropConfirmed.set(input, transfer.files);
+            cropDone = true;
             const preview = $(input.dataset.preview);
             if (preview) {
                 preview.src = canvas.toDataURL('image/jpeg');
@@ -249,6 +313,13 @@
         cropModalEl.addEventListener('hidden.bs.modal', () => {
             if (cropper) cropper.destroy();
             cropper = null;
+            // 按「取消」/ Esc 關閉：預覽沒換，檔案欄位也要還原，否則送出時會上傳未裁切的原圖
+            if (cropInput && !cropDone) {
+                const previous = cropConfirmed.get(cropInput);
+                if (previous) cropInput.files = previous;
+                else cropInput.value = '';
+            }
+            cropInput = null;
         });
     }
 
@@ -321,7 +392,21 @@
         $('edit-combo-desc').value = d.desc || '';
         $('edit-combo-choices').value = d.choices || '';
         [1, 2, 3].forEach((n) => {
-            sideSelect('edit-combo', n).value = d[`item${n}`] || '';
+            const select = sideSelect('edit-combo', n);
+            select.querySelectorAll('option[data-extra]').forEach((opt) => opt.remove());
+            const want = d[`item${n}`] || '';
+            select.value = want;
+            if (want && select.value !== want) {
+                // 既有配餐的分類已不在配餐分類清單 (例如飲料改成茶飲)：補上選項，否則下拉變空白、儲存後配餐被默默刪掉
+                const it = menuItems.get(String(want));
+                const opt = document.createElement('option');
+                opt.value = want;
+                opt.dataset.extra = '1';
+                opt.dataset.modifiers = (it && it.modifiers) || 'none';
+                opt.textContent = it ? `[${it.category}] ${it.name} (原有配餐，分類不在配餐清單)` : `#${want} (原有配餐)`;
+                select.append(opt);
+                select.value = want;
+            }
             $(`edit-combo-side${n}-group`).style.display = (n === 1 || d[`item${n - 1}`]) ? 'block' : 'none';
             syncSideCustomizable('edit-combo', n, d[`item${n}Cust`] === '1');
         });
@@ -351,6 +436,15 @@
             const level = Number(sel.dataset.level);
             checkComboSides(sel.dataset.prefix, level);
             syncSideCustomizable(sel.dataset.prefix, level);
+        });
+    });
+    // 進階設定：取消「依配方」才能手動輸入碳足跡 (伺服器只依儲存當下的 carbon_auto 輸出 readonly)
+    document.querySelectorAll('.menu-pro-form input[name="carbon_auto"]').forEach((box) => {
+        box.addEventListener('change', () => {
+            const grams = box.form && box.form.querySelector('input[name="carbon_grams"]');
+            if (!grams) return;
+            grams.readOnly = box.checked;
+            if (!box.checked) grams.focus();
         });
     });
     // 編輯視窗顯示後才能正確計算描述欄高度

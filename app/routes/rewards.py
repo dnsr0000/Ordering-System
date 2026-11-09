@@ -6,7 +6,7 @@ from app.models.coupon import Coupon
 from app.models.enums import VoucherStatus
 from app.models.menu import MenuItem, ModifierOption
 from app.models.user import RewardRedemption
-from app.services import loyalty_service, pass_service, reward_service
+from app.services import branch_service, i18n_service, loyalty_service, pass_service, reward_service
 from app.services.customer_session import current_member
 from app.utils import get_json_dict, member_required, safe_int
 
@@ -24,11 +24,15 @@ def _require_member():
 @member_required()
 def rewards_store(member):
     from app.services.customer_session import needs_pin_confirm
+    branch_service.activate_for_request(g.tenant_id)   # 分店下架與結帳一致 (線上端依顧客選的取餐分店)
     return render_template(
         'rewards.html',
         user=member, needs_pin=needs_pin_confirm(),
-        reward_items=MenuItem.query.filter_by(is_reward=True).all(),
-        reward_coupons=[c for c in Coupon.query.filter_by(is_reward=True, member_only=False).all() if c.period_error() is None],
+        # 本分店未販售、不在販售期間 / 供應時段的兌換品不顯示 (兌換後也無法結帳)
+        reward_items=[i for i in MenuItem.query.filter_by(is_reward=True).all()
+                      if not i.is_branch_hidden and i.service_status()[0]],
+        reward_coupons=[c for c in Coupon.query.filter_by(is_reward=True, member_only=False).all()
+                        if c.period_error() is None and c.redeem_points > 0],
         held_coupons=_held_summary(member.id),
         modifier_options=ModifierOption.query.filter_by(is_active=True).all(),
         open_vouchers=_open_voucher_summary(member.id),
@@ -48,7 +52,12 @@ def marketing_pref():
     member.marketing_opt_out = not opt_in
     db.session.commit()
     return jsonify({'success': True, 'opt_in': opt_in,
-                    'message': '✅ 已開啟優惠活動訊息' if opt_in else '✅ 已關閉優惠活動訊息，之後不會再收到行銷優惠券與推播'})
+                    **_message('✅ 已開啟優惠活動訊息' if opt_in else '✅ 已關閉優惠活動訊息，之後不會再收到行銷優惠券與推播')})
+
+
+def _message(message):
+    """成功回應的訊息：中文 message 加上目前顧客語言的 message_i18n (英 / 日文介面顯示用；沒有對照時同原文)"""
+    return {'message': message, 'message_i18n': i18n_service.translate_message(message)}
 
 
 def _referral(member):
@@ -99,13 +108,13 @@ def _open_voucher_summary(user_id):
     vouchers = (RewardRedemption.query.filter_by(user_id=user_id, status=VoucherStatus.OPEN)
                 .order_by(RewardRedemption.id.asc()).all())
     for v in vouchers:
-        if v.menu_item_id is None:
-            continue
-        row = summary.get(v.menu_item_id)
+        # 兌換商品已被刪除 (menu_item_id 為 NULL) 的憑證彙總成 item_id 0 一列，仍可退回點數
+        key = v.menu_item_id or 0
+        row = summary.get(key)
         if row is None:
-            item = db.session.get(MenuItem, v.menu_item_id)
-            row = summary[v.menu_item_id] = {'item_id': v.menu_item_id, 'name': item.name if item else '(已下架商品)',
-                                             'quantity': 0, 'points': 0}
+            item = db.session.get(MenuItem, key) if key else None
+            row = summary[key] = {'item_id': key, 'name': item.name if item else '(已下架商品)',
+                                  'quantity': 0, 'points': 0}
         row['quantity'] += 1
         row['points'] += v.points_cost or 0
     return list(summary.values())
@@ -113,22 +122,30 @@ def _open_voucher_summary(user_id):
 
 @rewards_bp.route('/api/redeem_reward', methods=['POST'])
 def redeem_reward():
+    from app.services import customer_session
     member = _require_member()
     data = get_json_dict()
+    if customer_session.needs_pin_confirm():   # 人臉登入 / 門市 LINE 登入：兌換 (花點數) 前要再輸入 PIN
+        customer_session.require_confirmed(member, data.get('pin'), '兌換紅利')
     if data.get('coupon_id') is not None:
         coupon = reward_service.redeem_coupon(g.tenant_id, member.id, safe_int(data['coupon_id']))
         return jsonify({
             'success': True, 'is_coupon': True, 'promo_code': coupon.code,
-            'message': f'🎉 成功兌換【{coupon.title}】！',
+            **_message(f'🎉 成功兌換【{coupon.title}】！'),
             'remaining_points': reward_service.member_points(member.id),
         })
 
-    modifier_ids = [safe_int(m) for m in data.get('modifier_ids') or [] if str(m).isdigit()]
-    item, _voucher, cart_line = reward_service.redeem_item(
+    raw_mods = data.get('modifier_ids') or []
+    if not isinstance(raw_mods, list):
+        raise AppError('加料資料格式不正確，請重新選擇！')
+    modifier_ids = [safe_int(m) for m in raw_mods if str(m).isdigit()]
+    branch_service.activate_for_request(g.tenant_id)   # 分店下架的兌換品不可兌換 (與結帳一致)
+    item, voucher, cart_line = reward_service.redeem_item(
         g.tenant_id, member.id, safe_int(data.get('item_id')), modifier_ids, data.get('customization'))
+    customer_session.remember_voucher(voucher)   # 分店 / 線上端登出或換人登入時，自動退還本工作階段兌換、未結帳的憑證
     return jsonify({
         'success': True, 'is_coupon': False,
-        'message': f'🎉 成功兌換【{item.name}】！',
+        **_message(f'🎉 成功兌換【{item.name}】！'),
         'remaining_points': reward_service.member_points(member.id),
         'redeemed_item': cart_line,
     })
@@ -141,4 +158,4 @@ def refund_reward_item():
     points = reward_service.refund_item(g.tenant_id, member.id, safe_int(data.get('item_id')),
                                         max(1, safe_int(data.get('quantity'), 1)))
     current = reward_service.member_points(member.id)
-    return jsonify({'success': True, 'message': f'已退還 {points} 點數', 'current_points': current})
+    return jsonify({'success': True, **_message(f'已退還 {points} 點數'), 'current_points': current})

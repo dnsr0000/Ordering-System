@@ -170,12 +170,16 @@ def test_branch_tombstones_follow_direction_rules(env):
     from tests.test_sync_hub_node import tenant_ctx
     with tenant_ctx(env.hub):
         hq = HqSetting(key='pos', value='{"service_charge_percent": 5}')
-        exp = Expense(name='線上端彙整的費用', amount=500, node_uuid=env.b_uuid if hasattr(env, 'b_uuid') else None)
-        db.session.add_all([hq, exp])
+        exp = Expense(name='線上端彙整的費用', amount=500, node_uuid=env.node_b_uuid)   # 分店 B 上傳的費用
+        hub_exp = Expense(name='線上端自己登錄的費用', amount=300, node_uuid=None)
+        db.session.add_all([hq, exp, hub_exp])
         db.session.commit()
-        hq_uuid, exp_uuid = hq.uuid, exp.uuid
+        hq_uuid, exp_uuid, hub_exp_uuid = hq.uuid, exp.uuid, hub_exp.uuid
     reasons = _reasons(_push(env.transports[env.a], {'sync_tombstone': [_tomb('hq_setting', hq_uuid),
-                                                                         _tomb('expense', exp_uuid)]}))
+                                                                         _tomb('expense', exp_uuid),
+                                                                         _tomb('expense', hub_exp_uuid)]}))
     assert any('總部設定' in r for r in reasons)
+    assert len(reasons) == 1, f'費用的刪除紀錄應靜默略過、不回報衝突：{reasons}'
     assert _q(env.hub, lambda: HqSetting.query.filter_by(uuid=hq_uuid).count()) == 1, '總部設定沒有被分店刪掉'
-    assert _q(env.hub, lambda: Expense.query.filter_by(uuid=exp_uuid).count()) == 1, '上傳資料不因分店刪除而消失'
+    for uuid in (exp_uuid, hub_exp_uuid):
+        assert _q(env.hub, lambda u=uuid: Expense.query.filter_by(uuid=u).count()) == 1, '上傳資料不因分店刪除而消失'

@@ -168,8 +168,9 @@ def test_ruff_passes_on_repository():
     import shutil
     import subprocess
     import sys
-    ruff = shutil.which('ruff') or os.path.join(os.path.dirname(sys.executable), 'ruff')
-    if not os.path.exists(ruff):
+    # 沒有啟用 venv 時 PATH 找不到：改找目前 Python 旁邊的 ruff (shutil.which 會處理 Windows 的 .exe 副檔名)
+    ruff = shutil.which('ruff') or shutil.which('ruff', path=os.path.dirname(sys.executable))
+    if not ruff:
         import pytest
         pytest.skip('未安裝 ruff (pip install ruff)')
     proc = subprocess.run([ruff, 'check', '.', '--output-format', 'concise'], cwd=ROOT, capture_output=True, text=True)

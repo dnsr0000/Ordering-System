@@ -62,9 +62,19 @@ export function revalidatePromo() {
     if (state.promoCode && state.cart.length) runPromoCheck(state.promoCode);
 }
 
+// 上次驗證優惠券時採用的促銷折扣：促銷預覽回來後折扣變了就重新驗證 (recalcTotals)
+let promoCheckedPromotion = 0;
+
+/** 優惠券的計算基準 = 扣掉促銷後的金額 (與後端結帳 c.remaining 相同：門檻與百分比折扣都以此計算) */
+function promoBase() {
+    const subtotal = cartSubtotal();
+    return Math.max(0, subtotal - Math.min(num(state.promotion.discount), subtotal));
+}
+
 /** 驗證優惠碼 (shared/promo.js 帶請求序號：只採用最新一次的結果)；網路異常時保留原狀，結帳時後端仍會重新驗證 */
 export async function runPromoCheck(code) {
-    const res = await promo.verify({ promo_code: code, subtotal: cartSubtotal(), user_id: state.member ? state.member.id : 0 });
+    promoCheckedPromotion = num(state.promotion.discount);
+    const res = await promo.verify({ promo_code: code, subtotal: promoBase(), user_id: state.member ? state.member.id : 0 });
     if (!res) return;   // 已有更新的請求或已被重置，丟棄過期結果
     if (res.error) {
         setPromoMsg(false, res.message);
@@ -105,21 +115,23 @@ export function recalcTotals() {
     const subtotal = cartSubtotal();
     const toggle = $('posUsePointsToggle');
     const input = $('posPointsInput');
-    const pointsOn = Boolean(state.member && rewardConfig.isEnabled && toggle && toggle.checked && input);
+    // 外送單登錄模式 (平台代收)：送出時不帶會員、優惠券、整單折扣、點數與外送到府運費，畫面金額也不計入
+    const dm = state.deliveryMode;
+    const pointsOn = Boolean(!dm && state.member && rewardConfig.isEnabled && toggle && toggle.checked && input);
     const t = computeTotals({
         subtotal,
         promotionDiscount: state.promotion.discount,
         blocksCoupon: state.promotion.blocks_coupon,
-        couponDiscount: state.promoDiscount,
-        tierPct: state.member ? state.member.tier_discount : 0,
-        manual: state.orderDiscount,
+        couponDiscount: dm ? 0 : state.promoDiscount,
+        tierPct: state.member && !dm ? state.member.tier_discount : 0,
+        manual: dm ? null : state.orderDiscount,
         points: pointsOn ? {
             enabled: true, available: state.member.points - cartRewardPoints(), requested: input.value,
             ppd: rewardConfig.pointsPerDollar, maxDiscount: rewardConfig.maxDiscount,
         } : null,
         servicePct: posCfg.serviceChargePercent,
         serviceApplies: serviceChargeApplies(),
-        deliveryFee: homeDeliveryFee(subtotal),   // 外送到府：依配送區域加外送費 (商品小計達免運門檻免收)
+        deliveryFee: dm ? 0 : homeDeliveryFee(subtotal),   // 外送到府：依配送區域加外送費 (商品小計達免運門檻免收)
         earnsPoints: false,
     });
     if (pointsOn) input.value = t.pointsRequested;
@@ -141,8 +153,13 @@ export function recalcTotals() {
     if ($('posServicePercent')) $('posServicePercent').textContent = num(posCfg.serviceChargePercent);
     const gifts = state.promotion.gifts || [];
     setHtml($('posGiftList'), gifts.map((gft) => html`<div><i class="bi bi-gift me-1"></i>贈送 ${gft.name} x${gft.quantity} (${gft.promotion})</div>`));
-    $('posFinalTotal').textContent = state.finalTotal;
+    // 收銀已確認伺服器回報的新金額時顯示新金額 (與找零 / 送出用的 payableTotal 一致)
+    $('posFinalTotal').textContent = payableTotal();
     updateCashChange();
+    // 促銷預覽的折扣變了：已套用的優惠券以新的「扣促銷後金額」重新驗證 (百分比券的金額、門檻券是否成立)
+    if (state.promoCode && state.cart.length && num(state.promotion.discount) !== promoCheckedPromotion) {
+        runPromoCheck(state.promoCode);
+    }
 }
 
 // ======================================================================
@@ -222,7 +239,7 @@ export function broadcastCart() {
     const isCash = $('posPaymentMethod') && $('posPaymentMethod').value === 'Cash';
     displayChannel.postMessage({
         kind: 'cart',
-        total: state.finalTotal || 0,
+        total: payableTotal() || 0,
         totals: state.totals || {},
         cash: isCash ? num($('posCashReceived').value) : 0,
         member: state.member ? { name: state.member.name, points: state.member.points } : null,

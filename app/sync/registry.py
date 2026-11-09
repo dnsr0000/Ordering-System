@@ -36,6 +36,7 @@ class TableSpec:
     # 自然鍵：新資料與既有資料的自然鍵相同時視為同一筆 (合併而非新增)
     natural_key: tuple = ()
     # 合併方式：lww (較新的 updated_at 覆蓋) / insert_only (建立後不再變更) / order / order_item / voucher / transfer
+    # / feedback (評價：店家回覆 / 公開以較新的 replied_at 為準，見 engine._merge；不依 updated_at 判斷)
     merge: str = 'lww'
     # 每店只有一筆 (例如紅利設定)：兩邊各自建立時合併成同一筆
     singleton: bool = False
@@ -49,7 +50,10 @@ class TableSpec:
 
 # 依外鍵相依順序排列：被參照的資料表在前
 SPECS = (
-    TableSpec(StaffAccount, natural_key=('username',), local_only=frozenset({'hourly_wage', 'max_hours_week'})),
+    # totp_last_counter：每次兩步驟驗證登入都會寫入；列為本機欄位才不會讓整列 updated_at 變新、
+    # 以 LWW 蓋回線上端的停用 / 改密碼 (代價：同一組驗證碼 30 秒內換到另一台主機仍可用)
+    TableSpec(StaffAccount, natural_key=('username',),
+              local_only=frozenset({'hourly_wage', 'max_hours_week', 'totp_last_counter'})),
     TableSpec(MenuItem, local_only=frozenset({'stock', 'total_stock', 'is_sold_out', 'station_id'})),
     # 分店價格 / 分店上下架：總部設定，只下發給該分店 (見 app/sync/hub.py 的下載範圍)
     TableSpec(BranchMenuOverride, direction='down', natural_key=('node_uuid', 'menu_item_id')),
@@ -68,15 +72,21 @@ SPECS = (
               natural_key=('phone',)),
     TableSpec(UserCoupon),
     TableSpec(CustomerLog, direction='up'),
-    TableSpec(Order, merge='order', local_only=frozenset({'dining_table_id', 'shift_id', 'settlement_id', 'client_order_id'})),
-    # 訂單明細：新增後只有「單品作廢」會改 (作廢份數只增不減，見 engine._merge)
-    TableSpec(OrderItem, merge='order_item', local_only=frozenset({'prepared_at'})),
-    TableSpec(OrderFeedback, direction='up', merge='insert_only'),
+    # feed_rev：API v1 cursor 用的本機異動序號 (見 node._bump_feed_rev)，不上傳、只改它也不標記同步；
+    # payment_refs：線上端產生付款頁時的本機資料，不同步 (舊版分店也不認得這個欄位)
+    TableSpec(Order, merge='order', local_only=frozenset({'dining_table_id', 'shift_id', 'settlement_id', 'client_order_id',
+                                                          'feed_rev', 'payment_refs'})),
+    # 訂單明細：新增後只有「單品作廢」會改 (作廢份數只增不減，見 engine._merge)；
+    # 出餐進度 (prepared_at / 各工作站完成紀錄 prepared_stations) 為各主機 KDS 自己的狀態，不同步
+    TableSpec(OrderItem, merge='order_item', local_only=frozenset({'prepared_at', 'prepared_stations'})),
+    # 評價：分店在上傳後才回覆 / 勾選公開，線上端要能收到 (以較新的 replied_at 為準，見 engine._merge)
+    TableSpec(OrderFeedback, direction='up', merge='feedback'),
     TableSpec(RewardRedemption, merge='voucher'),
     TableSpec(PointLedger, merge='insert_only'),
     TableSpec(WalletLedger, merge='insert_only'),
     TableSpec(StampLedger, merge='insert_only'),
-    TableSpec(GiftCard, natural_key=('code',)),
+    # request_id：POS 售出時本機去重用的冪等鍵，不同步 (各主機各自唯一；舊版另一端也沒有這個欄位)
+    TableSpec(GiftCard, natural_key=('code',), local_only=frozenset({'request_id'})),
     TableSpec(GiftCardLedger, merge='insert_only'),
     # 寄杯：商品與會員持有的寄杯以較新者為準；剩餘次數為本機欄位 (異動帳合併後重算)
     TableSpec(PassProduct),
@@ -85,8 +95,11 @@ SPECS = (
     # 叫貨 / 調撥單：只送給出貨方與收貨方；狀態只往前走 (見 engine._merge_transfer)
     TableSpec(StockTransfer, merge='transfer'),
     # 收款 / 退款 / 發票：分店上傳給線上端彙整報表 (各台主機自己開立、自己退款)
-    TableSpec(PaymentRecord, direction='up', merge='insert_only', local_only=frozenset({'shift_id', 'settlement_id'})),
-    TableSpec(Refund, direction='up'),
+    # request_id：POS 冪等鍵只在本機有意義 (上傳後可能在線上端撞到 (tenant_id, request_id) 唯一索引)；
+    # node_uuid (收款的分店) 要隨同步上傳，不可列入 local_only
+    TableSpec(PaymentRecord, direction='up', merge='insert_only',
+              local_only=frozenset({'shift_id', 'settlement_id', 'request_id'})),
+    TableSpec(Refund, direction='up', local_only=frozenset({'request_id'})),
     TableSpec(Invoice, direction='up', local_only=frozenset({'settlement_id'})),
     # 營業費用：分店上傳給線上端 (損益表彙整 / 依分店比較)；刪除以 is_deleted 標記同步
     TableSpec(Expense, direction='up'),

@@ -90,12 +90,12 @@ def accounting():
         if export == 'journal':
             header, rows, title = acc.JOURNAL_HEADER, list(acc.journal_rows(acc.journal(g.tenant_id, start, end, node))), '傳票'
         else:
-            header, rows, title = acc.INVOICE_HEADER, acc.invoices(g.tenant_id, start, end), '發票明細'
+            header, rows, title = acc.INVOICE_HEADER, acc.invoices(g.tenant_id, start, end, node), '發票明細'
         name = f'{title}_{start}_{end}.{fmt}'
         if fmt == 'xlsx':
             return send_xlsx(acc.to_xlsx(header, rows, title), name)
         return send_file(acc.to_csv(header, rows), as_attachment=True, download_name=name, mimetype='text/csv; charset=utf-8')
     vouchers = acc.journal(g.tenant_id, start, end, node)
     nodes = SyncNode.query.order_by(SyncNode.id).all() if sync_runtime.is_hub() else []
-    return render_template('admin_accounting.html', vouchers=vouchers, invoice_count=len(acc.invoices(g.tenant_id, start, end)),
+    return render_template('admin_accounting.html', vouchers=vouchers, invoice_count=len(acc.invoices(g.tenant_id, start, end, node)),
                            start=start, end=end, node=node, nodes=nodes)

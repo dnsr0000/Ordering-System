@@ -56,7 +56,9 @@ def analyze(tenant_id, start, end, node_uuid=None):
                               func.sum((OrderItem.original_price - OrderItem.price) * OrderItem.quantity)) \
         .join(Order, Order.id == OrderItem.order_id) \
         .filter(Order.tenant_id == tenant_id, Order.created_at >= t0, Order.created_at < t1,
-                OrderItem.original_price.is_not(None), Order.cashier_username != '')
+                OrderItem.original_price.is_not(None), Order.cashier_username != '',
+                # 與整單折扣 / 營業額同一個基準：已作廢、尚未收款的訂單不計
+                Order.status != OrderStatus.CANCELLED, func.coalesce(Order.payment_status, '').not_in(UNPAID))
     if node_uuid:
         over_q = over_q.filter(Order.node_uuid == node_uuid)
     for name, cnt, amount in over_q.group_by(Order.cashier_username).all():
@@ -66,17 +68,23 @@ def analyze(tenant_id, start, end, node_uuid=None):
     ref_q = Refund.query.filter(Refund.tenant_id == tenant_id, Refund.created_at >= t0, Refund.created_at < t1)
     if node_uuid:
         ref_q = ref_q.join(Order, Order.id == Refund.order_id).filter(Order.node_uuid == node_uuid)
+    cancelled = set()   # 混合付款的整單作廢會依付款方式各建一筆退款：同一人同一張單只算一次作廢 (金額照加)
     for ref in ref_q.all():
         name = ref.staff_username or 'system'
         if name == 'system':
             continue
         key = 'cancel' if ref.kind == 'cancel' else 'partial'
-        rows[name][f'{key}_count'] += 1
+        if key == 'partial' or (name, ref.order_id) not in cancelled:
+            rows[name][f'{key}_count'] += 1
+        if key == 'cancel' and ref.order_id is not None:
+            cancelled.add((name, ref.order_id))
         rows[name][f'{key}_amount'] += ref.amount or 0
-    for name, cnt in db.session.query(StaffAuditLog.staff_username, func.count(StaffAuditLog.id)) \
-            .filter(StaffAuditLog.tenant_id == tenant_id, StaffAuditLog.action_type == 'VOID_ITEM',
-                    StaffAuditLog.created_at >= t0, StaffAuditLog.created_at < t1) \
-            .group_by(StaffAuditLog.staff_username).all():
+    void_q = db.session.query(StaffAuditLog.staff_username, func.count(StaffAuditLog.id)) \
+        .filter(StaffAuditLog.tenant_id == tenant_id, StaffAuditLog.action_type == 'VOID_ITEM',
+                StaffAuditLog.created_at >= t0, StaffAuditLog.created_at < t1)
+    if node_uuid:   # 稽核紀錄沒有分店欄位：以作廢的訂單判斷分店
+        void_q = void_q.join(Order, Order.id == StaffAuditLog.target_order_id).filter(Order.node_uuid == node_uuid)
+    for name, cnt in void_q.group_by(StaffAuditLog.staff_username).all():
         if name and name != 'system':
             rows[name]['void_items'] += cnt
     if not node_uuid:

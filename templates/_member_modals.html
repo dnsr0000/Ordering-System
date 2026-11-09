@@ -18,7 +18,8 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label small fw-bold" for="edit-user-points">紅利點數 (點)</label>
-                            <input type="number" min="0" class="form-control" name="points" id="edit-user-points" required>
+                            <!-- 不設 min="0"：跨分店同時折抵後點數可能為負，設了下限會讓瀏覽器擋下送出；後端會把新點數夾成 >= 0，點數欄沒改時不調整 -->
+                            <input type="number" class="form-control" name="points" id="edit-user-points" required>
                             <!-- 開啟視窗當下的點數：後端只套用「差額」，期間顧客消費賺到/花掉的點數不會被蓋掉 -->
                             <input type="hidden" name="loaded_points" id="edit-user-loaded-points">
                             <small class="text-white-50">可直接手動補發或扣除會員紅利點數。</small>

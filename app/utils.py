@@ -1,11 +1,14 @@
 import hashlib
 import io
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from functools import wraps
 
 from flask import abort, current_app, g, has_request_context, redirect, request, send_file, url_for
+from flask.sessions import SecureCookieSessionInterface
 from flask_login import current_user
+from itsdangerous import BadSignature
+from werkzeug.routing import IntegerConverter
 
 from app.errors import AppError
 
@@ -38,7 +41,7 @@ def get_own(model, obj_id, label='資料', status=404):
     載入過其他店的物件時，session.get 會從 identity map 直接回傳，所以這裡一律再比對 tenant_id。
     """
     from app.extensions import db
-    obj = db.session.get(model, safe_int(obj_id, 0))
+    obj = db.session.get(model, safe_id(obj_id))
     if obj is None or getattr(obj, 'tenant_id', None) != g.tenant_id:
         raise AppError(f'查無此{label}', status)
     return obj
@@ -47,7 +50,7 @@ def get_own(model, obj_id, label='資料', status=404):
 def find_own(model, obj_id):
     """同 get_own，但不存在或屬於其他店家時回傳 None (供「可選的」查詢參數使用)"""
     from app.extensions import db
-    obj = db.session.get(model, safe_int(obj_id, 0))
+    obj = db.session.get(model, safe_id(obj_id))
     return obj if obj is not None and getattr(obj, 'tenant_id', None) == g.tenant_id else None
 
 
@@ -111,6 +114,35 @@ def member_required(redirect_to=None):
     return decorator
 
 
+class KioskSessionInterface(SecureCookieSessionInterface):
+    """
+    依角色分開的 session 有效期 (由 app/__init__.py 的 create_app 安裝)：
+    - 員工 (permanent，或已登入員工帳號)：PERMANENT_SESSION_LIFETIME (30 分鐘)，每次請求都會重新簽章，等於閒置逾時。
+    - 顧客 / 未登入 (非 permanent)：只有內容變動時才重新簽章，Flask 預設也以 PERMANENT_SESSION_LIFETIME 驗證，
+      造成點餐機停在首頁 30 分鐘後「訪客點餐」CSRF 失敗、桌位綁定 (4 小時) 跟著消失。改用 CUSTOMER_SESSION_LIFETIME。
+    """
+
+    def open_session(self, app, request):
+        s = self.get_signing_serializer(app)
+        if s is None:
+            return None
+        val = request.cookies.get(self.get_cookie_name(app))
+        if not val:
+            return self.session_class()
+        staff_age = app.permanent_session_lifetime.total_seconds()
+        customer_age = app.config.get('CUSTOMER_SESSION_LIFETIME', app.permanent_session_lifetime).total_seconds()
+        try:
+            data, signed_at = s.loads(val, max_age=int(max(staff_age, customer_age)), return_timestamp=True)
+        except BadSignature:
+            return self.session_class()
+        age = (datetime.now(timezone.utc) - signed_at).total_seconds()
+        if (data.get('_permanent') or '_user_id' in data) and age > staff_age:
+            return self.session_class()   # 員工工作階段閒置逾時
+        if age > customer_age:
+            return self.session_class()
+        return self.session_class(data)
+
+
 def current_staff_name(default='system'):
     """目前登入員工的帳號；沒有請求情境或未登入 (排程、CLI、顧客端) 時回傳 default"""
     try:
@@ -140,6 +172,33 @@ def safe_float(val, default=0.0):
 def safe_int(val, default=0):
     num = safe_float(val, None)
     return default if num is None else int(num)
+
+
+MAX_DB_ID = 2 ** 63 - 1
+
+
+def safe_id(val, default=0):
+    """
+    資料庫主鍵：不是正整數或超出 64 位元整數範圍時回傳 default (視為不存在)。
+    超出範圍的值 (例如 20 位數) 直接查詢時 SQLite 綁定參數會拋 OverflowError → 500。
+    """
+    try:
+        num = int(str(val).strip())   # 整數字串直接轉換 (經 float 會失去大數的精度)
+    except (ValueError, TypeError):
+        num = safe_int(val, None)
+    return num if num is not None and 0 < num <= MAX_DB_ID else default
+
+
+class BoundedIntConverter(IntegerConverter):
+    """
+    取代預設的 <int:...> 路由轉換器 (由 app/__init__.py 的 create_app 安裝)：上限 2^63-1 (資料庫整數範圍)，
+    超出時路由不符合 → 404，不讓 SQLite 綁定參數拋 OverflowError → 500。
+    """
+
+    def __init__(self, url_map, *args, **kwargs):
+        if len(args) < 3:   # 位置參數依序為 fixed_digits, min, max
+            kwargs.setdefault('max', MAX_DB_ID)
+        super().__init__(url_map, *args, **kwargs)
 
 
 def safe_round(val, default=0):
@@ -188,13 +247,17 @@ def parse_birthday(form):
     try:
         year, month, day = (int(p) for p in parts)
         birthday = date(year, month, day)
-    except ValueError:
+    except (ValueError, OverflowError):   # 年份是極大的整數時 date() 拋 OverflowError
         raise AppError('生日日期不存在，請重新選擇')
     if birthday > date.today():
         raise AppError('生日不能是未來的日期')
     if birthday.year < date.today().year - 120:
         raise AppError('生日日期不存在，請重新選擇')
     return birthday
+
+
+# 報表 / 查詢區間可接受的日期範圍 (超出範圍比照格式錯誤處理)
+QUERY_DATE_MIN, QUERY_DATE_MAX = date(2000, 1, 1), date(2100, 12, 31)
 
 
 def parse_date_range(default_days=7, week=False, presets=False, max_days=None, strict=False, together=False):
@@ -218,11 +281,16 @@ def parse_date_range(default_days=7, week=False, presets=False, max_days=None, s
         return end.replace(day=1), end
     def parse(raw):
         try:
-            return date.fromisoformat(raw)
+            value = date.fromisoformat(raw)
         except ValueError:
             if strict and raw:
                 raise AppError('日期格式錯誤')
             return None
+        if not QUERY_DATE_MIN <= value <= QUERY_DATE_MAX:   # 9999-12-31 之類：之後加天數會溢位 (500)
+            if strict:
+                raise AppError(f'日期超出可查詢範圍 ({QUERY_DATE_MIN} ~ {QUERY_DATE_MAX})')
+            return None
+        return value
     start, end = parse(request.args.get('start') or ''), parse(request.args.get('end') or '')
     if together and (start is None or end is None):
         start = end = None
@@ -240,7 +308,10 @@ def parse_date_range(default_days=7, week=False, presets=False, max_days=None, s
 def day_bounds(start, end=None):
     """日期 (區間) 轉成半開的 datetime 區間 [start 00:00, end + 1 天 00:00)；end 省略時為同一天"""
     begin = datetime.combine(start, time.min)
-    return begin, datetime.combine((end or start) + timedelta(days=1), time.min)
+    last = end or start
+    if last >= date.max:   # 9999-12-31 + 1 天會 OverflowError
+        return begin, datetime.max
+    return begin, datetime.combine(last + timedelta(days=1), time.min)
 
 
 def parse_local_dt(raw, label=None):
@@ -345,17 +416,22 @@ def mask_name(name):
     return chars[0] + '○' * (len(chars) - 2) + chars[-1]
 
 
+def mask_long_digits(text):
+    """8 碼以上的連續數字 (多半是電話號碼) 只留末 3 碼：0912345678 → ○○○○○○○678"""
+    return re.sub(r'\d{8,}', lambda m: '○' * (len(m.group()) - 3) + m.group()[-3:], text)
+
+
 def public_display_name(order):
-    """公開看板顯示名稱：會員一律遮罩；訪客代號、櫃檯 POS、純英數桌號原樣顯示"""
+    """公開看板顯示名稱：會員一律遮罩；訪客代號、櫃檯 POS、純英數桌號原樣顯示 (像電話號碼的長串數字一律遮罩)"""
     if order.user_id:
         return mask_name(order.user.name if order.user else (order.table_number or ''))
     table = (order.table_number or '').strip() or '訪客'
     if order.order_source == 'Table':  # 掃碼點餐的訪客：顯示桌號
         return table
     if table.startswith(('訪客', '櫃檯POS', 'POS')) and '(' not in table and '（' not in table:
-        return table
+        return mask_long_digits(table)
     if re.fullmatch(r'[A-Za-z0-9_\-]{1,10}', table):
-        return table
+        return mask_long_digits(table)
     # 例如 "A5 (王小明)"：保留括號外的桌號，其餘遮罩
     return mask_name(re.split(r'\s*[(（]', table)[0])
 

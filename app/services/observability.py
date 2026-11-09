@@ -101,7 +101,8 @@ def _authorized() -> bool:
         return False
     given = request.args.get('token') or request.headers.get('Authorization', '').removeprefix('Bearer ').strip()
     import hmac
-    return hmac.compare_digest(given, token)
+    # 以 bytes 比較：str 含非 ASCII 字元 (例如 ?token=%E4%B8%AD) 時 compare_digest 會丟 TypeError → 500
+    return hmac.compare_digest(given.encode('utf-8'), token.encode('utf-8'))
 
 
 def install(app: Any) -> None:
@@ -143,22 +144,40 @@ def _init_sentry(app: Any) -> bool:
     from app.services.log_service import current_request_id
     sentry_sdk.init(dsn=dsn, integrations=[FlaskIntegration()], send_default_pii=False,
                     traces_sample_rate=float(app.config.get('SENTRY_TRACES_SAMPLE_RATE') or 0),
-                    release=_release(), environment='hub' if app.config.get('SYNC_ROLE') == 'hub' else 'store')
+                    release=_release(), environment='hub' if app.config.get('SYNC_ROLE') == 'hub' else 'store',
+                    before_send=_sentry_before_send)
 
     @app.before_request
     def _sentry_tags():
+        # 店家 (tenant_id) 在送出事件時才讀 (_sentry_before_send)：這個 hook 比店家解析早註冊、先執行，此時還沒有 g.tenant_id
         # sentry-sdk 2.x 起 configure_scope 已棄用、3.x 移除 (每個請求都會 500)；新版用 get_current_scope
         getter = getattr(sentry_sdk, 'get_current_scope', None)
         if getter is not None:
-            scope = getter()
-            scope.set_tag('request_id', current_request_id() or '')
-            scope.set_tag('tenant_id', str(getattr(g, 'tenant_id', '') or ''))
+            getter().set_tag('request_id', current_request_id() or '')
             return
         with sentry_sdk.configure_scope() as scope:
             scope.set_tag('request_id', current_request_id() or '')
-            scope.set_tag('tenant_id', str(getattr(g, 'tenant_id', '') or ''))
     logger.info('Sentry 錯誤回報已啟用')
     return True
+
+
+def _sentry_before_send(event: dict, hint: Any) -> dict:
+    """送出事件時補上店家標籤 (此時店家已解析；沒有請求時不加)"""
+    from flask import has_request_context
+    try:
+        if has_request_context():
+            tid = getattr(g, 'tenant_id', None)
+            if tid is not None:
+                tags = event.get('tags')
+                if isinstance(tags, dict):
+                    tags['tenant_id'] = str(tid)
+                elif isinstance(tags, list):
+                    tags.append(['tenant_id', str(tid)])
+                else:
+                    event['tags'] = {'tenant_id': str(tid)}
+    except Exception:  # noqa: BLE001  標籤失敗不可讓事件送不出去
+        pass
+    return event
 
 
 def _release() -> str:

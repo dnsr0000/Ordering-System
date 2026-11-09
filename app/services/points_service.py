@@ -47,12 +47,18 @@ def change_points(tenant_id, user_id, delta, reason, order_id=None, clamp=False)
 
 
 def recompute_points(user_ids):
-    """以異動帳重算會員點數與儲值金合計"""
+    """
+    以異動帳重算會員點數與儲值金合計。
+    先以 SELECT ... FOR UPDATE 鎖住這些會員列 (依 id 排序避免死結)，再另外下 UPDATE：PostgreSQL READ COMMITTED 下，
+    UPDATE 等到其他交易 (原子扣點 + 新增異動) 提交後，SET 的子查詢仍用語句開始時的快照，會漏算那筆異動；
+    鎖住後才開始的 UPDATE 是新語句、取得新快照，看得到已提交的異動。(SQLite 單一寫入者，FOR UPDATE 不產生語法)
+    """
     from app.models.member import WalletLedger
     ids = sorted({i for i in user_ids if i})
     if not ids:
         return
-    total = select(func.coalesce(func.sum(PointLedger.delta), 0)).where(PointLedger.user_id == User.id) \
+    db.session.execute(select(User.id).where(User.id.in_(ids)).order_by(User.id).with_for_update())
+    total =select(func.coalesce(func.sum(PointLedger.delta), 0)).where(PointLedger.user_id == User.id) \
         .scalar_subquery()
     wallet = select(func.coalesce(func.sum(WalletLedger.delta), 0)).where(WalletLedger.user_id == User.id) \
         .scalar_subquery()

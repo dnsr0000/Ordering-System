@@ -11,12 +11,18 @@
             <span class="fw-bold"><i class="bi bi-person-badge me-1"></i>{{ data.driver or '未指派' }}</span>
             <span class="badge bg-warning text-dark" id="driverStatus">{{ data.delivery_label }}</span>
         </div>
+        {% if data.active %}
         <div class="fw-bold fs-5"><i class="bi bi-geo-alt me-1 text-danger"></i>{{ data.address }}</div>
         <div class="small text-white-50">{{ data.zone }}</div>
         <div class="d-grid gap-2 mt-3">
             <a class="btn btn-outline-info fw-bold" href="{{ data.nav_url }}" target="_blank" rel="noopener"><i class="bi bi-signpost-2 me-1"></i>導航到地址</a>
             {% if data.phone %}<a class="btn btn-outline-light fw-bold" href="tel:{{ data.phone }}"><i class="bi bi-telephone me-1"></i>撥打 {{ data.phone }}</a>{% endif %}
         </div>
+        {% else %}
+        {# 配送結束後 driver_payload 不再提供地址 / 電話 / 餐點 (個資最小化)，只顯示結束狀態 #}
+        <div class="fw-bold fs-5"><i class="bi bi-check2-circle me-1 text-info"></i>配送已結束{% if data.delivery_label %} ({{ data.delivery_label }}){% endif %}</div>
+        <div class="small text-white-50">此訂單已不需配送，顧客地址與電話已不再顯示。</div>
+        {% endif %}
     </div>
 
     <div class="card rounded-4 p-3 mb-3">
@@ -29,6 +35,7 @@
         <div class="small mt-2" id="gpsMsg" aria-live="polite"></div>
     </div>
 
+    {% if data.active %}
     <div class="card rounded-4 p-3">
         <div class="fw-bold mb-2"><i class="bi bi-bag me-1"></i>餐點 • 應收 ${{ data.total }}{{ ' (已付款)' if data.paid else ' (' ~ data.payment_method ~ ')' }}</div>
         <ul class="list-group list-group-flush">
@@ -36,6 +43,7 @@
         </ul>
         {% if data.note %}<div class="text-warning small mt-2">備註：{{ data.note }}</div>{% endif %}
     </div>
+    {% endif %}
 </main>
 {% endblock %}
 {% block page_data %}<script type="application/json" id="page-data">{{ data|tojson }}</script>{% endblock %}

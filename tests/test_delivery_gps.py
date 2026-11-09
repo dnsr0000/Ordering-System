@@ -131,7 +131,9 @@ def test_driver_token_syncs_to_hub_and_positions_reported_there():
         with tenant_ctx(env.hub) as tenant:
             settings_service.put('own_delivery', {'enabled': True, 'zones': ZONES, 'channels': ['online'],
                                                   'drivers': '阿明', 'gps_tracking': True}, tenant_id=tenant.id)
+            settings_service.publish_hq('own_delivery', tenant.id)   # 下發到分店
             db.session.commit()
+        env.sync(env.b, rounds=2)   # 分店收到總部設定並回報本店生效的外送設定
         hub = env.hub.test_client()
         hub.get('/?shop=default')
         order = _checkout(env.hub, [line(_item(env.hub, burger)['id'])], node_uuid=env.node_b_uuid,

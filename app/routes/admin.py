@@ -6,7 +6,8 @@ from datetime import date, datetime
 from flask import (Blueprint, current_app, flash, g, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 from flask_login import current_user, login_user, logout_user
-from sqlalchemy import update
+from sqlalchemy import delete, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.errors import AppError
 from app.extensions import db, ip_key, limiter
@@ -29,10 +30,24 @@ from app.services.order_service import todays_range
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
 from app.services.upload_paths import remove_upload
+from app.sync import runtime as sync_runtime
 from app.utils import (WEAK_PIN_MESSAGE, form_flag, get_json_dict, get_own, is_platform_admin, is_weak_pin,
-                       platform_admin_required, role_required, safe_int, send_xlsx, validate_phone, validate_pin)
+                       platform_admin_required, role_required, safe_float, safe_int, send_xlsx, validate_phone,
+                       validate_pin)
 
 admin_bp = Blueprint('admin', __name__)
+
+# 表單整數欄位的上限：PostgreSQL INTEGER 最大約 21 億，超過時線上端 500、分店 SQLite 存下後上傳會讓整批同步失敗
+MAX_AMOUNT = 1_000_000        # 金額 (元)，與 menu_service.MAX_AMOUNT / coupon.MAX_FIXED_DISCOUNT 一致
+MAX_POINTS = 100_000_000      # 點數
+# 新建員工帳號名稱長度上限：admin_log.username 在已部署的資料庫 (未升級前) 只有 50 字，較長的帳號在 PostgreSQL 上無法登入
+MAX_USERNAME_LEN = 50
+AI_ADVICE_MIN_INTERVAL = 20 * 60   # 有雲端 AI 金鑰時，營運建議最短更新間隔 (秒)；每次呼叫都會計費
+
+
+def bounded_int(val, default, lo, hi):
+    """表單整數：格式錯誤時用 default，再夾在 lo ~ hi 之間 (寫入資料庫 Integer 欄位前使用)"""
+    return min(hi, max(lo, safe_int(val, default)))
 
 
 # 動作完成後導回的頁面：菜單、會員、稽核是獨立頁面，其餘 (rewards…) 是後台首頁的分頁
@@ -57,10 +72,14 @@ def _dashboard_summary():
     from app.models.enums import OrderStatus
     from app.models.inventory import Ingredient
     from app.models.reservation import Reservation
-    from app.services import inventory_service, maintenance_service
+    from app.models.payment import Invoice, InvoiceStatus, Refund
+    from app.models.printing import PrintJob
+    from app.services import inventory_service, table_service
     start, end = todays_range()
     active = Order.query.filter(Order.created_at >= start - timedelta(days=1), Order.status != OrderStatus.CANCELLED)
-    unpaid_tables = active.filter(Order.payment_status == 'unpaid', Order.dining_table_id.isnot(None)).count()
+    # 以桌為單位、不限日期 (與 POS 的未結帳桌位清單 table_service.unpaid_tables 相同條件)
+    unpaid_tables = table_service.unpaid_orders_query() \
+        .with_entities(db.func.count(db.distinct(Order.dining_table_id))).scalar() or 0
     deliveries = active.filter(Order.delivery_status.in_(('pending', 'assigned', 'out'))).count()
     low_stock = sum(1 for i in Ingredient.query.filter_by(is_active=True).all() if i.is_low) \
         if inventory_service.enabled(g.tenant_id) else 0
@@ -70,14 +89,29 @@ def _dashboard_summary():
     except Exception:  # noqa: BLE001  (訂位模組欄位變動時不影響總覽)
         db.session.rollback()
         reservations = 0
+    # 只取總覽需要的異常計數；完整的 maintenance_service.health() 含 AI 金鑰檢查 (可能同步連外部服務)，只在系統健康頁使用
+    health = {
+        'invoice_pending': Invoice.query.filter(Invoice.status == InvoiceStatus.PENDING).count(),
+        'invoice_failed': Invoice.query.filter(Invoice.status == InvoiceStatus.FAILED).count(),
+        'print_failed': PrintJob.query.filter(PrintJob.status == 'failed').count(),
+        'print_queued': PrintJob.query.filter(PrintJob.status == 'queued').count(),
+        'refund_manual': Refund.query.filter(Refund.status.in_(('manual', 'failed'))).count(),
+    }
     return {'unpaid_tables': unpaid_tables, 'deliveries_active': deliveries, 'low_stock': low_stock,
-            'reservations_today': reservations, 'health': maintenance_service.health(g.tenant_id)}
+            'reservations_today': reservations, 'health': health}
 
 
 def _ai_signature(orders):
-    """今日訂單狀態摘要：有變動才重新產生 AI 營運建議"""
+    """
+    今日訂單狀態摘要：有變動才重新產生營運建議。
+    有雲端 AI 金鑰時每次產生都會計費 (並消耗每月預算)：改為今日有訂單後最多每 AI_ADVICE_MIN_INTERVAL 秒更新一次；
+    沒有金鑰時用本機規則引擎 (不計費)，維持訂單一有變動就更新。
+    """
     start, _end = todays_range()
-    return ','.join(f'{o.id}:{o.status}' for o in sorted(orders, key=lambda o: o.id) if o.created_at >= start)
+    today = sorted((o for o in orders if o.created_at >= start), key=lambda o: o.id)
+    if ai_service.credentials(g.tenant_id):
+        return f"{start:%Y%m%d}:{bool(today)}:{int(time.time() // AI_ADVICE_MIN_INTERVAL)}"
+    return ','.join(f'{o.id}:{o.status}' for o in today)
 
 
 def _analytics(orders, limit):
@@ -100,13 +134,30 @@ def admin_dashboard():
     from app.models.enums import PAGE_PERMISSIONS
     tabs = [p for p in PAGE_PERMISSIONS if current_user.has_permission(p)]
     if current_user.role not in MANAGER_ROLES and not tabs:
-        # 後台含會員個資與稽核紀錄：櫃檯與廚房 (沒有被授權任何後台分頁時) 直接進入各自的工作畫面
-        return redirect(url_for('kitchen.kitchen_display' if current_user.role == 'kitchen' else 'pos.pos_terminal'))
+        # 只被授權「顧客評價 / 客服」或「系統設定」的櫃檯 / 廚房：進入該頁 (有後台側欄可切換其他可用頁面)，
+        # 不要導回 POS / KDS 讓負責人勾選的權限在畫面上找不到入口
+        for perm, endpoint in (('feedback', 'feedback.index'), ('settings', 'settings_admin.index')):
+            if current_user.has_permission(perm):
+                return redirect(url_for(endpoint))
+        # 後台含會員個資與稽核紀錄：櫃檯與廚房 (沒有被授權任何後台頁面時) 直接進入各自的工作畫面
+        if current_user.role != 'kitchen':
+            return redirect(url_for('pos.pos_terminal'))
+        if not sync_runtime.is_hub():
+            return redirect(url_for('kitchen.kitchen_display'))
+        # 線上端沒有廚房看板 (/kitchen 回 404)：顯示只有總覽的後台首頁
+        flash('線上端沒有廚房看板，請到分店開啟 KDS', 'info')
     if current_user.role in MANAGER_ROLES:
         tabs = list(PAGE_PERMISSIONS)
 
     limit = max(1, request.args.get('limit', 3, type=int))
     orders = analytics_service.load_dashboard_orders()
+    if 'reports' in tabs:
+        analytics = _analytics(orders, limit)
+    else:
+        # 營收 / 客單價 / 熱銷金額 / 營運建議屬於「營運報表」權限：不呼叫 AI，也不把營收資料交給樣板
+        analytics = analytics_service.build_order_analytics(orders, limit=limit)
+        analytics.update(today_revenue=0, avg_order_value=0, ai_advice='')
+        analytics['top_items'] = [{k: v for k, v in t.items() if k != 'revenue'} for t in analytics.get('top_items') or []]
     items = MenuItem.query.order_by(MenuItem.category, MenuItem.name).all() if 'coupons' in tabs else []
     return render_template(
         'admin.html',
@@ -119,7 +170,7 @@ def admin_dashboard():
         member_tiers=wallet_service.tiers(g.tenant_id),
         line_push_ready=line_service.messaging_enabled(),
         today=date.today(),
-        analytics=_analytics(orders, limit),
+        analytics=analytics,
         current_limit=limit,
         reward_setting=get_or_create_reward_setting(g.tenant_id),
         tenant=g.tenant,
@@ -213,27 +264,52 @@ def tenant_register():
     slug = re.sub(r'[^a-z0-9-]+', '-', request.form.get('slug', '').strip().lower()).strip('-')
     if not shop_name or not username or len(password) < 10 or not slug:
         raise AppError('請填妥資料；密碼至少 10 個字元。')
+    if len(shop_name) > 120 or len(slug) > 80 or len(username) > MAX_USERNAME_LEN:
+        raise AppError(f'店名最多 120 字、網址代號最多 80 字、負責人帳號最多 {MAX_USERNAME_LEN} 字。')
     if Tenant.query.filter_by(slug=slug).first():
         raise AppError('店家網址代號已被使用。', 409)
     if StaffAccount.query.filter_by(username=username).first():
         raise AppError('員工帳號已被使用。', 409)
 
-    tenant = Tenant(name=shop_name, slug=slug, is_active=True)
-    db.session.add(tenant)
-    db.session.flush()
-    g.tenant, g.tenant_id = tenant, tenant.id
-    owner = StaffAccount(tenant_id=tenant.id, username=username, role='owner', is_active=True)
-    owner.set_password(password)
-    db.session.add(owner)
-    seed_tenant_defaults(tenant.id)
-    db.session.commit()
+    try:
+        tenant = Tenant(name=shop_name, slug=slug, is_active=True)
+        db.session.add(tenant)
+        db.session.flush()
+        g.tenant, g.tenant_id = tenant, tenant.id
+        owner = StaffAccount(tenant_id=tenant.id, username=username, role='owner', is_active=True)
+        owner.set_password(password)
+        db.session.add(owner)
+        seed_tenant_defaults(tenant.id)
+        db.session.commit()
+    except IntegrityError:   # 兩人同時以同一個代號 / 帳號註冊：先查後插之間被搶先
+        db.session.rollback()
+        raise AppError('店家網址代號或員工帳號已被使用。', 409)
     if current_user.is_authenticated:   # 平台管理者替別人建店：不切換成新店的負責人
         flash(f'已建立店家「{tenant.name}」(代號 {tenant.slug})，負責人帳號 {owner.username}', 'success')
         return redirect(_dashboard())
-    session.clear()
-    login_user(owner)
-    session.permanent = True
-    return redirect(_dashboard())
+    # 與一般登入相同：建立工作階段紀錄 (閒置逾時 / 單一裝置登出) 並寫入登入日誌 (不沿用註冊前瀏覽的店家)
+    session.pop('tenant_id', None)
+    return complete_staff_login(owner)
+
+
+def _verify_current_credentials(acc, back):
+    """變更自己的密碼前確認本人：目前的密碼，已啟用兩步驟驗證時再加驗證碼 (或備用碼)"""
+    if not acc.check_password(request.form.get('current_password') or ''):
+        raise AppError('❌ 變更自己的密碼需輸入正確的目前密碼！', redirect_to=back)
+    if acc.totp_enabled:
+        from app.services import security_service
+        if not security_service.verify_second_factor(acc, (request.form.get('totp_code') or '').strip()):
+            raise AppError('❌ 變更自己的密碼需輸入正確的兩步驟驗證碼 (或備用碼)！', redirect_to=back)
+
+
+def _clear_staff_lockout(username):
+    """解除員工帳號的登入鎖定 (帳號層級與各 IP 的裝置層級；鍵名與 auth_throttle.staff_keys 相同)"""
+    from app.models.system import AuthThrottle
+    keys = auth_throttle.staff_keys(username, '')   # IP 留白：device 鍵即為「staff:dev:<帳號>:」前綴
+    db.session.execute(delete(AuthThrottle).where(or_(
+        AuthThrottle.key == keys['account'],
+        AuthThrottle.key.startswith(keys['device'], autoescape=True),
+    )).execution_options(synchronize_session=False))
 
 
 @admin_bp.route('/admin/staff', methods=['GET', 'POST'], endpoint='staff_accounts')
@@ -243,7 +319,7 @@ def staff_accounts():
         from app.models.enums import PERMISSIONS, ROLE_DEFAULT_PERMISSIONS
         accounts = StaffAccount.query.filter_by(tenant_id=g.tenant_id, deleted_at=None).order_by(StaffAccount.id).all()
         return render_template('staff_accounts.html', accounts=accounts, tenant=g.tenant, current_staff_id=current_user.id,
-                               permissions=PERMISSIONS,
+                               permissions=PERMISSIONS, sync_node=sync_runtime.is_node(),   # 分店：負責人帳號只能在線上端修改
                                role_defaults={k: sorted(v) for k, v in ROLE_DEFAULT_PERMISSIONS.items()})
 
     back = url_for('admin.staff_accounts')
@@ -254,6 +330,8 @@ def staff_accounts():
         password = request.form.get('password', '')
         if role not in CREATABLE_STAFF_ROLES or not username or len(password) < 10:
             raise AppError('❌ 帳號必填，密碼至少 10 個字元，且角色需合法！', redirect_to=back)
+        if len(username) > MAX_USERNAME_LEN:
+            raise AppError(f'❌ 員工帳號最多 {MAX_USERNAME_LEN} 個字元！', redirect_to=back)
         if StaffAccount.query.filter_by(username=username).first():
             raise AppError('❌ 該員工帳號名稱已被使用！', 409, redirect_to=back)
         account = StaffAccount(tenant_id=g.tenant_id, username=username, role=role, is_active=True)
@@ -267,14 +345,30 @@ def staff_accounts():
                                        deleted_at=None).first_or_404()
     if action in ('toggle_active', 'delete_account') and acc.id == current_user.id:
         raise AppError('❌ 無法停用或刪除您目前登入的負責人帳號！', redirect_to=back)
+    if action in ('toggle_active', 'delete_account', 'reset_password') and acc.role == 'owner' and sync_runtime.is_node():
+        # 負責人的帳密 / 啟用狀態只能在線上端修改：分店改了也會在同步時被線上端整列拒收，線上端仍接受舊密碼
+        raise AppError('❌ 負責人帳號請到線上端修改 (分店的修改不會同步到線上端)', 403, redirect_to=back)
     if action == 'toggle_active':
         acc.is_active = not acc.is_active
+        if not acc.is_active:
+            from app.services import security_service, staffing_service
+            # 遞增 session_epoch (同步的「安全版本」)：分店斷線期間的舊版本 (仍為啟用) 之後同步上來也不能把帳號改回啟用
+            security_service.logout_everywhere(acc, '帳號已被停用')
+            # 只刪今天起的班表，保留可排時段 (重新啟用後仍可自動排班)
+            staffing_service.clear_future_schedules(g.tenant_id, acc.id)
         record_staff_audit('STAFF_TOGGLE_ACTIVE', details=f"{'啟用' if acc.is_active else '停用'}員工帳號：{acc.username} ({acc.role})")
     elif action == 'reset_password':
         new_pwd = request.form.get('new_password', '')
         if len(new_pwd) < 10:
             raise AppError('❌ 新密碼長度至少需 10 個字元！', redirect_to=back)
+        if acc.id == current_user.id:
+            # 變更自己的密碼需重新驗證：拿到未登出工作階段的人不能藉此永久奪走帳號
+            _verify_current_credentials(acc, back)
         acc.set_password(new_pwd)
+        from app.services import security_service
+        # 遞增 session_epoch：分店斷線期間的舊密碼版本之後同步上來也不會蓋回新密碼
+        security_service.logout_everywhere(acc, '密碼已被重設')
+        _clear_staff_lockout(acc.username)   # 被連錯鎖定的員工拿到新密碼後可立即登入
         record_staff_audit('STAFF_RESET_PASSWORD', details=f"重設員工帳號密碼：{acc.username}")
         flash(f'已成功重設員工【{acc.username}】的密碼！', 'success')
     elif action == 'logout_all':
@@ -309,6 +403,11 @@ def staff_accounts():
         acc.deleted_at = datetime.now()
         acc.username = f"{acc.username[:90]}#deleted-{acc.id}"
         acc.set_password(secrets.token_urlsafe(32))
+        from app.services import security_service, staffing_service
+        # 遞增 session_epoch：分店的舊版本 (未刪除) 之後同步上來也不能還原帳號
+        security_service.logout_everywhere(acc, '帳號已被刪除')
+        # 刪除今天起的班表與該員工全部可排時段
+        staffing_service.clear_future_schedules(g.tenant_id, acc.id, availability=True)
     else:
         raise AppError('不支援的操作', redirect_to=back)
     db.session.commit()
@@ -319,23 +418,52 @@ def staff_accounts():
 # 菜單、套餐、紅利商品
 # ==============================================================================
 def _store_uploaded_image(item):
+    """存好上傳的新圖並換上 item.image_path；回傳被取代的舊圖路徑 (沒有換圖時回傳 None)，由 _commit_item_image 處理"""
     image = request.files.get('image')
     if not image or not image.filename:
-        return
+        return None
     upload_dir = current_app.config['UPLOAD_FOLDER_MENU']
-    new_path = menu_service.save_menu_image(upload_dir, g.tenant_id, image)
-    if item.image_path:  # 新圖存好後才刪舊圖，圖片損毀時不會把原圖弄丟
-        remove_upload(upload_dir, item.image_path)
-    item.image_path = new_path
+    old_path = item.image_path or ''
+    item.image_path = menu_service.save_menu_image(upload_dir, g.tenant_id, image)
+    return old_path
+
+
+def _commit_item_image(item, old_path):
+    """
+    commit；換了圖時 commit 成功後才刪舊圖。交易失敗時資料庫仍指向舊圖：刪掉剛存的新圖 (不留孤兒檔)，舊圖保留。
+    old_path 為 None 代表沒有換圖。
+    """
+    upload_dir = current_app.config['UPLOAD_FOLDER_MENU']
+    new_path = item.image_path if old_path is not None else None
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        if new_path and new_path != old_path:
+            remove_upload(upload_dir, new_path)
+        raise
+    if old_path and old_path != new_path:
+        _remove_menu_image_if_unused(old_path, item.id)
+
+
+def _remove_menu_image_if_unused(path, own_id):
+    """
+    刪除餐點圖片檔：還有其他餐點 (不分店家，排除 own_id) 使用同一路徑時保留。
+    線上端可能有修正前上傳、跨店共用的圖片路徑，刪除或換圖時不可刪掉別家店的圖片。
+    """
+    other = db.session.execute(select(MenuItem.id).where(MenuItem.image_path == path, MenuItem.id != own_id)
+                               .execution_options(skip_tenant_filter=True).limit(1)).first()
+    if other is None:
+        remove_upload(current_app.config['UPLOAD_FOLDER_MENU'], path)
 
 
 @admin_bp.route('/admin/add', methods=['POST'])
 @permission_required('menu')
 def add_item():
     item = menu_service.apply_menu_form(MenuItem(tenant_id=g.tenant_id, image_path=''), request.form, form_flag)
-    _store_uploaded_image(item)
+    old_image = _store_uploaded_image(item)
     db.session.add(item)
-    db.session.commit()
+    _commit_item_image(item, old_image)
     order_event_bus.notify(g.tenant_id)   # 數位看板 / 點餐機即時更新售完與價格
     return redirect(_dashboard('menu'))
 
@@ -345,10 +473,12 @@ def add_item():
 def edit_item(id):
     item = db.get_or_404(MenuItem, id)
     menu_service.apply_menu_form(item, request.form, form_flag)
-    menu_service.set_item_reward_status(item, form_flag('is_reward'), request.form.get('reward_points'),
-                                        request.form.get('reward_discount_points'))
-    _store_uploaded_image(item)
-    db.session.commit()
+    if current_user.has_permission('coupons'):
+        # 紅利商城上下架屬於「優惠券 / 紅利商城」權限 (同 add_reward / remove_reward)；只有菜單權限時保留原設定
+        menu_service.set_item_reward_status(item, form_flag('is_reward'), request.form.get('reward_points'),
+                                            request.form.get('reward_discount_points'))
+    old_image = _store_uploaded_image(item)
+    _commit_item_image(item, old_image)
     order_event_bus.notify(g.tenant_id)   # 數位看板 / 點餐機即時更新售完與價格
     return redirect(_dashboard(request.form.get('from_tab') or ('rewards' if item.is_reward else 'menu')))
 
@@ -365,8 +495,15 @@ def delete_item(id):
         raise AppError(f'有 {held} 位會員的寄杯還沒兌換完 (綁定此品項)，不能刪除；請改用「停售 / 下架」')
     if PassProduct.query.filter_by(menu_item_id=item.id, is_active=True).first() is not None:
         raise AppError('此品項有販售中的寄杯商品，請先到「寄杯」停售該商品再刪除品項 (或改用下架)')
+    # 其他套餐的固定配餐 / 任選選項：刪除會被資料庫連帶拿掉，套餐卻照原加價販售 (多收錢少給餐)
+    from app.models.menu import ComboOptionItem
+    combos = sorted({side.combo.name for side in ComboOptionItem.query.filter_by(menu_item_id=item.id).all()
+                     if side.combo is not None and side.combo.main_item_id != item.id})
+    if combos:
+        raise AppError(f"此品項是套餐「{'」、「'.join(combos[:5])}」{' 等' if len(combos) > 5 else ''}的配餐 / 任選選項，"
+                       f"不能刪除；請先編輯套餐移除此品項，或改用「停售 / 下架」")
     if item.image_path:
-        remove_upload(current_app.config['UPLOAD_FOLDER_MENU'], item.image_path)
+        _remove_menu_image_if_unused(item.image_path, item.id)
     record_staff_audit('DELETE_MENU_ITEM', details=f'刪除菜單品項：{item.name} (${item.price})')
     db.session.delete(item)
     db.session.commit()
@@ -438,10 +575,19 @@ def _apply_coupon_form(coupon):
     dtype = request.form.get('discount_type', DiscountType.FIXED)
     coupon.code, coupon.title = code, title
     coupon.discount_type = dtype if dtype in (DiscountType.FIXED, DiscountType.PERCENT) else DiscountType.FIXED
-    coupon.discount_value = parse_discount_value(coupon.discount_type, request.form.get('discount_value'))
-    coupon.min_spend = max(0, safe_int(request.form.get('min_spend'), 0))
-    coupon.reward_points = max(0, safe_int(request.form.get('reward_points'), 0))
-    coupon.reward_discount_points = max(0, safe_int(request.form.get('reward_discount_points'), 0)) if coupon.reward_points else 0
+    raw_value = request.form.get('discount_value')
+    value = parse_discount_value(coupon.discount_type, raw_value)
+    if coupon.discount_type == DiscountType.PERCENT:
+        # 0 / 負數 / 100 以上都不是有效折數 (舊版會夾成 1 → 0.1 折，等於折掉 99%)
+        if value is None or safe_float(raw_value, 0) <= 0 or not 1 <= value <= 99:
+            raise AppError('❌ 折數請輸入 0.1 ~ 9.9 折 (例如 85、8.5 或 0.85 都代表 85 折)！')
+    elif not value or value <= 0:
+        raise AppError('❌ 折抵金額必須大於 0！')
+    coupon.discount_value = value
+    coupon.min_spend = bounded_int(request.form.get('min_spend'), 0, 0, MAX_AMOUNT)
+    coupon.reward_points = bounded_int(request.form.get('reward_points'), 0, 0, MAX_POINTS)
+    coupon.reward_discount_points = bounded_int(request.form.get('reward_discount_points'), 0, 0, MAX_POINTS) \
+        if coupon.reward_points else 0
     coupon.member_only = bool(request.form.get('member_only'))
     if coupon.member_only:   # 會員專屬券只能發放，不在紅利商城兌換
         coupon.reward_points = coupon.reward_discount_points = 0
@@ -455,8 +601,6 @@ def _apply_coupon_form(coupon):
     coupon.login_required = bool(request.form.get('login_required'))
     coupon.uses_per_member = min(1000, max(0, safe_int(request.form.get('uses_per_member'), 0)))
     coupon.max_discount = min(1000000, max(0, safe_int(request.form.get('max_discount'), 0)))
-    if coupon.discount_type == DiscountType.FIXED and coupon.discount_value <= 0:
-        raise AppError('❌ 折抵金額必須大於 0！')
     return coupon
 
 
@@ -464,6 +608,19 @@ def _coupon_desc(c):
     kind = '會員專屬' if c.member_only else f'兌換點數:{c.reward_points}'
     limits = f"，限制:{c.usage_label}" if c.usage_label else ''
     return f"{c.title} ({c.code}，{c.discount_label}，門檻${c.min_spend}，{kind}，期限:{c.period_label}{limits})"
+
+
+def _release_until_snapshot(coupon, old_until):
+    """
+    延長或取消活動結束日時：舊版發放會把當時的結束日 (23:59:59) 寫進持券的 expires_at，
+    這些未使用的持券改用「領取後 N 天」的到期時間 (沒有設定天數或較早時清空，只受活動期間限制，由 status 動態比對新的 valid_until)。
+    新發的券已不寫入結束日快照，這裡只處理既有資料。
+    """
+    from datetime import time as dt_time
+    snap = datetime.combine(old_until, dt_time(23, 59, 59))
+    for uc in UserCoupon.query.filter_by(coupon_id=coupon.id, is_used=False, expires_at=snap).all():
+        new = coupon.expires_for(uc.created_at) if uc.created_at else None
+        uc.expires_at = new if (new is not None and new > snap) else None
 
 
 @admin_bp.route('/admin/add_coupon', methods=['POST'])
@@ -481,7 +638,10 @@ def add_coupon():
 def edit_coupon(id):
     coupon = db.get_or_404(Coupon, id)
     before = _coupon_desc(coupon)
+    old_until = coupon.valid_until
     _apply_coupon_form(coupon)
+    if old_until and (coupon.valid_until is None or coupon.valid_until > old_until):
+        _release_until_snapshot(coupon, old_until)
     record_staff_audit('COUPON_CHANGE', details=f"編輯優惠券：{before} → {_coupon_desc(coupon)}")
     db.session.commit()
     return redirect(_dashboard('rewards'))
@@ -491,6 +651,20 @@ def edit_coupon(id):
 @permission_required('coupons')
 def delete_coupon(id):
     coupon = db.get_or_404(Coupon, id)
+    # 會員用點數兌換、還沒用掉的券：刪券會連帶刪掉持券 (資料庫 CASCADE)，會員付出的點數也不會退回
+    now = datetime.now()
+    redeemed = sum(1 for uc in coupon.user_coupons
+                   if uc.source == 'reward' and uc.status(now) in ('available', 'upcoming'))
+    if redeemed:
+        raise AppError(f'❌ 有 {redeemed} 張會員用點數兌換、尚未使用的券 (刪除後點數不會退回)，不能刪除；'
+                       f'請等會員使用完畢或券到期後再刪除', 409, redirect_to=_dashboard('rewards'))
+    # 自動行銷活動引用這張券：刪券後外鍵被清空 (SET NULL)，只發券的活動之後每次執行都 0 人收到，狀態卻仍顯示啟用
+    from app.models.marketing import MarketingCampaign
+    campaign = MarketingCampaign.query.filter(MarketingCampaign.coupon_id == coupon.id,
+                                              MarketingCampaign.status.in_(('active', 'paused', 'running'))).first()
+    if campaign is not None:
+        raise AppError(f'❌ 自動行銷活動「{campaign.name}」仍在使用這張優惠券，請先修改或刪除該活動！', 409,
+                       redirect_to=_dashboard('rewards'))
     record_staff_audit('COUPON_CHANGE', details=f"刪除優惠券：{coupon.title} ({coupon.code})，連同會員已領取的 {len(coupon.user_coupons)} 張持券")
     db.session.delete(coupon)
     db.session.commit()
@@ -504,13 +678,22 @@ def delete_coupon(id):
 @permission_required('members')
 def delete_user(id):
     user = db.get_or_404(User, id)
-    if user.photo_path:
-        remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
-    # 訂單保留 (外鍵為 SET NULL)，桌號註記為已註銷會員
-    db.session.execute(update(Order).where(Order.user_id == id).values(table_number=f"{user.name} (已註銷會員)"[:50])
-                       .execution_options(synchronize_session=False))
+    from app.services import privacy_service, support_service
+    # 已付款的儲值金 / 寄杯是店家對會員的負債：刪除會員會連帶刪掉異動帳與寄杯 (資料庫 CASCADE)，需先退費或用完
+    if (user.wallet_balance or 0) > 0:
+        raise AppError(f'❌ 會員【{user.name}】儲值金尚有 ${user.wallet_balance} 餘額，請先辦理退費或使用完畢再刪除', 409,
+                       redirect_to=_dashboard('users'))
+    from app.models.member import MemberPass
+    if MemberPass.query.filter(MemberPass.user_id == user.id, MemberPass.status == 'active',
+                               MemberPass.remaining > 0).first() is not None:
+        raise AppError(f'❌ 會員【{user.name}】還有未兌換完的寄杯，請先辦理退費或使用完畢再刪除', 409,
+                       redirect_to=_dashboard('users'))
+    # 與會員自助刪除相同的去識別化：人臉特徵與照片、訂單上的姓名 (訂單保留，外鍵為 SET NULL)、外送地址、客服對話
+    privacy_service.withdraw_face(user)
+    privacy_service._deidentify_member_records(user)
     record_staff_audit('DELETE_USER', target_user_id=user.id, points_delta=-(user.points or 0),
                        details=f"刪除會員：{user.name} ({user.phone}, 原點數:{user.points})")
+    support_service.forget_member(user.id)
     db.session.delete(user)
     db.session.commit()
     return redirect(_dashboard('users'))
@@ -536,10 +719,13 @@ def edit_user(id):
 
     user.name, user.phone = name, phone
     # 點數：表單帶有開啟視窗時的點數 (loaded_points) 時只套用差額，不蓋掉編輯期間顧客剛消費的點數
-    submitted = max(0, safe_int(request.form.get('points'), 0))
+    raw_points = bounded_int(request.form.get('points'), 0, -MAX_POINTS, MAX_POINTS)
+    submitted = max(0, raw_points)
     loaded = request.form.get('loaded_points')
     if loaded not in (None, ''):
-        delta = submitted - max(0, safe_int(loaded, 0))
+        # 開窗點數不可夾成 0：跨分店同時折抵後點數可能為負，差額要以實際的負數計算才會調到店員輸入的點數
+        loaded_points = bounded_int(loaded, 0, -MAX_POINTS, MAX_POINTS)
+        delta = 0 if raw_points == loaded_points else submitted - loaded_points   # 點數欄沒改 (含負點) 時不調整
         if delta:
             change_points(g.tenant_id, user.id, delta, 'admin', clamp=True)
             db.session.refresh(user, ['points'])
@@ -578,7 +764,7 @@ def issue_coupon(coupon_id):
     expires_on = coupon_service.parse_date(f.get('expires_on')) if expire_mode == 'date' else None
     if expire_mode == 'date' and expires_on is None:
         raise AppError('❌ 請選擇到期日', redirect_to=_dashboard('rewards'))
-    valid_days = max(1, safe_int(f.get('valid_days'), 0)) if expire_mode == 'days' else None
+    valid_days = bounded_int(f.get('valid_days'), 0, 1, 3650) if expire_mode == 'days' else None
     result = coupon_service.issue(g.tenant_id, coupon, users, safe_int(f.get('quantity'), 1), expires_on=expires_on,
                                   valid_days=valid_days, staff=current_user.username)
     until = f"，到期 {result['expires_at']:%Y/%m/%d}" if result['expires_at'] else '，無到期日'
@@ -640,14 +826,14 @@ def update_reward_setting():
     s = get_or_create_reward_setting(g.tenant_id)
     before = (s.is_enabled, s.points_per_dollar, s.max_discount_per_order, s.spend_per_point)
     s.is_enabled = form_flag('is_enabled')
-    s.points_per_dollar = max(1, safe_int(request.form.get('points_per_dollar'), 1))
-    s.max_discount_per_order = max(0, safe_int(request.form.get('max_discount_per_order'), 0))
-    s.spend_per_point = max(1, safe_int(request.form.get('spend_per_point'), 1))
+    s.points_per_dollar = bounded_int(request.form.get('points_per_dollar'), 1, 1, MAX_POINTS)
+    s.max_discount_per_order = bounded_int(request.form.get('max_discount_per_order'), 0, 0, MAX_AMOUNT)
+    s.spend_per_point = bounded_int(request.form.get('spend_per_point'), 1, 1, MAX_AMOUNT)
     after = (s.is_enabled, s.points_per_dollar, s.max_discount_per_order, s.spend_per_point)
     if before != after:
         record_staff_audit('UPDATE_REWARD_SETTING', details=f"紅利設定 (啟用/幾點折$1/單筆折抵上限/每幾元送1點)：{before} → {after}")
     db.session.commit()
-    return redirect(_dashboard('users'))
+    return redirect(_dashboard('rewards'))   # 表單在「回饋商城與優惠券」分頁 (只有優惠券權限的員工進不了會員頁)
 
 
 # ==============================================================================
@@ -685,18 +871,38 @@ def restore_backup():
     return redirect(_dashboard())
 
 
-EXPORT_TABLE_PERMISSION = {'User': 'members', 'UserCoupon': 'members', 'Coupon': 'coupons', 'MenuItem': 'menu', 'Order': 'reports'}
+# 各工作表需要的權限；None = 只限店長以上 (進出日誌含 IP、員工操作稽核：與稽核頁 audit.index 相同)。不在表內的一律不匯出
+EXPORT_TABLE_PERMISSION = {'User': 'members', 'UserCoupon': 'members', 'Coupon': 'coupons', 'MenuItem': 'menu', 'Order': 'reports',
+                           'OrderItem': 'reports', 'Analytics': 'reports', 'AdminLog': None}
+
+
+def _can_export(table):
+    if table not in EXPORT_TABLE_PERMISSION:
+        return False
+    perm = EXPORT_TABLE_PERMISSION[table]
+    return current_user.role in MANAGER_ROLES if perm is None else current_user.has_permission(perm)
+
+
+def _export_date(value, label):
+    """匯出區間日期 (YYYY-MM-DD)；格式錯誤回 400，不讓 strptime 的 ValueError 變成 500"""
+    if not value:
+        return value
+    try:
+        datetime.strptime(value, '%Y-%m-%d')
+    except ValueError:
+        raise AppError(f'❌ {label}格式錯誤，請使用 YYYY-MM-DD！')
+    return value
 
 
 @admin_bp.route('/admin/export_excel', methods=['POST'])
 @permission_required('menu')
 def export_excel():
     # 資料表依頁面權限過濾：只有「菜單」權限的櫃檯不能匯出會員 / 訂單 (匯出按鈕在菜單分頁，整個路由以 menu 權限進入)
-    tables = [t for t in request.form.getlist('tables')
-              if current_user.has_permission(EXPORT_TABLE_PERMISSION.get(t, 'members'))]
+    tables = [t for t in request.form.getlist('tables') if _can_export(t)]
     if not tables:
         raise AppError('❌ 請至少勾選一個資料表 (且您有該資料的頁面權限)！')
-    start, end = request.form.get('start_date'), request.form.get('end_date')
+    start = _export_date(request.form.get('start_date'), '開始日期')
+    end = _export_date(request.form.get('end_date'), '結束日期')
     suffix = f"_{start}_to_{end}" if start and end else ''
     return send_xlsx(excel_service.generate_excel_export(tables, start, end),
                      f"Kiosk_Export_{datetime.now():%Y%m%d_%H%M%S}{suffix}.xlsx")
@@ -722,9 +928,13 @@ def import_smart():
 @admin_bp.route('/api/admin_live_orders')
 @permission_required('reports')
 def api_admin_live_orders():
+    from app.models.enums import OrderStatus
     orders = analytics_service.load_dashboard_orders()
     start, end = todays_range()
-    today = [o for o in orders if o.created_at and start <= o.created_at < end]
+    # 今天建立、預約今天取餐，以及前幾天遺留的製作中訂單 (總覽「超過預估時間仍未出餐」連到這個看板)
+    today = [o for o in orders if (o.created_at and start <= o.created_at < end)
+             or (o.pickup_at and start <= o.pickup_at < end)
+             or (o.status == OrderStatus.PENDING and o.created_at and o.created_at < start)]
     limit = max(1, min(100, request.args.get('limit', 3, type=int) or 3))
     node_names = node_name_map()
     return jsonify({
@@ -743,12 +953,22 @@ def api_admin_live_orders():
             'need_cutlery': bool(o.need_cutlery), 'note': o.note or '',
             'created_at': o.created_at.strftime('%m-%d %H:%M'), 'status': o.status,
             'discount_amount': o.discount_amount or 0, 'total_price': o.total_price,
+            'refunded_amount': o.refunded_amount or 0,
             'items': [i.to_dict() for i in o.items],
         } for o in today],
         'menu_items': [{'id': m.id, 'stock': m.stock or 0, 'total_stock': m.total_stock or 0,
                         'is_sold_out': not m.is_available} for m in MenuItem.query.all()],
         'analytics': _analytics(orders, limit),
     })
+
+
+@admin_bp.route('/api/admin/menu_items/<int:id>/stock')
+@permission_required('menu')
+def api_menu_item_stock(id):
+    """菜單頁「編輯品項」開啟時取目前庫存：沒有「報表」權限的人頁面不會即時同步，用載入當下的庫存當差額基準會存錯"""
+    item = get_own(MenuItem, id, '品項')
+    return jsonify({'success': True, 'id': item.id, 'stock': item.stock or 0, 'total_stock': item.total_stock or 0,
+                    'is_sold_out': bool(item.is_sold_out)})
 
 
 @admin_bp.route('/api/generate_item_description', methods=['POST'])

@@ -11,15 +11,29 @@
     let lastStatus = data.status;
     let lastDelivery = data.delivery_status || '';
     let notified = data.status === 'Completed';
+    let deliveryNotified = data.delivery_status || '';   // 外送訂單：已通知過的配送狀態 (out / delivered 各通知一次)
+
+    function notify(title, body) {
+        if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]);
+        Kiosk.beep(880, 400);
+        if (window.Notification && Notification.permission === 'granted') {
+            try { new Notification(title, { body }); } catch (err) { /* 部分手機不支援 */ }
+        }
+    }
 
     function announceReady(d) {
         if (notified) return;
         notified = true;
-        if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]);
-        Kiosk.beep(880, 400);
-        if (window.Notification && Notification.permission === 'granted') {
-            try { new Notification(Kiosk.t('track_ready_title', '餐點已完成'), { body: `${Kiosk.t('track_pickup_no', '取餐號碼')} ${Kiosk.pickupNo(d.pickup_number)}${Kiosk.t('track_ready_body', '，請至櫃檯取餐')}` }); } catch (err) { /* 部分手機不支援 */ }
-        }
+        notify(Kiosk.t('track_ready_title', '餐點已完成'), `${Kiosk.t('track_pickup_no', '取餐號碼')} ${Kiosk.pickupNo(d.pickup_number)}${Kiosk.t('track_ready_body', '，請至櫃檯取餐')}`);
+    }
+
+    /** 外送訂單不提示「請至櫃檯取餐」：改在外送員出發 / 送達時通知 */
+    function announceDelivery(d) {
+        if (!['out', 'delivered'].includes(d.delivery_status) || deliveryNotified === d.delivery_status) return;
+        deliveryNotified = d.delivery_status;
+        const body = d.delivery_status === 'out' ? Kiosk.t('track_hint_out', '外送員已出發，請留意電話！')
+            : Kiosk.t('track_hint_delivered', '已送達，祝您用餐愉快！');
+        notify(Kiosk.t(`delivery_${d.delivery_status}`, d.delivery_label), body);
     }
 
     // ---------------------------------------------------------------- Web Push 訂閱
@@ -32,7 +46,8 @@
     async function subscribePush() {
         if (!data.push_enabled || !('serviceWorker' in navigator) || !('PushManager' in window)) return false;
         try {
-            const vapid = await Kiosk.api('/api/push/vapid');
+            // 帶訂單 uuid：用訂單所屬店家的設定與公鑰 (送出推播時以該店私鑰簽章)
+            const vapid = await Kiosk.api(`/api/push/vapid?order=${encodeURIComponent(data.uuid)}`);
             if (!vapid.enabled || !vapid.public_key) return false;
             const reg = await navigator.serviceWorker.ready;
             const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapid.public_key) });
@@ -44,14 +59,31 @@
         }
     }
 
+    /** 依最新資料重繪品項清單 (結構同 track.html 的初始渲染；品名以 textContent 寫入) */
+    function applyItems(items) {
+        const list = document.getElementById('trackItems');
+        if (!list || !Array.isArray(items)) return;
+        list.replaceChildren(...items.map((it) => {
+            const li = document.createElement('li');
+            li.className = 'list-group-item bg-dark text-white border-secondary d-flex justify-content-between';
+            const name = document.createElement('span');
+            name.textContent = it.name;
+            const qty = document.createElement('span');
+            qty.textContent = `x${it.quantity}`;
+            li.append(name, qty);
+            return li;
+        }));
+    }
+
     function apply(d) {
+        applyItems(d.items);
         // 待分店確認的文字沿用本頁的 pending_branch 字串 (共用的 pickup_pending 字串多了「取餐號：」前綴)
         numberEl.textContent = d.pickup_pending ? Kiosk.t('pending_branch', '待分店確認') : Kiosk.pickupNo(d.pickup_number);
         statusEl.textContent = Kiosk.t(`status_${d.status}`, d.status_label);
         statusEl.className = `fs-4 fw-bold mt-2 ${d.status === 'Completed' ? 'text-success' : (d.status === 'Cancelled' ? 'text-danger' : '')}`;
         if (d.status === 'Completed') {
             hintEl.textContent = Kiosk.t('track_hint_ready', '餐點已完成，請至櫃檯取餐！');
-            announceReady(d);
+            if (!d.delivery_status) announceReady(d);
         } else if (d.status === 'PickedUp') {
             hintEl.textContent = Kiosk.t('track_hint_picked', '已取餐，祝您用餐愉快！');
         } else if (d.status === 'Cancelled') {
@@ -68,6 +100,7 @@
             }
             if (d.delivery_status === 'out') hintEl.textContent = Kiosk.t('track_hint_out', '外送員已出發，請留意電話！');
             if (d.delivery_status === 'delivered') hintEl.textContent = Kiosk.t('track_hint_delivered', '已送達，祝您用餐愉快！');
+            announceDelivery(d);
         }
         applyDriver(d);
         applyFeedback(d.feedback || {});
@@ -102,7 +135,10 @@
     function applyDriver(d) {
         const box = document.getElementById('trackDriverBox');
         if (!box) return;
-        const show = d.delivery_status === 'out' && 'driver_position' in d;
+        // 店家未啟用 GPS 回報時位置永遠不會出現：不顯示「等待外送員回報位置…」與「分享我的位置」
+        // (後端有帶 gps_enabled 時以它為準；舊版後端沒有這個欄位時維持原本判斷)
+        const gps = 'gps_enabled' in d ? Boolean(d.gps_enabled) : 'driver_position' in d;
+        const show = d.delivery_status === 'out' && gps;
         box.classList.toggle('d-none', !show);
         if (!show) return;
         const pos = d.driver_position;
@@ -178,7 +214,7 @@
             try {
                 const res = await Kiosk.api(`/api/track/${data.uuid}/feedback`,
                     { json: { rating, comment: document.getElementById('feedbackComment').value } });
-                showThanks(res.rating, res.review_url, res.message);
+                showThanks(res.rating, res.review_url, res.message_i18n || res.message);
             } catch (err) {
                 document.getElementById('feedbackMsg').textContent = err.message;
                 btn.disabled = false;

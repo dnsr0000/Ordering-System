@@ -40,8 +40,8 @@ POS / 店員
   POST /api/kitchen/orders/<id>/station_done {station_id}                 GET /api/kitchen/prep_card/<id>
   POST /api/promotions/preview   促銷試算 (點餐頁 / POS 即時顯示)
 顧客
-  GET /api/eta、/api/menu/availability (ETag)、POST /api/reorder/<id>、/api/voice/parse、/api/chat、/api/gift_cards/balance、
-  /api/member/marketing {opt_in}
+  GET /api/menu/availability (ETag)、/api/reorder/<id>
+  POST /api/eta {items}、/api/voice/parse、/api/chat、/api/gift_cards/balance、/api/member/marketing {opt_in}
   POST /api/chat {message, history, order_uuid?} → {answer, source, suggestions, did_you_mean, handoff}
   POST /api/chat/handoff {history, order_uuid?, message?} → {token, status, messages}   轉接真人客服
   GET /api/chat/handoff/<token>?after=<id>、POST …/<token>/message {text}、…/<token>/close   (對話憑證存取)
@@ -55,7 +55,7 @@ POS / 店員
   reservation_result (門市)；/reserve/<代碼>/pay 訂位訂金 (每次開啟換新的交易編號)
   POST /webhooks/ubereats (X-Uber-Signature)、/webhooks/foodpanda/<店家代碼> (Bearer 權杖)   外送平台
   /api/sync/v1/hello、push、pull、media/menu/<路徑> (分店權杖，詳見 docs/SYNC.txt)      GET /healthz、GET /metrics?token=
-  /device/pair、POST /api/device/heartbeat {version, path} (回傳 locked / reload)
+  /device/pair (可帶 ?shop=<代號> 指定店家；後台新增裝置時提示的網址已帶上)、POST /api/device/heartbeat {version, path} (回傳 locked / reload)
 後台
   /admin/menu、/admin/members?q=&page=、/admin/audit、/admin/tenants、/admin/expenses?month=YYYY-MM (POST action=add | edit |
   delete | copy_fixed)、/admin/pnl?month= | start=&end= [&node=分店 uuid] [&format=xlsx]、/admin/cost-history?days=30&kind=ingredient|menu、
@@ -66,4 +66,10 @@ POS / 店員
   GET orders?since=&after_id=&limit= (依建立時間；next 為下一頁參數)、GET orders?cursor=0 (異動追蹤，回傳 next_cursor；建議在
   線上端呼叫)、GET orders/<uuid>、GET menu (ETag)、POST menu/<id>/availability {sold_out, stock}、GET members/<手機>、
   GET reports/daily?date=
+  - next_cursor 通常是整數，同一筆提交的訂單跨頁時為「序號:id」字串，請原樣帶回 cursor。
+  - since / until 無時區時視為門市本地時間，帶時區 (Z / +08:00) 會換算為本地時間。
+  - status 值為 Pending / Completed / PickedUp / Cancelled (不分大小寫)。
+  - GET menu 的 price 為目前售價 (含特價)，另有 list_price (原價)、service_hint 與供應時段欄位 (sale_from / sale_until、
+    avail_days / avail_start / avail_end)；is_available 已考慮供應時段。
+  - 線上端 GET menu 可帶 node=分店 uuid (依該分店回報的庫存)；線上端的 POST availability 不接受 stock (庫存以分店為準)。
   完整說明 (參數、回應欄位、錯誤碼、Webhook 簽章範例、線上試打)：/developers；OpenAPI 3.0：/developers/openapi.json

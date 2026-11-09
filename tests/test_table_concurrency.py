@@ -110,8 +110,9 @@ def test_settlement_and_cancellation_at_the_same_time(app, item):
         assert _status(settle) in (200, 409) and _status(cancel) == 200, (settle, cancel)
         status, payment, _ = _order(app, order_id)
         assert status == 'Cancelled'
-        assert payment in ('unpaid', 'refund_required'), f'第 {rnd} 輪：已取消的訂單不可維持已結帳 ({payment})'
-        assert (payment == 'refund_required') == (_status(settle) == 200), '有收款才需要退款'
+        # 桌位現金結帳後作廢會當場退現金，付款狀態直接變 refunded (不停在 refund_required)
+        assert payment in ('unpaid', 'refunded'), f'第 {rnd} 輪：已取消的訂單不可維持已結帳 ({payment})'
+        assert (payment == 'refunded') == (_status(settle) == 200), '有收款才需要退款'
 
 
 def test_order_submission_while_table_is_deleted(app, item):
@@ -239,7 +240,8 @@ def test_conflict_check_command_finds_and_fixes(app, item):
     for kind, oid in (('orphan', orphan), ('cancelled_paid', cancelled_paid), ('stale_unpaid', stale)):
         assert f'[{kind}]' in result.output and f'#{oid} ' in result.output, (kind, result.output)
     result = runner.invoke(args=['tables', 'check', '--fix'])
-    assert result.exit_code == 0 and '已自動修正' in result.output
+    # orphan / stale_unpaid 需人工確認，--fix 後仍回 1
+    assert result.exit_code == 1 and '已自動修正' in result.output
     assert _order(app, cancelled_paid)[1] == 'refund_required'
     with app.app_context():  # 清理：讓之後的檢查不受這幾張測試訂單影響
         for oid in ids:

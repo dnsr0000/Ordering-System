@@ -20,9 +20,9 @@ from app.models.enums import PaymentMethod
 from app.models.expense import EXPENSE_CATEGORIES, CostHistory, Expense
 from app.models.inventory import Ingredient, RecipeLine
 from app.models.menu import MenuItem
-from app.models.order import Order
 from app.models.payment import PaymentKind, PaymentRecord
 from app.services import report_service, settings_service
+from app.services.accounting_service import filter_payments_by_node
 from app.sync import runtime as sync_runtime
 from app.utils import day_bounds, parse_date, safe_int, workbook_bytes
 
@@ -32,6 +32,7 @@ FEE_GROUPS = {
     'online_fee_percent': (PaymentMethod.ATM, PaymentMethod.CVS),
     'platform_fee_percent': (PaymentMethod.PLATFORM,),
 }
+ECPAY_STAFF = 'ecpay'   # 綠界線上付款完成時記錄的收款經手人 (payment_ecpay)
 FEE_LABELS = {'card_fee_percent': '刷卡手續費', 'mobile_fee_percent': '行動支付手續費', 'online_fee_percent': '線上金流手續費',
               'platform_fee_percent': '外送平台抽成'}
 
@@ -87,8 +88,13 @@ def expenses(tenant_id, start, end, node_uuid=None):
 
 
 def _own(rows):
-    """本機登錄的費用 (線上端的費用 node_uuid 為空；分店上傳到線上端的不算線上端自己的)"""
+    """
+    本機登錄的費用 (線上端的費用 node_uuid 為空；分店上傳到線上端的不算線上端自己的)。
+    分店本機只有自己的費用 (費用只往上同步)：首次連線前 (或由單機改為分店前) 登錄的費用 node_uuid 為空，也是本機的。
+    """
     local = sync_runtime.local_node_uuid()
+    if sync_runtime.is_node():
+        return [e for e in rows if (e.node_uuid or None) in (None, local)]
     return [e for e in rows if (e.node_uuid or None) == (local or None)]
 
 
@@ -117,18 +123,22 @@ def copy_fixed(tenant_id, month, staff=''):
 # ---------------------------------------------------------------------------
 def _fees(tenant_id, t0, t1, node_uuid):
     cfg = settings_service.get('pnl', tenant_id)
-    q = db.session.query(PaymentRecord.method, db.func.sum(PaymentRecord.amount)).filter(
+    # 綠界線上收款 (經手人 ecpay：線上信用卡 / Apple Pay / ATM / 超商) 一律套用線上金流費率，不是刷卡機費率
+    via_ecpay = PaymentRecord.staff_username == ECPAY_STAFF
+    q = db.session.query(PaymentRecord.method, via_ecpay, db.func.sum(PaymentRecord.amount)).filter(
         PaymentRecord.tenant_id == tenant_id, PaymentRecord.created_at >= t0, PaymentRecord.created_at < t1,
         PaymentRecord.amount > 0,
-        PaymentRecord.kind.in_((PaymentKind.SALE, PaymentKind.SETTLE, PaymentKind.TOPUP, PaymentKind.GIFT_SALE)))
+        PaymentRecord.kind.in_((PaymentKind.SALE, PaymentKind.SETTLE, PaymentKind.TOPUP, PaymentKind.GIFT_SALE,
+                                PaymentKind.DEPOSIT)))
     if node_uuid:
-        q = q.join(Order, Order.id == PaymentRecord.order_id).filter(Order.node_uuid == node_uuid)
-    by_method = dict(q.group_by(PaymentRecord.method).all())
-    out = {}
-    for key, methods in FEE_GROUPS.items():
-        base = sum(int(by_method.get(m) or 0) for m in methods)
-        out[key] = round(base * float(cfg.get(key) or 0) / 100)
-    return out
+        q = filter_payments_by_node(q, node_uuid)
+    group_of = {m: key for key, methods in FEE_GROUPS.items() for m in methods}
+    base = defaultdict(int)
+    for method, ecpay, amount in q.group_by(PaymentRecord.method, via_ecpay).all():
+        key = 'online_fee_percent' if ecpay else group_of.get(method)
+        if key:
+            base[key] += int(amount or 0)
+    return {key: round(base[key] * float(cfg.get(key) or 0) / 100) for key in FEE_GROUPS}
 
 
 def statement(tenant_id, start, end, node_uuid=None):
@@ -157,6 +167,9 @@ def statement(tenant_id, start, end, node_uuid=None):
         'labor_missing_wage': r.get('labor_missing_wage') or [],
         # 打卡紀錄與員工時薪只在各門市主機：線上端或依分店檢視時不含人事成本 (淨利會偏高)
         'labor_available': not node_uuid and not sync_runtime.is_hub(),
+        # 原物料與配方是各主機的本機資料 (不同步)：線上端計算分店訂單的銷貨成本時，用的是線上端自己的配方 /
+        # 餐點單位成本，可能偏低甚至為 0 (毛利、淨利偏高)
+        'cogs_available': not node_uuid and not sync_runtime.is_hub(),
     }
 
 
@@ -217,6 +230,15 @@ def to_excel(cur, prev, months, shop_name=''):
                 ws.append([f'  {clabel}', cur['expenses'][ckey], prev['expenses'][ckey],
                            cur['expenses'][ckey] - prev['expenses'][ckey]])
     ws.append(['淨利率 %', cur['net_margin'], prev['net_margin'], round(cur['net_margin'] - prev['net_margin'], 1)])
+    notes = []
+    if not cur.get('cogs_available', True):
+        notes.append('銷貨成本只依線上端的配方 / 餐點單位成本估算 (分店的配方不同步)，可能偏低')
+    if not cur.get('labor_available', True):
+        notes.append('人事成本未列入 (打卡紀錄與員工時薪只在各門市主機)')
+    if notes:
+        ws.append([])
+        for note in notes:
+            ws.append(['說明', note])
     s2 = wb.create_sheet('近六個月')
     s2.append(['月份', '營業收入淨額', '營業毛利', '營業費用', '營業淨利', '淨利率 %'])
     for m in months:
@@ -234,8 +256,15 @@ def ingredient_cost_at(tenant_id, when):
                                      CostHistory.field == 'unit_cost', CostHistory.changed_at > when) \
         .order_by(CostHistory.changed_at.desc(), CostHistory.id.desc()).all()
     out = dict(current)
+    expected, broken = dict(current), set()
     for h in later:   # 由新到舊覆蓋，最後留下的是 when 之後第一筆變動的舊值
-        out[h.ref_id] = h.old_value
+        # 同一原料的變動應前後相接 (這筆的新值 = 下一筆的舊值，最新一筆的新值 = 目前成本)。接不上的是已刪除原料留下的
+        # 紀錄 (SQLite 會重用最大的 id)：從這筆起更舊的都不屬於目前這個原料
+        if h.ref_id in broken or h.ref_id not in expected \
+                or abs(float(h.new_value or 0) - expected[h.ref_id]) > 0.001:
+            broken.add(h.ref_id)
+            continue
+        out[h.ref_id] = expected[h.ref_id] = float(h.old_value or 0)
     return out
 
 

@@ -50,9 +50,10 @@ def test_csrf_scan_every_post_route(app, csrf_enabled):
             continue
         if rule.endpoint.startswith(('sync_api.', 'payment.ecpay_', 'delivery.ubereats_webhook', 'delivery.foodpanda_webhook',
                                      'table_pay.notify', 'table_pay.result', 'reservations.deposit_notify',
-                                     'reservations.deposit_result', 'api_v1.')):
+                                     'reservations.deposit_result', 'api_v1.', 'driver.position')):
             # 分店同步 API 以權杖驗證、綠界通知以檢查碼驗證、外送平台 Webhook 以簽章 / 權杖驗證 (都不使用 cookie)，
             # 見 test_sync_hub_node / test_payment_ecpay / test_delivery_platforms
+            # 外送員回報位置只憑網址裡的 driver_token 授權 (匿名 session 逾期後 csrf_token 會失效)，見 app/routes/driver.py
             continue
         total += 1
         path = re.sub(r'<[^>]+>', '1', rule.rule)

@@ -35,7 +35,7 @@
             try {
                 const data = await Kiosk.api('/api/otp/send', { json: { phone, purpose: form.dataset.otpPurpose || 'register' } });
                 msg.className = 'small mb-2 text-success';
-                msg.textContent = data.message;
+                msg.textContent = data.message_i18n || data.message;
                 countdown(btn, 60);
             } catch (err) {
                 msg.className = 'small mb-2 text-danger';

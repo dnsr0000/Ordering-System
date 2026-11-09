@@ -67,7 +67,7 @@
         const shown = String(Kiosk.t(labelsKey, '') || '').split('|');
         return html`
             <div class="mb-2">
-                <label class="form-label small fw-bold text-white-50 mb-1" for="${id}">${label}</label>
+                <label class="form-label small fw-bold text-secondary mb-1" for="${id}">${label}</label>
                 <select id="${id}" class="form-select form-select-sm">
                     ${options.map((o, i) => html`<option value="${o}">${shown.length === options.length ? shown[i] : o}</option>`)}
                 </select>
@@ -86,7 +86,7 @@
             const addons = modifierOptions.filter((m) => m.category === 'addons');
             if (!addons.length) return '';
             return html`
-                <label class="form-label small fw-bold text-white-50 mb-1">${Kiosk.t('addons', '加料選項')}</label>
+                <label class="form-label small fw-bold text-secondary mb-1">${Kiosk.t('addons', '加料選項')}</label>
                 <div class="d-flex flex-wrap gap-3">
                     ${addons.map((m) => html`
                         <div class="form-check">
@@ -151,11 +151,18 @@
         confirmBtn.disabled = true;
         Kiosk.setHtml(confirmBtn, html`<span class="spinner-border spinner-border-sm me-2"></span>${Kiosk.t('rw_redeeming', '兌換中...')}`);
         try {
-            const data = await Kiosk.api('/api/redeem_reward', { json: payload });
+            let data;
+            try {
+                data = await Kiosk.api('/api/redeem_reward', { json: payload });
+            } catch (err) {
+                if (!(err.data && err.data.need_pin)) throw err;
+                confirmBtn.innerHTML = idle;   // 等待輸入 PIN 時不顯示「兌換中...」(按鈕仍停用，避免重複送出)
+                data = await redeemWithPin(payload, err);
+            }
             setPoints(data.remaining_points);
             modal.hide();
             if (data.is_coupon) {
-                alert(data.message);
+                alert(data.message_i18n || data.message);
             } else {
                 const cart = readCart();
                 cart.push(data.redeemed_item);
@@ -168,6 +175,24 @@
         } finally {
             confirmBtn.disabled = false;
             confirmBtn.innerHTML = idle;
+        }
+    }
+
+    /**
+     * 人臉登入 / 門市 LINE 登入的工作階段：後端要求 PIN (確認一次後整個工作階段有效)。
+     * 在兌換視窗內顯示遮蔽的 PIN 欄位後重送，PIN 錯誤時可在同一個欄位重試；取消 / 關閉視窗時拋出原本的錯誤。
+     */
+    async function redeemWithPin(payload, err) {
+        let reason = err;
+        for (;;) {
+            const pin = await askPin(`${reason.message} ${Kiosk.t('enter_pin', '請輸入 PIN 碼：')}`, modalAlert);
+            if (!pin) throw err;
+            try {
+                return await Kiosk.api('/api/redeem_reward', { json: { ...payload, pin } });
+            } catch (retryErr) {
+                if (!(retryErr.data && retryErr.data.need_pin)) throw retryErr;
+                reason = retryErr;
+            }
         }
     }
 
@@ -193,7 +218,7 @@
         beforeLogout: () => store.remove(CART_KEY),
     });
 
-    modalEl.addEventListener('hidden.bs.modal', () => { selected = null; });
+    modalEl.addEventListener('hidden.bs.modal', () => { selected = null; settlePin(null); });
 
     // ---------------------------------------------------------------- 會員動態條碼
     let qrTimer = null;
@@ -204,6 +229,44 @@
         return json ? Kiosk.api('/api/member_qr', { json }) : Kiosk.api('/api/member_qr');
     }
 
+    let pinResolver = null;   // 等待會員在條碼 / 兌換視窗內輸入 PIN
+    let pinForm = null;       // 目前顯示中的 PIN 表單
+
+    function settlePin(value) {
+        const resolve = pinResolver;
+        pinResolver = null;
+        if (pinForm) pinForm.remove();
+        pinForm = null;
+        if (resolve) resolve(value);
+    }
+
+    /**
+     * 在 anchor 元素 (預設為條碼視窗的訊息列) 之後顯示遮蔽的 PIN 欄位
+     * (點餐機是共用螢幕，不可用 window.prompt 明碼顯示)；關閉視窗時回 null。
+     */
+    function askPin(message, anchor = document.getElementById('memberQrMsg')) {
+        settlePin(null);
+        const form = document.createElement('form');
+        form.id = 'memberPinForm';
+        form.className = 'mt-2';
+        form.autocomplete = 'off';
+        Kiosk.setHtml(form, html`
+            <label class="form-label small text-secondary mb-1" for="memberPinInput">${message}</label>
+            <div class="d-flex gap-1 justify-content-center">
+                <input class="form-control form-control-sm" type="password" id="memberPinInput" inputmode="numeric" autocomplete="off"
+                       maxlength="6" placeholder="${Kiosk.t('pin', 'PIN 碼')}" aria-label="${Kiosk.t('pin', 'PIN 碼')}" required>
+                <button class="btn btn-sm btn-warning text-nowrap" type="submit">${Kiosk.t('confirm', '確認')}</button>
+            </div>`);
+        form.addEventListener('submit', (ev) => {
+            ev.preventDefault();
+            settlePin(form.querySelector('input').value.trim() || null);
+        });
+        anchor.after(form);
+        pinForm = form;
+        form.querySelector('input').focus();
+        return new Promise((resolve) => { pinResolver = resolve; });
+    }
+
     async function loadMemberQr(rotate = false) {
         const msg = document.getElementById('memberQrMsg');
         msg.textContent = '';
@@ -212,14 +275,23 @@
             try {
                 data = await fetchQr(rotate);
             } catch (err) {
-                // 人臉登入的工作階段：後端要求 PIN (確認一次後整個工作階段有效)
+                // 人臉登入的工作階段：後端要求 PIN (確認一次後整個工作階段有效)；PIN 錯誤時可在同一個欄位重試
                 if (!(err.data && err.data.need_pin)) throw err;
-                const pin = window.prompt(`${err.message}\n${Kiosk.t('enter_pin', '請輸入 PIN 碼：')}`, '');
-                if (!pin) {
-                    msg.textContent = Kiosk.t('rw_barcode_needs_pin', '需輸入 PIN 碼才能出示會員條碼');
-                    return;
+                let reason = err;
+                for (;;) {
+                    const pin = await askPin(`${reason.message} ${Kiosk.t('enter_pin', '請輸入 PIN 碼：')}`);
+                    if (!pin) {
+                        if (!pinResolver) msg.textContent = Kiosk.t('rw_barcode_needs_pin', '需輸入 PIN 碼才能出示會員條碼');
+                        return;
+                    }
+                    try {
+                        data = await fetchQr(rotate, pin);
+                        break;
+                    } catch (retryErr) {
+                        if (!(retryErr.data && retryErr.data.need_pin)) throw retryErr;
+                        reason = retryErr;
+                    }
                 }
-                data = await fetchQr(rotate, pin.trim());
             }
             const img = document.getElementById('memberQrImg');
             img.src = data.qr;
@@ -235,7 +307,7 @@
     }
 
     const qrModalEl = document.getElementById('memberQrModal');
-    if (qrModalEl) qrModalEl.addEventListener('hidden.bs.modal', () => { qrOpen = false; clearTimeout(qrTimer); });
+    if (qrModalEl) qrModalEl.addEventListener('hidden.bs.modal', () => { qrOpen = false; clearTimeout(qrTimer); settlePin(null); });
 
     Kiosk.on(document, 'click', {
         'show-member-qr': () => {
@@ -257,7 +329,7 @@
             const msg = document.getElementById('marketingMsg');
             try {
                 const data = await Kiosk.api('/api/member/marketing', { json: { opt_in: optIn.checked } });
-                msg.textContent = data.message;
+                msg.textContent = data.message_i18n || data.message;
             } catch (err) {
                 optIn.checked = !optIn.checked;
                 msg.textContent = err.message;

@@ -7,7 +7,7 @@
 - 設定在後台「數位看板」區塊 (settings_service 的 signage)。
 """
 import json
-from datetime import date, datetime
+from datetime import datetime
 
 from flask import Blueprint, abort, g, render_template, url_for
 
@@ -77,13 +77,15 @@ def _menu(cfg, now):
     today = now.date()
     items = [i for i in MenuItem.query.order_by(MenuItem.id.asc()).all()
              if not i.is_branch_hidden and _on_sale(i, today)]
-    avail = _availability_map(items, is_hub, pickup_node)
+    # 線上端看板沒有選分店的介面：分店數不是 1 (沒選到取餐分店) 時改看品項本身的狀態，
+    # 不用分店庫存 (空的分店庫存會把全部餐點判成售完)
+    avail = _availability_map(items, is_hub and pickup_node is not None, pickup_node)
     en_cats = i18n_service.category_labels('en') if cfg['showEnglish'] else {}
 
     grouped = {}
     for i in items:
         available, hint = avail[i.id]
-        if cfg['hideSoldOut'] and not available:
+        if cfg['hideSoldOut'] and not available and not hint:   # 只隱藏售完；供應時段外的仍顯示並標示時段
             continue
         grouped.setdefault((i.category or '未分類').strip(), []).append({
             'id': i.id,
@@ -113,7 +115,7 @@ def _pickup():
                                 Order.payment_status.notin_(('pending', 'authorizing', 'expired')))
              .order_by(Order.id.desc()).limit(MAX_READY).all())
     from app.models.reservation import WaitlistEntry
-    called = (WaitlistEntry.query.filter_by(business_date=date.today(), status='called')
+    called = (WaitlistEntry.query.filter_by(business_date=start.date(), status='called')   # 與候位取號同一營業日
               .order_by(WaitlistEntry.called_at.desc()).limit(MAX_CALLED).all())
     return {'ready': [{'id': o.id, 'number': o.display_pickup_number} for o in ready],
             'called': [{'id': w.id, 'label': w.label} for w in called]}
@@ -129,6 +131,8 @@ def api_signage():
     payload = {
         'success': True,
         'headline': cfg['headline'],
+        # 版面設定 (看板整天開著不會重新載入)：前端發現與載入時不同就重新整理頁面
+        'layout': {k: cfg[k] for k in ('columns', 'pageSeconds', 'promoSeconds', 'showPickup')},
         'categories': _menu(cfg, now),
         'promos': _promo_lines(cfg, now),
         'pickup': _pickup() if cfg['showPickup'] else None,

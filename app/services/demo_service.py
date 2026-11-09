@@ -15,6 +15,7 @@
 """
 import json
 import random
+import re
 import secrets
 from datetime import date, datetime, time, timedelta
 
@@ -78,8 +79,19 @@ def _marker(tenant_id):
         .execution_options(skip_tenant_filter=True).first()
 
 
+def _normalize_slug(slug):
+    """與公開註冊相同的規則 (小寫、只留 a-z0-9-)：/shop/<代號> 一律以小寫查詢，大寫代號建出的店家會打不開"""
+    norm = re.sub(r'[^a-z0-9-]+', '-', str(slug or '').strip().lower()).strip('-')
+    if not norm or len(norm) > 80:
+        raise DemoError(f'店家代號「{slug}」不合法 (請用英文小寫、數字與 -，最多 80 字)')
+    return norm
+
+
 def find_demo(slug=DEFAULT_SLUG):
+    raw, slug = str(slug or '').strip(), _normalize_slug(slug)
     tenant = Tenant.query.filter_by(slug=slug).first()
+    if tenant is None and raw != slug:   # 修正前以大寫代號建立的示範店家 (demo remove 仍要刪得掉)
+        tenant = Tenant.query.filter_by(slug=raw).first()
     if tenant is None:
         return None
     if _marker(tenant.id) is None:
@@ -119,6 +131,7 @@ def seed(slug=DEFAULT_SLUG, days=60, orders_per_day=80, seed_value=42, password=
         raise DemoError('示範資料請在單機 (SYNC_ROLE=standalone) 建立，分店主機與線上端不可執行')
     if not 1 <= days <= 400 or not 1 <= orders_per_day <= 500:
         raise DemoError('days 需為 1 ~ 400、orders-per-day 需為 1 ~ 500')
+    slug = _normalize_slug(slug)
     if find_demo(slug) is not None:
         if not reset:
             raise DemoError(f'示範店家「{slug}」已存在 (加上 --reset 重新建立)')

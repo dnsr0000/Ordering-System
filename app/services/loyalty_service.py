@@ -48,6 +48,28 @@ def _expire_months(tenant_id):
     return int(settings_service.get('member', tenant_id).get('points_expire_months') or 0)
 
 
+EXPIRE_REASON = 'expire'
+
+
+def _expire_reason(months):
+    """到期扣點異動的 reason：記下當次使用的有效期限 (月)，事後校正以當時的期限重算 (之後改設定不溯及既往)"""
+    return f'{EXPIRE_REASON}:{int(months)}'
+
+
+def _expire_row_months(reason, current_months):
+    """
+    到期扣點紀錄當時的有效期限 (月)；不是到期紀錄時回傳 None。
+    舊版的紀錄 (reason 為 'expire'，沒有記下期限) 只能以目前設定推算。
+    """
+    reason = reason or ''
+    if reason == EXPIRE_REASON:
+        return current_months
+    if reason.startswith(EXPIRE_REASON + ':'):
+        months = reason[len(EXPIRE_REASON) + 1:]
+        return int(months) if months.isdigit() and int(months) > 0 else current_months
+    return None
+
+
 def _lots(user_id):
     """[(得點時間, 尚未用掉的點數)] 由舊到新 (先進先出扣除所有扣點)"""
     # 到期校正 (expire_fix) 不是新得到的點數，而是修正「到期扣了多少」：從已用掉的量扣回
@@ -100,7 +122,7 @@ def expire_points(tenant_id, now=None):
     done = 0
     for (uid,) in candidates:
         amount = expiring_amount(uid, cutoff)
-        if amount > 0 and change_points(tenant_id, uid, -amount, 'expire', clamp=True):
+        if amount > 0 and change_points(tenant_id, uid, -amount, _expire_reason(months), clamp=True):
             done += 1
     db.session.commit()
     if done:
@@ -114,6 +136,7 @@ def true_up_expiry(tenant_id, user_id):
     線上端執行到期時，分店可能已經 (離線、尚未同步) 用掉同一批點數；合併後同一批點數被「到期」又被「使用」，
     會員點數被多扣甚至變負數。依時間順序重新模擬先進先出：每一次到期時，有效期限以前得到、當時尚未用掉的點數才算到期；
     與已記錄的到期量 (含先前的校正) 不同時補一筆 expire_fix。回傳校正的點數 (正數 = 退回)。
+    每次到期以「當次執行時」的有效期限 (記在 reason) 重算，之後修改期限設定不會溯及既往補點或多扣點。
     有效期限設定為 0 (不到期) 時不校正。
     """
     from collections import deque
@@ -122,14 +145,15 @@ def true_up_expiry(tenant_id, user_id):
         return 0
     rows = PointLedger.query.filter(PointLedger.user_id == user_id) \
         .order_by(PointLedger.created_at, PointLedger.id).all()
-    if not any(r.reason == 'expire' for r in rows):
+    if not any(_expire_row_months(r.reason, months) for r in rows):
         return 0
     lots, debt, correct, recorded = deque(), 0, 0, 0
     for r in rows:
         delta = r.delta or 0
-        if r.reason == 'expire':
+        row_months = _expire_row_months(r.reason, months)
+        if row_months:
             recorded -= delta
-            cutoff = add_months(r.created_at, -months)
+            cutoff = add_months(r.created_at, -row_months)
             while lots and lots[0][0] < cutoff:
                 correct += lots.popleft()[1]
         elif r.reason == 'expire_fix':
@@ -168,7 +192,8 @@ def notify_expiring(tenant_id, now=None):
     shop = db.session.get(Tenant, tenant_id)
     users = User.query.filter(User.tenant_id == tenant_id, User.points > 0, User.line_user_id != '') \
         .execution_options(skip_tenant_filter=True).all()
-    sent = 0
+    shop_name = shop.name if shop else ''
+    pending = []   # (LINE user id, 訊息)：先標記並 commit，釋放寫入鎖後才推播 (推播是網路呼叫，不可持鎖等待)
     for u in users:
         if u.points_notice_on is not None and u.points_notice_on > today - timedelta(days=days):
             continue
@@ -176,12 +201,12 @@ def notify_expiring(tenant_id, now=None):
         if up is None or up['date'] > today + timedelta(days=days):
             continue
         u.points_notice_on = today
-        line_service.push_text(tenant_id, u.line_user_id,
-                               f"{shop.name if shop else ''}：您有 {up['amount']} 點紅利將於 {up['date']:%Y/%m/%d} 到期，"
-                               f"歡迎回來使用！")
-        sent += 1
+        pending.append((u.line_user_id,
+                        f"{shop_name}：您有 {up['amount']} 點紅利將於 {up['date']:%Y/%m/%d} 到期，歡迎回來使用！"))
     db.session.commit()
-    return sent
+    for line_user_id, text in pending:
+        line_service.push_text(tenant_id, line_user_id, text)
+    return len(pending)
 
 
 # ---------------------------------------------------------------------------
@@ -214,19 +239,29 @@ def _stamps_earned(cfg, lines, final_price):
                and (not cats or (ln.menu_item.category or '').strip() in cats))
 
 
-def _grant_card_reward(tenant_id, user, cfg, order_id):
-    from app.models.coupon import Coupon, UserCoupon
+def _card_reward_coupon(tenant_id, cfg):
+    """集滿送的優惠券：(Coupon 或 None, 無法發放的原因或 None)；未設定代碼時為 (None, None)"""
+    from app.models.coupon import Coupon
+    code = str(cfg.get('reward_coupon_code') or '').strip().upper()
+    if not code:
+        return None, None
+    coupon = Coupon.query.filter_by(tenant_id=tenant_id, code=code).execution_options(skip_tenant_filter=True).first()
+    if coupon is None:
+        return None, f'獎勵優惠券「{code}」不存在'
+    err = coupon.period_error()
+    if err:   # 活動已結束 / 尚未開始：不發一張不能用的券
+        return None, f'獎勵優惠券「{coupon.code}」{err}'
+    return coupon, None
+
+
+def _grant_card_reward(tenant_id, user, cfg, order_id, coupon):
+    from app.models.coupon import UserCoupon
     if cfg.get('reward_points'):
         change_points(tenant_id, user.id, int(cfg['reward_points']), 'stamp_card', order_id=order_id)
-    code = str(cfg.get('reward_coupon_code') or '').strip().upper()
-    if code:
-        coupon = Coupon.query.filter_by(tenant_id=tenant_id, code=code).execution_options(skip_tenant_filter=True).first()
-        if coupon is not None:
-            now = datetime.now()
-            db.session.add(UserCoupon(tenant_id=tenant_id, user_id=user.id, coupon_id=coupon.id, code=coupon.code,
-                                      created_at=now, expires_at=coupon.expires_for(now), source='stamp'))
-        else:
-            logger.warning('集點卡獎勵優惠券 %s 不存在', code)
+    if coupon is not None:
+        now = datetime.now()
+        db.session.add(UserCoupon(tenant_id=tenant_id, user_id=user.id, coupon_id=coupon.id, code=coupon.code,
+                                  created_at=now, expires_at=coupon.expires_for(now), source='stamp'))
 
 
 def earn_stamps(tenant_id, user, order, lines, final_price):
@@ -242,9 +277,18 @@ def earn_stamps(tenant_id, user, order, lines, final_price):
     size = int(cfg.get('card_size') or 10)
     completed = 0
     total = stamp_count(user.id)
+    if total < size:
+        return n, 0
+    coupon, problem = _card_reward_coupon(tenant_id, cfg)
+    if problem:
+        from app.services import monitor_service
+        monitor_service.alert(f'集點卡集滿獎勵的{problem}，未發券；請到行銷活動調整券的活動期間，或到系統設定 → 集點卡修正代碼',
+                              key=f'stamp-coupon-{tenant_id}', tenant_id=tenant_id, level='warning', source='member')
+        if not cfg.get('reward_points'):
+            return n, 0   # 只設定了券：保留章數 (不扣章)，券修好後下次消費再兌換
     while total >= size:
         db.session.add(StampLedger(tenant_id=tenant_id, user_id=user.id, delta=-size, reason='complete', order_id=order.id))
-        _grant_card_reward(tenant_id, user, cfg, order.id)
+        _grant_card_reward(tenant_id, user, cfg, order.id, coupon)
         total -= size
         completed += 1
     return n, completed

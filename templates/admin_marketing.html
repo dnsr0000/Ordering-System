@@ -32,9 +32,13 @@
     {% if segment %}
     <section class="card rounded-4 p-3 mb-4" id="segmentMembers">
         <div class="d-flex justify-content-between align-items-center mb-2">
-            <h2 class="h6 fw-bold mb-0">{{ segments[segment].label }} ({{ members|length }} 位，依近一年金額排序)</h2>
-            <a class="btn btn-sm btn-warning fw-bold text-dark" href="{{ url_for('marketing.index', segment=segment, format='xlsx') }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel</a>
+            <h2 class="h6 fw-bold mb-0">{{ segments[segment].label }} ({{ member_count }} 位，依近一年金額排序)</h2>
+            {% if can_view_members %}<a class="btn btn-sm btn-warning fw-bold text-dark" href="{{ url_for('marketing.index', segment=segment, format='xlsx') }}"><i class="bi bi-file-earmark-excel me-1"></i>匯出 Excel</a>{% endif %}
         </div>
+        {% if not can_view_members %}
+        <div class="small text-white-50" id="segmentMembersDenied">會員名單需要「會員名冊」權限才能查看或匯出，請洽負責人授權。</div>
+        {% else %}
+        {% if member_count > member_limit %}<div class="small text-warning mb-2" id="segmentMembersTruncated">僅列前 {{ member_limit }} 位，完整名單請匯出 Excel</div>{% endif %}
         <div class="table-responsive"><table class="table table-dark table-sm align-middle mb-0">
             <thead><tr><th>會員</th><th>最近消費</th><th class="text-end">距今</th><th class="text-end">次數</th><th class="text-end">金額</th><th>R / F / M</th><th></th></tr></thead>
             <tbody>
@@ -46,6 +50,7 @@
             {% else %}<tr><td colspan="7" class="text-white-50">此分群沒有會員</td></tr>{% endfor %}
             </tbody>
         </table></div>
+        {% endif %}
     </section>
     {% endif %}
 
@@ -61,7 +66,7 @@
                     <td class="small">{% if c.kind == 'winback' %}超過 {{ c.inactive_days }} 天未消費<br>冷卻 {{ c.cooldown_days }} 天
                         {% else %}{{ segments[c.segment].label if c.segment in segments else '全部會員' }}<br>{{ c.send_at.strftime('%m/%d %H:%M') if c.send_at }}{% endif %}</td>
                     <td class="small">{{ c.coupon.title if c.coupon else '' }}{{ '｜' if c.coupon and c.message }}{{ c.message|truncate(30) }}</td>
-                    <td class="text-end">{{ st.sent }}</td>
+                    <td class="text-end">{{ st.sent }}<div class="small text-white-50">{{ st.members }} 人</div></td>
                     <td class="text-end">{{ st.returned }} ({{ st.rate }}%)<div class="small text-white-50">${{ '{:,}'.format(st.revenue) }}</div></td>
                     <td class="text-end">{{ st.coupons_used }} / {{ st.coupons_issued }}</td>
                     <td><span class="badge bg-{{ {'active': 'success', 'paused': 'secondary', 'done': 'info', 'running': 'warning'}.get(c.status, 'secondary') }}">{{ {'active': '啟用', 'paused': '暫停', 'done': '已發送', 'running': '執行中'}.get(c.status, c.status) }}</span></td>
@@ -69,7 +74,7 @@
                         <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="campaign_id" value="{{ c.id }}">
                             {% if c.status in ('active', 'paused') %}<button class="btn btn-sm btn-outline-warning" name="action" value="run_now" data-run-campaign="{{ c.id }}">立即執行</button>
                             <button class="btn btn-sm btn-outline-light" name="action" value="toggle">{{ '暫停' if c.status == 'active' else '啟用' }}</button>{% endif %}
-                            <button class="btn btn-sm btn-outline-danger" name="action" value="delete">刪除</button></form>{% endif %}</td>
+                            {% if c.status != 'running' %}<button class="btn btn-sm btn-outline-danger" name="action" value="delete">刪除</button>{% endif %}</form>{% endif %}</td>
                 </tr>
                 {% else %}<tr><td colspan="8" class="text-white-50">尚未建立活動</td></tr>{% endfor %}
                 </tbody>

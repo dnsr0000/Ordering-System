@@ -20,6 +20,9 @@ class PaymentKind:
     GIFT_SALE = 'gift_sale'  # 禮物卡售出收款 (預收款，與儲值相同列在「預收」)
     PAY_IN = 'pay_in'      # 零用金存入
     PAY_OUT = 'pay_out'    # 零用金支出 (金額為負)
+    # 訂位訂金 (預收款科目，不算營收、不算現金)：收款為正、退款為負；沒收時以 DEPOSIT_FORFEIT 由預收轉為收入
+    DEPOSIT = 'deposit'
+    DEPOSIT_FORFEIT = 'deposit_forfeit'
 
 
 class PaymentRecord(TenantScoped, db.Model):
@@ -39,7 +42,12 @@ class PaymentRecord(TenantScoped, db.Model):
     staff_username = db.Column(db.String(120), nullable=False, default='')
     shift_id = db.Column(db.Integer, nullable=True, index=True)          # 本機交班 (不同步)
     settlement_id = db.Column(db.Integer, nullable=True, index=True)     # 本機桌位結帳 (不同步)
+    node_uuid = db.Column(db.String(36), nullable=True, index=True)  # 收款的分店 (分店端填本分店 uuid；線上端與單機為空)
+    # POS 儲值等的冪等鍵 (前端每次開窗產生，重送相同)；NULL 不參與唯一性 (SQLite / PostgreSQL 都允許多個 NULL)
+    request_id = db.Column(db.String(64), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now, index=True)
+
+    __table_args__ = (db.Index('uq_payment_record_tenant_request', 'tenant_id', 'request_id', unique=True),)
 
 
 class Refund(TenantScoped, db.Model):
@@ -58,8 +66,12 @@ class Refund(TenantScoped, db.Model):
     provider_result = db.Column(db.String(300), nullable=False, default='')
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.now, index=True)
     completed_at = db.Column(db.DateTime, nullable=True)
+    # POS 部分退款 / 作廢品項的冪等鍵 (前端每次開窗產生的 UUID，重送相同)；NULL 不參與唯一性，舊資料不受影響
+    request_id = db.Column(db.String(64), nullable=True)
 
     order = db.relationship('Order')
+
+    __table_args__ = (db.Index('uq_refund_tenant_request', 'tenant_id', 'request_id', unique=True),)
 
 
 class Settlement(CreatedAtMixin, TenantScoped, db.Model):
@@ -68,7 +80,7 @@ class Settlement(CreatedAtMixin, TenantScoped, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     table_name = db.Column(db.String(50), nullable=False, default='')
     total = db.Column(db.Integer, nullable=False, default=0)
-    order_ids = db.Column(db.String(500), nullable=False, default='')
+    order_ids = db.Column(db.Text, nullable=False, default='')   # 逗號分隔 (同桌累積的未結帳訂單可能很多，不限長度)
     staff_username = db.Column(db.String(120), nullable=False, default='')
 
 

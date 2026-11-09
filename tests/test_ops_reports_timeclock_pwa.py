@@ -1,6 +1,7 @@
 """營運報表 (毛利、時段、付款方式、Excel、定期寄送)、員工打卡與班表、系統監控 / 自動備份 / 排程、
 出餐追蹤頁、PWA、菜單進階設定與多語系"""
 import io
+import re
 import zipfile
 from datetime import date, datetime, timedelta
 
@@ -71,13 +72,16 @@ def test_scheduled_report_email(app, admin_client, store_settings, smtp_box):
     assert msg['To'] == 'boss@example.com' and '營運報表' in msg['Subject']
     attachment = next(msg.iter_attachments())
     assert attachment.get_filename().endswith('.xlsx')
-    # 每週：只在週一寄
+    # 每週：最近一週還沒寄就補寄，不重複
     store_settings('report_email', frequency='weekly')
     tid = default_tenant_id(app)
     with app.app_context():
+        from app.sync.runtime import set_state
+        set_state(f'report_sent:{tid}:weekly', '')
+        db.session.commit()
         monday = date.today() - timedelta(days=date.today().weekday())
-        assert report_service.send_scheduled_report(tid, monday + timedelta(days=1)) == 0
-        assert report_service.send_scheduled_report(tid, monday) == 1
+        assert report_service.send_scheduled_report(tid, monday + timedelta(days=1)) == 1   # 週一沒寄 → 週二補寄上週
+        assert report_service.send_scheduled_report(tid, monday) == 0                      # 同一期不重複寄
         assert report_service.period_for('weekly', monday) == (monday - timedelta(days=7), monday - timedelta(days=1))
 
 
@@ -88,7 +92,8 @@ def test_daily_jobs_run_once_per_day(app, store_settings, smtp_box, monkeypatch)
     later = datetime.now().replace(hour=9, minute=0)
     with app.app_context():
         from app.sync.runtime import set_state
-        for key in ('job:backup', f'job:report:{default_tenant_id(app)}', f'job:birthday:{default_tenant_id(app)}'):
+        for key in ('job:backup', f'job:report:{default_tenant_id(app)}', f'job:birthday:{default_tenant_id(app)}',
+                    f'report_sent:{default_tenant_id(app)}:daily'):
             set_state(key, '')
         db.session.commit()
         before = len(smtp_box)
@@ -117,7 +122,10 @@ def test_system_page_and_backup(app, admin_client, manager_client):
     r = admin_client.get(f'/admin/system/backup/{name}')
     assert r.status_code == 200
     with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
-        assert zf.namelist() == ['menu.db'] and zf.read('menu.db')[:16] == b'SQLite format 3\x00'
+        # 舊資料封存檔 (database/archive/archive_t<店家>.db，前面的封存測試建立的) 也一起備份在 archive/ 底下
+        names = zf.namelist()
+        assert names[0] == 'menu.db' and zf.read('menu.db')[:16] == b'SQLite format 3\x00'
+        assert all(re.fullmatch(r'archive/archive_t\d+\.db', n) for n in names[1:]), names
     assert admin_client.get('/admin/system/backup/..%2Fmenu.db').status_code == 404
     assert admin_client.get('/admin/system/backup/other.zip').status_code == 404
     admin_client.post('/admin/system/test_alert')

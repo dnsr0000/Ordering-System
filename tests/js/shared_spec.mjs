@@ -33,13 +33,23 @@ test('computeTotals：促銷 → 優惠券 → 會員折扣 → 點數 → 服�
 });
 
 test('computeTotals：百分比優惠券留下 .5 時點數上限 = 四捨五入後的應付 (與後端相同)', () => {
-    const r = computeTotals({ subtotal: 101, tierPct: 50, points: { enabled: true, available: 10000, requested: 10000, ppd: 10 } });
-    // 101 * 50% = 50.5 → 上限 floor(50.5 + 0.5) = 51 元
+    const r = computeTotals({ subtotal: 101, couponDiscount: 50.5, points: { enabled: true, available: 10000, requested: 10000, ppd: 10 } });
+    // 101 - 50.5 (百分比優惠券) = 50.5 → 上限 floor(50.5 + 0.5) = 51 元
     assert.equal(r.maxCash, 51);
     assert.equal(r.pointsDiscount, 51);
     assert.equal(r.final, 0);
     assert.equal(maxPointsCash(50.5, 0), 51);
     assert.equal(maxPointsCash(50.5, 20), 20);
+});
+
+test('computeTotals：會員折扣與百分比整單折扣先四捨五入成整數再往下算 (與後端存檔值相同，收據折扣列加總 = 應付)', () => {
+    // 130 * 5% = 6.5 → 7；應付 130 - 7 = 123 (不是對 123.5 最後才進位成 124)
+    const t = computeTotals({ subtotal: 130, tierPct: 5 });
+    assert.equal(t.tier, 7);
+    assert.equal(t.final, 123);
+    const m = computeTotals({ subtotal: 130, manual: { type: 'percent', value: 5 } });
+    assert.equal(m.manual, 7);
+    assert.equal(m.final, 123);
 });
 
 test('computeTotals：促銷封鎖優惠券、整單折扣 (金額 / 百分比)、點數不能超過可用與輸入取整', () => {

@@ -6,7 +6,8 @@
 POS「桌位結帳」一次結清該桌所有未結帳訂單 (settled)。
 
 桌位綁定的安全性：QR code 代碼隨機且可重新產生 (舊的立即失效)；綁定 TABLE_SESSION_HOURS 小時後需重新掃碼；
-停用或刪除桌位、或代碼已重新產生時，已綁定的手機也會失效。
+停用或刪除桌位、或代碼已重新產生時，已綁定的手機也會失效；這一桌整桌結清後又有下一組客人點餐時，
+前一組的手機也會失效。店員把這支手機點的餐換桌 / 併桌時，綁定跟著換到新的桌位。
 """
 import base64
 import io
@@ -15,7 +16,7 @@ import socket
 from datetime import datetime, timedelta
 
 from flask import current_app, g, has_request_context, request, session, url_for
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from app.errors import AppError
 from app.extensions import db
@@ -32,26 +33,35 @@ einvoice_enabled = settings_service.flag('einvoice')
 TABLE_SESSION_KEY = 'dining_table'
 TABLE_SESSION_HOURS = 4
 MAX_TABLES_PER_REQUEST = 200
-_NAME_RE = re.compile(r'^[\w\-]{1,30}$')
-_RANGE_RE = re.compile(r'^(?P<prefix>[^\d\s]*)(?P<start>\d{1,4})\s*[-~]\s*(?P=prefix)?(?P<end>\d{1,4})$')
+# 桌號：中英文、數字、- 或 _ (不可以 - 開頭或結尾：「A1 - A10」切出的「-」、「-A3」不是桌號)
+_NAME_RE = re.compile(r'^(?!-)[\w\-]{1,30}(?<!-)$')
+# 範圍：前綴可含數字 (2F1-2F10)、可有後綴 (1A-10A)；結尾的前綴可省略 (A1-10)，前後綴需相同 (於 parse_table_names 檢查)
+_RANGE_RE = re.compile(r'^(?P<prefix>[^\s\-~]*?)(?P<start>\d{1,4})(?P<suffix>[^\d\s\-~]*)[-~]'
+                       r'(?P<prefix2>[^\s\-~]*?)(?P<end>\d{1,4})(?P<suffix2>[^\d\s\-~]*)$')
 
 
 # ---------------------------------------------------------------------------
 # 後台管理
 # ---------------------------------------------------------------------------
 def parse_table_names(text):
-    """「A1-A10, B1, 吧台1」→ ['A1', ..., 'A10', 'B1', '吧台1']；範圍的前綴可省略 (A1-10)"""
+    """「A1-A10, B1, 吧台1」→ ['A1', ..., 'A10', 'B1', '吧台1']；範圍的前綴可省略 (A1-10)，可含樓層 (2F1-2F10)"""
     names = []
-    for part in re.split(r'[,，、\s]+', str(text or '').strip()):
+    text = re.sub(r'\s*([-~])\s*', r'\1', str(text or '').strip())   # 「A1 - A10」= 「A1-A10」
+    for part in re.split(r'[,，、\s]+', text):
         if not part:
             continue
         m = _RANGE_RE.match(part)
+        if m and (m['prefix2'] not in ('', m['prefix']) or m['suffix2'] != m['suffix']):
+            if m['prefix2'] or m['suffix2']:
+                # 「A1-B3」「2F1-3F5」：前後的桌號格式不同，不能當成範圍，也不要建成一桌名為「A1-B3」的桌位
+                raise AppError(f'桌號範圍「{part[:30]}」格式不正確：範圍前後的桌號格式需相同，例如 A1-A10、2F1-2F10')
+            m = None   # 「2F-1」：樓層加桌號的桌名 (不是範圍)
         if m:
             start, end = int(m['start']), int(m['end'])
             if end < start or end - start >= MAX_TABLES_PER_REQUEST:
                 raise AppError(f'桌號範圍「{part}」不正確 (一次最多 {MAX_TABLES_PER_REQUEST} 桌)')
             width = len(m['start']) if m['start'].startswith('0') else 0
-            names += [f"{m['prefix']}{str(n).zfill(width)}" for n in range(start, end + 1)]
+            names += [f"{m['prefix']}{str(n).zfill(width)}{m['suffix']}" for n in range(start, end + 1)]
         else:
             names.append(part)
     for name in names:
@@ -81,6 +91,16 @@ def rename_table(table, name):
         raise AppError('桌號只能使用中英文、數字、- 或 _，最多 30 字')
     if DiningTable.query.filter(DiningTable.name == name, DiningTable.id != table.id).first():
         raise AppError(f'桌號「{name}」已存在', 409)
+    old = table.name
+    if old and old != name:
+        # 訂位 / 候位以桌名對應桌位：已預排這一桌、尚未入座的一併改名 (平面圖「即將訂位」與訂位頁的桌號才對得上)
+        from app.models.reservation import Reservation, WaitlistEntry
+        for r in Reservation.query.filter(Reservation.tenant_id == table.tenant_id, Reservation.table_name == old,
+                                          Reservation.status == 'booked').all():
+            r.table_name = name
+        for w in WaitlistEntry.query.filter(WaitlistEntry.tenant_id == table.tenant_id, WaitlistEntry.table_name == old,
+                                            WaitlistEntry.status.in_(('waiting', 'called'))).all():
+            w.table_name = name
     table.name = name
 
 
@@ -96,15 +116,31 @@ def delete_table(table):
     - PostgreSQL：SELECT ... FOR UPDATE 與送單時外鍵檢查的鎖互斥 (送單會等刪除完成後因桌位不存在而失敗)
     - SQLite：先做一次寫入取得資料庫寫入鎖，檢查與刪除期間其他人無法寫入訂單
     """
-    if db.engine.dialect.name == 'sqlite':
-        db.session.execute(update(DiningTable).where(DiningTable.id == table.id)
-                           .values(sort_order=DiningTable.sort_order).execution_options(synchronize_session=False))
-    else:
-        db.session.execute(select(DiningTable.id).where(DiningTable.id == table.id).with_for_update())
+    _lock_table(table.id)
     if unpaid_orders_query().filter(Order.dining_table_id == table.id).first():
         db.session.rollback()
         raise AppError(f'{table.label}還有未結帳的訂單，請先到 POS 結帳後再刪除', 409)
+    # 顧客正在綠界付款頁 (pending) 或付款通知正在結帳 (processing)：刪桌後付款通知會對不到桌位，顧客付了款卻無法結帳
+    from app.models.table import TablePayment
+    since = datetime.now() - timedelta(minutes=2 * current_app.config.get('PAYMENT_TIMEOUT_MINUTES', 15))
+    if TablePayment.query.filter(TablePayment.dining_table_id == table.id, TablePayment.created_at >= since,
+                                 TablePayment.status.in_(('pending', 'processing'))).first():
+        db.session.rollback()
+        raise AppError(f'{table.label}有顧客正在線上結帳 (付款中)，請稍後再刪除', 409)
     db.session.delete(table)
+
+
+def _lock_table(table_id):
+    """
+    鎖住這一桌直到交易結束 (與同一桌的其他寫入互斥)：
+    - PostgreSQL：SELECT ... FOR UPDATE
+    - SQLite：先做一次寫入取得資料庫寫入鎖
+    """
+    if db.engine.dialect.name == 'sqlite':
+        db.session.execute(update(DiningTable).where(DiningTable.id == table_id)
+                           .values(sort_order=DiningTable.sort_order).execution_options(synchronize_session=False))
+    else:
+        db.session.execute(select(DiningTable.id).where(DiningTable.id == table_id).with_for_update())
 
 
 def normalize_base_url(value):
@@ -197,7 +233,56 @@ def current_table():
             or not table.is_active or table.tenant_id != g.tenant_id or table.token != data.get('token')):
         session[TABLE_SESSION_KEY] = {'expired': True}
         return None
+    moved = _moved_to(table, bound_at)
+    if moved is not None:
+        # 店員把這支手機點的餐換桌 / 併桌：綁定跟著換到新的桌位 (之後加點才不會掛到原桌、算進下一組客人的帳)
+        if not moved.is_active or moved.tenant_id != g.tenant_id:
+            session[TABLE_SESSION_KEY] = {'expired': True}
+            return None
+        session[TABLE_SESSION_KEY] = dict(data, id=moved.id, token=moved.token)
+        table = moved
+    if _taken_over(table, bound_at):
+        # 綁定之後這一桌已整桌結清、又有下一組客人點餐：需重新掃碼，避免離開的顧客手機把新點的餐掛到下一組客人的帳上
+        session[TABLE_SESSION_KEY] = {'expired': True}
+        return None
     return table
+
+
+def _moved_to(table, bound_at):
+    """這支手機綁定後點的最新一張桌邊訂單已被換到其他桌：回傳那一桌，否則 None"""
+    log_id = session.get('customer_log_id')
+    if not log_id:
+        return None
+    row = db.session.query(Order.dining_table_id).filter(
+        Order.customer_log_id == log_id, Order.created_at >= bound_at, Order.dining_table_id.isnot(None),
+        Order.status != OrderStatus.CANCELLED).order_by(Order.id.desc()).first()
+    if row is None or row[0] == table.id:
+        return None
+    return db.session.get(DiningTable, row[0])
+
+
+def _taken_over(table, bound_at):
+    """
+    綁定之後這一桌曾整桌結清 (結帳當時這桌已沒有其他未結帳的訂單)，而且之後有其他手機在這桌點餐 (下一組客人)。
+    結清後同一支手機繼續加點 (例如線上結帳後再點甜點) 不受影響；只結部分訂單 (分開結帳) 不算結清。
+    """
+    paid_times = [t for (t,) in db.session.query(Order.paid_at).filter(
+        Order.dining_table_id == table.id, Order.settlement_id.isnot(None), Order.paid_at > bound_at)
+        .distinct().order_by(Order.paid_at).limit(20)]
+    for paid_at in paid_times:
+        still_open = db.session.query(Order.id).filter(
+            Order.dining_table_id == table.id, Order.created_at <= paid_at, Order.status != OrderStatus.CANCELLED,
+            or_(Order.payment_status == 'unpaid', Order.paid_at > paid_at)).first()
+        if still_open is not None:
+            continue
+        # 最早的一次整桌結清之後，有沒有別的手機在這桌點餐
+        others = db.session.query(Order.id).filter(Order.dining_table_id == table.id, Order.created_at > paid_at,
+                                                   Order.status != OrderStatus.CANCELLED)
+        log_id = session.get('customer_log_id')
+        if log_id:
+            others = others.filter(or_(Order.customer_log_id.is_(None), Order.customer_log_id != log_id))
+        return others.first() is not None
+    return False
 
 
 def table_binding_expired():
@@ -232,7 +317,8 @@ def unpaid_tables():
             'total': sum(o.total_price or 0 for o in orders),
             'orders': [{'id': o.id, 'pickup_number': o.pickup_number, 'status': o.status, 'total_price': o.total_price,
                         'created_at': o.created_at.strftime('%H:%M') if o.created_at else '',
-                        'items': [{'name': i.item_name, 'quantity': i.quantity, 'price': i.price} for i in o.items]}
+                        'items': [{'name': i.item_name, 'quantity': i.quantity, 'price': i.price} for i in o.items
+                                  if (i.quantity or 0) > 0]}   # 整項作廢 (數量 0) 的品項不顯示，與桌邊帳單一致
                        for o in orders],
         })
     out.sort(key=lambda t: t.pop('sort'))
@@ -269,9 +355,15 @@ def _parse_payments(payments, total, legacy_method, legacy_received, legacy_info
             raise AppError('每一筆付款金額都必須大於 0')
         received = safe_int(p.get('received'), 0)
         if method == 'Cash':
+            # 上限同 shift_service.MAX_CASH_AMOUNT：誤按 / 誤掃出 10 位數時回 400，不要 PostgreSQL 整數溢位 500
+            if received < 0 or received > 10_000_000:
+                raise AppError('實收金額需介於 0 ~ 10,000,000 元')
             if received and received < amount:
                 raise AppError(f'實收現金 (${received}) 小於應付金額 (${amount})！')
             received = received or amount
+            from app.services.order_checkout import MAX_CASH_CHANGE
+            if received - amount > MAX_CASH_CHANGE:   # 同 POS 結帳：找零異常大多半是輸入錯誤
+                raise AppError('實收現金比應付金額多出太多，請確認輸入的金額是否正確！')
         else:
             received = amount
         auth, last4 = ('', '')
@@ -285,40 +377,70 @@ def _parse_payments(payments, total, legacy_method, legacy_received, legacy_info
 
 
 def settle_table(tenant_id, table_id, payment_method, cash_received, staff, order_ids=None, payments=None,
-                 invoice_info=None, payment_info=None, online=None):
+                 invoice_info=None, payment_info=None, online=None, expected_total=None, force_online_pending=False):
     """
     桌位結帳：結清該桌未結帳的掃碼點餐訂單 (order_ids 指定時只結這幾張 = 分開結帳)，
-    payments 可分成多筆不同付款方式 (均分或自訂金額)。回傳 {orders, total, cash_received, change, ...}
+    payments 可分成多筆不同付款方式 (均分或自訂金額)。回傳 {orders, total, cash_received, change, invoice_id, ...}
+    expected_total：POS 畫面上的應收金額 (整桌結帳時帶入；與目前金額不符時回 409，不以新金額收款 / 扣 LINE Pay)。
+    force_online_pending：這一桌有顧客正在線上結帳 (綠界付款中) 時，店員確認後仍要在櫃檯結帳。
     """
+    from app.models.mixins import new_uuid
     from app.models.payment import PaymentKind, Settlement
     from app.services import einvoice_ecpay, linepay, payment_service
     table = db.session.get(DiningTable, safe_int(table_id, 0))
-    if table is None or table.tenant_id != tenant_id:
+    if online is None and (table is None or table.tenant_id != tenant_id):
         raise AppError('查無此桌位', 404)
-    query = unpaid_orders_query().filter(Order.dining_table_id == table.id)
-    if order_ids:
-        wanted = {safe_int(i, 0) for i in order_ids}
+    wanted = _order_id_set(order_ids)
+    query = unpaid_orders_query()
+    if online is None:
+        query = query.filter(Order.dining_table_id == table.id)
+    else:
+        # 桌邊線上結帳 (綠界已收款)：結的是按下線上結帳時記下的訂單；付款期間被換桌 / 併桌 (訂單已不在原桌)
+        # 或原桌位已刪除時照常結帳，不要把金額、訂單都正確的付款判為衝突而要求退款
+        if not wanted:
+            raise AppError('線上結帳沒有指定訂單', 409)
+        query = query.filter(Order.tenant_id == tenant_id)
+    if wanted:
         query = query.filter(Order.id.in_(wanted))
     orders = query.order_by(Order.id).all()
-    if not orders or (order_ids and len(orders) != len({safe_int(i, 0) for i in order_ids})):
-        raise AppError(f'{table.label}沒有可結帳的訂單 (可能剛被結帳或取消)，請重新整理', 409)
+    if online is not None and orders:
+        table = db.session.get(DiningTable, orders[0].dining_table_id)   # 訂單目前所在的桌位
+    if not orders or (wanted and len(orders) != len(wanted)):
+        raise AppError(f"{table.label if table else '這一桌'}沒有可結帳的訂單 (可能剛被結帳或取消)，請重新整理", 409)
     total = sum(o.total_price or 0 for o in orders)
+    if expected_total not in (None, '') and online is None and safe_int(expected_total, -1) != total:
+        # 店員輸入授權碼 / 掃 LINE Pay 期間被加點或作廢品項：不以畫面上沒看到的金額收款 (在 LINE Pay 扣款之前擋下)
+        raise AppError(f'{table.label}的應收金額已異動 (畫面 ${safe_int(expected_total, 0)}，目前 ${total})，'
+                       '請重新整理後再結帳', 409)
+    if online is None and not force_online_pending:
+        # 顧客正在綠界付款頁 (或付款通知正在結帳)：櫃檯先結帳的話，顧客之後付款成功會變成重複收款 (需到綠界後台退款)
+        from app.models.table import TablePayment
+        since = datetime.now() - timedelta(minutes=current_app.config.get('PAYMENT_TIMEOUT_MINUTES', 15))
+        if TablePayment.query.filter(TablePayment.dining_table_id == table.id, TablePayment.created_at >= since,
+                                     TablePayment.status.in_(('pending', 'processing'))).first():
+            raise AppError('這一桌有顧客正在用手機線上結帳 (綠界付款中)，確定仍要在櫃檯結帳？'
+                           '若顧客之後付款成功需到綠界後台退款', 409, online_pay_pending=True)
     if online is not None:   # 桌邊線上結帳 (綠界已收款)：金額必須與付款時相同
         if total != online['amount']:
             raise AppError(f'訂單金額已異動 (付款 ${online["amount"]}，目前 ${total})', 409)
         parts = [{'method': online['method'], 'amount': total, 'received': total, 'change': 0,
                   'auth_code': str(online.get('reference') or '')[:60], 'card_last4': '', 'one_time_key': None}]
+    elif total == 0:
+        # 紅利兌換 / 寄杯 / 點數全額折抵：應付 $0，不需收款 (不建收款紀錄、不扣款)，直接結清
+        parts = []
     else:
         parts = _parse_payments(payments, total, payment_method, cash_received, payment_info)
     if invoice_info:
         einvoice_ecpay.normalize_invoice_info(invoice_info, settings_service.get('einvoice', tenant_id))
-    primary = max(parts, key=lambda p: p['amount'])['method']
+    primary = max(parts, key=lambda p: p['amount'])['method'] if parts else PaymentMethod.CASH
+    # 多種付款方式：訂單標記為混合付款，收款紀錄分攤記在各訂單上 (作廢 / 退款時依各方式的實收金額退回)
+    split = len({p['method'] for p in parts}) > 1
     now = datetime.now()
 
-    settlement = Settlement(tenant_id=tenant_id, table_name=table.name, total=total,
+    # uuid 先產生 (LINE Pay 交易編號要用)：扣款在第一次寫入資料庫之前進行，
+    # 不會在呼叫 LINE Pay (最長約 55 秒) 的期間握著 SQLite 的寫入鎖、讓全店的寫入排隊或失敗
+    settlement = Settlement(uuid=new_uuid(), tenant_id=tenant_id, table_name=table.name, total=total,
                             order_ids=','.join(str(o.id) for o in orders), staff_username=staff.username, created_at=now)
-    db.session.add(settlement)
-    db.session.flush()
     # LINE Pay (串接) 先扣款：之後的資料庫更新失敗時自動退款
     charged = []
     for p in parts:
@@ -334,45 +456,181 @@ def settle_table(tenant_id, table_id, payment_method, cash_received, staff, orde
                 _refund_charged(tenant_id, charged)
                 raise AppError(exc.message, 402, payment_failed=True)
             charged.append((ref, p['amount']))
+    try:
+        db.session.add(settlement)
+        db.session.flush()
+    except Exception:
+        db.session.rollback()
+        _refund_charged(tenant_id, charged)
+        raise
     settled = 0
     for o in orders:
-        # 條件式更新：兩台 POS 同時結同一桌時，每張訂單只會被結一次
+        # 條件式更新：兩台 POS 同時結同一桌時，每張訂單只會被結一次；
+        # 讀取後金額被改 (例如同時作廢品項) 也不結，避免以舊金額收款、開發票
         settled += db.session.execute(
-            update(Order).where(Order.id == o.id, Order.payment_status == 'unpaid', Order.status != OrderStatus.CANCELLED)
-            .values(payment_status='settled', payment_method=primary, paid_at=now, cash_received=o.total_price,
-                    cash_change=0, cashier_username=o.cashier_username or staff.username, settlement_id=settlement.id,
-                    shift_id=payment_service.open_shift_id(tenant_id))
+            update(Order).where(Order.id == o.id, Order.payment_status == 'unpaid', Order.status != OrderStatus.CANCELLED,
+                                Order.total_price == o.total_price)
+            .values(payment_status='settled', payment_method=PaymentMethod.SPLIT if split else primary, paid_at=now,
+                    cash_received=o.total_price, cash_change=0, cashier_username=o.cashier_username or staff.username,
+                    settlement_id=settlement.id, shift_id=payment_service.open_shift_id(tenant_id))
             .execution_options(synchronize_session=False)).rowcount
     if settled != len(orders):
         db.session.rollback()
         _refund_charged(tenant_id, charged)
-        raise AppError('這一桌的訂單剛被其他人結帳或取消，請重新整理後再結帳！', 409)
-    for p in parts:
-        payment_service.record_payment(None, PaymentKind.SETTLE, p['method'], p['amount'], received=p['received'],
-                                       change=p['change'], reference=p['auth_code'], card_last4=p['card_last4'],
-                                       note=f'{table.label}結帳', staff=staff.username, settlement_id=settlement.id,
-                                       tenant_id=tenant_id)
+        raise AppError('這一桌的訂單剛被其他人結帳、取消或異動金額，請重新整理後再結帳！', 409)
+    if split:
+        _record_split_payments(orders, parts, f'{table.label}結帳', staff.username, settlement.id, tenant_id)
+    else:
+        for p in parts:
+            payment_service.record_payment(None, PaymentKind.SETTLE, p['method'], p['amount'], received=p['received'],
+                                           change=p['change'], reference=p['auth_code'], card_last4=p['card_last4'],
+                                           note=f'{table.label}結帳', staff=staff.username, settlement_id=settlement.id,
+                                           tenant_id=tenant_id)
+    if unpaid_orders_query().filter(Order.dining_table_id == table.id).first() is None:
+        # 整桌結清：這一桌未處理的「想結帳」呼叫一併結案 (不然下一組客人按想結帳會被併進舊呼叫、POS 不再響提示音)
+        from app.models.order import ServiceCall
+        db.session.execute(update(ServiceCall).where(ServiceCall.dining_table_id == table.id, ServiceCall.kind == 'bill',
+                                                     ServiceCall.handled_at.is_(None))
+                           .values(handled_at=now, handled_by=staff.username[:120])
+                           .execution_options(synchronize_session=False))
     from app.services.member_rewards import grant_paid_rewards
     for o in orders:
         db.session.refresh(o)
         grant_paid_rewards(o)   # 結清才給贈點、累積消費、集點與推薦 (掃碼點餐時未付款)
+    invoice_id = None
     if einvoice_enabled(tenant_id) and total > 0:
         inv = einvoice_ecpay.create_invoice(orders[0], invoice_info or {}, settlement=settlement, amount=total)
         db.session.flush()
+        invoice_id = inv.id   # POS 結帳完成時可直接提供「列印發票」
         if settings_service.get('einvoice', tenant_id).get('auto_issue', True):
             from app.services import deferred
             deferred.defer(einvoice_ecpay.issue_invoice, inv.id)
     received = sum(p['received'] for p in parts)
     change = sum(p['change'] for p in parts)
-    detail = '；'.join(f"{p['method']} ${p['amount']}" for p in parts)
+    detail = '；'.join(f"{p['method']} ${p['amount']}" for p in parts) or '免付款'
     record_staff_audit('TABLE_SETTLE', tenant_id=tenant_id,
                        details=f"{table.label}結帳：訂單 {', '.join('#' + str(o.id) for o in orders)} | 付款:{detail} "
                                f"應收:${total} 實收:${received} 找零:${change}")
     db.session.commit()
     order_event_bus.notify(tenant_id)
     return {'table': table.name, 'orders': [o.id for o in orders], 'total': total, 'cash_received': received,
-            'change': change, 'payment_method': primary, 'settlement_id': settlement.id,
+            'change': change, 'payment_method': primary, 'settlement_id': settlement.id, 'invoice_id': invoice_id,
             'payments': [{'method': p['method'], 'amount': p['amount'], 'change': p['change']} for p in parts]}
+
+
+def settle_order(tenant_id, order_id, payment_method, cash_received, staff, payments=None, invoice_info=None,
+                 payment_info=None):
+    """
+    到店付款訂單收款：線上端不收線上付款 (ONLINE_PAYMENT=0) 的線上訂單與團體預購 (現場付款) 送單時未付款 (unpaid)、
+    沒有桌位，顧客到店取餐時由 POS 在這裡收款 (同桌位結帳：可分多筆付款方式)。
+    收款後才記收款紀錄 (掛在目前的班別)、開發票、給會員回饋；廚房單已在送單時印過，這裡只依設定印收據。
+    回傳 {order_id, total, cash_received, change, payment_method, payments}
+    """
+    from app.models.mixins import new_uuid
+    from app.models.payment import PaymentKind
+    from app.services import deferred, einvoice_ecpay, linepay, payment_service, print_service
+    from app.services.member_rewards import grant_paid_rewards
+    order = db.session.get(Order, safe_int(order_id, 0))
+    if order is None or order.tenant_id != tenant_id:
+        raise AppError('查無此訂單', 404)
+    if order.payment_status != 'unpaid' or order.dining_table_id is not None or order.status == OrderStatus.CANCELLED:
+        raise AppError(f'訂單 #{order.id} 不是待收款的到店付款訂單 (可能剛被結帳或取消)，請重新整理', 409)
+    total = order.total_price or 0
+    parts = _parse_payments(payments, total, payment_method, cash_received, payment_info) if total > 0 else []
+    if invoice_info:
+        einvoice_ecpay.normalize_invoice_info(invoice_info, settings_service.get('einvoice', tenant_id))
+    primary = max(parts, key=lambda p: p['amount'])['method'] if parts else PaymentMethod.CASH
+    split = len({p['method'] for p in parts}) > 1
+    # LINE Pay (串接) 先扣款 (在第一次寫入資料庫之前)：之後的資料庫更新失敗時自動退款。
+    # 交易編號每次重新產生 (扣款失敗後可重試)，作廢 / 退款同桌位結帳由店員到 LINE Pay 後台處理
+    attempt, charged = new_uuid(), []
+    for p in parts:
+        if p['method'] == 'Line Pay' and linepay.is_enabled(tenant_id):
+            key = linepay.normalize_one_time_key(p.get('one_time_key'))
+            ref = f'O{attempt}-{len(charged) + 1}'
+            try:
+                p['auth_code'] = linepay.pay(tenant_id, ref, p['amount'], key)
+            except linepay.LinePayError as exc:
+                db.session.rollback()
+                if exc.code == linepay.UNKNOWN:
+                    charged.append((ref, p['amount']))   # 可能已扣款：一併退回 (沒扣到時退款會失敗，不影響)
+                _refund_charged(tenant_id, charged)
+                raise AppError(exc.message, 402, payment_failed=True)
+            charged.append((ref, p['amount']))
+    received = sum(p['received'] for p in parts)
+    change = sum(p['change'] for p in parts)
+    try:
+        # 條件式更新：兩台 POS 同時收同一張、或讀取後被取消 / 改金額時只會有一邊成功
+        claimed = db.session.execute(
+            update(Order).where(Order.id == order.id, Order.payment_status == 'unpaid', Order.dining_table_id.is_(None),
+                                Order.status != OrderStatus.CANCELLED, Order.total_price == order.total_price)
+            .values(payment_status='settled', payment_method=PaymentMethod.SPLIT if split else primary,
+                    paid_at=datetime.now(), cash_received=received, cash_change=change,
+                    cashier_username=order.cashier_username or staff.username,
+                    shift_id=payment_service.open_shift_id(tenant_id, lock=True))
+            .execution_options(synchronize_session=False)).rowcount
+    except Exception:
+        db.session.rollback()
+        _refund_charged(tenant_id, charged)
+        raise
+    if not claimed:
+        db.session.rollback()
+        _refund_charged(tenant_id, charged)
+        raise AppError(f'訂單 #{order.id} 剛被其他人收款、取消或異動金額，請重新整理後再收款！', 409)
+    db.session.refresh(order)
+    for p in parts:
+        payment_service.record_payment(order, PaymentKind.SALE, p['method'], p['amount'], received=p['received'],
+                                       change=p['change'], reference=p['auth_code'], card_last4=p['card_last4'],
+                                       note='到店付款', staff=staff.username, tenant_id=tenant_id)
+    grant_paid_rewards(order)   # 收款後才給贈點、累積消費、集點與推薦 (送單時未付款)
+    payment_service.maybe_create_invoice(order, invoice_info)
+    deferred.defer(print_service.print_order, order.id, tenant_id, None, False)   # 收據依設定；廚房單送單時已印
+    detail = '；'.join(f"{p['method']} ${p['amount']}" for p in parts) or '免付款'
+    record_staff_audit('ORDER_SETTLE', target_order_id=order.id, tenant_id=tenant_id,
+                       details=f'訂單 #{order.id} 到店付款：付款:{detail} 應收:${total} 實收:${received} 找零:${change}')
+    db.session.commit()
+    order_event_bus.notify(tenant_id)
+    return {'order_id': order.id, 'total': total, 'cash_received': received, 'change': change,
+            'payment_method': order.payment_method,
+            'payments': [{'method': p['method'], 'amount': p['amount'], 'change': p['change']} for p in parts]}
+
+
+def _order_id_set(order_ids):
+    """POS 指定的訂單編號 (分開結帳 / 部分換桌)；None 或空清單 = 整桌。不是清單時拋 AppError (不要 500 或把字串拆成字元)"""
+    if order_ids is None or order_ids == '':
+        return None
+    if not isinstance(order_ids, (list, tuple)):
+        raise AppError('order_ids 格式不正確 (需為訂單編號清單)')
+    return {safe_int(i, 0) for i in order_ids} or None
+
+
+def _record_split_payments(orders, parts, note, staff_username, settlement_id, tenant_id):
+    """
+    多種付款方式的桌位結帳：各筆付款依序分攤到每張訂單 (每張訂單分到的合計 = 訂單金額)，收款紀錄記在各訂單上
+    (同 POS 混合付款)，作廢 / 部分退款才能依各付款方式的實收金額退回，不會整筆記成金額最大的那一種。
+    找零記在該筆付款分攤的最後一張訂單上。
+    """
+    from app.models.payment import PaymentKind
+    from app.services import payment_service
+    remaining = {o.id: o.total_price or 0 for o in orders}
+    queue = [o for o in orders if remaining[o.id] > 0]
+    idx = 0
+    for p in parts:
+        left, shares = p['amount'], []
+        while left > 0 and idx < len(queue):
+            o = queue[idx]
+            share = min(left, remaining[o.id])
+            shares.append((o, share))
+            remaining[o.id] -= share
+            left -= share
+            if remaining[o.id] <= 0:
+                idx += 1
+        for n, (o, share) in enumerate(shares):
+            change = p['change'] if n == len(shares) - 1 else 0
+            payment_service.record_payment(o, PaymentKind.SETTLE, p['method'], share, received=share + change,
+                                           change=change, reference=p['auth_code'], card_last4=p['card_last4'],
+                                           note=note, staff=staff_username, settlement_id=settlement_id,
+                                           tenant_id=tenant_id)
 
 
 def _refund_charged(tenant_id, charged):
@@ -394,8 +652,9 @@ def move_orders(tenant_id, from_table_id, to_table_id, order_ids=None):
     if src.id == dst.id:
         raise AppError('請選擇不同的桌位')
     query = unpaid_orders_query().filter(Order.dining_table_id == src.id)
-    if order_ids:
-        query = query.filter(Order.id.in_([safe_int(i, 0) for i in order_ids]))
+    wanted = _order_id_set(order_ids)
+    if wanted:
+        query = query.filter(Order.id.in_(wanted))
     orders = query.all()
     if not orders:
         raise AppError(f'{src.label}沒有未結帳的訂單', 409)
@@ -430,8 +689,12 @@ def find_conflicts(stale_hours=24):
     - cancelled_paid：已取消卻仍是已結帳 / 已線上付款 (應標記需退款)
     - wrong_tenant：訂單的桌位屬於其他店家
     - stale_unpaid：超過 stale_hours 小時仍未結帳 (可能忘了結帳)
+    線上端 (hub) 不檢查 orphan / stale_unpaid：桌位是分店本機資料 (訂單的 dining_table_id 不同步，同步來的桌邊單一律為空)，
+    未結帳的桌邊單由各分店在本機檢查。
     """
+    from app.sync import runtime as sync_runtime
     from app.tenant_context import tenant_bypass
+    local_tables = not sync_runtime.is_hub()
     found = []
     with tenant_bypass():
         rows = db.session.execute(
@@ -446,7 +709,7 @@ def find_conflicts(stale_hours=24):
         if cancelled and pay in ('settled', 'paid'):
             found.append(dict(kind='cancelled_paid', order_id=oid, tenant_id=tid,
                               message=f'訂單 #{oid} ({label}) 已取消但付款狀態為 {pay}，應標記需退款'))
-        if pay == 'unpaid' and not cancelled:
+        if pay == 'unpaid' and not cancelled and local_tables:
             if table_id is None:
                 found.append(dict(kind='orphan', order_id=oid, tenant_id=tid,
                                   message=f'訂單 #{oid} ({label}) 未結帳但桌位已不存在，POS 桌位結帳看不到'))
@@ -486,9 +749,11 @@ def call_service(table, kind, note=''):
     if kind not in CALL_KINDS:
         raise AppError('不支援的呼叫類型')
     since = datetime.now() - timedelta(hours=CALL_EXPIRE_HOURS)
+    _lock_table(table.id)   # 同桌兩支手機同時按同一種呼叫：先鎖住這一桌再查，只會建立一筆
     existing = ServiceCall.query.filter(ServiceCall.dining_table_id == table.id, ServiceCall.kind == kind,
                                         ServiceCall.handled_at.is_(None), ServiceCall.created_at >= since).first()
     if existing is not None:
+        db.session.commit()   # 結束交易、釋放鎖
         return existing, False
     call = ServiceCall(tenant_id=table.tenant_id, dining_table_id=table.id, kind=kind,
                        note=str(note or '').strip()[:100], created_at=datetime.now())
@@ -567,14 +832,17 @@ def floor_plan(now=None):
     """
     POS 平面圖：每一桌的狀態 free 空桌 / occupied 用餐中 (有未結帳的掃碼點餐) / calling 呼叫服務中 / reserved 即將訂位到場，
     用餐中顯示開始時間、已用餐分鐘、未結帳金額與張數。
+    已停用但仍有未結帳訂單的桌位也列出 (inactive=True)，不然店員靠平面圖巡桌會漏收這一桌的款。
     """
     from app.models.order import ServiceCall
     from app.models.reservation import Reservation
     now = now or datetime.now()
-    tables = DiningTable.query.filter_by(is_active=True).order_by(DiningTable.sort_order, DiningTable.id).all()
     unpaid = {}
     for o in unpaid_orders_query().order_by(Order.id).all():
         unpaid.setdefault(o.dining_table_id, []).append(o)
+    tables = DiningTable.query.filter(or_(DiningTable.is_active.is_(True),
+                                          DiningTable.id.in_([k for k in unpaid if k is not None]))) \
+        .order_by(DiningTable.sort_order, DiningTable.id).all()
     calls = {}
     since = now - timedelta(hours=CALL_EXPIRE_HOURS)
     for c in ServiceCall.query.filter(ServiceCall.handled_at.is_(None), ServiceCall.created_at >= since).all():
@@ -592,7 +860,7 @@ def floor_plan(now=None):
         status = 'calling' if calls.get(t.id) else ('occupied' if orders else ('reserved' if r else 'free'))
         out.append({
             'id': t.id, 'name': t.name, 'seats': t.seats or 0, 'area': t.area or '', 'shape': t.shape or 'square',
-            'x': t.pos_x, 'y': t.pos_y, 'status': status,
+            'x': t.pos_x, 'y': t.pos_y, 'status': status, 'inactive': not t.is_active,
             'total': sum(o.total_price or 0 for o in orders), 'orders': len(orders),
             'since': first.strftime('%H:%M') if first else '',
             'minutes': int((now - first).total_seconds() // 60) if first else 0,

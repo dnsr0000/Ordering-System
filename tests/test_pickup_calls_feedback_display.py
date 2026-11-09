@@ -1,7 +1,7 @@
 """
 第三批專業功能：線上預約取餐時間、桌邊呼叫服務、待機輪播、大字模式、餐後評分 (含同步上傳)、熱量營養標示。
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -96,15 +96,21 @@ def test_online_order_with_pickup_time_reaches_branch(env):
 
     # 隔天：昨天建立、預約今天的訂單不會被換日結案，而且出現在廚房看板
     from app.services.order_service import auto_close_stale_orders
+    # 預約時間固定落在今天 (深夜 23:30 以後 now + 30 分鐘會跑到明天)，只算一次，斷言時不再重新呼叫 datetime.now()
+    now = datetime.now()
+    slot = datetime.combine(date.today(), time(12, 0))
+    if now >= slot:
+        slot = min(now + timedelta(minutes=30), datetime.combine(date.today(), time(23, 59)))
+    slot = slot.replace(second=0, microsecond=0)
     with env.b.app_context():
         o = db.session.get(Order, oid)
-        o.created_at = datetime.now() - timedelta(days=1)
-        o.pickup_at = datetime.now() + timedelta(minutes=30)
+        o.created_at = now - timedelta(days=1)
+        o.pickup_at = slot
         db.session.commit()
         auto_close_stale_orders()
         assert db.session.get(Order, oid).status == 'Pending'
     card = next(x for x in kitchen.get('/api/kitchen_orders').get_json()['orders'] if x['id'] == oid)
-    assert card['pickup_at'] == (datetime.now() + timedelta(minutes=30)).strftime('%H:%M')
+    assert card['pickup_at'] == slot.strftime('%H:%M')
 
 
 def test_branch_feedback_is_uploaded_to_hub(env):

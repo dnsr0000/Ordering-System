@@ -53,11 +53,12 @@ export const cartSubtotal = () => sumBy(state.cart, (l) => l.price * l.quantity)
 export const cartRewardPoints = () => sumBy(state.cart.filter((l) => l.is_reward), (l) => l.points_cost * l.quantity);
 export const displayName = (line) => (line.is_reward ? REWARD_PREFIX : '') + line.name;
 
-/** 目前的價格通路：外送單 > 外帶 > 內用 (與後端 order_service._price_channel 相同) */
+/** 目前的價格通路：外送單 > 外帶 / 外送到府 > 內用 (與後端 order_pricing._price_channel 相同：外送到府用外帶價、不收內用服務費) */
 export function channel() {
     if (state.deliveryMode) return 'delivery';
     const takeout = $('posTypeTakeout');
-    return takeout && takeout.checked ? 'takeout' : 'dine_in';
+    const home = $('posTypeHome');
+    return (takeout && takeout.checked) || (home && home.checked) ? 'takeout' : 'dine_in';
 }
 /** 綁定會員且品項有會員價 (member_prices) 時取較低者 (shared/pricing.js，與後端 MenuItem.price_for(member=True) 相同) */
 export const channelPrice = (item) => sharedChannelPrice(item, channel(), Boolean(state.member));

@@ -11,9 +11,13 @@ import zipfile
 import pytest
 
 from app.errors import AppError
+from app.services import update_service as _update_service
 from tests.support import checkout, count_queries, guest_client, line, login_staff, make_item
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# 收集階段就保存真正的 _fetch_latest：conftest 若在每個測試把它換成不連網的假函式，
+# 本檔測 GitHub 查詢流程時仍要換回真的 (再由 monkeypatch 的 requests.get 提供假回應)
+_REAL_FETCH_LATEST = _update_service._fetch_latest
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +161,9 @@ def test_update_service_version_compare_fetch_download_and_apply_guard(app, monk
         raise AssertionError(url)
     monkeypatch.setattr(svc.requests, 'get', fake_get)
     monkeypatch.setattr(svc, 'updates_dir', lambda: str(tmp_path))
+    # 模組層級的版本快取：換成本測試專用的 dict，結束後還原，假的 v2099.1.1 不會洩漏給之後的測試
+    monkeypatch.setattr(svc, '_cache', {'at': 0.0, 'data': None})
+    monkeypatch.setattr(svc, '_fetch_latest', _REAL_FETCH_LATEST)
     with app.app_context():
         info = svc.check(force=True)
         assert info['update_available'] is True and info['latest']['tag'] == 'v2099.1.1' and info['downloaded'] == ''

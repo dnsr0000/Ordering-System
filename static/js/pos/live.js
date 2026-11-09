@@ -6,9 +6,12 @@
 import { $, api, displayName, HOLD_STORAGE_KEY, html, itemMap, modalOf, num, posCfg, setHtml, state } from './core.js';
 import { renderCart } from './cart.js';
 import { bindMember, clearMember } from './member.js';
-import { invoicePayload, onOrderTypeChange, resetPromo } from './totals.js';
-import { showReceipt } from './checkout.js';
-import { paymentDetails } from './pro.js';
+import { isHomeDelivery, onInvoiceTypeChange, onOrderTypeChange, resetPromo } from './totals.js';
+import { resetTerminal, showReceipt } from './checkout.js';
+import { paymentDetails, withApproval } from './pro.js';
+import { invoicePayload as sharedInvoicePayload } from '../shared/invoice.js';
+import { pickupPayButton, unpaidBadge } from './orders.js';
+import { settleTableApi } from './split.js';   // 顧客正在手機線上結帳時確認後帶 force 重送
 
 // ======================================================================
 // 9. 掛單 / 取單
@@ -23,13 +26,20 @@ export function saveHeld(list) {
     $('holdCountBadge').textContent = list.length;
 }
 
+const fieldValue = (id) => ($(id) ? ($(id).value || '').trim() : '');
+/** 下拉選單有這個選項時才選取 (選項已被移除時保留原本的選擇，不會變成空白) */
+const setSelect = (sel, v) => { if (sel && v && [...sel.options].some((o) => o.value === v)) sel.value = v; };
+
 export function holdOrder() {
+    // 結帳送出中 / 付款碼、核准等視窗開著時不掛單：送出的內容已固定，掛單會留下一份已付款的購物車
+    if (state.submitting || document.querySelector('.modal.show')) return;
     if (state.cart.length === 0) {
         alert('⚠️ 目前沒有餐點可掛單！');
         return;
     }
     const list = getHeld();
     const table = ($('posTableInput').value || '').trim();
+    const home = isHomeDelivery();
     list.push({
         id: Date.now(),
         label: table || (state.member ? state.member.name : `掛單 #${list.length + 1}`),
@@ -37,18 +47,19 @@ export function holdOrder() {
         cart: state.cart,
         member: state.member,
         table,
-        orderType: $('posTypeTakeout').checked ? '外帶' : '內用',
+        orderType: home ? '外送到府' : ($('posTypeTakeout').checked ? '外帶' : '內用'),
+        home: home ? { address: fieldValue('posHomeAddress'), phone: fieldValue('posHomePhone'), zone: fieldValue('posHomeZone') } : null,
         note: ($('posOrderNote').value || '').trim(),
         promoCode: state.promoCode,   // 取回時一律重新驗證，不沿用舊折抵金額
         orderDiscount: state.orderDiscount,   // 整單折扣跟著掛單保存，取回時還原
+        rush: Boolean($('posRush') && $('posRush').checked),
+        invoiceType: fieldValue('posInvoiceType'),
+        invoiceValue: fieldValue('posInvoiceValue'),
+        deliveryRef: fieldValue('posDeliveryRef'),
     });
     saveHeld(list);
-    state.cart = [];
-    state.orderDiscount = null;
-    resetPromo();
-    clearMember();
-    $('posTableInput').value = '';
-    $('posOrderNote').value = '';
+    // 與結帳完成相同：清空購物車、會員、桌號備註、實收、刷卡授權碼、發票、加急與外送地址，下一位顧客不會沿用
+    resetTerminal();
 }
 
 export function openHoldModal() {
@@ -85,7 +96,21 @@ export function recallHold(idx) {
     else clearMember();
     $('posTableInput').value = target.table || '';
     $('posOrderNote').value = target.note || '';
-    $(target.orderType === '外帶' ? 'posTypeTakeout' : 'posTypeDineIn').checked = true;
+    const home = target.orderType === '外送到府' && $('posTypeHome');   // 已停用自有外送時改回內用
+    $(home ? 'posTypeHome' : (target.orderType === '外帶' ? 'posTypeTakeout' : 'posTypeDineIn')).checked = true;
+    if (home && target.home) {
+        $('posHomeAddress').value = target.home.address || '';
+        $('posHomePhone').value = target.home.phone || '';
+        setSelect($('posHomeZone'), target.home.zone);
+    }
+    if ($('posRush')) $('posRush').checked = Boolean(target.rush);
+    if ($('posInvoiceType')) {
+        $('posInvoiceType').value = '';
+        setSelect($('posInvoiceType'), target.invoiceType);
+        $('posInvoiceValue').value = $('posInvoiceType').value ? (target.invoiceValue || '') : '';
+        onInvoiceTypeChange();
+    }
+    if (target.deliveryRef && $('posDeliveryRef')) $('posDeliveryRef').value = target.deliveryRef;
     onOrderTypeChange();
     if (target.promoCode) {   // 先填入代碼，由 renderCart() 依目前小計與會員重新驗證
         state.promoCode = target.promoCode;
@@ -110,6 +135,7 @@ export function removeHold(idx) {
 /** 訂單狀態徽章 (Kiosk.statusBadge)：POS 把「已出餐」顯示為「待取餐」(等顧客核銷) */
 const statusBadge = (status) => Kiosk.statusBadge(status, status === 'Completed' ? '待取餐' : '');
 const statusText = (status) => (Kiosk.ORDER_STATUS[status] || { text: status }).text;
+const UNPAID = ['pending', 'authorizing', 'expired'];   // 待付款 / 扣款中 / 逾時未付：後端拒絕出餐與核銷取餐 (409)
 
 export function applyStock(menuItems) {
     menuItems.forEach((m) => {
@@ -117,7 +143,10 @@ export function applyStock(menuItems) {
         const soldOut = Boolean(m.is_sold_out) || num(m.stock) <= 0;
         if (it) {
             it.stock = m.stock;
-            it.is_available = !soldOut;
+            // 供應時段 (in_service)：時段外不可掃碼加入或選為配餐，只採用伺服器這次回傳的值 (頁面載入時的會過時)，
+            // 沒有回傳時不限制 (結帳時後端把關)；有回傳時一併更新 in_service / service_hint 供 confirmInService 提示
+            if (m.in_service !== undefined) Object.assign(it, { in_service: m.in_service, service_hint: m.service_hint || '' });
+            it.is_available = !soldOut && m.in_service !== false;
         }
         const card = $(`pos-card-${m.id}`);
         if (card) {
@@ -194,6 +223,9 @@ export async function serviceCallDone(id) {
 // ---------------------------------------------------------------- 桌位結帳 (桌邊掃碼點餐)
 export const PAY_LABELS = { Cash: '現金', 'Credit Card': '信用卡', 'Line Pay': 'LINE Pay', 街口支付: '街口支付', 'Apple Pay': 'Apple Pay' };
 export const TABLE_PAYMENTS = (posCfg.methods || ['Cash']).filter((m) => PAY_LABELS[m]).map((m) => [m, PAY_LABELS[m]]);
+/** 整桌結帳的發票 (每張桌位卡片自己的欄位，不讀收銀主畫面購物車區的發票設定) */
+const TABLE_INVOICE_TYPES = [['', '發票：預設'], ['print', '紙本證明聯'], ['mobile', '手機條碼'], ['company', '打統編'], ['donate', '捐贈']];
+const TABLE_INPUTS = '.table-pay-method, .table-cash, .table-inv-type, .table-inv-value';
 
 export function openTables() {
     syncLiveState();
@@ -247,6 +279,11 @@ export function renderTables() {
         setHtml(grid, html`<div class="col-12 text-center text-white-50 py-5">目前沒有未結帳的桌位</div>`);
         return;
     }
+    // 每次同步都會重繪：先記下店員已選的付款方式、實收、發票與游標位置，重繪後還原 (避免被重設成現金 / 剛好付清)
+    const inputsOf = (card) => [...card.querySelectorAll(TABLE_INPUTS)];
+    const kept = new Map([...grid.querySelectorAll('.pos-table-card')].map((c) => [c.dataset.tableId, inputsOf(c).map((el) => el.value)]));
+    const focusCard = grid.contains(document.activeElement) ? document.activeElement.closest('.pos-table-card') : null;
+    const focusIdx = focusCard ? inputsOf(focusCard).indexOf(document.activeElement) : -1;
     setHtml(grid, tables.map((t) => html`
         <div class="col-md-6 col-lg-4">
             <div class="p-3 rounded bg-dark border border-info h-100 d-flex flex-column justify-content-between pos-table-card" data-table-id="${t.table_id}">
@@ -280,6 +317,10 @@ export function renderTables() {
                             <input type="number" class="form-control form-control-sm table-cash" min="0" placeholder="實收 (空白=剛好)" aria-label="實收現金">
                         </div>
                     </div>
+                    ${posCfg.invoiceEnabled ? html`<div class="row g-1 mb-2">
+                        <div class="col-6"><select class="form-select form-select-sm table-inv-type" aria-label="發票類型">${TABLE_INVOICE_TYPES.map(([v, label]) => html`<option value="${v}">${label}</option>`)}</select></div>
+                        <div class="col-6"><input type="text" class="form-control form-control-sm table-inv-value" maxlength="16" autocomplete="off" placeholder="載具 / 統編 / 愛心碼" aria-label="載具 / 統編 / 愛心碼"></div>
+                    </div>` : ''}
                     <div class="small text-info mb-2 table-change"></div>
                     <div class="d-flex gap-1">
                         <button type="button" class="btn btn-info fw-bold text-dark flex-grow-1" data-action="settleTable" data-id="${t.table_id}">
@@ -290,6 +331,14 @@ export function renderTables() {
                 </div>
             </div>
         </div>`));
+    grid.querySelectorAll('.pos-table-card').forEach((card) => {
+        const values = kept.get(card.dataset.tableId);
+        if (!values) return;
+        const inputs = inputsOf(card);
+        inputs.forEach((el, i) => (el.tagName === 'SELECT' ? setSelect(el, values[i]) : (el.value = values[i] || '')));
+        tableCardChanged({ target: card });
+        if (focusCard && card.dataset.tableId === focusCard.dataset.tableId && inputs[focusIdx]) inputs[focusIdx].focus();
+    });
 }
 
 export function tableCardChanged(ev) {
@@ -309,15 +358,20 @@ export async function settleTable(btn) {
     const method = card.querySelector('.table-pay-method').value;
     const cash = method === 'Cash' ? num(card.querySelector('.table-cash').value) : 0;
     const t = (state.unpaidTables || []).find((x) => String(x.table_id) === String(btn.dataset.id));
-    const extra = await paymentDetails(method, t ? num(t.total) : 0);
+    if (!t) return;
+    // 只結畫面上這幾張單 (輸入授權碼 / 掃付款碼期間桌邊新加點的單留到下一次結帳)，並附上畫面金額供後端核對
+    const orderIds = t.orders.map((o) => o.id);
+    const expectedTotal = num(t.total);
+    const invType = card.querySelector('.table-inv-type');   // 本桌卡片的發票欄位 (不讀收銀主畫面的發票設定)
+    const invoice = invType ? sharedInvoicePayload(invType.value, card.querySelector('.table-inv-value').value) : null;
+    const extra = await paymentDetails(method, expectedTotal);
     if (extra === null) return;
     btn.disabled = true;
     try {
-        const res = await api(`/api/pos/tables/${encodeURIComponent(btn.dataset.id)}/settle`,
-            { json: { payment_method: method, cash_received: cash, ...extra, invoice: invoicePayload() } });
+        const res = await settleTableApi(btn.dataset.id, { payment_method: method, cash_received: cash, ...extra, order_ids: orderIds, expected_total: expectedTotal, invoice });
         alert(`✅ ${res.table} 桌結帳完成：應收 $${res.total}${res.change ? `，實收 $${res.cash_received}，找零 $${res.change}` : ''}`);
     } catch (err) {
-        alert(`❌ ${err.message}`);
+        if (!err.cancelled) alert(`❌ ${err.message}`);
         btn.disabled = false;
     }
     syncLiveState();
@@ -350,7 +404,7 @@ export function renderLiveOrders() {
                         <span>
                             ${o.pickup_at ? html`<span class="badge bg-info text-dark me-1 pos-pickup-at">預約 ${o.pickup_at}</span>` : ''}
                             ${o.delivery_status ? html`<span class="badge bg-warning text-dark me-1 pos-home-delivery">外送：${o.delivery_status_label}</span>` : ''}
-                            ${o.payment_status === 'unpaid' ? html`<span class="badge bg-warning text-dark me-1">未結帳</span>` : ''}
+                            ${unpaidBadge(o)}
                             ${statusBadge(o.status)}
                         </span>
                     </div>
@@ -375,14 +429,14 @@ export function renderLiveOrders() {
                         ${o.external_ref ? html`<span class="badge bg-warning text-dark ms-1">${o.external_ref}</span>` : ''}
                     </div>
                     <div class="d-flex flex-wrap gap-1 justify-content-end">
-                        <button type="button" class="btn btn-sm btn-outline-light" data-action="reprint" data-id="${o.id}" title="補印收據" aria-label="補印收據">
+                        ${pickupPayButton(o)}<button type="button" class="btn btn-sm btn-outline-light" data-action="reprint" data-id="${o.id}" title="補印收據" aria-label="補印收據">
                             <i class="bi bi-printer"></i>
                         </button>
                         ${o.invoice && o.invoice.invoice_no ? html`<a class="btn btn-sm btn-outline-light" href="/admin/invoices/${o.invoice.id}/print" target="_blank" rel="noopener" title="發票 ${o.invoice.invoice_no}" aria-label="列印發票"><i class="bi bi-receipt"></i></a>` : ''}
                         ${o.status === 'Pending' ? html`
-                            <button type="button" class="btn btn-sm ${o.is_rush ? 'btn-danger' : 'btn-outline-danger'}" data-action="toggleRush" data-id="${o.id}" data-rush="${o.is_rush ? 1 : 0}" title="加急" aria-label="加急"><i class="bi bi-lightning-charge"></i></button>
-                            <button type="button" class="btn btn-sm btn-success fw-bold" data-action="orderStatus" data-id="${o.id}" data-status="Completed">出餐</button>` : ''}
-                        ${o.status === 'Completed' ? html`
+                            <button type="button" class="btn btn-sm ${o.is_rush ? 'btn-danger' : 'btn-outline-danger'}" data-action="toggleRush" data-id="${o.id}" data-rush="${o.is_rush ? 1 : 0}" title="加急" aria-label="加急"><i class="bi bi-lightning-charge"></i></button>${UNPAID.includes(o.payment_status) ? '' : html`
+                            <button type="button" class="btn btn-sm btn-success fw-bold" data-action="orderStatus" data-id="${o.id}" data-status="Completed">出餐</button>`}` : ''}
+                        ${o.status === 'Completed' && !UNPAID.includes(o.payment_status) ? html`
                             <button type="button" class="btn btn-sm btn-info fw-bold text-dark" data-action="orderStatus" data-id="${o.id}" data-status="PickedUp">核銷取餐</button>` : ''}
                         ${o.status !== 'Cancelled' && o.payment_status === 'unpaid' && o.status !== 'PickedUp' ? html`
                             <button type="button" class="btn btn-sm btn-outline-danger" data-action="orderStatus" data-id="${o.id}" data-status="Cancelled">取消</button>` : ''}
@@ -399,9 +453,10 @@ export function renderLiveOrders() {
 export async function updateOrderStatus(orderId, status) {
     if (status === 'Cancelled' && !confirm(`確定要取消訂單 #${orderId} 並全額回滾庫存與紅利點數嗎？`)) return;
     try {
-        await api(`/api/orders/${encodeURIComponent(orderId)}/status`, { json: { status } });
+        // 後端要求主管核准時 (例如取消已出餐的未結帳桌單) 跳出核准視窗後重送
+        await withApproval((extra) => api(`/api/orders/${encodeURIComponent(orderId)}/status`, { json: { status, ...extra } }));
     } catch (err) {
-        alert(`❌ ${err.message}`);
+        if (!err.cancelled) alert(`❌ ${err.message}`);
     }
     syncLiveState();
 }
@@ -409,6 +464,7 @@ export async function updateOrderStatus(orderId, status) {
 export function reprint(orderId) {
     const o = state.liveOrders.find((x) => Number(x.id) === Number(orderId));
     if (!o) return;
+    const subtotal = o.subtotal === undefined ? num(o.total_price) + num(o.discount_amount) : num(o.subtotal);
     showReceipt({
         order_id: o.id,
         pickup_number: o.pickup_number || o.id,
@@ -418,7 +474,11 @@ export function reprint(orderId) {
         note: o.note,
         created_at: o.created_at,
         cashier: o.cashier_username || '補印收據',
-        subtotal: num(o.total_price) + num(o.discount_amount),
+        subtotal,   // 商品小計不含服務費與外送費 (外送費 = 應付 + 折扣 - 小計 - 服務費)，與結帳當下的收據相同
+        service_charge: num(o.service_charge),
+        delivery_fee: Math.max(0, num(o.total_price) + num(o.discount_amount) - subtotal - num(o.service_charge)),
+        invoice: o.invoice || null,
+        points_earned: num(o.points_earned),
         discount_amount: o.discount_amount,
         total_price: o.total_price,
         payment_method: o.payment_method,

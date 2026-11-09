@@ -1,15 +1,40 @@
 /*
  * POS 交班 / 零用金、會員儲值、禮物卡售出與查詢 (ES module；對話框在 templates/_pos_pro_modals.html)。
  */
-import { $, api, html, modalOf, num, setHtml, state } from './core.js';
+import { $, api, html, modalOf, num, posCfg, setHtml, state } from './core.js';
 import { bindMember } from './member.js';
-import { withApproval } from './pro.js';
+import { askCardLast4, withApproval } from './pro.js';
+
+// ======================================================================
+// 儲值 / 禮物卡售出的刷卡欄位 (prefix：posTopup / posGift → {prefix}Method、{prefix}Auth、{prefix}Last4)
+// ======================================================================
+const cardInputs = (prefix) => [$(`${prefix}Auth`), $(`${prefix}Last4`)].filter(Boolean);
+
+function syncCardFields(prefix) {
+    const isCard = $(`${prefix}Method`).value === 'Credit Card';
+    cardInputs(prefix).forEach((el) => el.classList.toggle('d-none', !isCard));
+}
+
+/** 視窗重開：付款方式回到現金、清空授權碼 / 末四碼，避免下一筆沿用上一筆的刷卡資料 */
+function resetCardFields(prefix) {
+    $(`${prefix}Method`).value = 'Cash';
+    cardInputs(prefix).forEach((el) => { el.value = ''; });
+    syncCardFields(prefix);
+}
+
+/** 卡號末四碼：視窗有末四碼欄位就讀欄位；沒有欄位且刷卡機設定必填時另外詢問。取消回傳 null */
+function cardLast4(prefix, amount) {
+    if ($(`${prefix}Method`).value !== 'Credit Card') return '';
+    const input = $(`${prefix}Last4`);
+    if (input) return input.value.trim();
+    return posCfg.cardRequireLast4 ? askCardLast4(amount) : '';
+}
 
 // ======================================================================
 // 交班 / 零用金
 // ======================================================================
 let shiftReport = null;
-let denominations = [1000, 500, 200, 100, 50, 10, 5, 1];
+let denominations = [2000, 1000, 500, 200, 100, 50, 20, 10, 5, 1];   // 與 shift_service.DENOMINATIONS 一致；開窗時以伺服器回傳為準
 
 function setShiftBadge(open) {
     const badge = $('posShiftBadge');
@@ -72,8 +97,14 @@ $('posShiftOpenForm').addEventListener('submit', async (ev) => {
     }
 });
 
+let moveBusy = false;
 $('posShiftMoveForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    if (moveBusy) return;   // 連點 / 連按 Enter 不重複登記零用金異動
+    const form = ev.currentTarget;
+    const btn = form.querySelector('[type="submit"]');
+    moveBusy = true;
+    if (btn) btn.disabled = true;
     try {
         const res = await api('/api/pos/shift/movement', {
             json: { kind: $('posShiftMoveKind').value, amount: num($('posShiftMoveAmount').value), note: $('posShiftMoveNote').value },
@@ -84,6 +115,11 @@ $('posShiftMoveForm').addEventListener('submit', async (ev) => {
         renderShift();
     } catch (err) {
         alert(`❌ ${err.message}`);
+    } finally {
+        moveBusy = false;
+        if (btn) btn.disabled = false;
+        // 按鈕停用時焦點會掉到 body，對話框就收不到 Esc：把焦點放回表單
+        if (!form.contains(document.activeElement)) $('posShiftMoveAmount').focus();
     }
 });
 
@@ -128,6 +164,7 @@ function openTopup() {
     $('posTopupBalance').textContent = num(member.wallet_balance);
     $('posTopupAmount').value = '';
     $('posTopupMsg').textContent = '';
+    resetCardFields('posTopup');
     modalOf('posTopupModal').show();
 }
 
@@ -138,22 +175,31 @@ function openGiftCards() {
     $('posGiftSellMsg').textContent = '';
     $('posGiftLookupMsg').textContent = '';
     $('posGiftAmount').value = '';
+    if ($('posGiftMethod')) resetCardFields('posGift');
     modalOf('posGiftModal').show();
 }
 
+let giftRequest = null;   // { id, sig }：同樣內容重送 (逾時後再按一次) 沿用同一個 request_id 供後端去重，成功後才換新的
 if ($('posGiftSellForm')) {
-    $('posGiftMethod').addEventListener('change', () => {
-        $('posGiftAuth').classList.toggle('d-none', $('posGiftMethod').value !== 'Credit Card');
-    });
+    $('posGiftMethod').addEventListener('change', () => syncCardFields('posGift'));
     $('posGiftSellForm').addEventListener('submit', async (ev) => {
         ev.preventDefault();
+        const amount = num($('posGiftAmount').value);
+        const last4 = cardLast4('posGift', amount);
+        if (last4 === null) return;
+        const payload = { amount, payment_method: $('posGiftMethod').value,
+                          payment_info: { auth_code: $('posGiftAuth').value, card_last4: last4 }, print: $('posGiftPrint').checked };
+        const sig = JSON.stringify(payload);
+        if (!giftRequest || giftRequest.sig !== sig) giftRequest = { id: Kiosk.newOrderId(), sig };
+        const requestId = giftRequest.id;
         const btn = $('posGiftSellBtn');
         btn.disabled = true;
         try {
             const res = await withApproval((extra) => api('/api/pos/gift_cards/sell', {
-                json: { amount: num($('posGiftAmount').value), payment_method: $('posGiftMethod').value,
-                        payment_info: { auth_code: $('posGiftAuth').value }, print: $('posGiftPrint').checked, ...extra },
+                json: { ...payload, request_id: requestId, ...extra },
             }));
+            giftRequest = null;   // 同一個視窗接著賣下一張用新的 request_id
+            cardInputs('posGift').forEach((el) => { el.value = ''; });
             setHtml($('posGiftSellMsg'), html`<span class="text-success">✅ 已售出 $${res.card.initial_amount}</span>
                 <div class="fs-5 fw-bold text-warning mt-1" id="posGiftNewCode">${res.card.code.replace(/(\d{4})(?=\d)/g, '$1 ')}</div>
                 <div class="text-white-50">${res.printed ? '已列印卡號' : '請將卡號交給顧客'}</div>`);
@@ -175,24 +221,38 @@ if ($('posGiftSellForm')) {
     });
 }
 
-$('posTopupMethod').addEventListener('change', () => {
-    $('posTopupAuth').classList.toggle('d-none', $('posTopupMethod').value !== 'Credit Card');
-});
+$('posTopupMethod').addEventListener('change', () => syncCardFields('posTopup'));
 
+let topupBusy = false;
+let topupRequest = null;   // { id, sig }：同樣內容重送 (例如逾時後再按一次) 沿用同一個 request_id 供後端去重，成功後才換新的
 $('posTopupForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const member = state.member;
-    if (!member) return;
+    if (!member || topupBusy) return;   // 連點 / 連按 Enter 不重複儲值
+    const btn = ev.currentTarget.querySelector('[type="submit"]');
+    const amount = num($('posTopupAmount').value);
+    const last4 = cardLast4('posTopup', amount);
+    if (last4 === null) return;
+    const payload = { user_id: member.id, amount, payment_method: $('posTopupMethod').value,
+                      payment_info: { auth_code: $('posTopupAuth').value, card_last4: last4 } };
+    const sig = JSON.stringify(payload);
+    if (!topupRequest || topupRequest.sig !== sig) topupRequest = { id: Kiosk.newOrderId(), sig };
+    topupBusy = true;
+    if (btn) btn.disabled = true;
     try {
-        const res = await api('/api/pos/wallet/topup', {
-            json: { user_id: member.id, amount: num($('posTopupAmount').value), payment_method: $('posTopupMethod').value,
-                    payment_info: { auth_code: $('posTopupAuth').value } },
-        });
+        const res = await api('/api/pos/wallet/topup', { json: { ...payload, request_id: topupRequest.id } });
+        topupRequest = null;
+        // 成功後清空金額與刷卡資料：視窗仍開著時再按一次不會用同樣金額重複加值
+        $('posTopupAmount').value = '';
+        cardInputs('posTopup').forEach((el) => { el.value = ''; });
         $('posTopupMsg').textContent = `✅ ${res.message}`;
         $('posTopupBalance').textContent = res.member.wallet_balance;
         bindMember(res.member);
     } catch (err) {
         $('posTopupMsg').textContent = `❌ ${err.message}`;
+    } finally {
+        topupBusy = false;
+        if (btn) btn.disabled = false;
     }
 });
 

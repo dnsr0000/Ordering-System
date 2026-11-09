@@ -45,6 +45,9 @@ def create_app(config_class=Config):
                 template_folder=os.path.join(config_class.BASE_DIR, 'templates'),
                 static_folder=os.path.join(config_class.BASE_DIR, 'static'))
     app.config.from_object(config_class)
+    from app.utils import BoundedIntConverter, KioskSessionInterface
+    app.url_map.converters['int'] = BoundedIntConverter   # <int:> 上限 2^63-1，超出 404 (B-209)；須在註冊 blueprint 之前
+    app.session_interface = KioskSessionInterface()   # 員工 30 分鐘閒置 / 顧客 CUSTOMER_SESSION_LIFETIME (B-195)
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = engine_options_for(app.config['SQLALCHEMY_DATABASE_URI'])
     from app.services import log_service
     log_service.configure_logging(app)   # 主控台 + 輪替記錄檔 (LOG_FILE)、每個請求的 X-Request-ID

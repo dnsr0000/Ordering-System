@@ -1,6 +1,7 @@
 """
 接單控制 (暫停接單 / 每時段訂單上限)、預估等候時間、再點一次。
 """
+import time
 from datetime import datetime, timedelta
 
 import pytest
@@ -19,6 +20,8 @@ def test_pause_blocks_kiosk_but_not_pos(app, store_settings):
     guest = app.test_client()
     guest.get('/?shop=default')
     guest.post('/guest_login')
+    # 先讓 store_settings 記下原值：中途斷言失敗時測試結束也會恢復接單 (否則後面的結帳測試全部 409)
+    store_settings('order_intake', paused=False, resume_at='')
 
     # POS 一鍵暫停 (15 分鐘後自動恢復)
     r = pos.post('/api/pos/intake', json={'paused': True, 'minutes': 15})
@@ -31,10 +34,27 @@ def test_pause_blocks_kiosk_but_not_pos(app, store_settings):
     # POS 櫃檯照常結帳
     r = pos.post('/api/pos/checkout', json={'items': [line(item)], 'payment_method': 'Cash', 'order_type': '內用'})
     assert r.status_code == 200, r.get_data(as_text=True)
-    # 斷線暫存單補送不受影響 (點餐機當時已收單)
-    r = guest.post('/api/kiosk/offline_order', json={
-        'shop': 'default', 'code': 'AB12', 'queued_at': datetime.now().isoformat(timespec='seconds'),
-        'order': {'client_order_id': 'offline-intake-0001', 'items': [line(item)], 'order_type': '內用'}})
+    # 斷線暫存單補送：未註冊的用戶端無法證明當時確實離線，照常套用暫停接單
+    body = {'shop': 'default', 'code': 'AB12', 'queued_at': datetime.now().isoformat(timespec='seconds'),
+            'order': {'client_order_id': 'offline-intake-0001', 'items': [line(item)], 'order_type': '內用'}}
+    r = guest.post('/api/kiosk/offline_order', json=body)
+    assert r.status_code == 409 and r.get_json().get('intake_paused') is True, r.get_data(as_text=True)
+    # 已註冊的點餐機補送不受影響 (點餐機當時已收單)
+    from flask import g
+
+    from app.extensions import db
+    from app.services import device_service
+    tid = default_tenant_id(app)
+    with app.app_context():
+        g.tenant_id = tid
+        d = device_service.create(tid, '暫停補送點餐機', 'kiosk')
+        db.session.commit()
+        d, raw = device_service.pair(tid, d.pair_code)
+        db.session.commit()
+    kiosk = app.test_client()
+    kiosk.set_cookie('kiosk_device', raw)
+    kiosk.get('/?shop=default')
+    r = kiosk.post('/api/kiosk/offline_order', json=body)
     assert r.status_code == 200, r.get_data(as_text=True)
 
     # 恢復
@@ -85,6 +105,10 @@ def test_window_limit_counts_only_customer_orders(app, store_settings):
     try:
         # 上限內的訂單由前面測試的同時段訂單決定：先數目前同時段已有幾張 (同一個資料庫共用)
         from app.services import intake_service
+        # 時段以整點切：快到下一個時段時先等過整點，免得結帳途中換時段 (新時段從 0 張算起) 造成偶發失敗
+        _start, end = intake_service.window_bounds(datetime.now(), 60)
+        if (end - datetime.now()).total_seconds() < 30:
+            time.sleep(max(0.0, (end - datetime.now()).total_seconds()) + 1)
         with app.test_request_context('/'):
             tid = default_tenant_id(app)
             have = intake_service.window_count(tid, datetime.now(), 60)

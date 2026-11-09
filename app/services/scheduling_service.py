@@ -41,8 +41,8 @@ def availability_map(tenant_id):
         s, e = _minutes(row.start_time), _minutes(row.end_time)
         if s is None or e is None:
             continue
-        if e <= s:
-            e = 24 * 60   # 23:59 / 跨午夜視為到當天結束
+        if e <= s or e >= 23 * 60 + 59:
+            e = 24 * 60   # 23:59 (時間欄位最晚只能填到 23:59) / 跨午夜視為到當天結束
         out[row.staff_account_id][row.weekday].append((s, e))
     return out
 
@@ -70,8 +70,8 @@ def week_start_of(target):
 
 
 def _existing(tenant_id, start, end):
-    rows = WorkSchedule.query.filter(WorkSchedule.tenant_id == tenant_id, WorkSchedule.work_date >= start,
-                                     WorkSchedule.work_date <= end).all()
+    rows = staffing_service.active_schedules(tenant_id).filter(WorkSchedule.work_date >= start,
+                                                              WorkSchedule.work_date <= end).all()
     hours = defaultdict(float)     # (staff_id, date) -> 小時
     for ws in rows:
         s, e = _minutes(ws.start_time), _minutes(ws.end_time)
@@ -81,6 +81,20 @@ def _existing(tenant_id, start, end):
             e += 24 * 60   # 跨夜班 (18:00~02:00 = 8 小時)；原本只算到 24:00，週工時被少算而超過上限
         hours[(ws.staff_account_id, ws.work_date)] += (e - s) / 60
     return hours
+
+
+def _overnight_until(tenant_id, start, end):
+    """既有的跨夜班：{(staff_id, 隔天日期): 隔天幾分鐘下班}；例如週一 20:00~02:00 → (員工, 週二): 120"""
+    out = {}
+    rows = staffing_service.active_schedules(tenant_id).filter(WorkSchedule.work_date >= start,
+                                                              WorkSchedule.work_date <= end).all()
+    for ws in rows:
+        s, e = _minutes(ws.start_time), _minutes(ws.end_time)
+        if s is None or e is None or e > s or e == 0:
+            continue
+        key = (ws.staff_account_id, ws.work_date + timedelta(days=1))
+        out[key] = max(out.get(key, 0), e)
+    return out
 
 
 def generate(tenant_id, week_start, today=None):
@@ -96,6 +110,7 @@ def generate(tenant_id, week_start, today=None):
     # 既有班表：本週 (計週工時)，與前後各 max_consecutive_days 天 (計連續工作天；後面已排好的班也要算)
     worked = _existing(tenant_id, week_start - timedelta(days=cfg['max_consecutive_days']),
                        week_start + timedelta(days=6 + cfg['max_consecutive_days']))
+    overnight = _overnight_until(tenant_id, week_start - timedelta(days=1), week_start + timedelta(days=5))
     week_hours = defaultdict(float)
     for (sid, d), h in worked.items():
         if week_start <= d <= week_start + timedelta(days=6):
@@ -120,7 +135,8 @@ def generate(tenant_id, week_start, today=None):
         weekday = d.isoweekday()
         plan = staffing_service.plan(tenant_id, d, today)
         missing = {r['hour']: max(0, r['need'] - r['have']) for r in plan['rows']}
-        shifts = staffing_service.suggest_shifts(missing, cfg['shift_hours'])
+        # 班別長度不超過每日工時上限 (否則每一班都排不出人，畫面只顯示「沒有符合條件的員工」)
+        shifts = staffing_service.suggest_shifts(missing, min(cfg['shift_hours'], cfg['max_hours_day']))
         day_rows = []
         for s_h, e_h in shifts:
             length = e_h - s_h
@@ -130,6 +146,8 @@ def generate(tenant_id, week_start, today=None):
                 cap_week = min(cfg['max_hours_week'], st.max_hours_week or cfg['max_hours_week'])
                 if worked.get((st.id, d)):
                     continue   # 當天已有班 (既有或本次已排)
+                if overnight.get((st.id, d), 0) > s_h * 60:
+                    continue   # 前一天的跨夜班 (例如 20:00~02:00) 還沒下班：不可再排與它重疊的凌晨班
                 if length > limit_day or week_hours[st.id] + length > cap_week:
                     continue
                 # 排進這天後的連續天數 = 前面 + 這天 + 後面 (已排好的班)

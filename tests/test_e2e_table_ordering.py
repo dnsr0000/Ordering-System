@@ -74,6 +74,5 @@ def test_manage_tables_scan_order_and_settle(app, page, demo):
     expect(card).to_be_visible()
     card.locator('.table-cash').fill('100')
     expect(card.locator('.table-change')).to_contain_text('找零 $30')
-    page.once('dialog', lambda d: d.accept())
     card.locator('[data-action="settleTable"]').click()
     expect(page.locator('.pos-table-card', has_text='E1 桌')).to_have_count(0)

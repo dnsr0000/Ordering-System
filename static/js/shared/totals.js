@@ -21,25 +21,27 @@ export function deliveryFee(subtotal, fee, freeOver) {
  * 回傳每一個中間值 (皆為數字)：
  *   promotionDiscount 促銷、promo 優惠券、tier 會員折扣、manual 整單折扣、pointsDiscount 點數折抵金額、
  *   pointsUsed 實際扣的點數、pointsRequested 修正後的輸入點數、maxPoints 可用點數上限、service 服務費、delivery 外送費、
- *   final 應付、earned 本單可得點數
+ *   final 應付、earned 本單可得點數 (乘上 pointsMultiplier：會員等級贈點倍數，預設 1)
  * points：{ enabled, available, requested, ppd (幾點折 1 元), maxDiscount (每單上限，0 = 不限) }
  * manual：{ type: 'amount' | 'percent', value } 或 null
  */
 export function computeTotals({
     subtotal = 0, promotionDiscount = 0, blocksCoupon = false, couponDiscount = 0, tierPct = 0, manual = null, points = null,
-    servicePct = 0, serviceApplies = false, deliveryFee: delivery = 0, spendPerPoint = 100, earnsPoints = true,
+    servicePct = 0, serviceApplies = false, deliveryFee: delivery = 0, spendPerPoint = 100, earnsPoints = true, pointsMultiplier = 1,
 } = {}) {
     const promotion = Math.min(Number(promotionDiscount) || 0, subtotal);
     const afterPromotion = Math.max(0, subtotal - promotion);
     const promo = blocksCoupon ? 0 : Math.min(Number(couponDiscount) || 0, afterPromotion);
     let remaining = Math.max(0, afterPromotion - promo);
     const pct = Number(tierPct) || 0;
-    const tier = pct > 0 ? remaining * Math.min(100, pct) / 100 : 0;
+    // 與後端相同：會員折扣、整單折扣都先四捨五入成整數再從剩餘金額扣 (否則 .5 的情況前後端差 1 元，結帳回 409)
+    const tier = pct > 0 ? Math.floor(remaining * Math.min(100, pct) / 100 + 0.5) : 0;
     remaining = Math.max(0, remaining - tier);
     let manualDiscount = 0;
     if (manual) {
         const v = Number(manual.value) || 0;
-        manualDiscount = manual.type === 'percent' ? remaining * Math.min(100, v) / 100 : Math.min(v, remaining);
+        const raw = manual.type === 'percent' ? remaining * Math.min(100, v) / 100 : Math.min(v, remaining);
+        manualDiscount = Math.floor(raw + 0.5);
         remaining = Math.max(0, remaining - manualDiscount);
     }
     let pointsDiscount = 0;
@@ -61,7 +63,11 @@ export function computeTotals({
     const deliveryAmount = Number(delivery) || 0;
     // 與後端相同：應付金額四捨五入到整數元
     const final = Math.floor(afterDiscounts + 0.5) + service + deliveryAmount;
-    const earned = earnsPoints ? Math.floor((final - deliveryAmount) / Math.max(1, Number(spendPerPoint) || 100)) : 0;
+    // 與後端相同：(應付 - 外送費) // 每幾元 1 點 × 會員等級贈點倍數，再取整 (倍數 0 = 此等級不累積點數；沒給時視為 1)
+    const mult = pointsMultiplier === null || pointsMultiplier === '' || Number.isNaN(Number(pointsMultiplier))
+        ? 1 : Math.max(0, Number(pointsMultiplier));
+    const earned = earnsPoints
+        ? Math.floor(Math.floor((final - deliveryAmount) / Math.max(1, Number(spendPerPoint) || 100)) * mult) : 0;
     return {
         subtotal, promotionDiscount: promotion, promo, tier, manual: manualDiscount, pointsDiscount, pointsUsed, pointsRequested,
         maxPoints, maxCash, service, delivery: deliveryAmount, final, earned,

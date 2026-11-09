@@ -55,7 +55,8 @@ Project Root/
 │   │                          sync_rev / tenant_id 等共用欄位)、enums (訂單狀態、付款方式、角色組合、權限)
 │   ├── services/              商業邏輯 (重點；檔名即主題，*_service.py)。幾個入口：
 │   │   ├── order_service.py   結帳與訂單的對外入口 (只匯出；呼叫端一律 import 這裡)。實作在 order_pricing (計價)、
-│   │   │                      order_stock (庫存與取餐號)、order_checkout (原子結帳 process_checkout)、order_lifecycle (狀態機)
+│   │   │                      order_stock (庫存與取餐號)、order_validate (結帳前檢查)、order_checkout (原子結帳 process_checkout)、
+│   │   │                      order_lifecycle (狀態機)
 │   │   ├── settings_service.py  系統設定的區塊 / 欄位定義 (後台表單自動產生)、讀寫、連線測試
 │   │   ├── i18n_pages.py      顧客端三語字串 (PAGES / MESSAGES / MESSAGE_PATTERNS)；admin_nav.py 後台側欄
 │   │   ├── points_service.py  點數異動帳；receipt_service.py 收據內容 (熱感機與純文字共用)；payment_ecpay.py 綠界共用骨架
@@ -71,7 +72,7 @@ Project Root/
 │                              其餘 admin_*.html 各後台頁
 ├── static/css/、js/           theme.css、common.js 共用；admin.js (後台共用：首頁分頁由網址決定、實時訂單、總覽即時更新，提供 window.AdminPage)、
 │                              admin-menu.js、admin-coupons.js、admin-members.js、admin-pro.js、settings-hub.js；pos.js 為 POS 進入點
-│                              (ES module)，功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live / pro / shift / split)；
+│                              (ES module)，功能拆在 js/pos/ (core / menu / cart / member / totals / checkout / live / pro / shift / split / orders)；
 │                              customer.js 為點餐機進入點，功能拆在 js/customer/ (core / cart / totals / menu / checkout / live / voice)；
 │                              js/shared/ 是點餐機與 POS 共用的純邏輯 (addons 加購配額、pricing 單價、cartline 購物車行、modifiers
 │                              客製化視窗、totals 金額計算、orderpayload、promo、invoice、combos)，不碰 DOM；
@@ -108,7 +109,9 @@ Project Root/
   - POS 與點餐機前端全部是 ES module (templates/pos.html、customer.html 以 type="module" 載入 js/pos.js、js/customer.js)：
     新增功能放進 js/pos/、js/customer/ 對應的模組並 export，其他模組以 import 使用；共用狀態只放 core.js 的 state (跨模組不可
     重新指定 let 變數)；每個檔案 500 行以內 (有測試檢查)。POS 進階功能在 pos/pro.js (主管核准 / 會員驗證 / LINE Pay / 補印 /
-    開錢櫃 / 接單控制)、pos/shift.js (交班 / 儲值 / 禮物卡)、pos/split.js (作廢退款 / 分桌換桌)；對話框在 templates/_pos_pro_modals.html。
+    開錢櫃 / 接單控制)、pos/shift.js (交班 / 儲值 / 禮物卡)、pos/split.js (作廢退款 / 分桌換桌)、pos/orders.js (當日訂單
+    「到店付款」收款：線上不收線上付款與團體預購的訂單，於 POS 收款呼叫 /api/pos/orders/<id>/settle)；對話框在
+    templates/_pos_pro_modals.html。
   - 點餐機與 POS 都要遵守的規則 (單價、加購配額、購物車行合併鍵、客製化視窗、金額順序、送後端的品項格式、優惠碼驗證、發票欄位、
     套餐可售判斷) 只寫在 js/shared/ 的純函式，兩邊的模組只負責讀寫 DOM；改規則時兩邊會一起變 (有測試檢查匯入與 500 行限制，
     tests/test_shared_js_logic.py 以 node 跑 tests/js/shared_spec.mjs 固定這些規則；改了規則請一併補案例)。
@@ -117,7 +120,7 @@ Project Root/
     onOrdersChanged、poll、handleAuthLost、pollJson (ETag)、beep；不要在各頁再寫一份。庫存徽章的黃色門檻只定義在
     menu_service.LOW_STOCK (樣板的 stock_badge 直接用，base.html 以 <meta name="low-stock"> 交給 Kiosk.stockClass)。
   - 即時更新只有兩種寫法：
-    員工畫面與店內看板的訂單資料用 Kiosk.onOrdersChanged (SSE；斷線或不支援時自動輪詢，預設 5 秒)，不另寫定時器重抓訂單；
+    員工畫面與店內看板的訂單資料用 Kiosk.onOrdersChanged (SSE；斷線或不支援時自動輪詢，預設 5 秒；分頁在背景超過 15 秒時關閉 SSE 改為輪詢，切回時重新連線，避免 HTTP/1.1 每主機 6 條連線被占滿；回傳物件只有 close / addEventListener)，不另寫定時器重抓訂單；
     資料請求的 catch 先呼叫 Kiosk.handleAuthLost(err) (登入逾時時重新載入導到登入頁)。
     顧客頁 (我的訂單、出餐進度、候位、售完狀態) 與 SSE 不會通知、依時間變化的資料 (供應時段、AI 建議、暫停接單自動恢復)
     用 Kiosk.poll (不重疊、背景暫停；要在背景等通知的頁面用 keepInBackground)。顧客頁不用 SSE：每條連線占用伺服器一條

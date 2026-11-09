@@ -112,7 +112,24 @@ def _archive_engine(tenant_id):
             cols.append(sa.Column('_order_uuid', sa.String(36), index=True))
         sa.Table(name, meta, *cols)
     meta.create_all(engine)
+    _add_missing_columns(engine, meta)
     return engine, meta
+
+
+def _add_missing_columns(engine, meta):
+    """
+    create_all 不會替已存在的資料表補欄位：舊版建立的封存檔缺少之後遷移新增的欄位 (例如訂單的 client_order_id)，
+    INSERT 會失敗。這裡比對封存檔的實際欄位，缺的以可為空的欄位補上 (舊封存資料這些欄位為 NULL)。
+    """
+    inspector = sa.inspect(engine)
+    quote = engine.dialect.identifier_preparer.quote
+    with engine.begin() as conn:
+        for name, table in meta.tables.items():
+            existing = {c['name'] for c in inspector.get_columns(name)}
+            for col in table.columns:
+                if col.name not in existing:
+                    conn.execute(sa.text(f'ALTER TABLE {quote(name)} ADD COLUMN {quote(col.name)} '
+                                         f'{col.type.compile(dialect=engine.dialect)}'))
 
 
 def _copy(conn, meta, name, rows, order_uuids=None):
@@ -218,7 +235,8 @@ def search(tenant_id, q, limit=50):
     try:
         with engine.connect() as conn:
             where, params = [], {'q': q}
-            if q.isdigit():
+            # 只接受 ASCII 數字且在 SQLite 整數範圍內 (「²」isdigit 為真但 int() 失敗；20 位以上綁定時溢位)
+            if q.isascii() and q.isdigit() and len(q) <= 18:
                 where.append('id = :q_int')
                 params['q_int'] = int(q)
             where.append('uuid = :q')

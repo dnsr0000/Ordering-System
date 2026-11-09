@@ -54,10 +54,10 @@ export function scanCode(raw) {
         alert(`⚠️ 【${item.name}】已售完或目前不供應`);
         return true;
     }
+    // 掃碼一律是一般販售：停在「🎁 紅利兌換」分頁時也不可變成點數兌換
     const card = document.getElementById(`pos-card-${item.id}`);
-    if (card) pickItem(card);
-    else if ((item.combos || []).length > 0) openComboModal(item);
-    else startConfigure({ item, combo: null, mode: 'normal' });
+    if (card) pickItem(card, { allowReward: false });
+    else sellItem(item);
     return true;
 }
 
@@ -72,7 +72,7 @@ export function searchEnter() {
     }
     const visible = [...document.querySelectorAll('.pos-menu-col:not(.d-none) [data-action="pickItem"]')];
     if (visible.length === 1) {
-        pickItem(visible[0]);
+        pickItem(visible[0], { allowReward: false });
         clearSearch();
     }
 }
@@ -80,21 +80,37 @@ export function searchEnter() {
 // ======================================================================
 // 2. 點選商品 / 紅利兌換 / 套餐
 // ======================================================================
-export function pickItem(card) {
-    if (card.dataset.soldout === '1') return;
-    const item = itemMap.get(Number(card.dataset.itemId));
-    if (!item) return;
+/**
+ * 不在供應時段 (頁面載入時的 in_service) 的品項結帳時會被後端拒絕，先提醒收銀；
+ * 頁面開著跨過供應時段時這個值可能已過時，所以只確認、不硬擋
+ */
+function confirmInService(item) {
+    if (item.in_service !== false) return true;
+    return window.confirm(`⚠️ 【${item.name}】目前不在供應時段${item.service_hint ? ` (${item.service_hint})` : ''}，結帳時會被拒絕。\n仍要加入購物車嗎？`);
+}
 
-    // 在「🎁 紅利兌換」分頁點擊紅利商品，直接走紅利兌換
-    if (state.category === '__reward__' && item.is_reward) {
-        redeemItem(item);
-        return;
-    }
+/** 一般販售加入 (有套餐時先選單點 / 套餐) */
+function sellItem(item) {
+    if (!confirmInService(item)) return;
     if ((item.combos || []).length > 0) {
         openComboModal(item);
     } else {
         startConfigure({ item, combo: null, mode: 'normal' });
     }
+}
+
+/** 點選品項卡片；allowReward = false (掃碼 / 搜尋 Enter) 時不看目前分頁，一律一般販售 */
+export function pickItem(card, { allowReward = true } = {}) {
+    if (card.dataset.soldout === '1') return;
+    const item = itemMap.get(Number(card.dataset.itemId));
+    if (!item) return;
+
+    // 在「🎁 紅利兌換」分頁點擊紅利商品，直接走紅利兌換
+    if (allowReward && state.category === '__reward__' && item.is_reward) {
+        redeemItem(item);
+        return;
+    }
+    sellItem(item);
 }
 
 export function redeemItem(item) {
@@ -110,6 +126,7 @@ export function redeemItem(item) {
         alert(`⚠️ 會員可用紅利點數不足！\n目前剩餘可用：${available} 點，此商品需要：${need} 點。`);
         return;
     }
+    if (!confirmInService(item)) return;
     startConfigure({ item, combo: null, mode: 'reward' });
 }
 
@@ -153,6 +170,7 @@ export function openComboModal(item) {
 export function chooseCombo(el) {
     if (el.dataset.soldout === '1' || !state.comboItem) return;
     const item = state.comboItem;
+    state.comboItem = null;   // 視窗淡出期間再點一下不可重複加入
     const comboId = Number(el.dataset.comboId);
     const combo = comboId ? item.combos.find((c) => Number(c.id) === comboId) : null;
     afterHidden('posComboModal', () => startConfigure({ item, combo, mode: 'normal' }));
@@ -245,9 +263,9 @@ export function makeLine({ item, combo, mode, passId }, parts, extra, modifierId
         can_addon: mode === 'normal' && (!combo || combo.can_addon !== false),
         pass_id: mode === 'pass' ? Number(passId) : 0,
     };
-    if (mode === 'pass') {   // 寄杯兌換：免費 (只收加料)
+    if (mode === 'pass') {   // 寄杯兌換：免費 (只收加料)；「[寄杯]」標籤由後端加上 (購物車以徽章顯示)，這裡不重複寫入
         line.price = extra;
-        line.customization = ['[寄杯]', ...parts].join('、');
+        line.customization = parts.join('、');
         return line;
     }
     if (mode === 'reward') {
@@ -258,19 +276,22 @@ export function makeLine({ item, combo, mode, passId }, parts, extra, modifierId
         line.customization = parts.join('、');
     } else {
         line.extra_price = (combo ? num(combo.price) : 0) + choice.extra + extra;
-        line.price = unitPrice({ item, channel: channel(), isMember: Boolean(state.member), size: sizeName, modifierTotal: line.extra_price });
+        line.price = unitPrice({ item, channel: channel(), isMember: memberPricing(), size: sizeName, modifierTotal: line.extra_price });
         const named = sizeName ? [sizeName, ...parts] : parts;
         line.customization = (combo ? [`[套餐: ${combo.name}]`, ...choice.labels, ...named] : named).join('、');
     }
     return line;
 }
 
+/** 是否套用會員價：外送平台單不綁會員 (後端以非會員計價)，外送單登錄模式一律用一般價 */
+const memberPricing = () => Boolean(state.member) && !state.deliveryMode;
+
 /** 切換內用 / 外帶 / 外送單或綁定會員時，一般品項改用該通路的價格 (加購、寄杯、紅利與改過價的品項不變) */
 export function repriceCart() {
     state.cart.forEach((l) => {
         if (l.is_reward || l.is_add_on || l.pass_id || l.override_price !== undefined) return;
         const item = itemMap.get(l.menu_item_id);
-        if (item) l.price = unitPrice({ item, channel: channel(), isMember: Boolean(state.member), size: l.size, modifierTotal: l.extra_price });
+        if (item) l.price = unitPrice({ item, channel: channel(), isMember: memberPricing(), size: l.size, modifierTotal: l.extra_price });
     });
     renderCart();
 }

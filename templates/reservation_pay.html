@@ -6,7 +6,7 @@
         <h1 class="h4 fw-bold mb-3"><i class="bi bi-calendar-check me-2 text-warning"></i>{{ ui.rp_title }}</h1>
         <p class="mb-1">{{ r.reserved_at.strftime('%m/%d %H:%M') }} • {{ r.name }} • {{ r.party_size }} {{ ui.guests_unit }}</p>
         <p class="mb-1">{{ ui.deposit }} <span class="fs-4 fw-bold text-warning" id="depositAmount">${{ r.deposit_amount }}</span></p>
-        <p class="text-secondary small">{{ ui.pr_pending_a }} {{ minutes }} {{ ui.rp_timeout }}</p>
+        <p class="text-secondary small">{{ ui.rp_timeout_a or ui.pr_pending_a }} {{ minutes }} {{ ui.rp_timeout }}</p>
         {% if stage %}
         <div class="alert alert-info text-start small">
             <div class="fw-bold mb-1"><i class="bi bi-info-circle-fill me-1"></i>{{ ui.pay_stage }}</div>

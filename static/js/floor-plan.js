@@ -15,9 +15,11 @@
 
     function tableHtml(t, editable) {
         const st = STATUS[t.status] || STATUS.free;
-        return html`<div class="fp-table fp-${t.shape || 'square'} ${editable ? 'fp-edit' : st.cls}" data-table-id="${t.id}"
-                         data-name="${t.name}" role="button" tabindex="0" title="${t.name} (${t.seats} 位)">
-            <div class="fp-name">${t.name}</div>
+        // 已停用但仍有未結帳訂單的桌位 (inactive)：照常顯示用餐中金額讓店員去結帳，加上「已停用」小標
+        return html`<div class="fp-table fp-${t.shape || 'square'} ${editable ? 'fp-edit' : st.cls}${t.inactive ? ' is-inactive' : ''}"
+                         data-table-id="${t.id}" data-name="${t.name}" role="button" tabindex="0"
+                         title="${t.name} (${t.seats} 位)${t.inactive ? ' • 已停用' : ''}">
+            <div class="fp-name">${t.name}${t.inactive ? html` <span class="badge bg-secondary fp-inactive-tag">已停用</span>` : ''}</div>
             <div class="fp-meta">${t.seats} 位</div>
             ${!editable && t.status === 'occupied' ? html`<div class="fp-meta">$${t.total} • ${t.minutes} 分</div>` : ''}
             ${!editable && t.status === 'calling' ? html`<div class="fp-meta">${(t.calls || []).join('、')}</div>` : ''}

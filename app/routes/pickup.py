@@ -8,19 +8,23 @@ from app.models.enums import OrderStatus, POS_ROLES
 from app.models.order import Order
 from app.services.event_bus import order_event_bus
 from app.services.order_service import todays_orders_condition, todays_range
-from app.utils import public_display_name, role_required
+from app.utils import public_display_name, role_required, store_only
 
 pickup_bp = Blueprint('pickup', __name__)
+# 取餐核銷與叫號看板是門市本機的現場作業：線上端 (hub) 一律 404 (否則會在線上端把分店訂單核銷成已取餐並同步下發)。
+# /api/orders_stream 不限：線上端的點餐頁、後台頁也透過 common.js 訂閱即時通知。
 SSE_KEEPALIVE_SECONDS = 15
 
 
 @pickup_bp.route('/pickup', endpoint='pickup_management')
+@store_only
 @role_required(*POS_ROLES)
 def pickup_management():
     return render_template('pickup.html')
 
 
 @pickup_bp.route('/api/pickup_orders')
+@store_only
 @role_required(*POS_ROLES)
 def api_pickup_orders():
     """櫃檯取餐核銷：今日已出餐、等待顧客取餐的訂單 (含明細)"""
@@ -41,6 +45,7 @@ def api_pickup_orders():
 
 
 @pickup_bp.route('/counter', endpoint='counter_display')
+@store_only
 def counter_display():
     from app.services import settings_service
     cfg = settings_service.get('notify')
@@ -52,6 +57,7 @@ def counter_display():
 
 
 @pickup_bp.route('/api/counter_orders')
+@store_only
 def api_counter_orders():
     """公開叫號看板 (免登入)：只回傳取餐號與遮罩後的名稱"""
     start, end = todays_range()
@@ -69,8 +75,8 @@ def api_counter_orders():
             'created_at': o.created_at.strftime('%H:%M'),
         })
     from app.models.reservation import WaitlistEntry
-    from datetime import date
-    called = WaitlistEntry.query.filter_by(business_date=date.today(), status='called') \
+    # 與 reservation_service.join_waitlist 相同的營業日 (BUSINESS_DAY_START_HOUR 換日前的凌晨仍算前一天)
+    called = WaitlistEntry.query.filter_by(business_date=start.date(), status='called') \
         .order_by(WaitlistEntry.called_at.desc()).limit(6).all()
     return jsonify({'success': True, 'ready_orders': board[OrderStatus.COMPLETED],
                     'preparing_orders': board[OrderStatus.PENDING],

@@ -5,7 +5,8 @@ from flask import Blueprint, flash, g, redirect, render_template, request, url_f
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, parse_size_options
+from app.models.menu import ALLERGENS, DIETS, WEEKDAY_LABELS, CategoryTranslation, MenuItem, invalid_size_options, \
+    parse_size_options
 from app.services import ai_service, menu_service, menu_translate_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
@@ -14,6 +15,14 @@ from app.services.approval_service import permission_required
 from app.utils import get_own, parse_date, safe_int
 
 menu_pro_bp = Blueprint('menu_pro', __name__)
+
+
+def _bounded_amount(raw, label):
+    """通路價 / 會員價 / 成本：負數視為 0，超過 MAX_AMOUNT 擋下 (超出資料庫 INTEGER 範圍會 500)"""
+    value = max(0, safe_int(raw, 0))
+    if value > menu_service.MAX_AMOUNT:
+        raise AppError(f'❌ {label}必須介於 0 ~ {menu_service.MAX_AMOUNT:,}！')
+    return value
 
 
 def apply_pro_form(item, form):
@@ -29,25 +38,36 @@ def apply_pro_form(item, form):
         raise AppError('販售結束日不可早於開始日')
     item.avail_start, item.avail_end, item.avail_days = start, end, days
     item.sale_from, item.sale_until = sale_from, sale_until
-    for ch in ('takeout_price', 'online_price', 'delivery_price', 'member_price'):
-        setattr(item, ch, max(0, safe_int(form.get(ch), 0)))
+    for ch, label in (('takeout_price', '外帶價'), ('online_price', '線上價'), ('delivery_price', '外送價'),
+                      ('member_price', '會員價')):
+        setattr(item, ch, _bounded_amount(form.get(ch), label))
     item.allergens = ','.join(a for a in form.getlist('allergens') if a in ALLERGENS)
     item.diet = form.get('diet') if form.get('diet') in DIETS else ''
     item.spicy_level = min(3, max(0, safe_int(form.get('spicy_level'), 0)))
     for f, size in (('name_en', 100), ('name_ja', 100), ('description_en', 300), ('description_ja', 300),
                     ('external_code', 50)):
         setattr(item, f, (form.get(f) or '').strip()[:size])
-    item.unit_cost = max(0, safe_int(form.get('unit_cost'), 0))
+    item.unit_cost = _bounded_amount(form.get('unit_cost'), '成本')
     raw_sizes = (form.get('size_options') or '').strip()
     sizes = parse_size_options(raw_sizes)
+    bad = invalid_size_options(raw_sizes)
+    if bad:
+        raise AppError(f'規格格式錯誤：{"、".join(bad[:3])}；格式應為「名稱:加減價」，例如 中杯:0, 大杯:+15')
     if raw_sizes and not sizes:
         raise AppError('規格格式應為「名稱:加減價」，例如 中杯:0, 大杯:15')
     item.size_options = ', '.join(f'{n}:{d:+d}' if d else f'{n}:0' for n, d in sizes)
     item.calories = min(5000, max(0, safe_int(form.get('calories'), 0)))
+    was_auto = bool(item.carbon_auto) if item.id else False
     item.carbon_auto = form.get('carbon_auto') == '1'
     if item.carbon_auto:
+        from app.models.inventory import RecipeLine
         from app.services import carbon_service
-        item.carbon_grams = carbon_service.recipe_carbon(item) if item.id else 0
+        # 配方是各主機的本機資料，carbon_grams 卻會同步：本機沒有這道菜的配方 (例如分店沒有總部的配方) 時保留原本
+        # (同步來) 的值，否則分店存一次進階設定就把全店家的碳足跡改成 0；從手動改回自動時照常依本機配方重算
+        if not item.id:
+            item.carbon_grams = 0
+        elif not was_auto or RecipeLine.query.filter_by(menu_item_id=item.id).first() is not None:
+            item.carbon_grams = carbon_service.recipe_carbon(item)
     else:
         item.carbon_grams = min(1_000_000, max(0, safe_int(form.get('carbon_grams'), 0)))
     item.nutrition = (form.get('nutrition') or '').strip()[:200]
@@ -70,6 +90,12 @@ def _translate_message(filled, stats):
     if not stats['fallback']:
         done = f"{who} 已翻譯 {stats['ai']} 項，" if stats['ai'] else ''
         return f"{reused}{done}填入 {filled} 個欄位；{check}", 'success'
+    from app.services import ai_usage
+    over = ai_usage.budget_exceeded(g.tenant_id)
+    if over:   # 達每月預算上限：不是忙碌，也不會在背景補翻 (note_result 不排)
+        done = f"{who} 已翻譯 {stats['ai']} 項；" if stats['ai'] else ''
+        return (f"{reused}{done}{stats['fallback']} 項沒翻成：{over}。先以規則字典填入常見分類 / 品名，"
+                f'共填入 {filled} 個欄位；{check}', 'warning')
     reason = ai_service.last_ai_error() or '回應格式不完整'
     busy = f'AI 服務目前忙碌或失敗 ({reason})，已自動重試數次'
     retry = '系統會在背景每隔幾分鐘自動補翻還沒翻好的項目，不用再按 (也可以稍後自己再按一次)'
@@ -119,7 +145,8 @@ def manage():
             raise AppError('不支援的操作')
         db.session.commit()
         order_event_bus.notify(g.tenant_id)   # 數位看板：供應時段 / 價格 / 翻譯變更即時更新
-        return redirect(url_for('menu_pro.manage', _anchor=f"item-{request.form.get('item_id')}" if action == 'item' else None))
+        # 儲存進階設定後捲回剛編輯的品項列 (品項列上有 id 的是標籤欄 item-tags-<id>)
+        return redirect(url_for('menu_pro.manage', _anchor=f"item-tags-{request.form.get('item_id')}" if action == 'item' else None))
     from sqlalchemy.orm import selectinload
     from app.models.menu import ComboOption
     from app.routes.admin import data_modal_context

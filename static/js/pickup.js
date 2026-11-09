@@ -21,12 +21,20 @@
     }
 
     function orderCard(o) {
-        const items = o.items.map((it) => html`
-            <div class="d-flex justify-content-between small text-white-50 mb-1">
-                <span class="text-white fw-bold pickup-item-name">${it.name}</span>
-                <span>x ${Number(it.quantity) || 0}</span>
-            </div>
-            ${it.customization ? html`<div class="text-danger small mb-1">${it.customization}</div>` : ''}`);
+        // 單品作廢：quantity 為剩下的份數；整個作廢 (0 份) 劃掉淡化，有作廢份數時比照 KDS 顯示「已作廢 N 份」
+        const items = o.items.map((it) => {
+            const qty = Number(it.quantity) || 0;
+            const voided = Number(it.voided_qty) || 0;
+            return html`
+            <div class="${qty === 0 ? 'text-decoration-line-through opacity-50' : ''}">
+                <div class="d-flex justify-content-between small text-white-50 mb-1">
+                    <span class="text-white fw-bold pickup-item-name">${it.name}</span>
+                    <span>x ${qty}</span>
+                </div>
+                ${voided ? html`<div class="badge bg-danger mb-1"><i class="bi bi-x-octagon me-1"></i>已作廢 ${voided} 份${it.void_note ? html` (${it.void_note})` : ''}</div>` : ''}
+                ${it.customization ? html`<div class="text-danger small mb-1">${it.customization}</div>` : ''}
+            </div>`;
+        });
 
         return html`
             <div class="col-12 col-md-6 col-lg-4 col-xl-3 pickup-col" data-order-id="${o.id}">

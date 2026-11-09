@@ -13,6 +13,7 @@ from app.models.enums import PaymentMethod, normalize_payment_method
 from app.models.member import GiftCard, GiftCardLedger
 from app.models.member import mask_code as mask_code   # 卡號遮罩定義在 models.member (模型不能反向匯入服務)，由這裡提供給服務層 / 路由
 from app.services import settings_service
+from app.utils import safe_int
 
 CODE_LENGTH = 16
 
@@ -62,20 +63,26 @@ def summary(card):
             'initial_amount': card.initial_amount, 'created_at': card.created_at.strftime('%Y-%m-%d')}
 
 
+SALE_METHODS = (PaymentMethod.CASH, PaymentMethod.CREDIT_CARD, PaymentMethod.LINE_PAY, PaymentMethod.JKO_PAY,
+                PaymentMethod.APPLE_PAY)   # 售出禮物卡可收的付款方式 (實際收款，與 wallet_service.TOPUP_METHODS 相同)
+
+
 def sell(tenant_id, amount, method, staff, payment_info=None, note=''):
     """POS 售出：建立卡片與售出異動、收款紀錄 (預收)。由呼叫端 commit。"""
     from app.models.payment import PaymentKind
     from app.services import payment_service
     if not enabled(tenant_id):
         raise AppError('尚未啟用禮物卡 (系統設定 → 禮物卡)')
-    amount = int(amount or 0)
+    amount = safe_int(amount, 0)   # 非數字 ('abc'、'1,000') 走下面的面額檢查回 400，不丟 ValueError
     limit = int(config(tenant_id).get('max_amount') or 10000)
     if not 1 <= amount <= limit:
         raise AppError(f'禮物卡面額需介於 $1 ~ ${limit:,}')
     method = normalize_payment_method(method)
-    if method is None or method in (PaymentMethod.STORED_VALUE, PaymentMethod.GIFT_CARD, PaymentMethod.PLATFORM,
-                                    PaymentMethod.ATM, PaymentMethod.CVS):
+    if method not in SALE_METHODS:   # 儲值金 / 禮物卡 / 平台代收 / ATM / 超商代碼 / 混合付款 都不是實際收款
         raise AppError('購買禮物卡的付款方式不正確')
+    if payment_service.open_shift_id(tenant_id, lock=True) is None \
+            and settings_service.get('pos', tenant_id).get('require_shift'):
+        raise AppError('尚未開班：請先在 POS 按「交班」輸入開班零用金後再收款', 409, need_shift=True)
     reference, last4 = '', ''
     if method == PaymentMethod.CREDIT_CARD:
         reference, last4 = payment_service.validate_card_details(payment_info, True)
@@ -91,9 +98,14 @@ def sell(tenant_id, amount, method, staff, payment_info=None, note=''):
 
 
 def _lock(card):
-    """鎖住這張卡 (PostgreSQL 列鎖 / SQLite 寫入鎖)，避免兩台 POS 同時扣款超扣"""
-    db.session.execute(update(GiftCard).where(GiftCard.id == card.id).values(status=GiftCard.status)
-                       .execution_options(synchronize_session=False))
+    """
+    鎖住這張卡 (PostgreSQL 列鎖 / SQLite 寫入鎖)，避免兩台 POS 同時扣款超扣。
+    以 Core Table 的 UPDATE 寫回原值 (含 updated_at)：不標記為同步變更、不更新時間戳。否則每次扣款都會把
+    整張卡 (本機看到的狀態) 以最新時間戳上傳，離線分店在作廢後才扣款時，LWW 會把作廢蓋回「可使用」。
+    """
+    table = GiftCard.__table__
+    db.session.execute(update(table).where(table.c.id == card.id)
+                       .values(status=table.c.status, updated_at=table.c.updated_at))
 
 
 def charge(tenant_id, code, amount, order_id, staff=''):
@@ -110,12 +122,27 @@ def charge(tenant_id, code, amount, order_id, staff=''):
     return card
 
 
-def refund(order, amount, staff=''):
-    """訂單作廢 / 部分退款：退回原禮物卡"""
+def _order_card(order):
     code = normalize_code(order.payment_reference)
-    card = GiftCard.query.filter_by(tenant_id=order.tenant_id, code=code).execution_options(skip_tenant_filter=True).first()
+    return GiftCard.query.filter_by(tenant_id=order.tenant_id, code=code).execution_options(skip_tenant_filter=True).first()
+
+
+def voided_card(order):
+    """這筆訂單使用的禮物卡已作廢時回傳該卡 (退款不能退回卡片，需改用其他方式人工退款)，否則 None"""
+    card = _order_card(order)
+    return card if card is not None and card.status != 'active' else None
+
+
+def refund(order, amount, staff=''):
+    """
+    訂單作廢 / 部分退款：退回原禮物卡。
+    卡片已作廢時拋出 409：作廢的卡永遠不能再使用，退回卡片等於顧客拿不到退款 (呼叫端可先以 voided_card 判斷，改記人工退款)。
+    """
+    card = _order_card(order)
     if card is None:
         raise AppError('找不到這筆訂單使用的禮物卡，請人工處理', 409)
+    if card.status != 'active':
+        raise AppError(f'這筆訂單使用的禮物卡 {card.masked_code} 已作廢，無法退回卡片，請改用現金等其他方式人工退款', 409)
     db.session.add(GiftCardLedger(tenant_id=order.tenant_id, gift_card_id=card.id, delta=int(amount), reason='refund',
                                   order_id=order.id, staff_username=staff))
     return card

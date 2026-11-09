@@ -4,7 +4,7 @@
 """
 from flask import Blueprint, abort, jsonify, render_template
 
-from app.extensions import db, limiter
+from app.extensions import csrf, db, limiter
 from app.models.tenant import Tenant
 from app.services import delivery_tracking_service as tracking
 from app.tenant_context import tenant_bypass
@@ -15,7 +15,7 @@ driver_bp = Blueprint('driver', __name__)
 
 def _order_or_404(token):
     order = tracking.find_order(token)
-    if order is None or not tracking.enabled(order.tenant_id):
+    if order is None or not tracking.enabled_for_order(order):
         abort(404)
     return order
 
@@ -39,9 +39,12 @@ def status(token):
 
 
 @driver_bp.route('/api/driver/<token>/position', methods=['POST'], endpoint='position')
+@csrf.exempt
 @limiter.limit('120/minute')
 def position(token):
-    """外送員手機回報位置 {lat, lng, accuracy}；配送結束後回 409 (手機端停止回報)"""
+    """外送員手機回報位置 {lat, lng, accuracy}；配送結束後回 409 (手機端停止回報)。
+    只憑網址裡的 driver_token 授權、不依賴 cookie 身分，所以免 CSRF：外送員是匿名 session，
+    頁面開著超過 session 期限 (30 分鐘) 才開始回報時，session 裡的 csrf_token 已失效，否則每次都 403"""
     order = _order_or_404(token)
     data = get_json_dict()
     with tenant_bypass():

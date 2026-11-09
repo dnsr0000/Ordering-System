@@ -55,7 +55,7 @@ def submit(order, rating, comment=''):
         raise AppError(f'超過 {RATE_WINDOW_DAYS} 天的訂單無法評分', 409)
     try:
         rating = int(rating)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):   # JSON 的 1e400 解析成 inf，int(inf) 拋 OverflowError
         rating = 0
     if not 1 <= rating <= 5:
         raise AppError('請選擇 1~5 顆星')
@@ -105,12 +105,14 @@ def reply(fb, text, is_public=None, staff=''):
     """店長回覆一句 (通知顧客：LINE 綁定會員推文字、追蹤頁推播)；is_public 不為 None 時一併設定公開"""
     from app.services import deferred, line_service, push_service
     text = str(text or '').strip()[:300]
+    old = (fb.reply or '').strip()
     fb.reply = text
     fb.replied_at = datetime.now() if text else None
     if is_public is not None:
         fb.is_public = bool(is_public)
     order = fb.order
-    if text and order is not None:
+    # 回覆內容有變才通知 (後台表單預填原回覆：只切換「公開」再儲存不可重發 LINE / 推播)
+    if text and text != old and order is not None:
         push_service.notify_order(order, 'feedback_reply')
         if order.user is not None and order.user.line_user_id:
             from app.models.tenant import Tenant

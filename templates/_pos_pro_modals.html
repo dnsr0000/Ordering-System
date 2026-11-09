@@ -53,7 +53,7 @@
                 <div class="fw-bold text-warning mb-2" id="posMemberVerifyName"></div>
                 <input type="password" inputmode="numeric" class="form-control form-control-lg text-center" id="posMemberVerifyPin"
                        placeholder="請會員輸入 PIN 碼" maxlength="6" autocomplete="off">
-                <div class="small text-white-50 mt-1">或請會員在手機「紅利商城」開啟動態條碼，掃描後即可結帳。</div>
+                <div class="small text-white-50 mt-1">會員出示手機「紅利商城」的動態條碼：請先按「取消」，在會員搜尋框掃描條碼後再按結帳 (15 分鐘內免輸入 PIN)。</div>
                 <div class="small text-danger mt-2" id="posMemberVerifyMsg"></div>
             </div>
             <div class="modal-footer border-secondary justify-content-between">
@@ -179,6 +179,8 @@
                 <div class="d-flex gap-1 mb-2">{% for v in [500, 1000, 2000, 3000] %}<button type="button" class="btn btn-sm btn-outline-light flex-grow-1" data-action="topupPreset" data-value="{{ v }}">${{ v }}</button>{% endfor %}</div>
                 <select class="form-select mb-2" id="posTopupMethod" aria-label="付款方式"><option value="Cash">現金</option><option value="Credit Card">信用卡</option><option value="Line Pay">LINE Pay (記帳)</option></select>
                 <input type="text" class="form-control form-control-sm d-none" id="posTopupAuth" placeholder="刷卡授權碼" maxlength="12" aria-label="刷卡授權碼">
+                {# 系統設定「刷卡需輸入卡號末四碼」時，選信用卡才顯示 (static/js/pos/shift.js 依 cardRequireLast4 切換並送出 card_last4) #}
+                <input type="text" class="form-control form-control-sm mt-1 d-none" id="posTopupLast4" placeholder="信用卡末四碼" maxlength="4" inputmode="numeric" pattern="\d{4}" autocomplete="off" aria-label="信用卡末四碼">
                 <div class="small text-success mt-2" id="posTopupMsg"></div>
             </div>
             <div class="modal-footer border-secondary">
@@ -203,6 +205,8 @@
                         <div class="col-6"><select class="form-select" id="posGiftMethod" aria-label="付款方式"><option value="Cash">現金</option><option value="Credit Card">信用卡</option><option value="Line Pay">LINE Pay (記帳)</option></select></div>
                     </div>
                     <input type="text" class="form-control form-control-sm mb-2 d-none" id="posGiftAuth" placeholder="刷卡授權碼" maxlength="12" aria-label="刷卡授權碼">
+                    {# 「刷卡需輸入卡號末四碼」時選信用卡才顯示 (shift.js 切換並送出 card_last4) #}
+                    <input type="text" class="form-control form-control-sm mb-2 d-none" id="posGiftLast4" placeholder="信用卡末四碼" maxlength="4" inputmode="numeric" pattern="\d{4}" autocomplete="off" aria-label="信用卡末四碼">
                     <div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="posGiftPrint" checked><label class="form-check-label small" for="posGiftPrint">以收據印表機列印卡號</label></div>
                     <button type="submit" class="btn btn-warning fw-bold text-dark w-100" id="posGiftSellBtn">售出</button>
                     <div class="small mt-2" id="posGiftSellMsg"></div>
@@ -265,6 +269,8 @@
                     <div class="col-6"><select class="form-select" id="posPassMethod" aria-label="付款方式"></select></div>
                     <div class="col-6"><input type="number" class="form-control" id="posPassCash" min="0" placeholder="現金實收 (選填)" aria-label="現金實收"></div>
                     <div class="col-12"><input type="text" class="form-control d-none" id="posPassAuth" placeholder="刷卡授權碼" aria-label="刷卡授權碼"></div>
+                    {# 「刷卡需輸入卡號末四碼」時選信用卡才顯示 (member.js syncPassMethod 切換並送出 card_last4) #}
+                    <div class="col-12"><input type="text" class="form-control d-none" id="posPassLast4" placeholder="信用卡末四碼" maxlength="4" inputmode="numeric" pattern="\d{4}" autocomplete="off" aria-label="信用卡末四碼"></div>
                 </div>
                 <div class="small text-white-50 mt-2">售出後建立一張「寄杯購買」訂單 (收款、發票、交班照常)；之後會員每次兌換一份。</div>
                 <div class="small mt-2" id="posPassMsg"></div>

@@ -219,8 +219,10 @@ def test_addon_and_quantity_controls(app, page, demo):
     assert page.locator('#cart-final').inner_text() == str(99 + 25)
     # 名額用完：加購推薦中不再出現紅茶
     assert addon_btn.count() == 0
-    # 加購品的「+」：名額已滿時提示，數量不變 (原本程式錯誤，按了沒反應)
-    page.locator('#cart-items [data-action="qty"][data-index="1"][data-delta="1"]').click()
+    # 加購品的「+」：名額已滿時提示，數量不變 (原本程式錯誤，按了沒反應；提示由 page 夾具按確定)
+    with page.expect_event('dialog') as dialog_info:
+        page.locator('#cart-items [data-action="qty"][data-index="1"][data-delta="1"]').click()
+    assert '上限' in dialog_info.value.message
     expect(page.locator('#cart-count')).to_have_text('2')
 
     # 主餐數量歸零 → 加購品失去資格被自動移除

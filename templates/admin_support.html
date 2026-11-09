@@ -13,7 +13,7 @@
                 <input class="form-check-input" type="checkbox" id="supportShowClosed">
                 <label class="form-check-label small" for="supportShowClosed">顯示已結束</label>
             </div>
-            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('settings_admin.edit', key='chatbot') }}">客服機器人設定</a>
+            {% if current_user.has_permission('settings') %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('settings_admin.edit', key='chatbot') }}">客服機器人設定</a>{% endif %}
         </div>
     </div>
     <p class="small text-white-50 mb-3">顧客在點餐頁或出餐進度頁的客服對話窗按「轉接真人客服」後會出現在這裡 (含與 AI 的對話紀錄)；

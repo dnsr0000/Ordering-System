@@ -7,7 +7,7 @@
 {% block content %}
 <main class="container py-4" id="devicesPage">
     {% call page_header('裝置管理', 'bi-display', '點餐機、POS、廚房看板的註冊、在線狀態、程式版本、遠端鎖定與重新整理') %}{% endcall %}
-    <div class="alert alert-secondary small">新增裝置後，在該裝置的瀏覽器開啟 <code>/device/pair</code> 輸入配對碼 (15 分鐘內有效)。目前程式版本 <code id="serverVersion">{{ version }}</code>；
+    <div class="alert alert-secondary small">新增裝置後，在該裝置的瀏覽器開啟 <code>{{ url_for('devices.pair', shop=g.tenant.slug) }}</code> 輸入配對碼 (15 分鐘內有效)。目前程式版本 <code id="serverVersion">{{ version }}</code>；
         版本不同的裝置請按「重新整理」。鎖定後畫面會蓋上鎖定訊息，且該裝置的結帳等操作立即被拒絕。</div>
     <div class="table-responsive"><table class="table table-dark table-sm align-middle" id="deviceTable">
         <thead><tr><th>裝置</th><th>狀態</th><th>版本</th><th>最後回報</th><th>頁面 / IP</th><th></th></tr></thead>
@@ -25,8 +25,11 @@
                 {% if d.is_locked %}<button class="btn btn-sm btn-success" name="action" value="unlock">解除鎖定</button>
                 {% else %}<input class="form-control form-control-sm" name="message" placeholder="鎖定訊息" aria-label="鎖定訊息" style="width: 9rem">
                 <button class="btn btn-sm btn-outline-danger" name="action" value="lock">鎖定</button>{% endif %}
-                <button class="btn btn-sm btn-outline-info" name="action" value="reload">重新整理</button>
-                <button class="btn btn-sm btn-outline-light" name="action" value="pair">重新配對</button>
+                <button class="btn btn-sm btn-outline-info" name="action" value="reload">重新整理</button></form>
+                {# 重新配對 / 刪除會讓該裝置的註冊立即失效 (需到現場重新輸入配對碼)：各自的表單並先確認 #}
+                <form method="POST" class="d-inline" data-confirm="確定要重新配對「{{ d.name }}」？目前的註冊會立即失效，需要在該裝置重新輸入配對碼。">{{ csrf() }}<input type="hidden" name="device_id" value="{{ d.id }}">
+                <button class="btn btn-sm btn-outline-light" name="action" value="pair">重新配對</button></form>
+                <form method="POST" class="d-inline" data-confirm="確定要刪除裝置「{{ d.name }}」？該裝置的註冊會立即失效且無法復原 (需重新新增並在現場配對)。">{{ csrf() }}<input type="hidden" name="device_id" value="{{ d.id }}">
                 <button class="btn btn-sm btn-outline-secondary" name="action" value="delete">刪除</button></form></td>
         </tr>
         {% else %}<tr><td colspan="6" class="text-white-50">尚未登記裝置</td></tr>{% endfor %}

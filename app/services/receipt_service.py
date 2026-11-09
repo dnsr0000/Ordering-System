@@ -10,7 +10,7 @@ from typing import Any
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.enums import PAYMENT_METHOD_LABELS
+from app.models.enums import PAYMENT_METHOD_LABELS, OrderStatus
 from app.models.tenant import Tenant
 from app.services import deferred, line_service, mail_service, settings_service
 
@@ -59,27 +59,54 @@ def receipt_rows(order: Any, shop: Any = None, detailed: bool = False, title: st
     shop = shop or db.session.get(Tenant, order.tenant_id)
     rule = lambda ch: {'kind': 'rule', 'char': ch}   # noqa: E731
     rows = [_text(shop.name if shop else '', bold=True, size=2, align='center'),
-            _text(title, align='center'), rule('='),
-            _text(f'取餐號碼 #{order.display_pickup_number:03d}', bold=True, size=2, align='center'),
-            _row('單號', f'#{order.id}'),
-            _row('時間', order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '')]
+            _text(title, align='center'), rule('=')]
+    cancelled = order.status == OrderStatus.CANCELLED
+    if cancelled:   # 已取消的訂單補印 / 寄送時要看得出來，不可當成有效收據
+        rows.append(_text('*** 已取消 / 已作廢 ***', bold=True, size=2, align='center'))
+    # 線上點餐尚未由分店編號：display_pickup_number 會退回訂單 id，不可印成取餐號碼
+    pickup_line = (_text('取餐號碼：待分店確認', bold=True, align='center') if order.pickup_pending
+                   else _text(f'取餐號碼 #{order.display_pickup_number:03d}', bold=True, size=2, align='center'))
+    rows += [pickup_line,
+             _row('單號', f'#{order.id}'),
+             _row('時間', order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '')]
     if detailed:
         rows.append(_row('顧客/桌號', order.table_number or ''))
     rows.append(_row('用餐方式', order.order_type or ''))
     if detailed and order.cashier_username:
         rows.append(_row('收銀', order.cashier_username))
     rows.append(rule('-'))
+    # 單品作廢過的品項列「原份數」與作廢份數，小計為原訂單商品金額，另列作廢扣減 (桌邊未結帳的訂單作廢時直接降低應付金額，
+    # 折扣 / 服務費不變；否則小計與品項合計、應付總額都對不上)
+    voided = any(it.voided_qty for it in order.items)
+    original_sum = sum((it.price or 0) * ((it.quantity or 0) + (it.voided_qty or 0)) for it in order.items)
+    void_cut = original_sum - order.subtotal if voided else 0
+    if void_cut < 0:
+        voided, void_cut = False, 0
     for it in order.items:
-        rows.append({'kind': 'item', 'label': f'{it.display_name} x{it.quantity}', 'value': f'${it.price * it.quantity}'})
+        qty = (it.quantity or 0) + (it.voided_qty or 0) if voided else it.quantity
+        rows.append({'kind': 'item', 'label': f'{it.display_name} x{qty}', 'value': f'${(it.price or 0) * (qty or 0)}'})
         if it.customization:
             rows.append(_text(f'  {it.customization}'))
-    rows += [rule('-'), _row('小計', f'${order.subtotal}')]
-    for label, value in (('促銷', order.promotion_discount), ('會員折扣', order.member_discount), ('整單折扣', order.manual_discount)):
+        if voided and it.voided_qty:
+            rows.append(_text(f'  已作廢 x{it.voided_qty}'))
+    rows += [rule('-'), _row('小計', f'${original_sum if voided else order.subtotal}')]
+    discounts: list[list[Any]] = [['促銷', order.promotion_discount or 0], ['會員折扣', order.member_discount or 0],
+                 ['整單折扣', order.manual_discount or 0]]
+    other = (order.discount_amount or 0) - sum(v for _label, v in discounts)
+    # 各項折扣分別四捨五入存檔，合計可能比折扣總額多 1 元：從會員折扣 / 整單折扣 / 促銷扣回，列出的折扣加總才等於折扣總額
+    for entry in (discounts[1], discounts[2], discounts[0]):
+        if other >= 0:
+            break
+        cut = min(entry[1], -other)
+        entry[1] -= cut
+        other += cut
+    for label, value in discounts:
         if value:
             rows.append(_row(label, f'-${value}'))
-    other = (order.discount_amount or 0) - (order.promotion_discount or 0) - (order.member_discount or 0) - (order.manual_discount or 0)
     if other > 0:
         rows.append(_row('優惠券/點數', f'-${other}', text_label='優惠券 / 點數'))
+    if void_cut:
+        rows.append(_row('作廢品項', f'-${void_cut}'))
     if order.service_charge:
         rows.append(_row('服務費', f'+${order.service_charge}'))
     if order.delivery_fee:
@@ -87,8 +114,11 @@ def receipt_rows(order: Any, shop: Any = None, detailed: bool = False, title: st
     if detailed and order.delivery_address:
         rows += [_text(f'外送：{order.delivery_address}', bold=True),
                  _text(f'電話：{order.delivery_phone}　區域：{order.delivery_zone}')]
-    rows += [_row('應付總額', f'${order.total_price}', bold=True),
-             _row('付款方式', PAYMENT_METHOD_LABELS.get(order.payment_method, order.payment_method))]
+    rows.append(_row('應付總額', f'${order.total_price}', bold=True))
+    if order.refunded_amount:   # 已收款訂單的單品作廢 / 取消退款：應付金額不變、改記已退款
+        rows += [_row('已退款', f'-${order.refunded_amount}', bold=True),
+                 _row('實收淨額', f'${max(0, (order.total_price or 0) - order.refunded_amount)}', bold=True)]
+    rows.append(_row('付款方式', PAYMENT_METHOD_LABELS.get(order.payment_method, order.payment_method)))
     if detailed and order.payment_method == 'Cash':
         rows += [_row('實收', f'${order.cash_received or order.total_price}'), _row('找零', f'${order.cash_change or 0}')]
     if detailed and order.payment_reference:
@@ -100,7 +130,7 @@ def receipt_rows(order: Any, shop: Any = None, detailed: bool = False, title: st
         rows += [_row('電子發票', inv['invoice_no']), _row('隨機碼', inv.get('random_number') or '')]
         if detailed:
             rows.append(_row('載具', inv.get('carrier') or ''))
-    if order.user and order.points_earned:
+    if order.user and order.points_earned and not cancelled:   # 取消時贈點已追回
         rows.append(_row('本次贈點', f'+{order.points_earned}'))
     if detailed:
         rows.append(rule('-'))

@@ -4,7 +4,7 @@
  */
 import { $, api, html, modalOf, num, posCfg, setHtml, state, SUBMIT_LABEL } from './core.js';
 import { repriceCart } from './menu.js';
-import { renderCart } from './cart.js';
+import { canOverridePrice, renderCart } from './cart.js';
 import { applyServerPrices, clearMember, refreshBoundMember } from './member.js';
 import { askLinePayKey, withApproval, withMemberVerify } from './pro.js';
 import {
@@ -17,11 +17,24 @@ import { payloadLine } from '../shared/orderpayload.js';
 // ======================================================================
 // 8. 結帳送出與收據 (送出的品項結構 payloadLine 在 shared/orderpayload.js)
 // ======================================================================
+const DELIVERY_LABEL = html`<i class="bi bi-bicycle me-1"></i> 登錄外送單 (F2)`;
+/** 主按鈕平常的文字 (外送單登錄模式下是「登錄外送單」) */
+const submitLabel = () => (state.deliveryMode ? DELIVERY_LABEL : SUBMIT_LABEL);
+
 export function setSubmitting(on) {
     state.submitting = on;
     const btn = $('posSubmitBtn');
     btn.disabled = on;
-    setHtml(btn, on ? html`<span class="spinner-border spinner-border-sm me-2"></span>結帳處理中...` : SUBMIT_LABEL);
+    setHtml(btn, on ? html`<span class="spinner-border spinner-border-sm me-2"></span>結帳處理中...` : submitLabel());
+    // 結帳進行中不可掛單：送出的內容已固定，掛單會把同一份餐點留下來再結一次
+    document.querySelectorAll('[data-action="holdOrder"]').forEach((b) => { b.disabled = on; });
+}
+
+/** 常用備註按鈕的「已選」反白依整單備註的實際內容同步 (清空 / 掛單 / 取回 / 手動修改後都要一致) */
+export function syncQuickNotes() {
+    const input = $('posOrderNote');
+    const parts = ((input && input.value) || '').split(/[、,，]\s*/).map((x) => x.trim()).filter(Boolean);
+    document.querySelectorAll('[data-action="quickNote"]').forEach((b) => b.classList.toggle('active', parts.includes(b.dataset.note)));
 }
 
 export function resetTerminal() {
@@ -30,6 +43,7 @@ export function resetTerminal() {
     clearMember();         // 內含 renderCart()
     $('posTableInput').value = '';
     $('posOrderNote').value = '';
+    syncQuickNotes();
     $('posCashReceived').value = '';
     state.orderDiscount = null;
     ['posCardAuth', 'posCardLast4', 'posInvoiceValue', 'posDeliveryRef', 'posHomeAddress', 'posHomePhone']
@@ -82,7 +96,7 @@ export async function submitOrder() {
         table_number: ($('posTableInput').value || '').trim(),
         order_type: orderType,
         payment_method: payMethod,
-        need_cutlery: orderType === '外帶' ? $('posNeedCutlery').checked : false,
+        need_cutlery: orderType === '外帶' || orderType === '外送到府' ? $('posNeedCutlery').checked : false,
         note: ($('posOrderNote').value || '').trim(),
         promo_code: state.promoCode,
         use_points: usePoints,
@@ -114,7 +128,17 @@ export async function submitOrder() {
     if (!state.checkout || state.checkout.sig !== sig) state.checkout = { id: Kiosk.newOrderId(), sig };
 
     if (payMethod === 'Line Pay' && posCfg.linePayIntegrated) {
-        const key = await askLinePayKey(finalTotal);
+        if (finalTotal <= 0) {   // 應付 $0 不會向 LINE Pay 扣款，不必請顧客出示付款碼
+            alert('⚠️ 本單應付 $0，不需 LINE Pay 扣款，請將付款方式改為現金後再結帳。');
+            return;
+        }
+        state.submitting = true;   // 付款碼視窗開著時不可再結帳或掛單 (這份內容稍後就會送出)
+        let key;
+        try {
+            key = await askLinePayKey(finalTotal);
+        } finally {
+            state.submitting = false;
+        }
         if (!key) return;
         payload.payment_info = { one_time_key: key };
     }
@@ -209,6 +233,11 @@ export async function submitDeliveryOrder() {
         $('posDeliveryRef').focus();
         return;
     }
+    // 外送平台單不綁會員：紅利兌換與寄杯在後端一定被拒，先講清楚原因
+    if (state.cart.some((l) => l.is_reward || l.pass_id)) {
+        alert('⚠️ 外送平台訂單不能使用紅利兌換或寄杯，請先移除這些品項！');
+        return;
+    }
     const payload = {
         items: state.cart.map(payloadLine), platform: $('posDeliveryPlatform').value, external_ref: ref,
         note: ($('posOrderNote').value || '').trim(),
@@ -235,7 +264,18 @@ export function toggleDeliveryMode() {
     $('posOrderInfoBox').classList.toggle('opacity-50', state.deliveryMode);
     const btn = $('posDeliveryBtn');
     if (btn) btn.classList.toggle('active', state.deliveryMode);
-    setHtml($('posSubmitBtn'), state.deliveryMode ? html`<i class="bi bi-bicycle me-1"></i> 登錄外送單 (F2)` : SUBMIT_LABEL);
+    setHtml($('posSubmitBtn'), submitLabel());
+    if (state.deliveryMode) {   // 外送單不是櫃檯收銀單，後端不接受改價：改過價的品項還原成原價
+        let restored = false;
+        state.cart.forEach((l) => {
+            if (l.override_price === undefined) return;
+            if (l.original_price !== undefined) l.price = l.original_price;
+            delete l.override_price;
+            delete l.original_price;
+            restored = true;
+        });
+        if (restored) alert('⚠️ 外送單不能改價，已將改過價的品項還原為原價。');
+    }
     repriceCart();
 }
 
@@ -243,7 +283,7 @@ export function toggleDeliveryMode() {
 export let priceIdx = null;
 export function openPriceModal(idx) {
     const line = state.cart[idx];
-    if (!line) return;
+    if (!line || !canOverridePrice(line)) return;
     priceIdx = idx;
     $('posPriceItemName').textContent = line.name;
     $('posPriceOriginal').textContent = line.original_price !== undefined ? line.original_price : line.price;
@@ -293,7 +333,8 @@ export function showReceipt(d, title) {
     $('rcpt-pickup-no').textContent = `#${Kiosk.pad3(d.pickup_number || d.order_id)}`;
     $('rcpt-order-id').textContent = `#${d.order_id}`;
     $('rcpt-customer').textContent = d.table_number || d.user_name || '櫃檯POS';
-    $('rcpt-order-type').textContent = d.order_type + (d.order_type === '外帶' ? (d.need_cutlery ? ' (附餐具)' : ' (免餐具)') : '');
+    const withCutlery = d.order_type === '外帶' || d.order_type === '外送到府';
+    $('rcpt-order-type').textContent = d.order_type + (withCutlery ? (d.need_cutlery ? ' (附餐具)' : ' (免餐具)') : '');
     $('rcpt-cashier').textContent = d.cashier || 'POS';
     $('rcpt-time').textContent = d.created_at || new Date().toLocaleString();
 
@@ -315,6 +356,11 @@ export function showReceipt(d, title) {
     const svc = num(d.service_charge);
     $('rcpt-service-row').classList.toggle('d-none', svc <= 0);
     $('rcpt-service').textContent = svc;
+    const fee = num(d.delivery_fee);   // 外送到府：小計不含外送費，另列一行讓明細加總對得上總計
+    if ($('rcpt-delivery-row')) {
+        $('rcpt-delivery-row').classList.toggle('d-none', fee <= 0);
+        $('rcpt-delivery').textContent = Math.round(fee);
+    }
     const inv = d.invoice || null;
     $('rcpt-invoice-box').classList.toggle('d-none', !inv);
     if (inv) {
@@ -335,6 +381,8 @@ export function showReceipt(d, title) {
     ptsBox.classList.toggle('d-none', !showPts);
     $('rcpt-earned-pts').textContent = `+${num(d.points_earned)} 點`;
     $('rcpt-remain-pts').textContent = `${num(d.remaining_points)} 點`;
+    // 補印收據 (當日訂單) 沒有會員目前點數：隱藏「會員剩餘紅利」，避免顯示成 0 點
+    $('rcpt-remain-pts').parentElement.classList.toggle('d-none', d.remaining_points === undefined || d.remaining_points === null);
 
     modalOf('posReceiptModal').show();
 }

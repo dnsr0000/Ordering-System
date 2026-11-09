@@ -2,6 +2,7 @@
 from flask import Blueprint, flash, g, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from app.models.enums import POS_ROLES
 from app.errors import AppError
@@ -12,6 +13,7 @@ from app.models.user import User
 from app.services import pass_service
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
+from app.services.order_service import find_by_client_order_id
 from app.utils import find_own, get_json_dict, get_own, role_required, safe_int
 
 passes_bp = Blueprint('passes', __name__)
@@ -64,12 +66,43 @@ def index():
 @role_required(*POS_ROLES)
 @limiter.limit('30/minute')
 def api_sell():
-    """POS 售出寄杯：{user_id, product_id, payment_method, cash_received, payment_info, invoice}"""
+    """
+    POS 售出寄杯：{user_id, product_id, payment_method, cash_received, payment_info, invoice, request_id}。
+    request_id：前端每次開啟售出視窗產生 (重送沿用)，存成寄杯購買訂單的 client_order_id (同店唯一索引)；
+    回應遺失後重按「售出」時回傳原本那筆，不會重複建立寄杯與收款。
+    """
     data = get_json_dict()
+    request_id = str(data.get('request_id') or '').strip()[:36] or None
+    existing = find_by_client_order_id(g.tenant_id, request_id) if request_id else None
+    if existing is not None:
+        return _replay_sale(existing)
     user = db.session.get(User, safe_int(data.get('user_id'), 0))
     mp, order = pass_service.sell(g.tenant_id, data.get('product_id'), user, data.get('payment_method', 'Cash'),
                                   current_user.username, cash_received=data.get('cash_received'),
                                   payment_info=data.get('payment_info') or {}, invoice_info=data.get('invoice') or None)
-    db.session.commit()
+    if request_id:
+        order.client_order_id = request_id
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # 同一個 request_id 同時送出兩次：後到的撞上唯一索引，回傳先完成的那筆
+        db.session.rollback()
+        existing = find_by_client_order_id(g.tenant_id, request_id) if request_id else None
+        if existing is None:
+            raise
+        return _replay_sale(existing)
+    return _sale_response(mp, order)
+
+
+def _sale_response(mp, order, replayed=False):
     return jsonify({'success': True, 'pass': mp.to_dict(), 'order_id': order.id, 'total': order.total_price,
-                    'cash_change': order.cash_change, 'message': f'已售出寄杯「{mp.name}」{mp.total_uses} 次'})
+                    'cash_change': order.cash_change, 'replayed': replayed,
+                    'message': f'已售出寄杯「{mp.name}」{mp.total_uses} 次'})
+
+
+def _replay_sale(order):
+    """重送同一個 request_id：只回傳給原本售出的收銀員，且必須是寄杯購買訂單"""
+    mp = MemberPass.query.filter_by(sale_order_id=order.id).first()
+    if mp is None or order.cashier_username != current_user.username:
+        raise AppError('售出編號重複，請關閉視窗後重新操作', 409)
+    return _sale_response(mp, order, replayed=True)

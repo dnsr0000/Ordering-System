@@ -17,15 +17,20 @@ from app.models.coupon import Coupon, UserCoupon
 from app.models.enums import DELIVERY_SOURCES, OrderSource, OrderType
 from app.models.menu import ComboOption, MenuItem, ModifierOption
 from app.models.user import User
-from app.utils import safe_int
+from app.utils import safe_id, safe_int
 
 logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
 NON_MAIN_ADDON_CATEGORIES = ('飲料', '點心', '副餐', '配餐')
+# 每一列 / 整張訂單的份數上限 (團購合併送單同一品項最多 300 人 × 20 份 = 6000 份)；
+# 防止「1e10 份」這類請求讓促銷計算、庫存檢查耗盡伺服器資源
+MAX_LINE_QUANTITY = 9999
+MAX_ORDER_QUANTITY = 99999
 _PRICE_TAG = re.compile(r'\(\+\d+\)')
 _COMBO_TAG = re.compile(r'\[套餐:[^\]]*\]')
+_CONTROL_CHARS = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 
 
 # ============================================================================
@@ -193,11 +198,18 @@ class CheckoutLine:
 
 
 def _clean_customization(raw, modifier_names):
-    """移除前端送來的價格標籤 (+N)、套餐標籤與加料名稱 (加料由後端依 modifier_ids 重新產生)"""
+    """
+    移除前端送來的價格標籤 (+N)、套餐標籤、控制字元與加料片段 (加料由後端依 modifier_ids 重新產生)。
+    只移除「完全等於加料名稱」的片段 (不用子字串比對，配餐「珍珠奶茶(少冰/半糖)」在有加料「珍珠」時要保留)；
+    相容舊版前端把加料放進配餐括號內「薯條(起司(+15)、蛋(+10))」切段後的「薯條(起司」與「蛋)」。
+    """
     parts = []
     for part in _COMBO_TAG.sub('', str(raw or '')).split('、'):
-        part = _PRICE_TAG.sub('', part).strip()
-        if part and not any(name in part for name in modifier_names):
+        part = _PRICE_TAG.sub('', _CONTROL_CHARS.sub('', part)).strip()
+        head, sep, tail = part.rpartition('(')
+        if sep and part.count('(') > part.count(')') and tail.strip() in modifier_names:
+            part = head.strip()
+        if part and part not in modifier_names and part.rstrip(')') not in modifier_names:
             parts.append(part)
     return parts
 
@@ -207,7 +219,9 @@ def _combo_choice_sides(combo, raw_choices):
     套餐任選：每個任選群組必須選一項 (前端送出選中的 ComboOptionItem id)。回傳 (實際配餐清單, 加價合計, 顯示文字)。
     沒有任選群組的套餐回傳固定配餐。
     """
-    chosen_ids = {safe_int(c, 0) for c in (raw_choices or []) if str(c).strip().lstrip('-').isdigit()}
+    if raw_choices and not isinstance(raw_choices, (list, tuple)):
+        raise AppError(f'套餐【{combo.name}】的任選資料格式不正確，請重新選擇！')
+    chosen_ids = {safe_id(c) for c in (raw_choices or []) if str(c).strip().lstrip('-').isdigit()}
     sides, extra, labels = list(combo.fixed_sides), 0, []
     for group, options in combo.choice_groups:
         picked = [o for o in options if o.id in chosen_ids]
@@ -250,10 +264,11 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
     modifiers = {m.id: m for m in ModifierOption.query.filter_by(is_active=True).all()}
     modifier_names = {m.name for m in modifiers.values()}
     lines = []
+    total_quantity = 0
     for raw in items_data:
         if not isinstance(raw, dict):
             continue
-        item_id = safe_int(raw.get('menu_item_id') or raw.get('id'), 0)
+        item_id = safe_id(raw.get('menu_item_id') or raw.get('id'))
         menu_item = db.session.get(MenuItem, item_id) if item_id > 0 else None
         if menu_item is None or menu_item.tenant_id != tenant_id:
             raise AppError(f"餐點【{raw.get('name') or item_id}】不存在於系統中！")
@@ -269,11 +284,18 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
                            sold_out=True, sold_out_items=[menu_item.name])
 
         quantity = max(1, safe_int(raw.get('quantity'), 1))
+        if quantity > MAX_LINE_QUANTITY:
+            raise AppError(f'餐點【{menu_item.name}】一次最多 {MAX_LINE_QUANTITY} 份，請調整數量！')
+        total_quantity += quantity
+        if total_quantity > MAX_ORDER_QUANTITY:
+            raise AppError(f'單筆訂單最多 {MAX_ORDER_QUANTITY} 份，請分批結帳！')
         is_reward = bool(raw.get('is_reward'))
-        pass_id = safe_int(raw.get('pass_id'), 0) if not is_reward else 0
+        pass_id = safe_id(raw.get('pass_id')) if not is_reward else 0
         is_add_on = bool(raw.get('is_add_on')) and not is_reward and not pass_id
         combo = None
-        combo_id = safe_int(raw.get('combo_option_id'), 0)
+        combo_id = safe_id(raw.get('combo_option_id'))
+        if combo_id and pass_id:   # 寄杯只兌換單品本身 (只收加料)，不能附帶套餐配餐
+            raise AppError(f'餐點【{menu_item.name}】以寄杯兌換時不能搭配套餐，請改為單點！')
         if combo_id and not (is_reward or is_add_on):
             combo = db.session.get(ComboOption, combo_id)
             if combo is None or combo.tenant_id != tenant_id or combo.main_item_id != menu_item.id:
@@ -283,7 +305,10 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
         else:
             combo_sides, choice_extra, choice_labels = [], 0, []
 
-        mod_ids = [safe_int(m, 0) for m in raw.get('modifier_ids') or [] if str(m).isdigit()]
+        raw_mods = raw.get('modifier_ids') or []
+        if not isinstance(raw_mods, (list, tuple)):
+            raise AppError(f'餐點【{menu_item.name}】的加料資料格式不正確，請重新選擇！')
+        mod_ids = [safe_id(m) for m in raw_mods if str(m).isdigit()]
         if mod_ids and combo is None and menu_item.modifiers != 'addons' and not menu_item.can_be_add_on:
             raise AppError(f'餐點【{menu_item.name}】不支援客製化加料！')
         if any(m not in modifiers for m in mod_ids):
@@ -301,6 +326,8 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
             chosen = next((s for s in sizes if s[0] == wanted), None) if wanted else sizes[0]
             if chosen is None:
                 raise AppError(f'餐點【{menu_item.name}】沒有「{wanted}」這個規格，請重新選擇！')
+            if pass_id and chosen is not sizes[0]:   # 寄杯兌換只含預設規格 (單價不收規格加價)
+                raise AppError(f'餐點【{menu_item.name}】以寄杯兌換時只能選擇預設規格「{sizes[0][0]}」！')
             size_delta = chosen[1]
             parts = [p for p in parts if p != chosen[0]]
             parts.insert(0, chosen[0])
@@ -316,6 +343,7 @@ def _parse_lines(items_data, tenant_id, price_channel='dine_in', now=None, allow
             parts = parts or ['紅利免費兌換']
         elif pass_id:   # 寄杯兌換：免費 (只收加料)，結帳時檢查並扣次數
             unit_price = extra
+            parts = [p for p in parts if p != '[寄杯]']   # 舊掛單 / 舊版 POS 仍可能送來這個標籤，避免重複
             parts.insert(0, '[寄杯]')
         elif is_add_on:
             if not menu_item.can_be_add_on:

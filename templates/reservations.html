@@ -6,10 +6,10 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
 <main class="container-fluid px-4 py-4" id="reservations-page">
-    {% call page_header('訂位 / 候位', 'bi-calendar-check', '線上訂位頁：/reserve；顧客自行取號：/waitlist (可用平板放在門口)；叫號會顯示在叫號看板並語音播報',
+    {% call page_header('訂位 / 候位', 'bi-calendar-check', '線上訂位頁：/reserve?shop=' ~ g.tenant.slug ~ '；顧客自行取號：/waitlist?shop=' ~ g.tenant.slug ~ ' (門口平板請先在「裝置管理」註冊，不受取號次數限制)；叫號會顯示在叫號看板並語音播報',
                         back_url=url_for('pos.pos_terminal'), back_label='POS') %}
-    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('reservations.public_waitlist') }}" target="_blank" rel="noopener">取號頁</a>
-    {% if cfg.online_enabled %}<a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('reservations.public_reserve') }}" target="_blank" rel="noopener">線上訂位頁</a>{% endif %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('reservations.public_waitlist', shop=g.tenant.slug) }}" target="_blank" rel="noopener">取號頁</a>
+    {% if cfg.online_enabled %}<a class="btn btn-outline-info btn-sm fw-bold" href="{{ url_for('reservations.public_reserve', shop=g.tenant.slug) }}" target="_blank" rel="noopener">線上訂位頁</a>{% endif %}
     {% endcall %}
     <div class="row g-4">
         <section class="col-xl-7">
@@ -19,14 +19,17 @@
                     <form method="GET" class="d-flex gap-1"><input class="form-control form-control-sm" type="date" name="day" value="{{ day }}" aria-label="日期"><button class="btn btn-outline-info btn-sm" type="submit">查看</button></form>
                 </div>
                 <div class="small text-white-50 mb-2" id="noShowStats">本月未到 {{ deposit_stats.no_show }} 筆｜訂金不退 ${{ deposit_stats.forfeited }}
-                    {% if deposit_stats.refund_failed %}｜<span class="text-danger">訂金退款失敗 {{ deposit_stats.refund_failed }} 筆 (請到綠界後台退款)</span>{% endif %}</div>
+                    {% if deposit_stats.refund_failed %}｜<span class="text-danger">訂金退款失敗待處理 {{ deposit_stats.refund_failed }} 筆 (請重試或到綠界後台退款後按「已人工退款」)</span>{% endif %}</div>
                 <table class="table table-dark table-sm align-middle" id="reservationsTable">
                     <thead><tr><th>時間</th><th>姓名 / 電話</th><th>人數</th><th>桌號</th><th>備註</th><th>狀態</th><th></th></tr></thead>
                     <tbody>
                     {% for r in reservations %}
                     <tr data-reservation-id="{{ r.id }}"><td class="fw-bold">{{ r.reserved_at.strftime('%H:%M') }}</td><td>{{ r.name }}<div class="small text-white-50">{{ r.phone }}{% if r.source == 'online' %} • 線上{% endif %}</div>
                         {% if no_shows.get(r.phone) %}<span class="badge bg-danger" title="近 180 天未到次數">未到 {{ no_shows[r.phone] }} 次</span>{% endif %}
-                        {% if r.deposit_status %}<span class="badge bg-{{ {'paid': 'success', 'pending': 'warning', 'refund_failed': 'danger', 'applied': 'info'}.get(r.deposit_status, 'secondary') }}" data-deposit="{{ r.deposit_status }}" title="{{ r.deposit_note }}">{{ r.deposit_label }} ${{ r.deposit_amount }}</span>{% endif %}</td>
+                        {% if r.deposit_status %}<span class="badge bg-{{ {'paid': 'success', 'pending': 'warning', 'refund_failed': 'danger', 'applied': 'info'}.get(r.deposit_status, 'secondary') }}" data-deposit="{{ r.deposit_status }}" title="{{ r.deposit_note }}">{{ r.deposit_label }} ${{ r.deposit_amount }}</span>{% endif %}
+                        {% if r.deposit_status == 'refund_failed' %}<div class="d-flex gap-1 mt-1">
+                            <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="deposit_retry"><input type="hidden" name="reservation_id" value="{{ r.id }}"><button class="btn btn-sm btn-outline-warning" type="submit">重試退款</button></form>
+                            <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="deposit_manual"><input type="hidden" name="reservation_id" value="{{ r.id }}"><button class="btn btn-sm btn-outline-light" type="submit">已人工退款</button></form></div>{% endif %}</td>
                         <td>{{ r.party_size }}</td><td>{{ r.table_name }}</td><td class="small">{{ r.note }}</td>
                         <td>{{ status_badge({'booked': '已訂位', 'seated': '已入座', 'cancelled': '已取消', 'no_show': '未到'}[r.status], {'booked': 'info', 'seated': 'success', 'cancelled': 'secondary', 'no_show': 'danger'}[r.status]) }}</td>
                         <td class="text-nowrap">{% if r.status == 'booked' %}
@@ -34,7 +37,12 @@
                                 <select class="form-select form-select-sm" name="table_name" aria-label="桌號" style="width: 6rem"><option value="">桌號</option>{% for t in tables %}<option value="{{ t.name }}" {{ 'selected' if r.table_name == t.name }}>{{ t.name }}</option>{% endfor %}</select>
                                 <button class="btn btn-sm btn-success" type="submit" name="status" value="seated">入座</button>
                                 <button class="btn btn-sm btn-outline-danger" type="submit" name="status" value="no_show">未到</button>
-                                <button class="btn btn-sm btn-outline-secondary" type="submit" name="status" value="cancelled">取消</button></form>{% endif %}</td></tr>
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" name="status" value="cancelled">取消</button></form>
+                            <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="reservation_status"><input type="hidden" name="reservation_id" value="{{ r.id }}"><input type="hidden" name="status" value="cancelled"><input type="hidden" name="by_store" value="1">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" title="店家因素取消：訂金一律全額退還">店家取消 (退訂金)</button></form>
+                            {% elif r.status in ('no_show', 'cancelled') %}
+                            <form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="reservation_status"><input type="hidden" name="reservation_id" value="{{ r.id }}"><input type="hidden" name="expected_status" value="{{ r.status }}">
+                                <button class="btn btn-sm btn-outline-info" type="submit" name="status" value="booked" title="誤標未到 / 取消時改回，已沒收的訂金恢復為已付款">改回預約中</button></form>{% endif %}</td></tr>
                     {% else %}<tr><td colspan="7" class="text-center text-white-50">這天沒有訂位</td></tr>{% endfor %}
                     </tbody>
                 </table>

@@ -12,6 +12,7 @@ import time
 from flask import request, session
 
 from app.errors import AppError
+from app.models.enums import PaymentMethod, normalize_payment_method
 from app.services import approval_service, auth_throttle, settings_service
 from app.services.audit import record_staff_audit
 from app.utils import safe_int
@@ -24,31 +25,40 @@ MAX_REMEMBERED = 20
 enabled = settings_service.flag('member', 'pos_verify', True)
 
 
-def mark_verified(user_id, now=None):
+def _session_key(user):
+    """以 (id, uuid) 識別會員：SQLite 會重用被刪除會員的 id，只用 id 時刪除後新註冊的會員會沿用前一位的驗證狀態"""
+    return f'{user.id}:{user.uuid}'
+
+
+def mark_verified(user, now=None):
     """記下這個收銀工作階段已驗證的會員 (掃條碼、PIN 正確或主管核准後)"""
     now = now or time.time()
     rows = {k: v for k, v in (session.get(SESSION_KEY) or {}).items() if now - float(v) < VERIFIED_TTL}
-    rows[str(user_id)] = now
+    rows[_session_key(user)] = now
     if len(rows) > MAX_REMEMBERED:
         rows = dict(sorted(rows.items(), key=lambda kv: kv[1])[-MAX_REMEMBERED:])
     session[SESSION_KEY] = rows
 
 
-def is_verified(user_id, now=None):
+def is_verified(user, now=None):
     now = now or time.time()
-    at = (session.get(SESSION_KEY) or {}).get(str(user_id))
+    at = (session.get(SESSION_KEY) or {}).get(_session_key(user))
     return at is not None and now - float(at) < VERIFIED_TTL
 
 
 def uses_member_assets(data):
     """結帳請求是否動用會員資產：儲值金 (含混合付款的儲值金)、點數折抵、寄杯兌換、
-    紅利兌換品項 (會用掉會員的兌換券或扣點)、會員持有的優惠券代碼"""
-    if str(data.get('payment_method') or '') == '儲值金':
+    紅利兌換品項 (會用掉會員的兌換券或扣點)、會員持有的優惠券代碼。
+    付款方式與結帳 (order_checkout / payment_service.parse_tenders) 一樣以 normalize_payment_method 解析，
+    否則送「 儲值金」(前後空白) 會被這裡判為沒動用會員資產，結帳卻照樣扣儲值金"""
+    if normalize_payment_method(data.get('payment_method')) == PaymentMethod.STORED_VALUE:
         return True
     if safe_int(data.get('use_points'), 0) > 0:
         return True
     tenders = ((data.get('payment_info') or {}).get('tenders') if isinstance(data.get('payment_info'), dict) else None) or []
-    if any(isinstance(t, dict) and str(t.get('method') or '') == '儲值金' for t in tenders):
+    if not isinstance(tenders, list):
+        tenders = []
+    if any(isinstance(t, dict) and normalize_payment_method(t.get('method')) == PaymentMethod.STORED_VALUE for t in tenders):
         return True
     items = [i for i in (data.get('items') or []) if isinstance(i, dict)]
     if any(safe_int(i.get('pass_id'), 0) > 0 or i.get('is_reward') for i in items):
@@ -71,7 +81,7 @@ def require_verified(user, data, label='動用會員儲值金 / 點數 / 寄杯'
     未驗證時依請求內容驗證：member_pin (會員當面輸入) 或主管帳密 (approver_username / approver_password)。
     驗證通過後記住 15 分鐘；都沒有時拋出 403 (need_member_pin=True，POS 據此跳出會員驗證視窗)。
     """
-    if not enabled(user.tenant_id) or is_verified(user.id):
+    if not enabled(user.tenant_id) or is_verified(user):
         return 'session'
     pin = str(data.get('member_pin') or '').strip()
     if pin:
@@ -82,17 +92,21 @@ def require_verified(user, data, label='動用會員儲值金 / 點數 / 寄杯'
         if not user.pin_hash:
             raise AppError('此會員尚未設定 PIN：請先在會員區協助設定，或改由主管核准', 403, need_member_pin=True,
                            member_name=user.name, has_pin=False)
+        # 先預扣裝置與帳號層級的額度再驗證：同時送出的一批 PIN 不會都通過「未鎖定」的檢查 (同 auth.py / customer_session)
+        if auth_throttle.reserve_pin_attempt(keys):
+            raise AppError('此會員 PIN 碼錯誤次數過多，已暫時鎖定；請改由主管核准或協助重設 PIN', 429, need_member_pin=True,
+                           member_name=user.name, has_pin=True)
         if not user.check_pin(pin):
-            auth_throttle.record_pin_failure(keys)
+            auth_throttle.record_pin_failure(keys, ip_only=True)
             raise AppError('會員 PIN 碼不正確，請重新輸入', 403, need_member_pin=True, member_name=user.name, has_pin=True)
         auth_throttle.clear_keys(keys['device'], keys['account'])
-        mark_verified(user.id)
+        mark_verified(user)
         return 'pin'
-    if (data.get('approver_username') or '').strip() or data.get('member_verify_override'):
+    if str(data.get('approver_username') or '').strip() or data.get('member_verify_override'):
         approver = approval_service.require_approval('member_verify', data, f'未驗證會員身分即{label}')
         record_staff_audit('MEMBER_VERIFY_OVERRIDE', target_user_id=user.id,
                            details=f'主管 {approver} 核准未驗證身分即{label}：會員 {user.name} ({user.phone})')
-        mark_verified(user.id)
+        mark_verified(user)
         return 'approval'
     raise AppError(f'{label}需先驗證會員身分：請掃描會員手機上的動態條碼，或請會員輸入 PIN 碼', 403,
                    need_member_pin=True, member_name=user.name, has_pin=bool(user.pin_hash))

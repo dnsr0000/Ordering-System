@@ -80,14 +80,22 @@ def test_signage_promos_and_pickup(app, store_settings, staff_client):
 
     # 沒填標語時輪播進行中的促銷活動名稱 (停用、只限線上的不顯示)
     with app.app_context():
-        db.session.add_all([
+        created = [
             Promotion(tenant_id=tid, name='看板買一送一', kind='bogo', is_active=True, priority=5),
             Promotion(tenant_id=tid, name='看板停用活動', kind='bogo', is_active=False),
             Promotion(tenant_id=tid, name='看板線上限定', kind='bogo', is_active=True, channels='online'),
-        ])
+        ]
+        db.session.add_all(created)
         db.session.commit()
-    promos = c.get('/api/signage').get_json()['promos']
-    assert '看板買一送一' in promos and '看板停用活動' not in promos and '看板線上限定' not in promos
+        promo_ids = [p.id for p in created]
+    try:
+        promos = c.get('/api/signage').get_json()['promos']
+        assert '看板買一送一' in promos and '看板停用活動' not in promos and '看板線上限定' not in promos
+    finally:
+        # 全品項、全通路的買一送一不可留在共用資料庫 (之後的測試結帳 2 份以上會被打折)
+        with app.app_context():
+            Promotion.query.filter(Promotion.id.in_(promo_ids)).delete(synchronize_session=False)
+            db.session.commit()
 
     # 後台填的標語優先 (一行一則)
     store_settings('signage', promo_lines='午餐時段 11:00-14:00 套餐 9 折\n加入會員送紅茶')

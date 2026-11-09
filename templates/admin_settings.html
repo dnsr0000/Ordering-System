@@ -41,7 +41,7 @@
                                 {% else %}<span class="badge bg-dark border border-secondary ms-auto">設定</span>{% endif %}
                             </div>
                             <div class="small text-white-50">{{ s.description }}</div>
-                            {% if s.owner_only %}<div class="small text-warning mt-1"><i class="bi bi-key me-1"></i>含金鑰，僅負責人可修改</div>{% endif %}
+                            {% if s.owner_only %}<div class="small text-warning mt-1"><i class="bi bi-shield-lock me-1"></i>僅負責人可修改</div>{% endif %}
                             {% if s.source == 'hq' %}<div class="small text-info mt-1"><i class="bi bi-building me-1"></i>使用總部設定</div>
                             {% elif s.source == 'local' and s.hq %}<div class="small text-white-50 mt-1"><i class="bi bi-shop me-1"></i>本店自訂</div>{% endif %}
                         </a>

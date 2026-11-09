@@ -15,6 +15,8 @@ AI 客服機器人 (顧客端：點餐頁與出餐進度頁的對話窗)。
 import difflib
 import re
 
+from flask import g
+
 from app.models.enums import OrderStatus
 from app.models.menu import ALLERGENS, DIETS, MenuItem
 from app.services import ai_service, settings_service
@@ -45,8 +47,68 @@ config = settings_service.reader('chatbot')
 enabled = settings_service.flag('chatbot')
 
 
-def _items():
-    return [i for i in MenuItem.query.all() if not i.is_branch_hidden]
+def _activate_branch(tenant_id, order=None):
+    """套用分店價格 / 上下架 (與點餐頁相同)：有訂單時依訂單的出餐分店；否則分店 = 本分店、線上端 = 顧客選的取餐分店"""
+    from app.services import branch_service
+    from app.sync import runtime as sync_runtime
+    if order is not None:
+        branch_service.activate(tenant_id, order.node_uuid if sync_runtime.is_hub() else sync_runtime.local_node_uuid())
+    else:
+        branch_service.activate_for_request(tenant_id)
+
+
+def _channel():
+    """報價用的通路：線上端 = 線上點餐價，其他 = 內用價 (與點餐頁預設顯示相同)"""
+    from app.sync import runtime as sync_runtime
+    return 'online' if sync_runtime.is_hub() else 'dine_in'
+
+
+def _price(item):
+    return item.price_for(_channel())
+
+
+def _items(tenant_id=None, order=None):
+    """本店 (明確以 tenant_id 過濾：/api/chat 在 tenant_bypass 內呼叫，不能靠自動租戶過濾) 未被分店下架的餐點"""
+    if tenant_id is None:
+        tenant_id = g.get('tenant_id')
+    _activate_branch(tenant_id, order)
+    query = MenuItem.query
+    if tenant_id is not None:
+        query = query.filter(MenuItem.tenant_id == tenant_id)
+    return [i for i in query.order_by(MenuItem.id).all() if not i.is_branch_hidden]
+
+
+def _without_item_names(question, items):
+    """
+    把問句裡的品名拿掉，再判斷是不是在問過敏原：品名常含「蛋 / 魚 / 蝦 / 花生 / 芝麻」(蛋餅、鮮魚湯、蝦仁炒飯)，
+    問「起司蛋餅多少錢」「蛋餅還有嗎」不可被當成過敏原問題。先拿掉完整品名；沒有完整品名時，
+    拿掉出現在任一品名裡的片段 (2 字以上，但本身就是過敏原用語的片段如「花生」保留)。
+    """
+    text = question.lower()
+    full = False
+    for item in sorted(items, key=lambda i: len(i.name), reverse=True):
+        for n in [item.name] + ([item.name_en] if item.name_en else []):
+            if n and n.lower() in text:
+                text = text.replace(n.lower(), ' ')
+                full = True
+    if full:
+        return text
+    names = [i.name.lower() for i in items]
+    changed = True
+    while changed:
+        changed = False
+        for length in range(min(6, len(text)), 1, -1):   # 長的片段先
+            for start in range(0, len(text) - length + 1):
+                part = text[start:start + length]
+                if (not re.fullmatch(r'[\w一-鿿]+', part) or part in ALLERGY_WORDS
+                        or not any(part in n for n in names)):
+                    continue
+                text = text[:start] + ' ' + text[start + length:]
+                changed = True
+                break
+            if changed:
+                break
+    return text
 
 
 def _mentioned_items(question, items):
@@ -74,7 +136,7 @@ def _mentioned_items(question, items):
 
 def _price_line(item):
     hint = '' if item.is_available and item.service_status()[0] else '（目前無法供應）'
-    return f'{item.name} ${item.unit_price}{hint}'
+    return f'{item.name} ${_price(item)}{hint}'
 
 
 # ---------------------------------------------------------------- 1. 過敏原 (純檢索)
@@ -120,14 +182,18 @@ def _status_answer(order):
         return None
     if order.status == OrderStatus.CANCELLED:
         return '這張訂單已取消，如有疑問請洽櫃檯。'
+    if (order.payment_status or '') == 'pending':
+        return '這張訂單尚未完成付款，付款完成後才會開始製作；請回到付款頁完成付款，如有疑問請洽櫃檯。'
     if order.delivery_status:
         label = order.delivery_status_label
         extra = f'，外送員 {order.driver_name}' if order.driver_name and order.delivery_status in ('assigned', 'out') else ''
         return f'您的外送訂單目前「{label}」{extra}。配送中可在這一頁看到外送員位置。'
-    if order.status == OrderStatus.COMPLETED:
-        return f'餐點已完成，取餐號碼 #{order.display_pickup_number:03d}，請到櫃檯取餐。'
     if order.status == OrderStatus.PICKED_UP:
         return '這張訂單已取餐，祝您用餐愉快！'
+    if order.pickup_pending:   # 線上點餐尚未由取餐分店編號：display_pickup_number 是訂單 id，不可當取餐號碼
+        return '您的訂單已送出，取餐號碼待分店確認，確認後這一頁會顯示取餐號碼。'
+    if order.status == OrderStatus.COMPLETED:
+        return f'餐點已完成，取餐號碼 #{order.display_pickup_number:03d}，請到櫃檯取餐。'
     eta = order.eta_label
     return f'餐點製作中，取餐號碼 #{order.display_pickup_number:03d}' + (f'，預估 {eta}' if eta else '') + '。完成時這一頁會提示您。'
 
@@ -179,7 +245,7 @@ def _menu_answer(question, items):
         if new:
             return '新品：' + '、'.join(_price_line(i) for i in new[:6]) + '。'
     if any(w in question for w in ('最便宜', '便宜')):
-        cheap = sorted((i for i in items if i.is_available), key=lambda i: i.unit_price)[:5]
+        cheap = sorted((i for i in items if i.is_available), key=_price)[:5]
         if cheap:
             return '價格較低的餐點：' + '、'.join(_price_line(i) for i in cheap) + '。'
     for cat in sorted({(i.category or '').strip() for i in items}, key=len, reverse=True):
@@ -193,17 +259,30 @@ def _menu_answer(question, items):
 
 
 # ---------------------------------------------------------------- 5. LLM
-def _menu_summary(items, limit=60):
+def _menu_summary(items, limit=60, max_names=400):
+    """
+    LLM 提示用的菜單：可供應的先、再依分類與建立順序排列 (固定順序，提示快取才有效)；
+    前 limit 項列出價格與標示，超過的不截掉，改成「分類：品名、品名」的精簡清單 (菜單大的店家新品也看得到)。
+    """
+    serving = {i.id: bool(i.is_available and i.service_status()[0]) for i in items}
+    ordered = sorted(items, key=lambda i: (not serving[i.id], (i.category or '').strip(), i.id or 0))
     rows = []
-    for i in items[:limit]:
+    for i in ordered[:limit]:
         tags = []
         if i.allergen_codes:
             tags.append('過敏原:' + '/'.join(ALLERGENS[c] for c in i.allergen_codes))
         if i.diet:
             tags.append(DIETS.get(i.diet, i.diet))
-        if not (i.is_available and i.service_status()[0]):
+        if not serving[i.id]:
             tags.append('售完')
-        rows.append(f'{i.category}|{i.name}|${i.unit_price}' + (f'|{" ".join(tags)}' if tags else ''))
+        rows.append(f'{i.category}|{i.name}|${_price(i)}' + (f'|{" ".join(tags)}' if tags else ''))
+    rest = ordered[limit:limit + max_names]
+    if rest:
+        groups = {}
+        for i in rest:
+            groups.setdefault((i.category or '未分類').strip(), []).append(i.name + ('' if serving[i.id] else '(售完)'))
+        rows.append('其他品項 (分類：品名；價格與過敏原未列出，需要時請顧客洽櫃檯)：')
+        rows += [f'{cat}：{"、".join(names)}' for cat, names in groups.items()]
     return '\n'.join(rows)
 
 
@@ -276,9 +355,9 @@ def answer(question, order=None, history=None, tenant_id=None, shop_name=''):
     if handoff_ok and any(w in q for w in HANDOFF_WORDS):
         return {'answer': '好的，請按下方「轉接真人客服」，店員會直接在這個對話窗回覆您。', 'source': 'faq',
                 'suggestions': _suggestions(order), 'did_you_mean': [], 'handoff': True}
-    items = _items()
+    items = _items(tenant_id, order)
     text, source = None, 'retrieval'
-    if any(w in q for w in ALLERGY_WORDS):
+    if any(w in _without_item_names(question, items) for w in ALLERGY_WORDS):
         text = _allergen_answer(question, items)
     if text is None and order is not None and any(w in q for w in STATUS_WORDS):
         text = _status_answer(order)

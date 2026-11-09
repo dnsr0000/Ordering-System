@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import case, func
 
 from app.errors import AppError
 from app.extensions import db
@@ -33,7 +33,9 @@ def _add(chat: Any, sender: str, text: str, staff_name: str = '') -> Any:
 def start(tenant_id: int, transcript: Any, *, user: Any = None, order: Any = None, page: str = '',
           first_message: str = '') -> Any:
     """建立轉接對話 (由呼叫端 commit)；transcript 是對話窗裡與 AI 的對話 [{role: user|bot, text}]"""
-    label = user.name if user is not None else (f'取餐 #{order.display_pickup_number:03d}' if order is not None else '訪客')
+    label = user.name if user is not None else ((f'訂單 #{order.id} (待分店確認)' if order.pickup_pending
+                                                  else f'取餐 #{order.display_pickup_number:03d}')
+                                                 if order is not None else '訪客')
     chat = SupportChat(tenant_id=tenant_id, customer_label=label[:60], page=page[:20],
                        user_id=getattr(user, 'id', None), order_id=getattr(order, 'id', None),
                        last_customer_at=datetime.now())
@@ -140,7 +142,9 @@ def list_chats(include_closed: bool = False, limit: int = 50) -> list[dict[str, 
     q = SupportChat.query
     if not include_closed:
         q = q.filter(SupportChat.status != 'closed')
-    chats = q.order_by(SupportChat.created_at.desc()).limit(limit).all()
+    # 先依狀態排序再取筆數：較早建立但顧客又傳訊息 (waiting) 的對話不可被較新的對話擠出清單 (徽章有計入)
+    rank = case((SupportChat.status == 'waiting', 0), (SupportChat.status == 'open', 1), else_=2)
+    chats = q.order_by(rank, SupportChat.created_at.desc()).limit(limit).all()
     order = {'waiting': 0, 'open': 1, 'closed': 2}
     chats.sort(key=lambda c: (order.get(c.status, 3), -(c.messages[-1].id if c.messages else 0)))
     return [chat_dict(c) for c in chats]

@@ -27,6 +27,10 @@
         $('cdDiscount').textContent = `-${money(discount)}`;
         $('cdServiceRow').classList.toggle('d-none', !(t.service > 0));
         $('cdService').textContent = money(t.service);
+        if ($('cdDeliveryRow')) {   // 外送到府的外送費 (應付金額已含)
+            $('cdDeliveryRow').classList.toggle('d-none', !(t.delivery > 0));
+            $('cdDelivery').textContent = money(t.delivery);
+        }
         $('cdTotal').textContent = money(msg.total);
         const cash = Number(msg.cash) || 0;
         $('cdCashRow').classList.toggle('d-none', !(cash > 0));

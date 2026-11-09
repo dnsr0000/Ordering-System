@@ -68,6 +68,11 @@ def register_cli(app: Flask):
         for u in users:
             click.echo(f'#{u.id} {u.name} {u.phone[:4]}****{u.phone[-2:]}')
         click.echo(f'{"已刪除" if apply_ else "將刪除 (加上 --apply 執行)"} {len(users)} 位停止使用超過 {months} 個月的會員')
+        held = privacy_service.inactive_members_with_balance(tenant.id, months)
+        if held:
+            click.echo(f'另有 {len(held)} 位會員停止使用超過 {months} 個月，但仍有儲值金餘額或未用完的寄杯，不會自動刪除，請先聯絡退費：')
+            for u in held:
+                click.echo(f'#{u.id} {u.name} {u.phone[:4]}****{u.phone[-2:]} 儲值金 ${u.wallet_balance or 0}')
 
     app.cli.add_command(privacy_cli)
 
@@ -77,16 +82,19 @@ def register_cli(app: Flask):
     @click.option('--stale-hours', default=24, show_default=True, help='未結帳超過幾小時列為「可能忘了結帳」')
     @click.option('--fix', is_flag=True, help='自動修正可修正的項目 (已取消卻已收款 → 需退款)')
     def tables_check_command(stale_hours, fix):
-        """檢查桌邊點餐的資料衝突：沒有桌位的未結帳訂單、已取消卻已收款、跨店桌位、久未結帳。有問題時結束代碼為 1"""
+        """檢查桌邊點餐的資料衝突：沒有桌位的未結帳訂單、已取消卻已收款、跨店桌位、久未結帳。
+        有問題時結束代碼為 1 (加 --fix 時，修正後仍有需人工確認的項目也是 1)"""
         from app.services import table_service
         found = table_service.find_conflicts(stale_hours)
         for item in found:
             click.echo(f"[{item['kind']}] 店家 {item['tenant_id']}：{item['message']}")
+        remaining = found
         if fix and found:
             click.echo(f'已自動修正 {table_service.fix_conflicts(found)} 筆 (其餘請人工確認)')
+            remaining = table_service.find_conflicts(stale_hours)
         if not found:
             click.echo('沒有發現衝突')
-        raise SystemExit(1 if found and not fix else 0)
+        raise SystemExit(1 if remaining else 0)
 
     app.cli.add_command(tables_cli)
 
@@ -133,7 +141,9 @@ def register_cli(app: Flask):
         click.echo('已執行：' + ('、'.join(done) if done else '沒有到期的工作'))
 
     @ops_cli.command('backup')
-    @click.option('--keep-days', default=14, show_default=True)
+    # 下限 1：0 或負數會讓清除舊備份把剛建立的這份 (與所有歷史備份) 一起刪掉
+    @click.option('--keep-days', default=14, show_default=True, type=click.IntRange(1, 3650),
+                  help='保留最近幾天的備份 (1 ~ 3650)')
     def backup_command(keep_days):
         """立即備份門市資料庫 (SQLite) 到 database/backups"""
         from app.services.maintenance_service import run_sqlite_backup

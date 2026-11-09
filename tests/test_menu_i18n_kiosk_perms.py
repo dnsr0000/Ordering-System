@@ -37,8 +37,10 @@ def test_translate_entries_parses_gemini_json_and_falls_back_to_rules(app, monke
     with app.app_context():
         results, source = ai_service.translate_entries([{'name': '牛肉堡', 'description': '多汁'}, {'name': '飲料', 'description': ''}])
     assert source == 'gemini' and len(calls) == 1 and '牛肉堡｜多汁' in calls[0]
-    assert results[0] == {'name_en': 'Beef Burger', 'name_ja': 'ビーフバーガー', 'description_en': 'Juicy', 'description_ja': 'ジューシー'}
+    assert results[0] == {'name_en': 'Beef Burger', 'name_ja': 'ビーフバーガー', 'description_en': 'Juicy', 'description_ja': 'ジューシー',
+                          'source': 'ai'}
     assert results[1]['name_en'] == 'Drinks' and results[1]['name_ja'] == 'ドリンク', '第 2 筆 Gemini 沒翻 → 規則字典'
+    assert results[1]['source'] == 'rules'
     # 沒有金鑰 / 回應壞掉：整批走規則字典
     monkeypatch.setattr(ai_service, 'cloud_generate', _cloud(lambda *a, **k: 'not json'))
     with app.app_context():
@@ -186,11 +188,12 @@ def _sell_card(app, amount=300):
 def test_kiosk_gift_card_payment(app, store_settings):
     item = make_item(app, '禮物卡點餐機餐', price=100)
     store_settings('gift_card', enabled=True, kiosk_enabled=False)
+    code = _sell_card(app, 300)   # 用真的卡查：才分得出是「未開放」而不是「查無此卡」回 404
     c = guest_client(app)
-    assert c.post('/api/gift_cards/balance', json={'code': '1' * 16}).status_code == 404, '未開放點餐機禮物卡'
+    r = c.post('/api/gift_cards/balance', json={'code': code})
+    assert r.status_code == 404 and '未開放' in r.get_json()['message'], '未開放點餐機禮物卡'
     assert '禮物卡' not in c.get('/').get_data(as_text=True).split('id="paymentMethod"')[1][:600]
     store_settings('gift_card', enabled=True, kiosk_enabled=True)
-    code = _sell_card(app, 300)
     c = guest_client(app)
     html = c.get('/').get_data(as_text=True)
     assert 'id="giftCardBox"' in html and 'data-action="gift-card-check"' in html
@@ -231,7 +234,9 @@ def test_member_price_applies_only_to_members(app, store_settings):
     # 訪客：原價
     guest = guest_client(app)
     html = guest.get('/').get_data(as_text=True)
-    assert '會員價' not in html.split('id="menuList"')[1][:20000] or 'Member price' not in html
+    # 品項名稱本身含「會員價」，改看該品項卡片的價格區塊：沒有劃線價、會員價徽章與會員價金額
+    block = html.split(f'data-id="{item}"')[1][:3000]
+    assert '$200' in block and '<del' not in block and 'badge bg-info text-dark' not in block and '$150' not in block
     r = checkout(guest, [line(item)])
     assert r.status_code == 200 and r.get_json()['total_price'] == 200
     # 會員：劃線價 + 會員價結帳

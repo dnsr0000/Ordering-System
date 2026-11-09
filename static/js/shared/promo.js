@@ -18,7 +18,8 @@ export function createPromoVerifier(endpoint) {
             try {
                 const res = await Kiosk.api(endpoint, { json: body });
                 if (mine !== seq) return null;
-                return { valid: Boolean(res.valid), discount: res.valid ? Number(res.discount) || 0 : 0, message: res.message, error: null };
+                // 顧客頁為英 / 日文時後端另附 message_i18n (錯誤路徑的 err.message 已由 Kiosk.api 採用 message_i18n)
+                return { valid: Boolean(res.valid), discount: res.valid ? Number(res.discount) || 0 : 0, message: res.message_i18n || res.message, error: null };
             } catch (err) {
                 if (mine !== seq) return null;
                 return { valid: false, discount: 0, message: err.message, error: err };

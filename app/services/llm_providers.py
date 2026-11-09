@@ -6,7 +6,8 @@
 依序呼叫各家的「模型清單」API，接受這組金鑰的就是。
 挑模型：各家的模型清單 + 挑選規則 (寫「系列」不寫死版本，新版推出自動換)；設定裡有指定模型時以指定為準。
 每組金鑰挑兩檔：models (主力，翻譯菜單等店家願意等的工作) 與 fast (快速便宜，客服 / 語音點餐 / 短文案)。
-結果快取 24 小時 (失敗快取 10 分鐘)；呼叫回「模型不存在」時重新查一次。
+結果快取 24 小時 (失敗快取 10 分鐘；已知廠商暫時連不上時沿用上次成功的結果、只快取 30 秒)，快取鍵含指定的模型 / 廠商
+(改了設定的指定模型立刻生效)；呼叫回「模型不存在」時重新查一次。系統監控頁只讀快取，需要辨識時改在背景執行緒做。
 Anthropic (Claude) 走官方 anthropic SDK；其餘多為 OpenAI 相容格式 (/chat/completions)，以 requests 呼叫。
 多行程部署 (設定 REDIS_URL) 時，辨識結果、冷卻與模型健康紀錄經 Redis 共用 (shared_*)；沒有 Redis 時只存在本行程記憶體。
 """
@@ -16,7 +17,7 @@ import logging
 import re
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import requests
 
@@ -44,7 +45,10 @@ _NOT_CHAT = re.compile(r'embed|whisper|tts|audio|speech|transcri|image|vision|da
                        r'ocr|banana|lyria|veo|imagen|research|customtools|computer|codex|omni|live', re.I)
 DETECT_TTL = 24 * 3600
 ERROR_TTL = 600
+TRANSIENT_TTL = 30   # 已知廠商查模型清單暫時失敗 (過載 / 限流 / 連線)：只短暫快取，很快再查
 LIST_TIMEOUT = 10
+NOT_DETECTED = '尚未辨識 (背景辨識中，請稍後重新整理)'
+INVALID_KEY_CHARS = '金鑰含無效字元 (例如零寬空白、全形字)，請重新貼上金鑰'
 
 
 class ProviderError(Exception):
@@ -68,6 +72,14 @@ class Credential:
         return hashlib.sha256(self.key.encode()).hexdigest()[:12]
 
     @property
+    def detect_id(self):
+        """辨識結果的快取鍵：指定的模型 / 廠商不同就是不同的結果 (改了設定的指定模型立刻生效，
+        同一把金鑰在不同店家指定不同模型也不會互相套用)；自動挑選時與 id 相同 (沿用既有的快取)"""
+        if not self.model and not self.provider:
+            return self.id
+        return hashlib.sha256(f'{self.key}|{self.model}|{self.provider}'.encode()).hexdigest()[:12]
+
+    @property
     def masked(self):
         return f'{self.key[:6]}…{self.key[-4:]}' if len(self.key) > 12 else '***'
 
@@ -80,6 +92,7 @@ class Resolved:
     at: float = 0.0
     auto: bool = True
     fast: list = field(default_factory=list)     # 快速便宜 [主要, 備援...]；空 = 同主力
+    ttl: float = 0.0                             # 快取幾秒 (0 = 依成敗用 DETECT_TTL / ERROR_TTL)
 
     def for_tier(self, tier):
         return list(self.fast or self.models) if tier == 'fast' else list(self.models)
@@ -214,6 +227,8 @@ def _get_json(url, headers, params=None):
         resp = requests.get(url, headers=headers, params=params, timeout=LIST_TIMEOUT)
     except requests.RequestException as exc:
         raise ProviderError('overload', f'連線異常 {exc.__class__.__name__}')
+    except UnicodeError:   # 金鑰含零寬空白 / 全形字等，HTTP 標頭無法編碼
+        raise ProviderError('auth', INVALID_KEY_CHARS)
     try:
         body = resp.json()
     except ValueError:
@@ -238,6 +253,8 @@ def list_models(provider, key):
                     for m in client.models.list(lifecycle=['active'], limit=100)]
         except anthropic.APIError as exc:
             raise _anthropic_error(anthropic, exc)
+        except UnicodeError:
+            raise ProviderError('auth', INVALID_KEY_CHARS)
     body = _get_json(f'{base}/models', {'Authorization': f'Bearer {key}'})
     return [{'id': str(m.get('id') or ''), 'created': m.get('created') or 0} for m in body.get('data') or [] if m.get('id')]
 
@@ -309,27 +326,30 @@ def _to_shared(result):
 
 def _from_shared(data):
     try:
-        return Resolved(**{k: data[k] for k in ('provider', 'models', 'error', 'at', 'auto', 'fast') if k in data})
+        return Resolved(**{k: data[k] for k in ('provider', 'models', 'error', 'at', 'auto', 'fast', 'ttl') if k in data})
     except (TypeError, KeyError):
         return None
 
 
-def resolve(cred, force=False):
-    """辨識金鑰的廠商與要用的模型 (快取)；回 Resolved (error 不為空代表無法使用)"""
+def resolve(cred, force=False, cached_only=False):
+    """辨識金鑰的廠商與要用的模型 (快取)；回 Resolved (error 不為空代表無法使用)。
+    cached_only=True (系統監控頁 / 後台首頁)：需要查模型清單時不在請求裡等網路，回上次的結果或「尚未辨識」"""
     now = time.time()
+    cid = cred.detect_id
 
     def fresh(r):
-        return r is not None and now - r.at < (DETECT_TTL if r.ok else ERROR_TTL)
+        return r is not None and now - r.at < (r.ttl or (DETECT_TTL if r.ok else ERROR_TTL))
     with _lock:
-        hit = _cache.get(cred.id)
+        hit = _cache.get(cid)
     if not force and fresh(hit):
         return hit
+    other = None
     if not force:   # 其他行程已經辨識過 (Redis)
-        other = shared_get(f'detect:{cred.id}')
+        other = shared_get(f'detect:{cid}')
         other = _from_shared(other) if isinstance(other, dict) else None
         if fresh(other):
             with _lock:
-                _cache[cred.id] = other
+                _cache[cid] = other
             return other
     result, errors = Resolved(at=now), []
     names = (cred.provider,) if cred.provider in PROVIDERS else candidates(cred.key)
@@ -337,14 +357,19 @@ def resolve(cred, force=False):
         result.provider, result.auto = cred.provider, False
         result.models = [m.strip() for m in cred.model.split(',') if m.strip()]
         with _lock:
-            _cache[cred.id] = result
+            _cache[cid] = result
         return result
+    if cached_only:
+        resolve_async(cred, _current_app())
+        return hit or other or Resolved(error=NOT_DETECTED, at=now)
+    transient = False
     for provider in names:
         try:
             models = list_models(provider, cred.key)
         except ProviderError as exc:
             errors.append(f'{PROVIDERS[provider][0]}：{exc.detail or exc.reason}')
             if exc.reason in ('overload', 'rate') and len(names) == 1:
+                transient = True
                 break   # 確定是這一家但暫時連不上：不要誤判成金鑰無效
             continue
         result.provider = provider
@@ -357,9 +382,14 @@ def resolve(cred, force=False):
         break
     if not result.provider:
         result.error = '；'.join(errors) or '無法辨識金鑰'
+        if transient:
+            # 暫時連不上：沿用上一次成功的辨識結果 (過期的也先用)，沒有的話只短暫快取，不標成無法使用 10 分鐘
+            last_ok = next((r for r in (hit, other) if r is not None and r.ok), None)
+            result = replace(last_ok, at=now) if last_ok is not None else result
+            result.ttl = TRANSIENT_TTL
     with _lock:
-        _cache[cred.id] = result
-    shared_set(f'detect:{cred.id}', _to_shared(result), DETECT_TTL if result.ok else ERROR_TTL)
+        _cache[cid] = result
+    shared_set(f'detect:{cid}', _to_shared(result), result.ttl or (DETECT_TTL if result.ok else ERROR_TTL))
     if result.ok:
         logger.info('AI 金鑰 %s (%s)：%s，模型 %s (快速 %s)', cred.masked, cred.source, result.label, ' → '.join(result.models),
                     ' → '.join(result.for_tier('fast')))
@@ -370,8 +400,44 @@ def resolve(cred, force=False):
 
 def forget(cred):
     with _lock:
-        _cache.pop(cred.id, None)
-    shared_delete(f'detect:{cred.id}')
+        _cache.pop(cred.detect_id, None)
+    shared_delete(f'detect:{cred.detect_id}')
+
+
+_detecting: set = set()   # 背景辨識中的 detect_id
+
+
+def _current_app():
+    try:
+        from flask import current_app
+        return current_app._get_current_object()
+    except RuntimeError:   # 沒有 app context
+        return None
+
+
+def resolve_async(cred, app=None):
+    """在背景執行緒辨識 (網頁請求不必等各家模型清單)；同一組金鑰同時只跑一個"""
+    cid = cred.detect_id
+    with _lock:
+        if cid in _detecting:
+            return None
+        _detecting.add(cid)
+
+    def run():
+        try:
+            if app is not None:
+                with app.app_context():
+                    resolve(cred)
+            else:
+                resolve(cred)
+        except Exception:  # noqa: BLE001
+            logger.exception('AI 金鑰 %s 背景辨識失敗', cred.masked)
+        finally:
+            with _lock:
+                _detecting.discard(cid)
+    t = threading.Thread(target=run, name='ai-detect', daemon=True)
+    t.start()
+    return t
 
 
 # ---------------------------------------------------------------------------
@@ -404,10 +470,12 @@ _CLAUDE_FALLBACK_MODELS = re.compile(r'claude-(opus-5|fable-5-1|sonnet-5-5)')
 _CLAUDE_EFFORT_MODELS = re.compile(r'claude-(opus|sonnet|haiku|fable)-[5-9]')
 
 
-def call_anthropic(key, model, prompt, max_tokens, interactive, prefix=''):
-    """prefix：每次都一樣的前段 (客服的店家資訊與菜單…)，放在 system 並標記提示快取，重複的部分只收約一成費用"""
+def call_anthropic(key, model, prompt, max_tokens, interactive, prefix='', timeout=None):
+    """prefix：每次都一樣的前段 (客服的店家資訊與菜單…)，放在 system 並標記提示快取，重複的部分只收約一成費用。
+    timeout：這次最多等幾秒 (翻譯菜單的時間上限快到時縮短；省略 = 即時 12 秒、其他 120 秒)"""
     anthropic = _anthropic()
-    client = anthropic.Anthropic(api_key=key, max_retries=0, timeout=12.0 if interactive else 120.0)
+    limit = 12.0 if interactive else 120.0
+    client = anthropic.Anthropic(api_key=key, max_retries=0, timeout=min(limit, timeout) if timeout else limit)
     # 思考 (thinking) 的用量也算在 max_tokens 裡：太小會在思考完之前就被截斷而沒有回答
     kwargs = {'model': model, 'max_tokens': max(max_tokens, 4000 if interactive else 16000),
               'messages': [{'role': 'user', 'content': prompt}]}
@@ -423,6 +491,8 @@ def call_anthropic(key, model, prompt, max_tokens, interactive, prefix=''):
             resp = client.messages.create(**kwargs)
     except anthropic.APIError as exc:
         raise _anthropic_error(anthropic, exc)
+    except UnicodeError:
+        raise ProviderError('auth', INVALID_KEY_CHARS)
     if resp.stop_reason == 'refusal':
         raise ProviderError('refusal', getattr(resp.stop_details, 'category', '') or '')
     text = ''.join(b.text for b in resp.content if b.type == 'text').strip()
@@ -434,8 +504,8 @@ def call_anthropic(key, model, prompt, max_tokens, interactive, prefix=''):
                            'cache_write': getattr(u, 'cache_creation_input_tokens', 0) or 0})
 
 
-def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature, interactive, prefix=''):
-    """prefix 放在 system 訊息 (固定的前段在最前面，OpenAI / DeepSeek 等會自動快取重複的開頭)"""
+def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature, interactive, prefix='', timeout=None):
+    """prefix 放在 system 訊息 (固定的前段在最前面，OpenAI / DeepSeek 等會自動快取重複的開頭)。timeout 見 call_anthropic"""
     base = PROVIDERS[provider][2]
     body = {'model': model, 'messages': ([{'role': 'system', 'content': prefix}] if prefix else [])
             + [{'role': 'user', 'content': prompt}]}
@@ -444,11 +514,16 @@ def call_openai_compatible(provider, key, model, prompt, max_tokens, temperature
         body['max_completion_tokens'] = max(max_tokens, 4000)
     else:
         body.update(max_tokens=max_tokens, temperature=temperature)
+    limit = (3, 12) if interactive else (5, 60)
+    if timeout:
+        limit = (min(limit[0], timeout), min(limit[1], timeout))
     try:
-        resp = requests.post(f'{base}/chat/completions', json=body, timeout=(3, 12) if interactive else (5, 60),
+        resp = requests.post(f'{base}/chat/completions', json=body, timeout=limit,
                              headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'})
     except requests.RequestException as exc:
         raise ProviderError('overload', f'連線異常 {exc.__class__.__name__}')
+    except UnicodeError:   # 金鑰含零寬空白 / 全形字等，HTTP 標頭無法編碼
+        raise ProviderError('auth', INVALID_KEY_CHARS)
     try:
         data = resp.json()
     except ValueError:
@@ -485,12 +560,15 @@ def test_settings(cfg):
         models = f'模型 {" → ".join(r.models)}'
         if r.for_tier('fast') != r.models:
             models += f'，快速 {" → ".join(r.for_tier("fast"))}'
+        # 店家剛修好金鑰 (儲值、開通 API) 就按測試：清掉冷卻，實際送出請求；失敗原因只看這次呼叫 (本店) 留下的錯誤
+        ai_service.clear_cooldown(cred.id)
+        ai_service.clear_ai_error()
         text, _source = ai_service.cloud_generate('只回覆兩個字：正常', max_tokens=50, patient=False, creds=[cred], tier='fast')
         if text:
             ok += 1
             lines.append(f'金鑰 {n}：{r.label}，{models} ({how})，回應正常')
         else:
-            lines.append(f'金鑰 {n}：{r.label}，{models} ({how})，但呼叫失敗：{ai_service.last_ai_error()}')
+            lines.append(f'金鑰 {n}：{r.label}，{models} ({how})，但呼叫失敗：{ai_service.last_ai_error() or "原因不明"}')
     if not lines:
         raise AppError('尚未填寫任何金鑰')
     if not ok:

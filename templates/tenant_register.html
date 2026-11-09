@@ -19,12 +19,12 @@
             </div>
             <div class="mb-3">
                 <label for="shop-slug" class="form-label">店家網址代號</label>
-                <input id="shop-slug" class="form-control" name="slug" pattern="[A-Za-z0-9\-]+" placeholder="例如：sunny-cafe" required>
+                <input id="shop-slug" class="form-control" name="slug" maxlength="80" pattern="[A-Za-z0-9\-]+" placeholder="例如：sunny-cafe" required>
                 <div class="form-text text-white-50">顧客入口：/shop/網址代號</div>
             </div>
             <div class="mb-3">
                 <label for="owner-username" class="form-label">負責人帳號</label>
-                <input id="owner-username" class="form-control" name="username" autocomplete="username" required>
+                <input id="owner-username" class="form-control" name="username" maxlength="50" autocomplete="username" required>
             </div>
             <div class="mb-4">
                 <label for="owner-password" class="form-label">密碼（至少 10 個字元）</label>

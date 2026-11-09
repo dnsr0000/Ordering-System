@@ -5,7 +5,7 @@ from flask import Blueprint, flash, g, redirect, render_template, request, url_f
 
 from app.errors import AppError
 from app.extensions import db
-from app.models.inventory import Ingredient, IngredientLot, RecipeLine, StockMovement, Supplier
+from app.models.inventory import Ingredient, IngredientLot, PurchaseOrderLine, RecipeLine, StockMovement, Supplier
 from app.models.menu import MenuItem
 from app.services import carbon_service, inventory_service, report_service, settings_service
 from app.services.approval_service import permission_required
@@ -35,16 +35,25 @@ def manage():
                 raise AppError('請輸入原料名稱')
             if Ingredient.query.filter_by(name=name).first():
                 raise AppError(f'原料「{name}」已存在', 409)
-            db.session.add(Ingredient(tenant_id=g.tenant_id, name=name, unit=(f.get('unit') or 'g').strip()[:20],
-                                      stock=round(safe_float(f.get('stock'), 0), 4),
-                                      low_threshold=max(0.0, safe_float(f.get('low_threshold'), 0)),
-                                      unit_cost=max(0.0, safe_float(f.get('unit_cost'), 0)),
-                                      origin=(f.get('origin') or '').strip()[:60],
-                                      carbon_factor=max(0.0, safe_float(f.get('carbon_factor'), 0))))
+            opening = round(safe_float(f.get('stock'), 0), 4)
+            if opening < 0:
+                raise AppError('期初庫存不可為負數')
+            ing = Ingredient(tenant_id=g.tenant_id, name=name, unit=(f.get('unit') or 'g').strip()[:20], stock=0,
+                             low_threshold=max(0.0, safe_float(f.get('low_threshold'), 0)),
+                             unit_cost=max(0.0, safe_float(f.get('unit_cost'), 0)),
+                             origin=(f.get('origin') or '').strip()[:60],
+                             carbon_factor=max(0.0, safe_float(f.get('carbon_factor'), 0)))
+            db.session.add(ing)
+            db.session.flush()
+            if opening > 0:   # 期初庫存：寫異動帳、建批號並做低庫存檢查
+                inventory_service.adjust(ing, opening, 'adjust', '期初庫存', unit_cost=ing.unit_cost)
             flash(f'已新增原料「{name}」', 'success')
         elif action == 'edit':
             ing = _ingredient(f.get('ingredient_id'))
-            ing.name = (f.get('name') or ing.name).strip()[:60]
+            name = (f.get('name') or '').strip()[:60] or ing.name
+            if name != ing.name and Ingredient.query.filter(Ingredient.name == name, Ingredient.id != ing.id).first():
+                raise AppError(f'原料「{name}」已存在', 409)
+            ing.name = name
             ing.unit = (f.get('unit') or ing.unit).strip()[:20]
             ing.low_threshold = max(0.0, safe_float(f.get('low_threshold'), ing.low_threshold))
             ing.unit_cost = max(0.0, safe_float(f.get('unit_cost'), ing.unit_cost))
@@ -65,8 +74,19 @@ def manage():
             flash('已更新原料' + (f'，{changed} 道餐點的碳足跡已重算' if changed else ''), 'success')
         elif action == 'delete':
             ing = _ingredient(f.get('ingredient_id'))
+            # 有異動帳 / 採購單 / 批號的原料不可刪除 (資料庫 ON DELETE CASCADE 會連帶刪掉歷史採購明細與異動帳)
+            if StockMovement.query.filter_by(ingredient_id=ing.id).first() is not None \
+                    or PurchaseOrderLine.query.filter_by(ingredient_id=ing.id).first() is not None \
+                    or IngredientLot.query.filter_by(ingredient_id=ing.id).first() is not None:
+                raise AppError(f'原料「{ing.name}」已有進出貨或採購紀錄，無法刪除；不再使用請取消勾選「啟用」', 409)
+            item_ids = {rl.menu_item_id for rl in RecipeLine.query.filter_by(ingredient_id=ing.id).all()}
+            name = ing.name
             db.session.delete(ing)
-            flash(f'已刪除原料「{ing.name}」(相關配方一併移除)', 'success')
+            db.session.flush()
+            changed = sum(carbon_service.refresh_item(i) for i in MenuItem.query.filter(MenuItem.id.in_(item_ids)).all()) \
+                if item_ids else 0   # 配方列已連帶刪除：用到它的餐點重算碳足跡
+            flash(f'已刪除原料「{name}」(相關配方一併移除' + (f'，{changed} 道餐點的碳足跡已重算' if changed else '') + ')',
+                  'success')
         elif action in ('purchase', 'waste', 'adjust'):
             ing = _ingredient(f.get('ingredient_id'))
             qty = safe_float(f.get('quantity'), 0)
@@ -95,12 +115,15 @@ def manage():
         elif action == 'recipe':
             item = get_own(MenuItem, f.get('menu_item_id'), '餐點')
             RecipeLine.query.filter_by(menu_item_id=item.id).delete(synchronize_session=False)
+            merged = {}   # 同一原料選了兩列：用量加總成一列 (配方每個原料只能有一列)
             for ing_id, qty in zip(f.getlist('ingredient_id'), f.getlist('quantity')):
                 q = safe_float(qty, 0)
                 if safe_int(ing_id, 0) and q > 0:
                     ing = _ingredient(ing_id)
-                    db.session.add(RecipeLine(tenant_id=g.tenant_id, menu_item_id=item.id, ingredient_id=ing.id,
-                                              quantity=round(q, 4)))
+                    merged[ing.id] = merged.get(ing.id, 0.0) + q
+            for ing_id, q in merged.items():
+                db.session.add(RecipeLine(tenant_id=g.tenant_id, menu_item_id=item.id, ingredient_id=ing_id,
+                                          quantity=round(q, 4)))
             record_staff_audit('RECIPE_CHANGE', details=f'更新「{item.name}」的配方')
             db.session.flush()
             carbon_service.refresh_item(item)

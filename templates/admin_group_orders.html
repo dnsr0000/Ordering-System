@@ -26,12 +26,12 @@
                 <td class="text-end">{{ s.people|length }} / {{ s.count }}</td><td class="text-end">${{ '{:,}'.format(s.total) }}</td>
                 <td>{{ status_badge(x.status_label, {'open': 'success', 'submitted': 'info', 'failed': 'danger'}.get(x.status, 'secondary')) }}
                     {% if x.order %}<div class="small">#{{ '%03d' % x.order.pickup_number }}</div>{% endif %}
-                    {% if x.status == 'failed' %}<div class="small text-danger">{{ x.error }}</div>{% endif %}</td>
+                    {% if x.status in ('open', 'failed') and x.error %}<div class="small text-danger">{{ x.error }}</div>{% endif %}</td>
                 <td class="text-nowrap">
                     <a class="btn btn-sm btn-outline-light" href="{{ url_for('group_orders.print_list', shop=shop, token=x.token) }}" target="_blank" rel="noopener">分裝單</a>
                     {% if x.status in ('open', 'failed') %}
                     <form method="POST" class="d-inline" data-confirm="確定送單？">{{ csrf() }}<input type="hidden" name="action" value="submit"><input type="hidden" name="group_id" value="{{ x.id }}">
-                        <button class="btn btn-sm btn-warning text-dark">送單</button></form>
+                        <button class="btn btn-sm btn-warning text-dark" {{ 'disabled' if not s.count }}>送單</button></form>
                     <form method="POST" class="d-inline" data-confirm="確定取消這個團購？">{{ csrf() }}<input type="hidden" name="action" value="cancel"><input type="hidden" name="group_id" value="{{ x.id }}">
                         <button class="btn btn-sm btn-outline-danger">取消</button></form>{% endif %}</td></tr>
             {% else %}<tr><td colspan="8" class="text-white-50">目前沒有團購</td></tr>{% endfor %}

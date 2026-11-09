@@ -339,9 +339,17 @@ def test_cash_checkout_kicks_drawer_but_card_does_not(app, staff_client, drawer_
     assert r.status_code == 200, r.get_json()
     assert not [d for h, d in sent if d.endswith(DRAWER_KICK)], '刷卡不開錢櫃'
     store_settings('pos', open_drawer_on_cash=False)
-    staff_client.post('/api/pos/checkout', json={'items': [line(item)], 'payment_method': 'Cash', 'order_type': '內用',
-                                                 'cash_received': 100})
+    sent.clear()
+    r = staff_client.post('/api/pos/checkout', json={'items': [line(item)], 'payment_method': 'Cash', 'order_type': '內用',
+                                                     'cash_received': 100})
+    assert r.status_code == 200, r.get_json()   # 結帳要成功，「沒開錢櫃」才有意義
     assert not [d for h, d in sent if d.endswith(DRAWER_KICK)], '關閉自動開錢櫃'
+    # 對照組：重新開啟後同樣的現金結帳會開錢櫃 (確認上面沒開是設定造成，不是印表機 / 結帳流程失效)
+    store_settings('pos', open_drawer_on_cash=True)
+    r = staff_client.post('/api/pos/checkout', json={'items': [line(item)], 'payment_method': 'Cash', 'order_type': '內用',
+                                                     'cash_received': 100})
+    assert r.status_code == 200, r.get_json()
+    assert len([d for h, d in sent if h == '10.0.0.77' and d.endswith(DRAWER_KICK)]) == 1, '重新開啟後現金結帳開錢櫃'
 
 
 def test_kiosk_cash_order_does_not_kick_drawer(app, drawer_printer, sent):

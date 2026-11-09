@@ -4,9 +4,9 @@
 """
 import json
 import logging
-from datetime import date, datetime
+from datetime import datetime, time, timedelta
 
-from flask import current_app
+from flask import current_app, has_app_context
 from sqlalchemy import case, insert, select, update
 from sqlalchemy.exc import IntegrityError
 
@@ -14,7 +14,8 @@ from app.errors import AppError
 from app.extensions import db
 from app.models.menu import ComboOption, MenuItem
 from app.models.order import DailyCounter, Order
-from app.models.sync import NodeStock, SyncNode
+from app.models.sync import NodeStock, SyncNode, SyncState
+from app.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,28 @@ logger = logging.getLogger(__name__)
 
 PICKUP_COUNTER = 'pickup'
 MAX_PICKUP_NUMBER = 999
+SHORTFALL_PREFIX = 'stock_short:'   # sync_state 鍵 (前綴 + 訂單 uuid 36 碼，鍵長上限 50)：線上訂單送達分店時沒扣到的份數
 
 
-def next_pickup_number(tenant_id):
-    """取得今日下一個取餐號 (1~999 循環)。必須在結帳交易內呼叫：計數列會鎖到交易結束。"""
-    today = date.today()
+def _day_start_hour():
+    """營業日切換時間 (BUSINESS_DAY_START_HOUR，0~12 點；與 order_lifecycle.todays_range 相同算法)"""
+    hour = safe_int(current_app.config.get('BUSINESS_DAY_START_HOUR', 0), 0) if has_app_context() else 0
+    return min(max(hour, 0), 12)
+
+
+def business_day(at=None):
+    """at (預設現在) 所屬的營業日：營業跨午夜的店 (例如 04:00 換日) 凌晨的時間算前一天"""
+    at = at or datetime.now()
+    hour = _day_start_hour()
+    return at.date() - timedelta(days=1) if at.time() < time(hour) else at.date()
+
+
+def next_pickup_number(tenant_id, business_date=None):
+    """
+    取得本營業日下一個取餐號 (1~999 循環，依 BUSINESS_DAY_START_HOUR 換日)。必須在結帳交易內呼叫：計數列會鎖到交易結束。
+    business_date：預約單依取餐日的計數編號 (到了該營業日，現場訂單沿用同一列計數往後編，不會撞號)。
+    """
+    today = business_date or business_day()
     key = dict(tenant_id=tenant_id, business_date=today, name=PICKUP_COUNTER)
     stmt = (
         update(DailyCounter)
@@ -41,7 +59,7 @@ def next_pickup_number(tenant_id):
         # 兩個請求同時建立時，後到的會撞上主鍵，改為直接更新即可。
         last = db.session.execute(
             select(Order.pickup_number)
-            .where(Order.tenant_id == tenant_id, Order.created_at >= datetime.combine(today, datetime.min.time()))
+            .where(Order.tenant_id == tenant_id, Order.created_at >= datetime.combine(today, time(_day_start_hour())))
             .order_by(Order.id.desc()).limit(1)
         ).scalar() or 0
         try:
@@ -97,17 +115,27 @@ def _deduct_stock(tenant_id, demands, gift_demands=None, node_id=None):
     return None, dropped
 
 
-def consume_stock_unchecked(tenant_id, demands):
+def consume_stock_unchecked(tenant_id, demands, order_uuid=None):
     """
     分店收到線上訂單時扣庫存：訂單已在線上成立，不因本機庫存不足而失敗 (最多扣到 0 並標示售完)，
-    店員可視情況取消訂單 (取消時會回補)。回傳不足的品項 [(品名, 需要, 原本庫存)] 供通知店員。
+    店員可視情況取消訂單 (取消時以 restock_demands 回補實際扣到的份數)。回傳不足的品項 [(品名, 需要, 原本庫存)] 供通知店員。
+    order_uuid：記錄這張訂單沒扣到的份數 (本機 sync_state，不同步)，取消 / 作廢時不會把沒扣到的份數加回庫存。
     """
-    short = []
+    short, unconsumed = [], {}
     if demands:
         for item_id, name, stock in db.session.execute(
                 select(MenuItem.id, MenuItem.name, MenuItem.stock).where(MenuItem.id.in_(list(demands)))).all():
             if (stock or 0) < demands[item_id]:
                 short.append((name, demands[item_id], max(0, stock or 0)))
+                unconsumed[item_id] = demands[item_id] - max(0, stock or 0)
+    if order_uuid and unconsumed:
+        key = SHORTFALL_PREFIX + str(order_uuid)
+        row = db.session.get(SyncState, key)
+        value = json.dumps({str(k): v for k, v in sorted(unconsumed.items())})
+        if row is None:
+            db.session.add(SyncState(key=key, value=value))
+        else:
+            row.value = value
     for item_id in sorted(demands):
         qty = demands[item_id]
         db.session.execute(
@@ -116,6 +144,32 @@ def consume_stock_unchecked(tenant_id, demands):
                     is_sold_out=case((MenuItem.stock - qty <= 0, True), else_=MenuItem.is_sold_out))
             .execution_options(synchronize_session=False))
     return short
+
+
+def restock_demands(order, demands=None):
+    """
+    取消 / 作廢訂單要回補的庫存：demands (預設整張訂單的 order_stock_demands) 扣掉線上訂單送達分店時因庫存不足而沒扣到的份數
+    (consume_stock_unchecked 記錄的)，避免回補出實際不存在的庫存。用掉的不足份數會從紀錄扣除，不會重複扣。
+    """
+    demands = dict(order_stock_demands(order) if demands is None else demands)
+    row = db.session.get(SyncState, SHORTFALL_PREFIX + str(order.uuid)) if getattr(order, 'uuid', None) else None
+    if row is None:
+        return demands
+    try:
+        unconsumed = {int(k): int(v) for k, v in json.loads(row.value or '{}').items()}
+    except (TypeError, ValueError, AttributeError):
+        unconsumed = {}
+    for item_id in list(demands):
+        gap = min(demands[item_id], unconsumed.get(item_id, 0))
+        if gap > 0:
+            demands[item_id] -= gap
+            unconsumed[item_id] -= gap
+    unconsumed = {k: v for k, v in unconsumed.items() if v > 0}
+    if unconsumed:
+        row.value = json.dumps({str(k): v for k, v in sorted(unconsumed.items())})
+    else:
+        db.session.delete(row)
+    return {k: v for k, v in demands.items() if v > 0}
 
 
 def _change_node_stock(node_id, demands, sign):

@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="zh-TW" data-bs-theme="{% block theme %}dark{% endblock %}">
+{# data-page-theme：樣板宣告的主題 (顧客頁以按鈕切換的淺色不會改它)；theme.css 依它決定是否套用深色的 Bootstrap 變數 #}
+<html lang="{{ {'en': 'en', 'ja': 'ja'}.get(lang, 'zh-TW') if lang is defined else 'zh-TW' }}" data-bs-theme="{% block theme %}dark{% endblock %}" data-page-theme="{{ self.theme() }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="low-stock" content="{{ LOW_STOCK }}">
+    <meta name="shop" content="{{ g.tenant.slug if g.tenant else '' }}">
     <link rel="icon" href="{{ url_for('static', filename='img/favicon.svg') }}">
     <title>{% block title %}自助點餐系統{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap/bootstrap.min.css') }}">

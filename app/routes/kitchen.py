@@ -14,12 +14,18 @@ from app.services import kitchen_service, settings_service
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.order_service import complete_all_pending_orders, todays_orders_condition, todays_range
-from app.utils import get_json_dict, get_own, role_required, safe_int
+from app.utils import get_json_dict, get_own, role_required, safe_int, store_only
 
 kitchen_bp = Blueprint('kitchen', __name__)
 # 尚未完成付款的訂單 (線上待付款、LINE Pay 扣款中) 不送廚房
 HIDDEN_PAYMENT_STATUSES = ('pending', 'authorizing', 'expired')
 PREP_LEAD_MINUTES = 15   # 預約取餐的訂單在廚房看板以「取餐前 15 分鐘」排序
+
+
+@kitchen_bp.before_request
+@store_only
+def only_on_store_servers():
+    """線上端沒有廚房：各分店上傳的訂單、尚未送達分店的線上訂單只能由分店出餐 (否則會在線上端被標成已出餐並通知顧客取餐)"""
 
 
 def _station_arg():
@@ -54,16 +60,21 @@ def api_kitchen_orders():
     stations = {s.id: s.name for s in kitchen_service.active_stations()}
     from app.models.inventory import RecipeLine
     recipe_ids = {r[0] for r in db.session.query(RecipeLine.menu_item_id).distinct()}   # 有配方的品項也有製作卡
+    by_uuid = {m.uuid: m for m in menu.values()}
     result = []
     for o in orders:
         lines = {}
         mine_pending = False
-        for i in o.items:  # 同品項同客製化合併成一行
+        rows = []
+        for i in o.items:   # 套餐的配餐 (只記在主餐的 combo_sides) 依配餐本身的工作站另列一行
+            rows.append(i)
+            rows.extend(kitchen_service.side_line(i, side) for side in kitchen_service.combo_sides_of(i, by_uuid))
+        for i in rows:  # 同品項同客製化合併成一行
             sid = resolve(menu.get(i.menu_item_id))
             if station is not None and sid != station.id:
                 continue
-            if station is not None and i.prepared_at is None:
-                mine_pending = True
+            if station is not None and i.prepared_at is None and kitchen_service.has_quantity(i):
+                mine_pending = True   # 整個作廢 (剩 0 份) 的品項不算本站待做
             note = '' if i.is_reward and i.customization == '紅利免費兌換' else (i.customization or '')
             key = (i.item_name, note, sid, i.prepared_at is not None)
             m = menu.get(i.menu_item_id)

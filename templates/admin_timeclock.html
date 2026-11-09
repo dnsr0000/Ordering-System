@@ -6,8 +6,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
 <main class="container-fluid px-4 py-4" id="timeclock-admin-page">
-    {% call page_header('打卡與排班', 'bi-person-badge', '員工在 /timeclock 以帳號密碼打卡；這裡可修正打卡紀錄、排班與統計工時') %}
-    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.punch') }}" target="_blank" rel="noopener">打卡頁</a>
+    {% call page_header('打卡與排班', 'bi-person-badge', '員工在 /timeclock?shop=' ~ g.tenant.slug ~ ' 以帳號密碼打卡；這裡可修正打卡紀錄、排班與統計工時') %}
+    <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('timeclock.punch', shop=g.tenant.slug) }}"target="_blank" rel="noopener">打卡頁</a>
     <a class="btn btn-warning btn-sm fw-bold text-dark" href="{{ url_for('timeclock.export', start=start, end=end) }}">匯出 Excel</a>
     <a class="btn btn-outline-info btn-sm" href="{{ url_for('timeclock.staffing') }}">排班建議</a>
     <a class="btn btn-outline-warning btn-sm" href="{{ url_for('timeclock.auto_schedule') }}">自動排班</a>
@@ -26,6 +26,7 @@
                         <button class="btn btn-sm btn-outline-info py-0 px-1 mb-1" type="submit" title="點擊刪除">{{ w.start_time }}-{{ w.end_time }} ✕</button></form>{% endfor %}</td>{% endfor %}</tr>
             {% endfor %}</tbody>
         </table></div>
+        {% if inactive_schedules %}<div class="small text-warning mb-2">已停用 / 刪除員工的班表 (不計入在班人力，請刪除)：{% for w in inactive_schedules %}<form method="POST" class="d-inline">{{ csrf() }}<input type="hidden" name="action" value="delete_schedule"><input type="hidden" name="schedule_id" value="{{ w.id }}"><button class="btn btn-sm btn-outline-warning py-0 px-1 mb-1" type="submit" title="點擊刪除">{{ w.staff.username if w.staff else w.staff_account_id }} {{ w.work_date.strftime('%m/%d') }} {{ w.start_time }}-{{ w.end_time }} ✕</button></form>{% endfor %}</div>{% endif %}
         <form method="POST" class="row g-2 align-items-end" id="addScheduleForm">{{ csrf() }}<input type="hidden" name="action" value="add_schedule">
             <div class="col-md-2"><label class="form-label small" for="sc-staff">員工</label><select class="form-select form-select-sm" id="sc-staff" name="staff_id">{% for s in staff %}<option value="{{ s.id }}">{{ s.username }}</option>{% endfor %}</select></div>
             <div class="col-md-2"><label class="form-label small" for="sc-date">日期</label><input class="form-control form-control-sm" type="date" id="sc-date" name="work_date" value="{{ start }}" required></div>
@@ -45,7 +46,7 @@
         <section class="col-xl-8"><div class="card rounded-4 p-3">
             <h2 class="h6 fw-bold">出勤紀錄</h2>
             {% for r in records %}
-            <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="action" value="edit_record"><input type="hidden" name="record_id" value="{{ r.id }}">
+            <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="action" value="edit_record"><input type="hidden" name="record_id" value="{{ r.id }}"><input type="hidden" name="orig_clock_in" value="{{ r.clock_in.strftime('%Y-%m-%dT%H:%M') }}"><input type="hidden" name="orig_clock_out" value="{{ r.clock_out.strftime('%Y-%m-%dT%H:%M') if r.clock_out else '' }}">
                 <span class="fw-bold" style="width: 7rem">{{ r.staff.username if r.staff else '' }}</span>
                 <input class="form-control form-control-sm" type="datetime-local" name="clock_in" value="{{ r.clock_in.strftime('%Y-%m-%dT%H:%M') }}" aria-label="上班" style="width: 13rem">
                 <input class="form-control form-control-sm" type="datetime-local" name="clock_out" value="{{ r.clock_out.strftime('%Y-%m-%dT%H:%M') if r.clock_out else '' }}" aria-label="下班" style="width: 13rem">

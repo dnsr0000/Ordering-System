@@ -7,13 +7,20 @@ pytest 共用設定。
 - 測試檔依檔案最下方 RUN_ORDER 的順序執行，檔案之間共用同一個資料庫 (情境式測試：前面建立的菜單、會員會被後面使用)。
 - CSRF 預設關閉以減少樣板程式碼；專門驗證 CSRF 的測試以 csrf_enabled fixture 臨時開啟。
 """
+import atexit
 import os
 import shutil
+import sys
 import tempfile
 
 import numpy as np
 import pytest
 from werkzeug.security import generate_password_hash
+
+# 測試檔用 from tests.conftest import ... 時沿用 pytest 已載入的這一份 (模組名 conftest)：
+# 避免以 tests.conftest 再執行一次頂層、多建立一個不會被刪除的 kiosk_test_ 暫存資料夾
+# (pytest 一定先載入 conftest，常數與 TestConfig 完全相同；__name__ 本來就是 tests.conftest 時不會有作用)
+sys.modules.setdefault('tests.conftest', sys.modules[__name__])
 
 TMP_DIR = tempfile.mkdtemp(prefix='kiosk_test_')
 DB_DIR = os.path.join(TMP_DIR, 'database')
@@ -21,6 +28,8 @@ MEMBER_DIR = os.path.join(TMP_DIR, 'static', 'member')
 MENU_DIR = os.path.join(TMP_DIR, 'static', 'menu')
 for d in (DB_DIR, MEMBER_DIR, MENU_DIR):
     os.makedirs(d)
+# 只做 --collect-only (不會執行 app fixture) 時也要清掉暫存資料夾
+atexit.register(shutil.rmtree, TMP_DIR, True)
 
 # 不讀專案的 .env：開發者自己的設定 (例如 SYNC_ROLE=node、AUTO_MIGRATE=0) 不可影響測試
 os.environ['KIOSK_SKIP_DOTENV'] = '1'
@@ -47,6 +56,14 @@ class TestConfig(Config):
     RATELIMIT_STORAGE_URI = 'memory://'
     RATELIMIT_ENABLED = True
     GEMINI_API_KEY = ''
+    # 其他雲端 AI 金鑰與模型也固定成空值：shell 已匯出 AI_API_KEYS 時，測試不可拿真實金鑰呼叫雲端
+    # (需要的測試以 monkeypatch.setitem(app.config, ...) 臨時設定)
+    AI_API_KEYS = ''
+    GEMINI_MODEL = ''
+    GEMINI_FALLBACK_MODEL = ''
+    # Webhook 的 SSRF 防護維持預設 (不放寬內網 / http)
+    WEBHOOK_ALLOW_PRIVATE = False
+    WEBHOOK_ALLOW_HTTP = False
     # 不載入本機語言模型 (載入 1GB 以上的模型會拖慢測試；AI 功能測試走規則引擎)
     LOCAL_MODEL_PATH = ''
     WTF_CSRF_ENABLED = False
@@ -109,6 +126,14 @@ def app():
         settings_service.put('member', {'pos_verify': False}, tenant_id=default_tenant_id(application))
         db.session.commit()
     yield application
+    # 先關掉連線池再刪暫存資料夾：Windows 上 SQLite 檔案仍被開著時刪不掉 (ignore_errors 會吞掉錯誤，留下 kiosk_test_*)
+    try:
+        with application.app_context():
+            from app.extensions import db
+            db.session.remove()
+            db.engine.dispose()
+    except Exception:
+        pass
     shutil.rmtree(TMP_DIR, ignore_errors=True)
 
 
@@ -120,11 +145,17 @@ def _per_test_isolation(app, monkeypatch):
     limiter.reset()
     limiter.enabled = True
     monkeypatch.setattr(auth_routes, 'extract_feature', deterministic_face)
+    # 假特徵已取代真模型：CI 不下載 models/*.onnx 時 face_status() 為 False，測試仍視為人臉辨識可用
+    monkeypatch.setattr(auth_routes, 'face_available', lambda: True)
     # 雲端 AI 的冷卻、模型健康、用量與辨識快取都是模組層級狀態：每個測試從乾淨的狀態開始
     from app.services import ai_service, ai_usage, llm_providers
     ai_service._cooldowns.clear()
     ai_usage.reset()
     llm_providers._cache.clear()
+    # 門市一鍵更新會查 GitHub 最新版本 (requests.get，timeout 10 秒)：測試一律不連外網，快取也從乾淨狀態開始
+    from app.services import update_service
+    monkeypatch.setattr(update_service, '_fetch_latest', lambda: None)
+    monkeypatch.setattr(update_service, '_cache', {'at': 0.0, 'data': None})
     yield
 
 
@@ -170,7 +201,9 @@ def noon_clock(monkeypatch, request):
     """
     把「現在」固定在今天中午 12:00：營運分析、換日結案等以「今天」計算的測試，
     在午夜前後執行時，「幾分鐘前」的訂單才不會被算成昨天。
-    固定 order_service、analytics_service 與測試模組本身的 date.today() / datetime.now()。
+    固定實際讀時鐘的訂單模組 (order_lifecycle 的換日結案 / todays_range、order_checkout、order_stock 的取餐號)、
+    analytics_service 與測試模組本身的 date.today() / datetime.now()
+    (order_service 只是轉匯出入口，沒有自己的 date / datetime)。
     """
     import datetime as dt
     frozen = dt.datetime.combine(dt.date.today(), dt.time(12, 0))
@@ -186,8 +219,10 @@ def noon_clock(monkeypatch, request):
             return frozen
 
     import app.services.analytics_service as analytics_service
-    import app.services.order_service as order_service
-    for module in (order_service, analytics_service, request.module):
+    import app.services.order_checkout as order_checkout
+    import app.services.order_lifecycle as order_lifecycle
+    import app.services.order_stock as order_stock
+    for module in (order_lifecycle, order_checkout, order_stock, analytics_service, request.module):
         if isinstance(getattr(module, 'date', None), type):
             monkeypatch.setattr(module, 'date', FrozenDate)
         if isinstance(getattr(module, 'datetime', None), type):
@@ -332,10 +367,24 @@ RUN_ORDER = [
 ]
 
 
+def _module_name(item):
+    return item.module.__name__.rsplit('.', 1)[-1]
+
+
+@pytest.hookimpl(wrapper=True)
 def pytest_collection_modifyitems(session, config, items):
+    # 自動加入的前置測試檔 (見下方 NEEDS) 要完整執行：-k / -m / --deselect 篩選期間先把它們拿出來，篩選完再放回，
+    # 否則例如 pytest tests/test_order_status_and_cancel.py -k cancel 會把前置檔裡名稱不符的測試取消，情境資料不存在
+    added = set(getattr(config, 'kiosk_added_prerequisites', None) or ())
+    held = [item for item in items if _module_name(item) in added]
+    if held:
+        items[:] = [item for item in items if _module_name(item) not in added]
+    result = yield
+    items.extend(held)
     default = RUN_ORDER.index('*')
     rank = {name: i for i, name in enumerate(RUN_ORDER)}
-    items.sort(key=lambda item: rank.get(item.module.__name__.rsplit('.', 1)[-1], default))
+    items.sort(key=lambda item: rank.get(_module_name(item), default))
+    return result
 
 
 # 情境依賴：單獨執行某個測試檔 (例如 pytest tests/test_pos_checkout.py) 時，自動把它需要的前置測試檔一起加入，

@@ -58,6 +58,18 @@
     // 狀態下拉選單：「⏳ 製作中」等文字由共用的狀態表組成
     const STATUS_OPTIONS = Object.entries(Kiosk.ORDER_STATUS).map(([value, st]) => [value, `${st.icon} ${st.text}`]);
     const grid = $('admin-orders-grid');
+    // 外送平台訂單 (DELIVERY_SOURCES：Uber Eats / foodpanda / POS 手動登錄的其他平台)
+    const DELIVERY_SOURCE_LABELS = { UberEats: 'Uber Eats', foodpanda: 'foodpanda', Delivery: '外送平台' };
+
+    function sourceBadge(o) {
+        const src = o.order_source || 'Kiosk';
+        if (src === 'POS') return html`<span class="badge bg-warning text-dark"><i class="bi bi-pc-display-horizontal me-1"></i>POS (${o.cashier_username || '櫃檯'})</span>`;
+        if (src === 'Online') return html`<span class="badge bg-success"><i class="bi bi-globe me-1"></i>線上點餐</span>`;
+        if (src === 'Table') return html`<span class="badge bg-light text-dark"><i class="bi bi-qr-code me-1"></i>桌邊掃碼</span>`;
+        if (DELIVERY_SOURCE_LABELS[src]) return html`<span class="badge bg-danger"><i class="bi bi-bicycle me-1"></i>${DELIVERY_SOURCE_LABELS[src]}</span>`;
+        if (src === 'Kiosk') return html`<span class="badge bg-info text-dark"><i class="bi bi-phone me-1"></i>自助機</span>`;
+        return html`<span class="badge bg-secondary">${src}</span>`;
+    }
 
     function orderCard(o) {
         // 線上訂單在取餐分店收到前尚未編號 (分店編號後同步回來)：Kiosk.pickupNo 顯示「待分店確認」
@@ -68,13 +80,7 @@
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h5 class="fw-bold text-warning mb-0">取餐 ${Kiosk.pickupNo(o)} <small class="text-white-50 fs-6">(單號 #${o.id})</small></h5>
                     <div class="d-flex flex-wrap justify-content-end gap-1">
-                        ${o.order_source === 'POS'
-                            ? html`<span class="badge bg-warning text-dark"><i class="bi bi-pc-display-horizontal me-1"></i>POS (${o.cashier_username || '櫃檯'})</span>`
-                            : (o.order_source === 'Online'
-                                ? html`<span class="badge bg-success"><i class="bi bi-globe me-1"></i>線上點餐</span>`
-                                : (o.order_source === 'Table'
-                                    ? html`<span class="badge bg-light text-dark"><i class="bi bi-qr-code me-1"></i>桌邊掃碼</span>`
-                                    : html`<span class="badge bg-info text-dark"><i class="bi bi-phone me-1"></i>自助機</span>`))}
+                        ${sourceBadge(o)}
                         ${o.pickup_node_name ? html`<span class="badge bg-light text-dark order-node-name"><i class="bi bi-shop me-1"></i>${o.pickup_node_name}</span>` : ''}
                         <span class="badge bg-primary">${o.order_type}</span>
                         <span class="badge bg-secondary">${o.payment_method}</span>
@@ -104,8 +110,10 @@
                             ${showCash ? html` • 實收 ${Kiosk.money(o.cash_received)} / 找零 ${Kiosk.money(o.cash_change)}` : ''}
                         </small>
                         <span class="text-white fw-bold fs-5">${Kiosk.money(o.total_price)}</span>
+                        ${Number(o.refunded_amount) > 0 ? html`<span class="badge bg-danger ms-1">已退 ${Kiosk.money(o.refunded_amount)}</span>` : ''}
                     </div>
-                    <select class="form-select form-select-sm order-status-select" data-action="order-status" data-id="${o.id}" aria-label="訂單狀態">
+                    <select class="form-select form-select-sm order-status-select" data-action="order-status" data-id="${o.id}"
+                            data-status="${o.status}" data-label="取餐 ${Kiosk.pickupNo(o)} (單號 #${o.id})" aria-label="訂單狀態">
                         ${STATUS_OPTIONS.map(([value, label]) => html`<option value="${value}" ${value === o.status ? html`selected` : ''}>${label}</option>`)}
                     </select>
                 </div>
@@ -126,12 +134,92 @@
 
     async function changeOrderStatus(select) {
         select.blur();
+        // 作廢 (取消) 會回補庫存點數、自動退款並作廢發票：先開確認視窗填原因 (比照 POS 的作廢對話框)，不在選單變更時直接送出
+        if (select.value === 'Cancelled') {
+            openVoid(select);
+            return;
+        }
         try {
             await Kiosk.setOrderStatus(select.dataset.id, select.value);
         } catch (err) {
+            if (select.dataset.status) select.value = select.dataset.status;
             window.alert(`❌ ${err.message}`);
         }
         syncLive();
+    }
+
+    // ---------------------------------------------------------------- 作廢訂單 (原因必填；已收款且沒有退款權限時由主管核准)
+    const voidForm = $('adminVoidForm');
+    let voidSelect = null;
+    let voidSubmitting = false;
+
+    function restoreVoidSelect() {
+        if (voidSelect && voidSelect.dataset.status) voidSelect.value = voidSelect.dataset.status;
+        voidSelect = null;
+    }
+
+    function openVoid(select) {
+        voidSelect = select;
+        if (!voidForm) {
+            restoreVoidSelect();
+            return;
+        }
+        setText('adminVoidOrderLabel', select.dataset.label || `#${select.dataset.id}`);
+        $('adminVoidReason').value = '';
+        $('adminVoidApproval').hidden = true;
+        $('adminVoidApproverUser').value = '';
+        $('adminVoidApproverPass').value = '';
+        setText('adminVoidMsg', '');
+        showModal('adminVoidModal');
+    }
+
+    async function submitVoid(ev) {
+        ev.preventDefault();
+        if (!voidSelect || voidSubmitting) return;
+        const approval = $('adminVoidApproval');
+        const extra = { reason: $('adminVoidReason').value.trim() };
+        if (!extra.reason) {
+            setText('adminVoidMsg', '請輸入作廢原因');
+            return;
+        }
+        if (!approval.hidden) {
+            extra.approver_username = $('adminVoidApproverUser').value.trim();
+            extra.approver_password = $('adminVoidApproverPass').value;
+            if (!extra.approver_username || !extra.approver_password) {
+                setText('adminVoidMsg', '請主管輸入帳號與密碼');
+                return;
+            }
+        }
+        voidSubmitting = true;
+        $('adminVoidSubmit').disabled = true;
+        setText('adminVoidMsg', '處理中...');
+        try {
+            await Kiosk.setOrderStatus(voidSelect.dataset.id, 'Cancelled', extra);
+            voidSelect = null;   // 成功：關閉視窗時不還原選單 (隨後的同步會重繪)
+            Kiosk.modal('adminVoidModal').hide();
+            syncLive();
+        } catch (err) {
+            if (err.status === 403 && err.data && err.data.need_approval) {
+                const first = approval.hidden;
+                approval.hidden = false;
+                if (first) setText('adminVoidApprovalMsg', err.message || '此操作需要主管核准');
+                setText('adminVoidMsg', first ? '' : `❌ ${err.message}`);
+                $('adminVoidApproverPass').value = '';
+                (first ? $('adminVoidApproverUser') : $('adminVoidApproverPass')).focus();
+            } else {
+                setText('adminVoidMsg', `❌ ${err.message}`);
+            }
+        } finally {
+            voidSubmitting = false;
+            $('adminVoidSubmit').disabled = false;
+        }
+    }
+
+    if (voidForm) {
+        voidForm.addEventListener('submit', submitVoid);
+        // 取消、按 Esc 或點背景關閉：選單還原成原本的狀態 (在開始關閉時就處理：淡出期間又開下一張單時不會誤清掉)
+        $('adminVoidModal').addEventListener('hide.bs.modal', restoreVoidSelect);
+        $('adminVoidModal').addEventListener('shown.bs.modal', () => $('adminVoidReason').focus());
     }
 
     // ---------------------------------------------------------------- 菜單庫存即時同步 (菜單頁的清單)

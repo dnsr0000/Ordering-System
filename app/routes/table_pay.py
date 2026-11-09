@@ -57,7 +57,7 @@ def notify():
 def result():
     """顧客付款後由綠界頁面帶回：驗證後導向結果頁 (門市主機收不到綠界通知時，以這裡帶回的已簽章結果完成結帳)"""
     return payment_ecpay.browser_return(request.form, '桌邊結帳 (瀏覽器帶回)', table_pay_service.mark_paid_from,
-                                        lambda p: url_for('table_pay.status', trade_no=p.get('MerchantTradeNo')))
+                                        lambda p: url_for('table_pay.status', trade_no=table_pay_service.payment_key(p)))
 
 
 @table_pay_bp.route('/table/pay/status/<trade_no>', endpoint='status')
@@ -65,4 +65,10 @@ def status(trade_no):
     tp = table_pay_service.find(trade_no)
     if tp is None:
         abort(404)
-    return render_template('table_pay_status.html', tp=tp)
+    # 付款期間同桌又有人加點：這次只結了按下線上結帳時的訂單，提醒本桌仍有未結帳金額 (只給綁定這一桌的手機看)
+    remaining = 0
+    if tp.status == 'paid':
+        table = table_service.current_table()
+        if table is not None and table.id == tp.dining_table_id:
+            remaining = table_pay_service.bill(table)['total']
+    return render_template('table_pay_status.html', tp=tp, remaining=remaining)

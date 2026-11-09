@@ -412,7 +412,8 @@ def test_monitor_webhook_refuses_private_targets(app, monkeypatch, store_setting
     from app.services import monitor_service, webhook_service
     calls = []
     monkeypatch.setattr(webhook_service, 'resolve_ips', lambda host: {'10.0.0.5'})
-    monkeypatch.setattr(monitor_service.requests, 'post', lambda *a, **k: calls.append(a) or None)
+    # monitor_service 經 webhook_service._post 送出 (固定連到檢查過的 IP，走 urllib3)，並檢查回傳的 HTTP 狀態碼
+    monkeypatch.setattr(webhook_service, '_post', lambda *a, **k: calls.append(a) or 200)
     store_settings('monitor', webhook_url='https://internal.example.test/hook')
     with app.test_request_context('/'):
         from flask import g

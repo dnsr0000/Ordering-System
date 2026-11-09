@@ -13,21 +13,28 @@ from app.models.enums import OrderStatus
 from app.models.menu import WEEKDAY_LABELS, MenuItem
 from app.models.order import Order, OrderItem
 from app.services import inventory_service
-from app.services.staffing_service import history_days, orders_by_hour
+from app.services.staffing_service import orders_by_hour
 from app.utils import day_bounds
 
 
-def _side_ids(sides_json):
-    """combo_sides (配餐 uuid 的 JSON 清單) → 本店菜單 id"""
+def _side_uuids(sides_json):
+    """combo_sides (配餐 uuid 的 JSON 清單) → uuid 清單"""
     import json
     try:
-        uuids = [u for u in json.loads(sides_json or '[]') if isinstance(u, str)]
+        sides = json.loads(sides_json or '[]')
     except ValueError:
         return []
-    if not uuids:
-        return []
-    found = dict(db.session.query(MenuItem.uuid, MenuItem.id).filter(MenuItem.uuid.in_(uuids)).all())
-    return [found[u] for u in uuids if u in found]
+    return [u for u in sides if isinstance(u, str)] if isinstance(sides, list) else []
+
+
+def reference_days(target, weeks, today):
+    """
+    過去 weeks 週與 target 同一個星期幾的日期 (只取今天以前的)：
+    從今天以前最近一個同星期幾的日期往回取，target 在很久以後時也取得到足夠的週數
+    """
+    gap = (target - today).days
+    first = gap // 7 + 1 if gap >= 0 else 1   # 最小的 k 使 target - 7k < today
+    return [target - timedelta(days=7 * (first + i)) for i in range(weeks)]
 
 
 def forecast(target=None, weeks=4, today=None):
@@ -36,7 +43,8 @@ def forecast(target=None, weeks=4, today=None):
     per_day = defaultdict(lambda: defaultdict(int))
     hours = defaultdict(int)
     active_days = set()
-    for d in history_days(target, weeks, today):
+    combo_rows = []   # (日期, combo_sides, 份數)：迴圈後一次換算配餐 id，避免每一列各查一次菜單 (N+1)
+    for d in reference_days(target, weeks, today):
         t0, t1 = day_bounds(d)
         rows = db.session.query(OrderItem.menu_item_id, func.sum(OrderItem.quantity)) \
             .join(Order, Order.id == OrderItem.order_id) \
@@ -51,11 +59,19 @@ def forecast(target=None, weeks=4, today=None):
                 .join(Order, Order.id == OrderItem.order_id) \
                 .filter(Order.created_at >= t0, Order.created_at < t1, Order.status != OrderStatus.CANCELLED,
                         OrderItem.combo_sides != '').all():
-            for side_id in _side_ids(sides_json):
-                per_day[side_id][d] += int(qty or 0)
-                active_days.add(d)
+            uuids = _side_uuids(sides_json)
+            if uuids:
+                combo_rows.append((d, uuids, qty))
         for h, c in orders_by_hour(d)[0].items():
             hours[h] += c
+    all_uuids = {u for _d, uuids, _q in combo_rows for u in uuids}
+    side_ids = dict(db.session.query(MenuItem.uuid, MenuItem.id).filter(MenuItem.uuid.in_(all_uuids)).all()) \
+        if all_uuids else {}
+    for d, uuids, qty in combo_rows:
+        for u in uuids:
+            if u in side_ids:
+                per_day[side_ids[u]][d] += int(qty or 0)
+                active_days.add(d)
     used = sorted(active_days)
     n = max(1, len(used))
     items = {m.id: m for m in MenuItem.query.filter(MenuItem.id.in_(list(per_day))).all()} if per_day else {}

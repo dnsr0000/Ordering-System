@@ -7,6 +7,11 @@
         <i class="bi bi-check-circle-fill text-success display-3"></i>
         <h1 class="h4 fw-bold mt-3">{{ ui.pr_paid }}</h1>
         <p class="text-secondary">{{ ui.pr_paid_text }}</p>
+        {% elif order.payment_status == 'pending' and order.status == 'Cancelled' %}
+        {# 店員已取消待付款的訂單 (付款狀態仍是 pending)：不可再付款 #}
+        <i class="bi bi-x-circle-fill text-danger display-3"></i>
+        <h1 class="h4 fw-bold mt-3">{{ ui.pr_cancelled }}</h1>
+        {% if ui.pr_cancelled_unpaid %}<p class="text-secondary">{{ ui.pr_cancelled_unpaid }}</p>{% endif %}
         {% elif order.payment_status == 'pending' and order.payment_note %}
         <i class="bi bi-bank text-info display-3"></i>
         <h1 class="h4 fw-bold mt-3">{{ ui.pr_pending }}</h1>
@@ -22,6 +27,8 @@
         <h1 class="h4 fw-bold mt-3">{{ ui.pr_cancelled }}</h1>
         {% if order.payment_status == 'refund_required' %}
         <p class="text-secondary">{{ ui.pr_refund }}</p>
+        {% elif order.payment_status == 'refunded' %}
+        <p class="text-secondary">{{ ui.pr_refunded or ui.payment_refunded }}</p>
         {% else %}
         <p class="text-secondary">{{ ui.pr_expired }}</p>
         {% endif %}

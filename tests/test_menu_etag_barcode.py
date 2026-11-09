@@ -28,7 +28,9 @@ def test_menu_availability_etag_and_changes(app):
     assert etag.startswith('"') and r.headers['Cache-Control'] == 'no-cache'
     body = r.get_json()
     assert body[str(item)] == {'available': True, 'hint': '', 'price': 120, 'original_price': 120,
-                               'prices': {'dine_in': 120, 'takeout': 120, 'online': 120, 'delivery': 120}}
+                               'prices': {'dine_in': 120, 'takeout': 120, 'online': 120, 'delivery': 120},
+                               # 沒有會員價時等於售價
+                               'member_prices': {'dine_in': 120, 'takeout': 120, 'online': 120, 'delivery': 120}}
     # 沒變化：304 且無內容
     r = c.get('/api/menu/availability', headers={'If-None-Match': etag})
     assert r.status_code == 304 and r.data == b'' and r.headers['ETag'] == etag
@@ -67,7 +69,16 @@ def test_menu_availability_requires_no_login_but_tenant_scoped(app):
 
 def test_public_api_menu_etag(app, no_rate_limit):
     from tests.support import get_or_create_tenant
+    from app.extensions import db
+    from app.models.menu import MenuItem
+    from tests.support import tenant_request
     tid = get_or_create_tenant(app, 'etag-api-shop')
+    with tenant_request(app, tid):
+        # 這家店要有品項，下面「每個品項都有 prep_minutes」的檢查才不會對空串列恆真
+        if not MenuItem.query.filter_by(tenant_id=tid, name='ETag API 餐').first():
+            db.session.add(MenuItem(tenant_id=tid, name='ETag API 餐', category='主餐', price=80, stock=10,
+                                    total_stock=10, modifiers='none', prep_minutes=7))
+            db.session.commit()
     owner = login_staff(app, 'etag_api_owner', 'owner', tenant_id=tid)
     key = _create_key(owner, ['menu:read'])
     c = app.test_client()
@@ -77,7 +88,9 @@ def test_public_api_menu_etag(app, no_rate_limit):
     etag = r.headers['ETag']
     assert c.get('/api/v1/menu', headers={**h, 'If-None-Match': etag}).status_code == 304
     assert c.get('/api/v1/menu', headers={**h, 'If-None-Match': '"nope"'}).status_code == 200
-    assert all('prep_minutes' in m for m in r.get_json()['items'])
+    items = r.get_json()['items']
+    assert len(items) >= 1 and all('prep_minutes' in m for m in items)
+    assert any(m['name'] == 'ETag API 餐' and m['prep_minutes'] == 7 for m in items)
 
 
 def test_pos_menu_data_carries_external_code_for_scanner(app):
@@ -93,23 +106,41 @@ def test_pos_menu_data_carries_external_code_for_scanner(app):
     assert item
 
 
-def test_customer_live_module_wired():
-    with open(os.path.join(ROOT, 'static', 'js', 'customer.js'), encoding='utf-8') as fh:
-        assert 'startAvailabilityPolling' in fh.read()
-    with open(os.path.join(ROOT, 'static', 'js', 'customer', 'live.js'), encoding='utf-8') as fh:
+def _js_code(*parts):
+    """讀 JS 檔並去掉註解 (只看實際程式碼，避免註解裡的字樣讓檢查恆真)"""
+    import re
+    with open(os.path.join(ROOT, 'static', 'js', *parts), encoding='utf-8') as fh:
         js = fh.read()
-    assert '/api/menu/availability' in js and 'If-None-Match' in js and '304' in js
+    js = re.sub(r'/\*.*?\*/', '', js, flags=re.S)
+    return re.sub(r'(?m)(^|\s)//[^\n]*', r'\1', js)
+
+
+def test_customer_live_module_wired():
+    import re
+    assert 'startAvailabilityPolling()' in _js_code('customer.js')
+    live = _js_code('customer', 'live.js')
+    # live.js 透過 Kiosk.pollJson 輪詢 (帶 ETag)，304 時 pollJson 回 null、不重畫
+    assert "Kiosk.pollJson('/api/menu/availability', pollState)" in live
+    assert 'if (payload) applyAvailability(payload)' in live
+    # 實際送出 If-None-Match 並處理 304 的是 common.js 的 pollJson
+    common = _js_code('common.js')
+    m = re.search(r'async function pollJson\(url, state = \{\}\) \{(.*?)\n    \}', common, re.S)
+    assert m, 'common.js 找不到 pollJson'
+    body = m.group(1)
+    assert "'If-None-Match': state.etag" in body and 'fetch(url, { headers' in body
+    assert 'resp.status === 304) return null' in body and "state.etag = resp.headers.get('ETag')" in body
+    assert len(re.findall(r'\bpollJson\b', common)) >= 2, 'pollJson 要公開在 Kiosk 物件上'
 
 
 def test_mypy_config_present_and_passes_if_installed():
-    import shutil
+    import importlib.util
     import subprocess
     import sys
     with open(os.path.join(ROOT, 'pyproject.toml'), encoding='utf-8') as fh:
         assert '[tool.mypy]' in fh.read()
-    mypy = shutil.which('mypy') or os.path.join(os.path.dirname(sys.executable), 'mypy')
-    if not os.path.exists(mypy):
+    # 以目前的直譯器判斷 / 執行 (Windows 用 .venv/Scripts/python 執行而未啟用 venv 時，PATH 找不到 mypy.exe)
+    if importlib.util.find_spec('mypy') is None:
         import pytest
         pytest.skip('未安裝 mypy (pip install mypy)')
-    proc = subprocess.run([mypy], cwd=ROOT, capture_output=True, text=True)
+    proc = subprocess.run([sys.executable, '-m', 'mypy'], cwd=ROOT, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr

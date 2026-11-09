@@ -204,6 +204,9 @@ body.customer-page {
 #historyModal .bg-light { background-color: #f1f5f9 !important; color: #0f172a !important; }
 #receiptModal .text-muted,
 #historyModal .text-muted { color: #475569 !important; }
+/* 白底視窗的表單說明文字：蓋過 theme.css 給 .customer-page 表單標籤的近白字 (例如收據「記住這個 Email」) */
+#receiptModal .form-check-label, #historyModal .form-check-label,
+#receiptModal .form-label, #historyModal .form-label { color: #0f172a; }
 #history-modal-body { max-height: 70vh; overflow-y: auto; }
 .receipt-points { color: #b45309; }
 
@@ -235,3 +238,9 @@ body.customer-page {
 [data-bs-theme="light"] .customer-page .border-secondary { border-color: #ced4da !important; }
 [data-bs-theme="light"] .customer-page .sort-btn, [data-bs-theme="light"] .customer-page .price-sort-btn { background-color: #ffffff; color: #212529; border-color: #ced4da; }
 [data-bs-theme="light"] .customer-page .review-card { background-color: #ffffff !important; color: #212529; }
+/* 主視覺在淺色模式仍是深色背景：文字維持白色 (不套用上方 .text-white → 深色字的覆寫) */
+[data-bs-theme="light"] .customer-page .hero.text-white:not(.btn):not(.badge) { color: #ffffff !important; }
+/* 套餐卡片：套餐視窗在淺色模式為白底，卡片改淺色底 (卡片內 .text-white 標題已改深色字) */
+[data-bs-theme="light"] .customer-page .combo-card { background: #ffffff; border-color: #dee2e6; }
+/* 購物車側欄與各視窗在淺色模式為白 / 淺灰底：反白的關閉鈕 (btn-close-white) 改回深色 X */
+[data-bs-theme="light"] .customer-page .btn-close-white { filter: none; }

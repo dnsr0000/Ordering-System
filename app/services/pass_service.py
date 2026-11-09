@@ -2,7 +2,8 @@
 寄杯 / 多次券：會員一次買 N 杯 (份)，之後每次來店或線上點餐扣一杯。
 
 - 購買：POS 綁定會員後售出，建立一張「寄杯購買」訂單 (收款、發票、交班、作廢退款都沿用訂單流程，不送廚房)，
-  並建立會員寄杯 MemberPass 與 +N 的異動。售出的訂單作廢時：寄杯未使用才可作廢 (寄杯一併作廢)。
+  並建立會員寄杯 MemberPass 與 +N 的異動。售出的訂單作廢時：寄杯未使用才可作廢 (寄杯一併作廢)；
+  部分退款時依退款金額占售價的比例收回未使用次數 (無條件進位，refund 異動)，退款不可超過未使用次數的價值。
 - 兌換：結帳品項帶 pass_id (會員自己的寄杯、餐點相符) → 該品項免費 (只收加料)，條件式扣剩餘次數；訂單取消時退回。
 - 剩餘次數 = pass_ledger 合計 (同點數：跨分店各自扣、同步合併後重算；兩家分店同時用完會變負數並通知店家)。
 """
@@ -61,6 +62,8 @@ def recompute(pass_ids):
     ids = sorted({i for i in pass_ids if i})
     if not ids:
         return []
+    # 先鎖住寄杯列，再以新語句重算 (PostgreSQL READ COMMITTED 下看得到同時提交的異動，避免遺失更新)
+    db.session.execute(select(MemberPass.id).where(MemberPass.id.in_(ids)).order_by(MemberPass.id).with_for_update())
     total = select(func.coalesce(func.sum(PassLedger.delta), 0)).where(PassLedger.member_pass_id == MemberPass.id) \
         .scalar_subquery()
     db.session.execute(update(MemberPass).where(MemberPass.id.in_(ids)).values(remaining=total)
@@ -89,6 +92,10 @@ def sell(tenant_id, product_id, user, payment_method, staff, cash_received=0, pa
         raise AppError('查無此寄杯商品', 404)
     if user is None or user.tenant_id != tenant_id:
         raise AppError('購買寄杯請先綁定會員')
+    from app.services import settings_service
+    shift_id = payment_service.open_shift_id(tenant_id, lock=True)
+    if shift_id is None and settings_service.get('pos', tenant_id).get('require_shift'):
+        raise AppError('尚未開班：請先在 POS 按「交班」輸入開班零用金後再收款', 409, need_shift=True)
     method = normalize_payment_method(payment_method)
     allowed = payment_service.allowed_methods('pos')
     if method is None or method not in allowed or method in (PaymentMethod.STORED_VALUE, PaymentMethod.GIFT_CARD,
@@ -107,14 +114,18 @@ def sell(tenant_id, product_id, user, payment_method, staff, cash_received=0, pa
         received = received or price
         if received < price:
             raise AppError(f'實收現金 (${received}) 小於售價 (${price})！')
+        from app.services.order_checkout import MAX_CASH_CHANGE
+        if received - price > MAX_CASH_CHANGE:   # 售價上限 100,000，實收因此不會超過 200,000
+            raise AppError('實收現金比應付金額多出太多，請確認輸入的金額是否正確！')
     now = datetime.now()
     from app.sync import runtime as sync_runtime
-    order = Order(tenant_id=tenant_id, user_id=user.id, table_number=user.name, pickup_number=0, total_price=price,
+    order = Order(tenant_id=tenant_id, user_id=user.id, table_number=(user.name or '')[:50], pickup_number=0,
+                  total_price=price,
                   payment_method=method, order_type=OrderType.TAKE_OUT, order_source=OrderSource.POS,
                   cashier_username=staff, cash_received=received, cash_change=received - price, need_cutlery=False,
                   note=SALE_LABEL, status=OrderStatus.PICKED_UP, completed_at=now, created_at=now,
                   node_uuid=sync_runtime.local_node_uuid(), payment_reference=reference, card_last4=last4,
-                  shift_id=payment_service.open_shift_id(tenant_id, lock=True))
+                  shift_id=shift_id)
     order.items = [OrderItem(tenant_id=tenant_id, menu_item_id=None, item_name=f'{SALE_LABEL}：{product.name}',
                              price=price, quantity=1, customization=f'{product.uses} 次')]
     db.session.add(order)
@@ -127,23 +138,90 @@ def sell(tenant_id, product_id, user, payment_method, staff, cash_received=0, pa
     _add(mp, product.uses, 'sale', order.id, staff)
     payment_service.record_payment(order, PaymentKind.SALE, method, price, received=received, change=received - price,
                                    reference=reference, card_last4=last4, staff=staff, note=f'{SALE_LABEL} {product.name}')
-    payment_service.after_paid(order, invoice_info)
+    # 同 payment_service.after_paid，但不印廚房單 (寄杯購買不需製作)
+    payment_service.maybe_create_invoice(order, invoice_info)
+    from app.services import deferred, print_service
+    deferred.defer(print_service.print_order, order.id, order.tenant_id, kitchen=False)
     from app.services.audit import record_staff_audit
     record_staff_audit('PASS_SELL', target_order_id=order.id, target_user_id=user.id, tenant_id=tenant_id,
                        details=f'售出寄杯 {product.name} ({product.uses} 次) ${price} 給 {user.name}')
     return mp, order
 
 
+def _refund_revoked(member_pass):
+    """部分退款已收回的次數 (refund 異動合計，正數)"""
+    total = db.session.execute(select(func.coalesce(func.sum(PassLedger.delta), 0))
+                               .where(PassLedger.member_pass_id == member_pass.id, PassLedger.reason == 'refund')).scalar()
+    return -int(total or 0)
+
+
 def on_sale_order_cancelled(order):
-    """寄杯購買訂單作廢：寄杯還沒用過才可作廢 (寄杯一併作廢)；用過的請改用部分退款"""
-    for mp in MemberPass.query.filter_by(sale_order_id=order.id).all():
-        used = (mp.total_uses or 0) - (mp.remaining or 0)
-        if used > 0:
-            raise AppError(f'寄杯「{mp.name}」已使用 {used} 次，無法整筆作廢；請改用部分退款', 409)
-        if mp.status == 'active':
-            mp.status = 'void'
-            _add(mp, -(mp.remaining or 0), 'void', order.id)
-            mp.remaining = 0
+    """
+    寄杯購買訂單作廢：寄杯還沒用過才可作廢 (寄杯一併作廢)；用過的請改用部分退款 (依比例收回未使用次數)。
+    以條件式 UPDATE (剩餘次數仍等於未使用次數) 作廢：同時有人兌換這張寄杯時不會以過期的剩餘次數蓋掉兌換扣次。
+    """
+    for mp in MemberPass.query.filter_by(sale_order_id=order.id).order_by(MemberPass.id).all():
+        unused = (mp.total_uses or 0) - _refund_revoked(mp)   # 扣掉部分退款已收回的次數
+        claimed = db.session.execute(
+            update(MemberPass).where(MemberPass.id == mp.id, MemberPass.status == 'active', MemberPass.remaining == unused)
+            .values(status='void', remaining=0).execution_options(synchronize_session=False)).rowcount
+        db.session.refresh(mp, ['status', 'remaining'])
+        if claimed:
+            if unused:
+                _add(mp, -unused, 'void', order.id)
+            continue
+        if mp.status != 'active':
+            continue
+        used = max(1, unused - (mp.remaining or 0))
+        raise AppError(f'寄杯「{mp.name}」已使用 {used} 次，無法整筆作廢；請改用部分退款 (依比例收回未使用次數)', 409)
+
+
+def on_partial_refund(order, staff=''):
+    """
+    寄杯購買訂單部分退款 (payment_service.partial_refund 在條件式更新 refunded_amount 之後、同一交易中呼叫)：
+    依累計退款金額占售價的比例收回未使用次數 (無條件進位，例如 3 次 $240 退 $160 → 收回 2 次)，寫 refund 異動；
+    全額退款時寄杯作廢。退款超過未使用次數的價值時拋 409 (由呼叫端回滾)。不是寄杯購買訂單時不做任何事。
+    """
+    from app.models.order import Order
+    passes = MemberPass.query.filter(MemberPass.sale_order_id == order.id, MemberPass.status == 'active') \
+        .order_by(MemberPass.id).all()
+    if not passes:
+        return 0
+    row = db.session.execute(select(Order.total_price, Order.refunded_amount).where(Order.id == order.id)).one()
+    price, refunded = int(row[0] or 0), int(row[1] or 0)
+    if price <= 0:
+        return 0
+    revoked_now = 0
+    for mp in passes:
+        total = mp.total_uses or 0
+        should = min(total, -(-refunded * total // price))   # 無條件進位
+        need = should - _refund_revoked(mp)
+        if need <= 0:
+            continue
+        values = {'remaining': MemberPass.remaining - need}
+        if should >= total:
+            values['status'] = 'void'   # 全額退款：寄杯一併作廢
+        claimed = db.session.execute(
+            update(MemberPass).where(MemberPass.id == mp.id, MemberPass.status == 'active', MemberPass.remaining >= need)
+            .values(**values).execution_options(synchronize_session=False)).rowcount
+        db.session.refresh(mp, ['status', 'remaining'])
+        if not claimed:
+            left = max(0, mp.remaining or 0)
+            raise AppError(f'寄杯「{mp.name}」只剩 {left} 次未使用 (約 ${price * left // total if total else 0})，'
+                           f'退款金額超過未使用次數的價值；已兌換的次數無法退款', 409)
+        _add(mp, -need, 'refund', order.id, staff)
+        revoked_now += need
+    return revoked_now
+
+
+def negative_alert_message(member_pass):
+    """同步重算後剩餘次數為負數時通知店家的文字 (區分「作廢 / 退款後才收到其他分店的兌換」)"""
+    who = member_pass.user.name if member_pass.user else member_pass.user_id
+    if member_pass.status == 'void':
+        return (f'會員 {who} 的寄杯「{member_pass.name}」已作廢 (購買訂單作廢或全額退款)，之後才收到其他分店在同步前的兌換紀錄，'
+                f'剩餘 {member_pass.remaining} 次；已退款仍被兌換，請向會員補收差額')
+    return (f'會員 {who} 的寄杯「{member_pass.name}」在不同分店同時兌換 (或退款收回次數) 後剩 {member_pass.remaining} 次 '
+            f'(同步前同時使用)；請確認是否補收差額')
 
 
 # ---------------------------------------------------------------------------

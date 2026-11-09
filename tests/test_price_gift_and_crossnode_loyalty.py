@@ -95,13 +95,53 @@ def test_last_promotion_gift_taken_by_another_order_does_not_block_checkout(app,
         assert all(r.status_code == 200 for r in results), [r.get_data(as_text=True)[:150] for r in results]
         ids = [r.get_json()['order_id'] for r in results]
         with app.app_context():
-            with_gift = OrderItem.query.filter(OrderItem.order_id.in_(ids), OrderItem.menu_item_id == gift).count()
-            notes = [db.session.get(Order, i).note for i in ids]
+            gift_orders = {r.order_id for r in OrderItem.query.filter(OrderItem.order_id.in_(ids), OrderItem.menu_item_id == gift)}
+            notes = {i: db.session.get(Order, i).note or '' for i in ids}
             assert db.session.get(MenuItem, gift).stock == 0
-        assert with_gift == 1, '只有一張拿到最後一份贈品'
-        # 送出時贈品還在、扣庫存時被搶走的訂單備註「贈品已送完」(之後才送出的訂單本來就沒有贈品)
-        assert sum('贈品已送完：限量贈品玩具' in n for n in notes) <= 5, notes
+        assert len(gift_orders) == 1, '只有一張拿到最後一份贈品'
+        # 拿到贈品的那張不會被加註「贈品已送完」(扣庫存時被搶走的情況由下一個測試以固定情境驗證)
+        assert all('贈品已送完' not in notes[i] for i in gift_orders), notes
     finally:
+        with app.app_context():
+            db.session.get(Promotion, promo_id).is_active = False
+            db.session.commit()
+
+
+def test_gift_taken_between_evaluate_and_stock_deduction_is_noted_on_order(app, monkeypatch, no_rate_limit):
+    """送出時贈品還在 (促銷有附贈)、扣庫存前被別的訂單拿走最後一份：訂單照常成立、沒有贈品明細、備註「贈品已送完」"""
+    from sqlalchemy import update
+
+    from app.models.promotion import Promotion
+    from app.services import order_checkout
+    main = make_item(app, '搶贈品測試主餐', price=200, stock=10)
+    gift = make_item(app, '搶完贈品公仔', price=0, stock=5)
+    with app.app_context():
+        promo = Promotion(tenant_id=default_tenant_id(app), name='滿額送公仔', kind='threshold_gift', threshold=150,
+                          gift_item_uuid=db.session.get(MenuItem, gift).uuid, channels='kiosk,pos')
+        db.session.add(promo)
+        db.session.commit()
+        promo_id = promo.id
+    real_deduct = order_checkout._deduct_stock
+
+    def deduct_after_gift_taken(tenant_id, demands, gift_demands=None, node_id=None):
+        assert gift in (gift_demands or {}), '送出時促銷應附上贈品'
+        # 模擬另一張訂單剛好在扣庫存前拿走最後一份贈品
+        db.session.execute(update(MenuItem).where(MenuItem.id == gift).values(stock=0, is_sold_out=True)
+                           .execution_options(synchronize_session=False))
+        return real_deduct(tenant_id, demands, gift_demands, node_id=node_id)
+
+    monkeypatch.setattr(order_checkout, '_deduct_stock', deduct_after_gift_taken)
+    try:
+        r = checkout(guest_client(app), [line(main)])
+        assert r.status_code == 200, r.get_data(as_text=True)[:200]
+        with app.app_context():
+            order = db.session.get(Order, r.get_json()['order_id'])
+            assert '贈品已送完：搶完贈品公仔' in (order.note or ''), order.note
+            assert not any(i.menu_item_id == gift for i in order.items), '被搶走的贈品不應出現在明細'
+            assert db.session.get(MenuItem, gift).stock == 0
+            assert db.session.get(MenuItem, main).stock == 9
+    finally:
+        monkeypatch.undo()
         with app.app_context():
             db.session.get(Promotion, promo_id).is_active = False
             db.session.commit()
@@ -288,5 +328,5 @@ def test_points_spent_at_branch_before_hub_expires_them_are_not_deducted_twice(e
         loyalty_service.expire_points(tenant.id)
         assert loyalty_service.true_up_expiry(tenant.id, uid_hub) == 0
         db.session.commit()
-    assert _ledger(env.hub, 4) == sorted(before + [('expire', -40)])
+    assert _ledger(env.hub, 4) == sorted(before + [('expire:12', -40)])
     _put((env.hub,), 'member', {'points_expire_months': 0})

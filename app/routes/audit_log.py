@@ -4,6 +4,7 @@
   依員工、動作類型、日期區間、關鍵字 (單號 / 會員 ID / 內容) 篩選；後台首頁的稽核分頁只顯示最近 200 筆。
 - 匯出 Excel (目前篩選條件、最多 20000 筆；文字欄位防公式注入)。
 """
+import re
 from datetime import datetime
 
 from flask import Blueprint, g, render_template, request
@@ -51,8 +52,10 @@ def _audit_query(f):
     if f['q']:
         like = f'%{f["q"]}%'
         conds = [StaffAuditLog.details.ilike(like), StaffAuditLog.ip_address.ilike(like)]
-        if f['q'].lstrip('#').isdigit():
-            n = int(f['q'].lstrip('#'))
+        # 只接受 ASCII 數字且長度有限 (isdigit 對「²」等也成立但 int() 會失敗；超過 64 位元的整數 SQLite 無法綁定)
+        m = re.fullmatch(r'#?(\d{1,18})', f['q'], re.ASCII)
+        if m:
+            n = int(m.group(1))
             conds += [StaffAuditLog.target_order_id == n, StaffAuditLog.target_user_id == n]
         q = q.filter(or_(*conds))
     return q.order_by(StaffAuditLog.id.desc())
@@ -85,6 +88,10 @@ def index():
 @role_required(*MANAGER_ROLES)
 def export():
     from openpyxl import Workbook
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+
+    def clean(row):   # 說明可能含會員姓名等外部輸入：去掉 Excel 不接受的控制字元，否則整份匯出失敗
+        return [ILLEGAL_CHARACTERS_RE.sub('', v) if isinstance(v, str) else v for v in row]
     f = _filters()
     wb = Workbook()
     ws = wb.active
@@ -92,16 +99,16 @@ def export():
         ws.title = '登入日誌'
         ws.append(['ID', '員工帳號', '登入時間', '登出時間', 'IP'])
         for lg in _login_query(f).limit(EXPORT_LIMIT).all():
-            ws.append([lg.id, lg.username, lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '',
-                       lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '', lg.ip_address or ''])
+            ws.append(clean([lg.id, lg.username, lg.login_at.strftime('%Y-%m-%d %H:%M:%S') if lg.login_at else '',
+                             lg.logout_at.strftime('%Y-%m-%d %H:%M:%S') if lg.logout_at else '', lg.ip_address or '']))
     else:
         ws.title = '操作稽核'
         ws.append(['ID', '時間', '員工', '角色', '動作', '動作代碼', '單號', '會員ID', '點數異動', '說明', 'IP'])
         for au in _audit_query(f).limit(EXPORT_LIMIT).all():
-            ws.append([au.id, au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else '', au.staff_username,
-                       au.staff_role, ACTION_LABELS.get(au.action_type, (au.action_type,))[0], au.action_type,
-                       au.target_order_id or '', au.target_user_id or '', au.points_delta or 0, au.details or '',
-                       au.ip_address or ''])
+            ws.append(clean([au.id, au.created_at.strftime('%Y-%m-%d %H:%M:%S') if au.created_at else '',
+                             au.staff_username, au.staff_role, ACTION_LABELS.get(au.action_type, (au.action_type,))[0],
+                             au.action_type, au.target_order_id or '', au.target_user_id or '', au.points_delta or 0,
+                             au.details or '', au.ip_address or '']))
     record_staff_audit('AUDIT_EXPORT', details=f"匯出{'登入日誌' if f['tab'] == 'logins' else '操作稽核'} (篩選：{f})"[:500])
     from app.extensions import db
     db.session.commit()

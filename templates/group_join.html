@@ -21,7 +21,7 @@
     <div class="d-flex justify-content-between align-items-start gap-2">
         <div><h1 class="h4 fw-bold mb-1">{{ group.title }}</h1>
             <div class="small text-white-50">{{ g.tenant.name }}{{ ui.gj_host }} {{ group.organizer_name }}・{{ ui.dinein if group.order_type == '內用' else ui.takeout }}{{ ui.gj_pickup }} {{ group.pickup_at.strftime('%m/%d %H:%M') }}</div></div>
-        <span id="groupStatus">{{ status_badge(ui['g_status_' ~ group.status] if not (group.status == 'open' and not group.is_open) else ui.g_status_closed, 'success' if group.is_open else 'secondary') }}</span>
+        <span id="groupStatus">{% if group.status == 'submitted' and group.order and group.order.status == 'Cancelled' %}{{ status_badge(ui.status_Cancelled, 'secondary') }}{% else %}{{ status_badge(ui['g_status_' ~ group.status] if not (group.status == 'open' and not group.is_open) else ui.g_status_closed, 'success' if group.is_open else 'secondary') }}{% endif %}</span>
     </div>
     {% if group.note %}<div class="alert alert-info small py-2 mt-2 mb-0">{{ group.note }}</div>{% endif %}
     <div class="small my-2">{{ ui.gj_deadline }}<b>{{ group.deadline.strftime('%m/%d %H:%M') }}</b>　{{ ui.gj_now }} {{ summary.people|length }} {{ ui.gj_people }}{{ summary.count }} {{ ui.gj_items_est }}{{ '{:,}'.format(summary.total) }}
@@ -43,7 +43,7 @@
     {% if group.is_open %}
     <form method="POST" class="card rounded-4 p-3 mb-3" id="groupEntryForm">{{ csrf() }}
         <input type="hidden" name="action" value="{{ 'update' if editing else 'add' }}">
-        {% if editing %}<input type="hidden" name="entry_key" value="{{ edit_key }}">{% endif %}
+        {% if editing %}<input type="hidden" name="entry_key" value="{{ edit_key }}">{% else %}<input type="hidden" name="entry_nonce" value="{{ entry_nonce }}">{% endif %}
         <div class="fw-bold mb-2">{{ ui.gj_edit_mine if editing else ui.gj_order_now }} <span class="small text-white-50">{{ ui.gj_max_a }} {{ cfg.max_qty_per_person }} {{ ui.gj_max_b }}</span></div>
         <div class="row g-2 mb-2">
             <div class="col-6"><label class="form-label small" for="geName">{{ ui.gj_your_name }}</label><input class="form-control" id="geName" name="name" maxlength="30" required value="{{ editing.name if editing else '' }}"></div>
@@ -53,7 +53,13 @@
         <button class="btn btn-warning fw-bold text-dark mt-3" type="submit" id="groupEntrySubmit">{{ ui.gj_save if editing else ui.gj_join }}</button>
     </form>
     {% else %}
-    <div class="alert alert-secondary" id="groupClosed">{{ ui.gj_this_group }}{{ ui.gj_closed_submitted if group.status == 'submitted' else (ui.gj_closed_cancelled if group.status == 'cancelled' else ui.gj_closed) }}{{ ui.period }}</div>
+    {% if group.status == 'submitted' and group.order and group.order.status == 'Cancelled' %}
+    <div class="alert alert-warning" id="groupClosed">{{ ui.track_hint_cancelled }}</div>
+    {% else %}
+    {% set closed_msg = ui.gj_closed_submitted if group.status == 'submitted' else (ui.gj_closed_cancelled if group.status == 'cancelled' else ui.gj_closed) %}
+    {% set closed_text = (ui.gj_this_group ~ ' ' ~ closed_msg) if lang == 'en' else (ui.gj_this_group ~ closed_msg) %}
+    <div class="alert alert-secondary" id="groupClosed">{{ closed_text[:1]|upper ~ closed_text[1:] }}{{ ui.period }}</div>
+    {% endif %}
     {% endif %}
 
     <section class="card rounded-4 p-3">

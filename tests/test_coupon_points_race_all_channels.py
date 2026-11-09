@@ -90,7 +90,7 @@ def _table_member(app, admin_client, table_name, phone, ip):
 
 
 def _assert_clear_failure(results, words):
-    """搶輸的請求：4xx + 明確原因 (不可是 500)"""
+    """搶輸的請求：4xx + 明確原因 (不可是 500)；words 要用具體字串，單一個「點」會比對到「餐點」或品名"""
     for kind, r in results:
         assert r.status_code in (200, 400, 409), (kind, r.status_code, r.get_data(as_text=True)[:200])
         if r.status_code != 200:
@@ -103,12 +103,12 @@ def _assert_clear_failure(results, words):
 # ===========================================================================
 def test_one_member_coupon_used_from_every_channel_at_once(app, admin_client, no_rate_limit):
     """會員只有 1 張「現折 40」：點餐機 ×3、桌邊掃碼 ×2、POS ×3 同時送出 → 只有 1 張訂單折抵，其他明確失敗 (不會用原價成立)"""
-    uid = make_member(app, '搶券會員', '0968800001', pin=PIN)
+    uid = make_member(app, '搶券會員', '0968810001', pin=PIN)
     _store_coupon(app, 'RACE40', holder=uid)
     item = make_item(app, '搶券便當', price=100, stock=100)
     login_staff(app, 'coupon_pos', 'staff')
-    kiosks = [member_client(app, '0968800001', PIN, ip=f'10.88.1.{n}') for n in range(3)]
-    tables = [_table_member(app, admin_client, f'CP{n}', '0968800001', f'10.88.2.{n}') for n in range(2)]
+    kiosks = [member_client(app, '0968810001', PIN, ip=f'10.88.1.{n}') for n in range(3)]
+    tables = [_table_member(app, admin_client, f'CP{n}', '0968810001', f'10.88.2.{n}') for n in range(2)]
 
     def kiosk(c):
         return lambda: ('kiosk', checkout(c, [line(item)], promo_code='RACE40'))
@@ -131,11 +131,11 @@ def test_one_member_coupon_used_from_every_channel_at_once(app, admin_client, no
 
 def test_public_code_limited_per_member_is_not_exceeded_by_simultaneous_channels(app, admin_client, no_rate_limit):
     """公開代碼「每位會員限用 1 次」：同一位會員在點餐機與 POS 同時使用 → 只成立 1 次"""
-    uid = make_member(app, '限用搶券會員', '0968800002', pin=PIN)
+    uid = make_member(app, '限用搶券會員', '0968810002', pin=PIN)
     _store_coupon(app, 'ONCE30', member_only=False, uses_per_member=1, value=30)
     item = make_item(app, '限用搶券餐', price=100, stock=100)
     login_staff(app, 'coupon_pos2', 'staff')
-    kiosks = [member_client(app, '0968800002', PIN, ip=f'10.88.3.{n}') for n in range(3)]
+    kiosks = [member_client(app, '0968810002', PIN, ip=f'10.88.3.{n}') for n in range(3)]
     jobs = [lambda c=c: ('kiosk', checkout(c, [line(item)], promo_code='ONCE30')) for c in kiosks]
     jobs += [lambda: ('pos', checkout(login_staff(app, 'coupon_pos2'), [line(item)], url=POS, user_id=uid,
                                       promo_code='ONCE30', cash_received=500))] * 3
@@ -153,12 +153,12 @@ def test_member_points_spent_from_every_channel_at_once(app, admin_client, point
     會員 300 點，同時：點餐機 ×3、POS ×3 各折抵 100 點，紅利商城兌換優惠券 ×2 與兌換商品 ×1 (各 100 點)。
     恰好 3 個成功；失敗的明確告知點數不足 / 已變動；不會出現「要折 100 點卻只折了一部分、用較高金額成立」的訂單。
     """
-    uid = make_member(app, '搶點會員', '0968800003', points=300, pin=PIN)
+    uid = make_member(app, '搶點會員', '0968810003', points=300, pin=PIN)
     item = make_item(app, '搶點便當', price=100, stock=100)
     gift = make_item(app, '搶點兌換飲料', price=0, stock=100, is_reward=True, reward_points=100)
     reward_cp = _store_coupon(app, 'PTS100CP', member_only=False, is_reward=True, reward_points=100, value=10)
     login_staff(app, 'points_pos', 'staff')
-    kiosks = [member_client(app, '0968800003', PIN, ip=f'10.88.4.{n}') for n in range(6)]
+    kiosks = [member_client(app, '0968810003', PIN, ip=f'10.88.4.{n}') for n in range(6)]
 
     jobs = [lambda c=c: ('kiosk', checkout(c, [line(item)], use_points=100)) for c in kiosks[:3]]
     jobs += [lambda: ('pos', checkout(login_staff(app, 'points_pos'), [line(item)], url=POS, user_id=uid,
@@ -166,7 +166,7 @@ def test_member_points_spent_from_every_channel_at_once(app, admin_client, point
     jobs += [lambda c=c: ('mall', c.post('/api/redeem_reward', json={'coupon_id': reward_cp})) for c in kiosks[3:5]]
     jobs += [lambda: ('mall', kiosks[5].post('/api/redeem_reward', json={'item_id': gift}))]
     results = run_together(*jobs)
-    _assert_clear_failure(results, ('點', '紅利'))
+    _assert_clear_failure(results, ('點數已變動', '紅利不足'))
 
     ok = [k for k, r in results if r.status_code == 200]
     assert len(ok) == 3, f'300 點只夠 3 次：{[(k, r.status_code) for k, r in results]}'
@@ -181,7 +181,7 @@ def test_coupon_and_points_with_simultaneous_cancellation(app, admin_client, poi
     一張訂單用了券 + 100 點；取消它的同時，其他通路也搶著用同一張券與點數。
     不論誰先：券最多被一張未取消的訂單使用、券的狀態與訂單一致、點數 = 200 - 未取消訂單用掉的點數 ≥ 0 = 異動帳合計。
     """
-    uid = make_member(app, '取消搶券會員', '0968800004', points=200, pin=PIN)
+    uid = make_member(app, '取消搶券會員', '0968810004', points=200, pin=PIN)
     _store_coupon(app, 'UNDO40', holder=uid)
     item = make_item(app, '取消搶券餐', price=150, stock=100)
     login_staff(app, 'undo_pos', 'staff')
@@ -190,7 +190,7 @@ def test_coupon_and_points_with_simultaneous_cancellation(app, admin_client, poi
                      use_points=100, cash_received=500)
     assert first.status_code == 200 and first.get_json()['total_price'] == 10
     first_id = first.get_json()['order_id']
-    kiosks = [member_client(app, '0968800004', PIN, ip=f'10.88.5.{n}') for n in range(3)]
+    kiosks = [member_client(app, '0968810004', PIN, ip=f'10.88.5.{n}') for n in range(3)]
 
     jobs = [lambda: ('cancel', login_staff(app, 'undo_mgr').post(f'/api/orders/{first_id}/status',
                                                                  json={'status': 'Cancelled'}))]
@@ -199,7 +199,7 @@ def test_coupon_and_points_with_simultaneous_cancellation(app, admin_client, poi
                                       promo_code='UNDO40', use_points=100, cash_received=500))] * 2
     results = run_together(*jobs)
     assert results[0][1].status_code == 200
-    _assert_clear_failure(results[1:], ('優惠券', '點'))
+    _assert_clear_failure(results[1:], ('優惠券', '點數已變動'))
 
     orders = _orders_of(app, uid, item)
     with app.app_context():

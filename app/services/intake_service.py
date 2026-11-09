@@ -11,7 +11,7 @@
 from typing import Any
 from datetime import datetime, timedelta
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 
 from app.errors import AppError
 from app.models.enums import OrderSource, OrderStatus
@@ -49,6 +49,33 @@ def is_paused(tenant_id: int | None = None, now: datetime | None = None) -> bool
     return status(tenant_id, now)['paused']
 
 
+def _resume_expired(values: dict, now: datetime | None = None) -> bool:
+    resume_at = _parse_resume(values.get('resume_at'))
+    return resume_at is not None and resume_at <= (now or datetime.now())
+
+
+def form_view_values(values: dict, now: datetime | None = None) -> dict:
+    """
+    系統設定頁顯示用 (settings_service.form_view)：POS 設的自動恢復時間已過 → 實際已恢復接單，
+    開關顯示「未暫停」且清空自動恢復時間 (否則開關仍勾著，店長以為還在暫停，再按儲存也不會生效)。
+    """
+    out = dict(values)
+    if _resume_expired(out, now):
+        out['paused'], out['resume_at'] = False, ''
+    return out
+
+
+def clean_form_values(values: dict, now: datetime | None = None) -> dict:
+    """
+    系統設定頁儲存用 (settings_service.parse_form)：表單帶回已過期的自動恢復時間時清空 (勾選暫停 = 手動恢復的暫停)，
+    否則 status() 仍判定已過恢復時間，勾選暫停沒有作用。
+    """
+    out = dict(values)
+    if _resume_expired(out, now):
+        out['resume_at'] = ''
+    return out
+
+
 def set_paused(paused: bool, minutes: int = 0, tenant_id: int | None = None, changed_by: str = 'system',
                now: datetime | None = None) -> dict:
     """POS 切換：paused=True 時 minutes > 0 代表幾分鐘後自動恢復 (0 = 手動恢復)。由呼叫端 commit。"""
@@ -77,15 +104,16 @@ def window_bounds(at: datetime, window_minutes: int) -> tuple[datetime, datetime
 
 def window_count(tenant_id: int, at: datetime, window_minutes: int, node_uuid: str | None = None,
                  scheduled: bool = False) -> int:
-    """同一時段內已接的訂單數 (不含已取消、POS、外送平台)"""
+    """
+    同一時段內已接的訂單數 (不含已取消、POS、外送平台)。盡快取餐與預約取餐合併計數：
+    盡快取餐的訂單以下單時間、預約取餐以取餐時間歸入時段 (scheduled 只為相容舊呼叫保留，不影響計數)。
+    """
     start, end = window_bounds(at, window_minutes)
     q = (Order.query.filter(Order.tenant_id == tenant_id, Order.status != OrderStatus.CANCELLED,
                             Order.order_source.in_([s.value for s in COUNTED_SOURCES]))
          .execution_options(skip_tenant_filter=True))
-    if scheduled:
-        q = q.filter(Order.pickup_at >= start, Order.pickup_at < end)
-    else:
-        q = q.filter(Order.pickup_at.is_(None), Order.created_at >= start, Order.created_at < end)
+    q = q.filter(or_(and_(Order.pickup_at.is_(None), Order.created_at >= start, Order.created_at < end),
+                     and_(Order.pickup_at >= start, Order.pickup_at < end)))
     if node_uuid:
         q = q.filter(Order.node_uuid == node_uuid)
     return q.with_entities(func.count(Order.id)).scalar() or 0
@@ -103,8 +131,12 @@ def customer_notice(tenant_id: int | None = None, node: Any = None, now: datetim
 
 
 def check(c: Any) -> None:
-    """process_checkout._validate 呼叫：不適用的通路直接回傳；暫停或時段額滿時拋出 AppError (409)"""
-    if c.is_pos or c.is_delivery or isinstance(c.pickup_at, datetime):
+    """
+    process_checkout._validate 呼叫：不適用的通路直接回傳；暫停或時段額滿時拋出 AppError (409)。
+    團購送單 (pickup_at 為 datetime) 一樣檢查：主揪 / 店員手動送單會被擋；只有排程自動送單以 skip_intake=True
+    呼叫 process_checkout (根本不會走到這裡)。
+    """
+    if c.is_pos or c.is_delivery:
         return
     now = c.now or datetime.now()
     notice = customer_notice(c.tenant_id, c.stock_node if c.is_hub else None, now)

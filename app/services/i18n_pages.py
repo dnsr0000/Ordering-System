@@ -129,6 +129,12 @@ PAGES = (
     ('offline_banner', '⚠️ 網路已中斷：恢復連線前無法送出訂單或結帳',
      '⚠️ Offline: orders and checkout are unavailable until the connection is back',
      '⚠️ ネットワークが切断されました。再接続するまで注文・お会計はできません'),
+    ('offline_banner_queue', '⚠️ 網路已中斷：現金訂單會先暫存，恢復連線後自動送出',
+     '⚠️ Offline: cash orders are saved on this kiosk and sent automatically when the connection is back',
+     '⚠️ ネットワークが切断されました。現金のご注文は一時保存され、再接続後に自動送信されます'),
+    ('logout_retrying', '正在登出上一位顧客，網路恢復後會自動完成，請稍候',
+     'Signing out the previous customer… this will finish automatically once the connection is back',
+     '前のお客様をログアウトしています。再接続後に自動で完了しますので、しばらくお待ちください'),
     ('cart_reward_tag', '[點數兌換]', '[Points reward]', '[ポイント交換]'),
     ('cart_pass_tag', '寄杯', 'Prepaid', '回数券'),
     ('cart_combo_tag', '套餐', 'Combo', 'セット'),
@@ -167,6 +173,7 @@ PAGES = (
     ('home_delivery', '外送到府', 'Home delivery', '宅配'),
     ('pay_cash', '現金 Cash', 'Cash', '現金'),
     ('pay_card', '信用卡', 'Credit card', 'クレジットカード'),
+    ('pay_online_hint', '線上付款 (送出後前往綠界付款頁選擇信用卡 / ATM / 超商等付款方式)', 'Online payment (after placing the order you will choose credit card / ATM / convenience store on the ECPay page)', 'オンライン決済 (注文後、ECPay の画面でクレジットカード / ATM / コンビニ払いを選択)'),
     ('pay_wallet', '儲值金', 'Stored value', 'チャージ残高'),
     ('pickup_time', '取餐時間', 'Pickup time', '受取時間'),
     ('asap', '盡快 (付款後開始製作)', 'ASAP (prepared after payment)', 'できるだけ早く (お支払い後に調理)'),
@@ -275,6 +282,7 @@ PAGES = (
     ('sugar', '甜度', 'Sweetness', '甘さ'),
     ('spicy', '辣度調整', 'Spiciness', '辛さ'),
     ('addons', '加料升級', 'Add-ons', 'トッピング'),
+    ('no_addons', '目前沒有可選的加料項目', 'No add-ons available', '追加できるトッピングはありません'),
     ('addon_customize', '加購客製化 - ', 'Add-on options - ', '追加のカスタマイズ - '),
     ('customize_for', '客製化選擇 - ', 'Customize - ', 'カスタマイズ - '),
     ('combo_prefix', '[套餐: ', '[combo: ', '[セット: '),
@@ -330,6 +338,7 @@ PAGES = (
     ('reg_line_bind_a', '登入後會綁定剛才授權的 LINE 帳號「', 'After logging in, the LINE account "', 'ログイン後、先ほど認証した LINE アカウント「'),
     ('reg_line_bind_b', '」(10 分鐘內有效)。不是您的 LINE？', '" you just authorized will be linked (valid for 10 minutes). Not your LINE?', '」を連携します (10 分以内有効)。あなたの LINE ではありませんか？'),
     ('reg_unbind', '取消綁定', 'Cancel linking', '連携をやめる'),
+    ('reg_line_bind_register', '完成註冊時同時綁定 LINE：', 'Also link this LINE account when registering: ', '登録と同時に LINE を連携する：'),
     ('back_home', '返回首頁', 'Back to home', 'ホームへ戻る'),
     ('reg_forgot', '忘記 PIN？', 'Forgot your PIN?', 'PIN を忘れた？'),
     ('reg_goto_register', '尚未加入會員？前往註冊', 'Not a member yet? Sign up', '会員ではない？登録へ'),
@@ -346,6 +355,8 @@ PAGES = (
     ('reg_birthday_year', '年', 'Year', '年'),
     ('reg_birthday_month', '月', 'Month', '月'),
     ('reg_birthday_day', '日', 'Day', '日'),
+    ('reg_birthday_incomplete', '請完整選擇生日的年、月、日', 'Please select the year, month and day of your birthday', '誕生日の年・月・日をすべて選択してください'),
+    ('reg_weak_pin', 'PIN 碼太容易被猜中 (例如 0000、1234、1212 或手機末幾碼)，請換一組！', 'This PIN is too easy to guess (e.g. 0000, 1234, 1212 or the last digits of your phone). Please choose another.', 'PIN が推測されやすすぎます (0000、1234、1212、電話番号の末尾など)。別の PIN にしてください。'),
     ('reg_referral', '推薦碼 (選填，朋友推薦時填寫)', 'Referral code (optional)', '紹介コード (任意)'),
     ('reg_face_consent', '(選填) 我同意使用人臉辨識登入', '(Optional) I agree to face login', '(任意) 顔認証ログインに同意します'),
     ('reg_face_consent_text', '：拍攝照片並保存人臉特徵值，僅用於本店各分店的刷臉登入， 可隨時於「隱私權告知」頁撤回並刪除。不勾選不影響會員權益，改以手機號碼 + PIN 登入。',
@@ -405,6 +416,8 @@ PAGES = (
     ('pr_cancelled', '訂單已取消', 'Order cancelled', '注文はキャンセルされました'),
     ('pr_refund', '訂單已取消，我們已收到款項，將由店家為您辦理退款。', 'The order was cancelled after payment; the store will refund you.', '注文はキャンセルされました。入金分は店舗より返金いたします。'),
     ('pr_expired', '付款逾時，訂單已自動取消。', 'Payment timed out; the order was cancelled automatically.', 'お支払い期限切れのため自動キャンセルされました。'),
+    ('pr_cancelled_unpaid', '此訂單已取消，不需要付款。', 'This order was cancelled; no payment is needed.', 'この注文はキャンセルされました。お支払いは不要です。'),
+    ('pr_refunded', '訂單已取消，款項已退還。', 'The order was cancelled and your payment has been refunded.', '注文はキャンセルされ、お支払い分は返金されました。'),
     ('back_to_order', '回點餐頁', 'Back to menu', 'メニューへ戻る'),
     # ---- 桌邊結帳 ----
     ('tp_title', '線上結帳', 'Pay online', 'オンライン決済'),
@@ -416,14 +429,28 @@ PAGES = (
     ('tp_changed', '已收到付款，請洽櫃檯', 'Payment received, please see the counter', 'お支払いを受け付けました。レジまでお越しください'),
     ('tp_changed_text', '付款期間這一桌的訂單有異動 (已結帳或已修改)，店家會為您處理或退款。', 'This table\'s orders changed during payment (settled or modified); the store will sort it out or refund you.', 'お支払い中にこのテーブルの注文が変更されました (会計済みまたは修正)。店舗が対応または返金いたします。'),
     ('tp_failed', '付款未完成', 'Payment not completed', 'お支払いが完了していません'),
+    ('tp_processing', '付款處理中', 'Processing payment', 'お支払い処理中'),
+    ('tp_processing_text', '已收到付款，正在完成結帳，頁面會自動更新，請勿重複付款。', 'Payment received; we are completing your bill. This page refreshes automatically, so please do not pay again.', 'お支払いを受け付け、お会計を処理しています。このページは自動で更新されます。重複してお支払いしないでください。'),
+    ('tp_remaining_a', '。本桌仍有 $', '. This table still has $', '。このテーブルにはまだ $'),
+    ('tp_remaining_b', ' 未結帳 (付款期間新增的訂單)，請到櫃檯結帳。', ' unpaid (orders added during payment); please pay at the counter.', ' の未会計分があります (お支払い中に追加された注文)。レジでお支払いください。'),
     # ---- 訂位 / 候位 ----
     ('rp_title', '訂位訂金', 'Reservation deposit', '予約デポジット'),
     ('guests_unit', '位', 'guests', '名'),
     ('deposit', '訂金', 'Deposit', 'デポジット'),
-    ('rp_timeout', '分鐘內完成付款，否則訂位會自動取消。', ' minutes to pay, or the reservation is cancelled.', '分以内にお支払いがない場合、予約は自動的にキャンセルされます。'),
+    ('rp_timeout_a', '請於', 'Please pay within', ''),
+    ('rp_timeout', '分鐘內完成付款，否則訂位會自動取消。', ' minutes, or the reservation will be cancelled.', '分以内にお支払いがない場合、予約は自動的にキャンセルされます。'),
     ('rp_view', '查看訂位', 'View reservation', '予約を確認'),
     ('rs_title', '訂位資訊', 'Reservation', '予約情報'),
     ('rs_deposit', '訂金 $', 'Deposit $', 'デポジット $'),
+    # 訂金狀態 (reservation_status.html 以 ui['rs_dep_' ~ deposit_status] 顯示)：refund_failed 刻意不寫「失敗」也不顯示金流錯誤原文
+    ('rs_dep_pending', '訂金待付款', 'awaiting payment', 'お支払い待ち'),
+    ('rs_dep_paid', '訂金已付', 'paid', 'お支払い済み'),
+    ('rs_dep_refunded', '訂金已退', 'refunded', '返金済み'),
+    ('rs_dep_forfeited', '訂金不退', 'non-refundable (forfeited)', '返金なし'),
+    ('rs_dep_applied', '訂金已折抵', 'applied to your bill', 'お会計に充当済み'),
+    ('rs_dep_expired', '逾時未付，訂位已取消', 'not paid in time; reservation cancelled', '期限切れのため予約はキャンセルされました'),
+    ('rs_dep_refund_failed', '退款處理中，店家將與您聯繫', 'refund in progress; the store will contact you', '返金手続き中です。店舗よりご連絡いたします'),
+    ('rs_dep_refunding', '退款處理中', 'refund in progress', '返金手続き中'),
     ('rs_pay', '前往付款訂金', 'Pay deposit', 'デポジットを支払う'),
     ('rs_keep', '請保留此頁網址以便查詢或取消。', 'Keep this page\'s address to check or cancel your reservation.', '確認・キャンセル用にこのページの URL を保存してください。'),
     ('rs_refund_a', '訂位前', 'Cancel at least ', '予約の '),
@@ -437,7 +464,7 @@ PAGES = (
     ('rv_date', '訂位日期', 'Date', '予約日'),
     ('rv_search', '查詢時段', 'Find times', '時間帯を検索'),
     ('rv_slots', '選擇時段 (', 'Choose a time (', '時間帯を選択 ('),
-    ('rv_left', '剩', '', '残り '),
+    ('rv_left', '剩', 'Left: ', '残り '),
     ('rv_none', '這天沒有可預訂的時段', 'No available times on this day', 'この日は予約できる時間帯がありません'),
     ('phone', '手機', 'Phone', '電話番号'),
     ('party_size', '人數', 'Guests', '人数'),
@@ -481,7 +508,7 @@ PAGES = (
     ('rw_stamps_c', '章', ' stamps', ' スタンプ'),
     ('rw_stamps_more_a', '再集', '', 'あと '),
     ('rw_stamps_more_b', '章即可兌換獎勵。', ' more stamps for a reward.', ' 個で特典と交換できます。'),
-    ('times', '次', ' left', ' 回'),
+    ('times', '次', ' uses', ' 回'),
     ('rw_pass_hint', '點餐時在購物車「我的寄杯」按「兌換一份」，或在櫃檯出示會員條碼兌換。', 'Redeem from "My prepaid cups" in the cart when ordering, or show your member barcode at the counter.', '注文時にカートの「マイ回数券」から「1 つ使う」を押すか、レジで会員バーコードを提示して使えます。'),
     ('rw_referral', '推薦好友', 'Refer a friend', '友達を紹介'),
     ('rw_my_code', '我的推薦碼', 'My referral code', 'マイ紹介コード'),
@@ -518,9 +545,9 @@ PAGES = (
     ('pin', 'PIN 碼', 'PIN', 'PIN'),
     ('rw_download', '下載我的資料', 'Download my data', 'データをダウンロード'),
     ('rw_delete', '刪除帳號', 'Delete account', 'アカウント削除'),
-    ('rw_delete_confirm', '確定要刪除會員帳號？點數、優惠券、集點將一併刪除且無法復原。', 'Delete your account? Points, coupons and stamps will be deleted and cannot be restored.', 'アカウントを削除しますか？ポイント・クーポン・スタンプも削除され、元に戻せません。'),
-    ('rw_delete_text', '刪除後點數、優惠券、集點卡與人臉資料都會刪除且無法復原；歷史訂單依法保存但不再連結到您。', 'Points, coupons, stamps and face data are deleted permanently; past orders are kept as required by law but no longer linked to you.', 'ポイント・クーポン・スタンプ・顔データは完全に削除されます。過去の注文は法令に基づき保存されますが、あなたと紐付けられなくなります。'),
-    ('rw_type_delete', '輸入「刪除」確認', 'Type 刪除 to confirm', '確認のため「刪除」と入力'),
+    ('rw_delete_confirm', '確定要刪除會員帳號？點數、優惠券、集點將一併刪除且無法復原 (儲值金有餘額或寄杯尚未用完時無法刪除)。', 'Delete your account? Points, coupons and stamps will be deleted and cannot be restored (not possible while you have stored value or unused prepaid passes).', 'アカウントを削除しますか？ポイント・クーポン・スタンプも削除され、元に戻せません (チャージ残高や未使用の回数券がある場合は削除できません)。'),
+    ('rw_delete_text', '刪除後點數、優惠券、集點卡與人臉資料都會刪除且無法復原；儲值金有餘額或寄杯尚未用完時無法刪除，請先使用完畢或洽櫃檯退費。歷史訂單依法保存但不再連結到您。', 'Points, coupons, stamps and face data are deleted permanently. You cannot delete your account while you have stored value or unused prepaid passes; use them up or ask the counter for a refund first. Past orders are kept as required by law but no longer linked to you.', 'ポイント・クーポン・スタンプ・顔データは完全に削除されます。チャージ残高や未使用の回数券がある場合は削除できないため、使い切るかレジで返金手続きをしてください。過去の注文は法令に基づき保存されますが、あなたと紐付けられなくなります。'),
+    ('rw_type_delete', '輸入「刪除」確認', 'Type DELETE to confirm', '確認のため「削除」と入力'),
     ('confirm', '確認', 'Confirm', '確認'),
     ('rw_delete_forever', '永久刪除帳號', 'Delete account permanently', 'アカウントを完全に削除'),
     ('rw_barcode', '會員條碼', 'Member barcode', '会員バーコード'),
@@ -672,6 +699,8 @@ PAGES = (
     ('payment_expired', '付款逾時', 'Payment expired', '支払い期限切れ'),
     ('payment_refund_required', '退款處理中', 'Refund in progress', '返金処理中'),
     ('payment_refunded', '已退款', 'Refunded', '返金済み'),
+    ('payment_unpaid', '未結帳', 'Unpaid (pay at counter)', '未会計'),
+    ('payment_settled', '已結帳', 'Paid', '会計済み'),
     ('delivery_platform', '外送', 'Delivery', '配達'),
     ('pending_branch', '待分店確認', 'Pending branch confirmation', '店舗確認待ち'),
     # ---- 前端 JS (Kiosk.t / ui.*) ----
@@ -727,6 +756,8 @@ PAGES = (
     ('off_points', '使用點數或優惠券的訂單需要連線確認', 'Orders using points or coupons need a connection', 'ポイントやクーポンを使う注文は接続が必要です'),
     ('off_reward', '紅利兌換與寄杯需要連線確認', 'Reward and prepaid-cup orders need a connection', 'ポイント交換と回数券は接続が必要です'),
     ('off_delivery', '外送與預約取餐需要連線確認', 'Delivery and scheduled pickup need a connection', '配達と受取予約は接続が必要です'),
+    ('off_member', '會員訂單 (會員價、點數) 需要連線確認', 'Member orders (member prices, points) need a connection', '会員の注文 (会員価格・ポイント) は接続が必要です'),
+    ('off_invoice', '電子發票載具 / 統編 / 愛心碼格式有誤，需要連線確認', 'The e-invoice carrier / tax ID / donation code is invalid; a connection is needed', '電子インボイスのキャリア / 統一番号 / 寄付コードの形式が正しくないため、接続が必要です'),
     ('off_badge_pending', '暫存單 {n} 筆待補送', '{n} saved order(s) to resend', '保存注文 {n} 件 再送待ち'),
     ('off_badge_failed', '暫存單 {n} 筆補送失敗', '{n} saved order(s) failed', '保存注文 {n} 件 再送失敗'),
     ('off_badge_done', '暫存單已補送 {n} 筆', '{n} saved order(s) sent', '保存注文 {n} 件 送信済み'),
@@ -748,6 +779,7 @@ PAGES = (
     ('addon_offer', '專屬加購優惠', 'Add-on deals', 'お得な追加'),
     ('addon_quota', '尚可加購 {n} 份', '{n} more available', 'あと {n} 点追加できます'),
     ('addon_adjusted', '購物車餐點異動導致加購品名額不足，已自動調整數量！', 'Cart changes reduced the add-on allowance; quantities were adjusted.', 'カートの変更により追加枠が減ったため、数量を調整しました。'),
+    ('addon_sold_out_removed', '加購品【{n}】已售完或停止加購，已從購物車移除', 'Add-on {n} is sold out or no longer offered and was removed from your cart', '追加商品「{n}」は売り切れまたは提供終了のため、カートから削除しました'),
     ('reward_qty', '紅利兌換餐點無法直接增加數量，如需多份請前往回饋商城再次兌換！', 'Redeemed items cannot be increased here; redeem again in the rewards shop for more.', '交換商品の数量はここでは増やせません。複数必要な場合は特典ショップで再度交換してください。'),
     ('addon_max', '加購品數量已達上限！', 'Add-on limit reached.', '追加の上限に達しました。'),
     ('reward_remove_confirm', '確定要移除兌換餐點【{n}】嗎？移除後將返還扣除的紅利點數。', 'Remove redeemed item "{n}"? Your points will be returned.', '交換商品「{n}」を削除しますか？ポイントは返却されます。'),
@@ -757,6 +789,8 @@ PAGES = (
     ('cart_has_sold_out', '購物車中有已售完餐點【{n}】，請先點擊「移除」後再結帳！', '"{n}" in your cart is sold out; please remove it before checking out.', 'カート内の「{n}」は売り切れです。削除してからお会計ください。'),
     ('wallet_short', '儲值金餘額 ${a} 不足 (應付 ${b})，請改用其他付款方式或至櫃檯加值！', 'Stored value ${a} is not enough (due ${b}); choose another payment method or top up at the counter.', 'チャージ残高 ${a} では不足です (お支払い ${b})。別の支払方法を選ぶか、レジでチャージしてください。'),
     ('just_sold_out', '抱歉！以下餐點剛好售罄：\n【{n}】\n已為您更新菜單並在購物車中劃掉標記，請移除後再結帳！', 'Sorry, these items just sold out:\n{n}\nThe menu has been updated and they are crossed out in your cart; please remove them before checking out.', '申し訳ありません。以下の商品は売り切れました：\n{n}\nメニューを更新し、カートで取り消し線を付けました。削除してからお会計ください。'),
+    ('pickup_slots_refreshed', '取餐時段已更新，請重新選擇取餐時間', 'Pickup times have been updated; please choose a pickup time again', '受取時間帯を更新しました。受取時間を選び直してください'),
+    ('promo_verify_failed', '無法驗證優惠碼，請確認網路連線後再試', 'Could not verify the promo code. Please check your connection and try again.', 'クーポンコードを確認できませんでした。接続を確認してもう一度お試しください。'),
     ('stock_short_a', '點餐數量超過目前剩餘庫存：', 'Quantity exceeds remaining stock:', '注文数が在庫を超えています：'),
     ('stock_short_b', '請至購物車調整購買數量後再重新結帳！', 'Please adjust the quantity in your cart and try again.', 'カートで数量を調整してからもう一度お会計ください。'),
     ('checkout_failed', '結帳失敗，請稍後再試！', 'Checkout failed; please try again later.', 'お会計に失敗しました。しばらくしてからお試しください。'),
@@ -765,6 +799,7 @@ PAGES = (
     ('pick_one_in', '請在「{g}」中選擇一項！', 'Please choose one option in "{g}".', '「{g}」から 1 つ選んでください。'),
     ('pass_item_missing', '找不到可兌換的餐點', 'No redeemable item found', '交換できる料理が見つかりません'),
     ('pass_all_added', '寄杯「{n}」剩 {r} 次，已全部加入購物車', 'Prepaid "{n}" has {r} left and all are already in your cart', '回数券「{n}」は残り {r} 回で、すべてカートに入っています'),
+    ('pass_qty_adjusted', '寄杯剩餘次數不足，已調整購物車中的兌換數量', 'Not enough prepaid uses left; the redemption quantity in your cart was adjusted', '回数券の残り回数が足りないため、カートの引換数量を調整しました'),
     ('addon_missing', '查無此加購品設定！', 'Add-on not found.', '追加商品の設定が見つかりません。'),
     ('addon_quota_used', '加購名額已用完！每購買一份合格餐點限加購一份優惠品，加購品無法再次折抵。', 'Add-on allowance used up: one add-on per qualifying item.', '追加枠を使い切りました。対象商品 1 点につき追加は 1 点までです。'),
     ('go_rewards', '去商城兌換', 'Redeem in the rewards shop', '特典ショップで交換'),
@@ -946,7 +981,7 @@ MESSAGES = {
     '已取消 LINE 綁定；登入後不會綁定任何 LINE 帳號。': ('LINE linking cancelled; no LINE account will be linked after login.', 'LINE 連携をキャンセルしました。ログイン後も LINE は連携されません。'),
     '本店尚未開放 LINE 登入': ('LINE login is not available', 'LINE ログインは利用できません'),
     'LINE 登入驗證失敗 (請重新點選 LINE 登入)': ('LINE login failed (please tap LINE login again)', 'LINE ログインに失敗しました (もう一度 LINE ログインを押してください)'),
-    '這個 LINE 帳號尚未綁定會員：請以手機 + PIN 登入，或加入會員，完成後會自動綁定': ('This LINE account is not linked yet: log in with phone + PIN or sign up, and it will be linked automatically', 'この LINE アカウントは未連携です。電話番号 + PIN でログインするか会員登録すると自動的に連携されます'),
+    '這個 LINE 帳號尚未綁定會員：請以手機 + PIN 登入，或加入會員，完成後會自動綁定 LINE。': ('This LINE account is not linked yet: log in with phone + PIN or sign up, and it will be linked automatically', 'この LINE アカウントは未連携です。電話番号 + PIN でログインするか会員登録すると自動的に連携されます'),
     '本店未啟用簡訊驗證': ('SMS verification is not enabled', 'SMS 認証は利用できません'),
     '本店未開放以簡訊重設 PIN，請洽櫃檯': ('PIN reset by SMS is not available; please ask the counter', 'SMS での PIN 再設定は利用できません。レジへお尋ねください'),
     '本店未開放以簡訊重設 PIN，請洽櫃檯人員協助': ('PIN reset by SMS is not available; please ask the counter staff', 'SMS での PIN 再設定は利用できません。レジスタッフへお尋ねください'),
@@ -954,7 +989,27 @@ MESSAGES = {
     '查無此手機號碼的會員': ('No member with this phone number', 'この電話番号の会員は見つかりません'),
     '已記錄您同意本隱私權告知，謝謝！': ('Thank you, your consent has been recorded.', '同意を記録しました。ありがとうございます。'),
     '已刪除您的人臉辨識資料，之後請以手機號碼 + PIN 登入。': ('Your face data has been deleted; please log in with phone number + PIN from now on.', '顔データを削除しました。今後は電話番号 + PIN でログインしてください。'),
-    '請在確認欄輸入「刪除」兩個字': ('Type 刪除 in the confirmation box', '確認欄に「刪除」と入力してください'),
+    '請在確認欄輸入「刪除」兩個字': ('Type DELETE in the confirmation box', '確認欄に「削除」と入力してください'),
+    '您還有未用完的寄杯，請先使用完畢或洽櫃檯辦理退費後再刪除帳號': ('You still have unused prepaid passes. Please use them up or ask the counter for a refund before deleting your account.', '未使用の回数券が残っています。使い切るか、レジで返金手続きをしてからアカウントを削除してください。'),
+    # ---- 紅利商城 / 行銷訊息設定 (rewards.py 的成功回應 message_i18n、reward_service) ----
+    '已開啟優惠活動訊息': ('Promotional messages turned on', 'キャンペーンのお知らせをオンにしました'),
+    '已關閉優惠活動訊息，之後不會再收到行銷優惠券與推播': ('Promotional messages turned off; you will no longer receive marketing coupons or notifications', 'キャンペーンのお知らせをオフにしました。今後マーケティングクーポンや通知は届きません'),
+    '此優惠券未設定兌換點數，暫時無法兌換！': ('This coupon has no points price and cannot be redeemed now.', 'このクーポンは交換ポイントが設定されていないため交換できません。'),
+    '加料資料格式不正確，請重新選擇！': ('Invalid add-on data; please choose again.', 'トッピングのデータが正しくありません。選び直してください。'),
+    # ---- 優惠代碼 (order_pricing.find_promo、coupon_service.find_usable、Coupon.period_error) ----
+    '請輸入優惠代碼！': ('Please enter a promo code.', 'クーポンコードを入力してください。'),
+    '無效的優惠代碼！': ('Invalid promo code.', '無効なクーポンコードです。'),
+    '此為會員專屬優惠券，請先登入會員！': ('This coupon is for members only; please log in first.', '会員限定のクーポンです。先にログインしてください。'),
+    '此為會員專屬優惠券，請先於 POS 綁定會員！': ('This coupon is for members only; please link a member at the POS first.', '会員限定のクーポンです。先に POS で会員を紐付けてください。'),
+    '該會員尚未持有此優惠券，或該券已核銷！': ('This member does not hold this coupon, or it has already been used.', 'この会員はこのクーポンを持っていないか、すでに使用済みです。'),
+    '此優惠代碼限會員使用，請先登入會員！': ('This promo code is for members only; please log in first.', 'このクーポンコードは会員限定です。先にログインしてください。'),
+    '此優惠代碼限會員使用，請先於 POS 綁定會員！': ('This promo code is for members only; please link a member at the POS first.', 'このクーポンコードは会員限定です。先に POS で会員を紐付けてください。'),
+    '活動尚未開始': ('The promotion has not started yet', 'キャンペーンはまだ始まっていません'),
+    '此優惠券已過期': ('This coupon has expired', 'このクーポンは期限切れです'),
+    # ---- 會員 LINE 綁定 (member_auth.LINE_BIND_NEEDS_PIN)、團購 ----
+    '您是以人臉辨識登入：綁定 LINE 前請先登出，改以手機 + PIN 登入後再綁定': ('You logged in with face recognition: please log out and log in with phone + PIN before linking LINE', '顔認証でログインしています。LINE を連携するには、ログアウトして電話番号 + PIN でログインしてください'),
+    '您是在門市以 LINE 登入：綁定 LINE 前請先登出，改以手機 + PIN 登入後再綁定': ('You logged in with LINE at the store: please log out and log in with phone + PIN before linking LINE', '店舗で LINE ログインしています。LINE を連携するには、ログアウトして電話番号 + PIN でログインしてください'),
+    '找不到您的點餐，可能已被主揪移除': ('Your order was not found; the organizer may have removed it', '注文が見つかりません。幹事が削除した可能性があります'),
     '查無此兌換商品或非有效兌換品項！': ('Reward item not found or not available.', '交換商品が見つからないか無効です。'),
     '查無可退還之有效兌換紀錄，無法重複退點！': ('No valid redemption to return.', '返却できる交換記録がありません。'),
     '請選擇可兌換的餐點': ('Please choose a redeemable item', '交換できる料理を選んでください'),
@@ -967,6 +1022,52 @@ MESSAGES = {
     '紅利兌換與寄杯無法以暫存單補送': ('Reward and prepaid-cup orders cannot be resent from the offline queue', 'ポイント交換と回数券の注文はオフライン再送できません'),
     '暫存單的店家與目前店家不同，請由店員處理': ('The saved order belongs to a different store; please ask staff', '保存された注文は別の店舗のものです。スタッフにお尋ねください'),
     '這張暫存單的訂單編號已被其他訂單使用，請店員確認': ('This saved order\'s ID is already used by another order; please ask staff', 'この保存注文の ID は他の注文で使用されています。スタッフにご確認ください'),
+    # ---- 註冊 / 登入 (auth、loyalty_service；帶圖示的訊息以去掉圖示的本文為鍵) ----
+    'PIN 碼太容易被猜中 (例如 0000、1234、1212 或手機末幾碼)，請換一組！': ('This PIN is too easy to guess (e.g. 0000, 1234, 1212 or the last digits of your phone number); please choose another.', 'この PIN は推測されやすすぎます (0000、1234、1212、電話番号の末尾など)。別の PIN にしてください。'),
+    '此人臉已註冊為本店會員，請直接使用「人臉辨識」或「手機 + PIN」登入；如需協助請洽櫃檯。': ('This face is already registered as a member; please log in with face recognition or phone + PIN. Ask the counter if you need help.', 'この顔はすでに会員登録されています。顔認証または電話番号 + PIN でログインしてください。お困りの際はレジへお尋ねください。'),
+    '推薦碼不存在，請確認後再輸入 (或留空)': ('Referral code not found; please check it (or leave it blank)', '紹介コードが見つかりません。確認して入力し直してください (空欄でも構いません)'),
+    # ---- 簡訊驗證碼 (sms_service、member_auth.otp_send) ----
+    '驗證碼不正確': ('Incorrect verification code', '認証コードが正しくありません'),
+    '驗證碼已過期或不存在，請重新發送': ('The verification code has expired or does not exist; please request a new one', '認証コードの有効期限が切れているか存在しません。再送信してください'),
+    '驗證碼錯誤次數過多，請重新發送': ('Too many incorrect codes; please request a new one', '認証コードの誤りが多すぎます。再送信してください'),
+    '請先完成手機簡訊驗證': ('Please complete SMS verification first', '先に SMS 認証を完了してください'),
+    '這支手機一小時內已寄送太多次驗證碼，請稍後再試': ('Too many codes sent to this phone in the last hour; please try again later', 'この電話番号には 1 時間以内に認証コードを送りすぎています。しばらくしてからお試しください'),
+    '本店簡訊驗證碼暫時額滿，請稍後再試或洽櫃檯': ('SMS verification is temporarily unavailable; please try again later or ask the counter', 'SMS 認証コードの送信上限に達しました。しばらくしてからお試しいただくか、レジへお尋ねください'),
+    '簡訊發送失敗，請稍後再試或洽櫃檯': ('Could not send the SMS; please try again later or ask the counter', 'SMS を送信できませんでした。しばらくしてからお試しいただくか、レジへお尋ねください'),
+    '本店註冊不需簡訊驗證': ('SMS verification is not required to sign up', '会員登録に SMS 認証は不要です'),
+    '驗證碼已寄出，10 分鐘內有效': ('Verification code sent; valid for 10 minutes', '認証コードを送信しました。10 分間有効です'),
+    # ---- 結帳：電子發票 (einvoice_ecpay.normalize_invoice_info) ----
+    '手機條碼格式錯誤：應為 / 開頭共 8 碼 (例如 /ABC+123)': ('Invalid mobile barcode: 8 characters starting with / (e.g. /ABC+123)', '携帯バーコードの形式が正しくありません：/ から始まる 8 文字です (例：/ABC+123)'),
+    '自然人憑證條碼格式錯誤：應為 2 碼英文 + 14 碼數字': ('Invalid citizen certificate barcode: 2 letters + 14 digits', '自然人証明書バーコードの形式が正しくありません：英字 2 文字 + 数字 14 桁です'),
+    '愛心碼格式錯誤：應為 3~7 碼數字': ('Invalid donation code: 3 to 7 digits', '寄付コードの形式が正しくありません：3〜7 桁の数字です'),
+    '統一編號格式錯誤 (8 碼數字且需通過檢查碼)': ('Invalid company tax ID (8 digits with a valid check digit)', '統一番号の形式が正しくありません (チェックディジットが有効な 8 桁の数字)'),
+    # ---- 訂位 / 桌邊 / 評分 / 隱私權 ----
+    '訂位時間已過，如需取消請洽店家': ('The reservation time has passed; please contact the store to cancel', '予約時間を過ぎています。キャンセルは店舗へお問い合わせください'),
+    '本店未開放桌邊線上結帳，請至櫃檯結帳': ('Online payment at the table is not available; please pay at the counter', 'テーブルでのオンライン決済はご利用いただけません。レジでお支払いください'),
+    '這一桌目前沒有需要結帳的訂單': ('This table has no orders to pay right now', 'このテーブルにはお支払いが必要な注文はありません'),
+    '這一桌未結帳的訂單太多，無法線上結帳，請至櫃檯結帳': ('This table has too many unpaid orders to pay online; please pay at the counter', 'このテーブルは未払いの注文が多すぎるためオンライン決済できません。レジでお支払いください'),
+    '本店目前未開放評分': ('Ratings are not available at this store', 'この店舗では評価を受け付けていません'),
+    '餐點完成後才能評分': ('You can rate your order once it is ready', '料理の完成後に評価できます'),
+    '請選擇 1~5 顆星': ('Please choose 1 to 5 stars', '星 1〜5 を選んでください'),
+    '這張訂單已經評分過了，謝謝您！': ('You have already rated this order, thank you!', 'この注文はすでに評価済みです。ありがとうございます！'),
+    '謝謝您的評分！': ('Thank you for your rating!', '評価ありがとうございます！'),
+    '謝謝您的評分！ 歡迎也到 Google 分享您的用餐體驗': ('Thank you for your rating! You are welcome to share your experience on Google too', '評価ありがとうございます！よろしければ Google でもご感想をお寄せください'),
+    '您的會員帳號與個人資料已刪除，歷史訂單已去識別化保存 (帳務依法保存)。謝謝您的支持！': ('Your member account and personal data have been deleted; past orders are kept anonymized (as required for accounting). Thank you for your support!', '会員アカウントと個人情報を削除しました。過去の注文は匿名化して保存されます (会計上の法定保存)。ご利用ありがとうございました！'),
+}
+
+# 人臉 / 門市 LINE 登入時需輸入 PIN 的操作名稱 (customer_session.require_confirmed 的 label)
+_PIN_LABELS = {
+    '此操作': ('This action', 'この操作'),
+    '出示會員條碼': ('Showing your member barcode', '会員バーコードの表示'),
+    '解除 LINE 綁定': ('Unlinking LINE', 'LINE 連携の解除'),
+    '下載個人資料': ('Downloading your personal data', '個人データのダウンロード'),
+    '使用儲值金、點數、紅利兌換或寄杯': ('Using stored value, points, rewards or prepaid cups', 'チャージ残高・ポイント・特典交換・回数券の利用'),
+}
+# 桌邊呼叫的種類 (table_service.CALL_KINDS)
+_CALL_LABELS = {
+    '加水 / 餐具': ('Water / cutlery', 'お水 / カトラリー'),
+    '想結帳': ('Bill', 'お会計'),
+    '需要服務': ('Assistance', 'スタッフ呼び出し'),
 }
 
 _WEEKDAYS = {'一': ('Mon', '月'), '二': ('Tue', '火'), '三': ('Wed', '水'), '四': ('Thu', '木'), '五': ('Fri', '金'),
@@ -992,6 +1093,39 @@ def _percent_off(pay, lang):
     return f'{off_text}% off' if lang == 'en' else f'{off_text}% オフ'
 
 
+def _tr(text, lang, labels=None):
+    """樣式群組本身是中文 (供應提示、送單失敗原因、操作名稱…)：先查 labels，再當成另一個後端訊息翻譯；沒有對照時原樣"""
+    if labels and text in labels:
+        return labels[text][0 if lang == 'en' else 1]
+    from app.services.i18n_service import translate_message   # 延遲匯入：i18n_service 載入時就會匯入本模組
+    return translate_message(text, lang)
+
+
+def _nested(en, ja, *keys, labels=None):
+    """樣式翻譯的 callable：keys 指定的群組先以 _tr 翻譯，再代入英 / 日文樣板"""
+    def render(lang, **groups):
+        groups.update({k: _tr(groups.get(k, ''), lang, labels) for k in keys})
+        return (en if lang == 'en' else ja).format(**groups)
+    return render
+
+
+def _table_at(lang, t):
+    """掃桌位 QR：t 是 DiningTable.label ('{name} 桌')，去掉「桌」字只留桌名"""
+    name = t[:-2] if t.endswith(' 桌') else t
+    if lang == 'en':
+        return f'You are at table {name}: food is brought to your table; please pay at the counter after your meal.'
+    return f'テーブル {name} のお席です。料理はお席までお届けします。お食事後はレジでお支払いください。'
+
+
+def _pass_short(lang, n, r, q, rest):
+    """寄杯次數不足：pass_service.redeem 的訊息另帶「(可能剛在其他裝置或門市使用)」後綴"""
+    if lang == 'en':
+        return f'Prepaid "{n}" has {r} left; not enough for {q}' + (
+            ' (it may have just been used on another device or in store)' if rest.strip() else '')
+    return f'回数券「{n}」は残り {r} 回で、{q} 点分に足りません' + (
+        ' (他の端末または店舗で使用された可能性があります)' if rest.strip() else '')
+
+
 # (正規式, (英文, 日文))：樣式帶具名群組，翻譯以 .format(**群組) 代入；也可以是 callable(lang, **群組)
 MESSAGE_PATTERNS = (
     # 優惠券 (Coupon.discount_label)
@@ -1003,7 +1137,7 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^餐點【(?P<n>.+?)】已售完，請移除後再結帳！$'), ('"{n}" is sold out; please remove it before checking out.', '「{n}」は売り切れです。削除してからお会計ください。')),
     (re.compile(r'^餐點或配餐【(?P<n>.+?)】已售完，請移除後再結帳！$'), ('"{n}" (or its side) is sold out; please remove it before checking out.', '「{n}」(またはサイド) は売り切れです。削除してからお会計ください。')),
     (re.compile(r'^餐點或配餐【(?P<n>.+?)】庫存剩 (?P<s>\d+) 份，庫存不足！$'), ('Only {s} of "{n}" left; not enough stock.', '「{n}」は残り {s} 点で在庫が足りません。')),
-    (re.compile(r'^餐點【(?P<n>.+?)】目前不供應 \((?P<h>.+?)\)，請移除後再結帳！$'), ('"{n}" is not available now ({h}); please remove it.', '「{n}」は現在提供できません ({h})。削除してください。')),
+    (re.compile(r'^餐點【(?P<n>.+?)】目前不供應 \((?P<h>.+?)\)，請移除後再結帳！$'), (_nested('"{n}" is not available now ({h}); please remove it.', '「{n}」は現在提供できません ({h})。削除してください。', 'h'), None)),
     (re.compile(r'^餐點【(?P<n>.+?)】此分店未販售，請移除後再結帳！$'), ('"{n}" is not sold at this branch; please remove it.', '「{n}」はこの店舗では販売していません。削除してください。')),
     (re.compile(r'^餐點【(?P<n>.+?)】不存在於系統中！$'), ('"{n}" does not exist.', '「{n}」は存在しません。')),
     (re.compile(r'^餐點【(?P<n>.+?)】沒有「(?P<s>.+?)」這個規格，請重新選擇！$'), ('"{n}" has no size "{s}"; please choose again.', '「{n}」に「{s}」というサイズはありません。選び直してください。')),
@@ -1011,7 +1145,7 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^餐點【(?P<n>.+?)】不支援客製化加料！$'), ('"{n}" cannot be customized.', '「{n}」はカスタマイズできません。')),
     (re.compile(r'^餐點【(?P<n>.+?)】未開放紅利兌換！$'), ('"{n}" cannot be redeemed with points.', '「{n}」はポイント交換できません。')),
     (re.compile(r'^套餐【(?P<c>.+?)】的配餐【(?P<n>.+?)】已售完，請改選其他套餐！$'), ('Side "{n}" of combo "{c}" is sold out; please choose another combo.', 'セット「{c}」のサイド「{n}」は売り切れです。別のセットを選んでください。')),
-    (re.compile(r'^套餐【(?P<c>.+?)】的配餐【(?P<n>.+?)】目前不供應 \((?P<h>.+?)\)，請改選其他套餐！$'), ('Side "{n}" of combo "{c}" is not available now ({h}); please choose another combo.', 'セット「{c}」のサイド「{n}」は現在提供できません ({h})。別のセットを選んでください。')),
+    (re.compile(r'^套餐【(?P<c>.+?)】的配餐【(?P<n>.+?)】目前不供應 \((?P<h>.+?)\)，請改選其他套餐！$'), (_nested('Side "{n}" of combo "{c}" is not available now ({h}); please choose another combo.', 'セット「{c}」のサイド「{n}」は現在提供できません ({h})。別のセットを選んでください。', 'h'), None)),
     (re.compile(r'^套餐【(?P<c>.+?)】請在「(?P<g>.+?)」中選擇一項！$'), ('Please choose one option in "{g}" for combo "{c}".', 'セット「{c}」の「{g}」から 1 つ選んでください。')),
     (re.compile(r'^套餐【(?P<c>.+?)】的配餐已不存在，請重新選擇！$'), ('A side of combo "{c}" no longer exists; please choose again.', 'セット「{c}」のサイドは存在しません。選び直してください。')),
     (re.compile(r'^「(?P<n>.+?)」一次最多 20 份$'), ('Up to 20 of "{n}" per order', '「{n}」は 1 回につき 20 点まで')),
@@ -1022,7 +1156,7 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^【(?P<n>.+?)】目前離線，暫停線上點餐，請稍後再試或改選其他分店！$'), ('"{n}" is offline and not taking online orders; please try later or choose another branch.', '「{n}」はオフラインのためオンライン注文を停止しています。後ほどお試しいただくか別の店舗を選んでください。')),
     (re.compile(r'^此點餐管道未開放「(?P<m>.+?)」付款，請改用其他付款方式$'), ('"{m}" is not accepted here; please choose another payment method', '「{m}」での支払いはできません。別の支払方法をお選びください')),
     (re.compile(r'^「(?P<z>.+?)」外送需消費滿 \$(?P<m>\d+) \(目前 \$(?P<s>\d+)\)$'), ('Delivery to "{z}" requires a minimum of ${m} (currently ${s})', '「{z}」への配達は ${m} 以上から (現在 ${s})')),
-    (re.compile(r'^寄杯「(?P<n>.+?)」剩餘 (?P<r>\d+) 次，不足兌換 (?P<q>\d+) 份$'), ('Prepaid "{n}" has {r} left; not enough for {q}', '回数券「{n}」は残り {r} 回で、{q} 点分に足りません')),
+    (re.compile(r'^寄杯「(?P<n>.+?)」剩餘 (?P<r>\d+) 次，不足兌換 (?P<q>\d+) 份(?P<rest>.*)$'), (_pass_short, None)),
     (re.compile(r'^寄杯「(?P<n>.+?)」不能兌換【(?P<i>.+?)】$'), ('Prepaid "{n}" cannot be used for "{i}"', '回数券「{n}」は「{i}」には使えません')),
     (re.compile(r'^目前訂單較多 \(每 (?P<w>\d+) 分鐘最多 (?P<m>\d+) 張\)，請稍後再試或洽櫃檯$'), ('We are very busy (max {m} orders every {w} minutes); please try again later or ask the counter', 'ただいま注文が多いため ({w} 分ごとに最大 {m} 件)、しばらくしてからお試しいただくかレジへお尋ねください')),
     (re.compile(r'^此時段剩餘 (?P<n>\d+) 位，請改選其他時段$'), ('Only {n} seats left in this slot; please choose another', 'この時間帯は残り {n} 名です。別の時間帯を選んでください')),
@@ -1032,11 +1166,12 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^取餐時間至少要在 (?P<n>\d+) 分鐘後$'), ('Pickup time must be at least {n} minutes from now', '受取時間は {n} 分後以降にしてください')),
     (re.compile(r'^每人最多 (?P<n>\d+) 份$'), ('Up to {n} items per person', '一人 {n} 点まで')),
     (re.compile(r'^這個團購已滿 (?P<n>\d+) 人$'), ('This group order is full ({n} people)', 'このグループ注文は満員です ({n} 名)')),
-    (re.compile(r'^送單失敗：(?P<e>.+)$'), ('Submission failed: {e}', '送信失敗：{e}')),
+    (re.compile(r'^送單失敗：(?P<e>.+)$'), (_nested('Submission failed: {e}', '送信失敗：{e}', 'e'), None)),
     (re.compile(r'^金額已變動：畫面顯示 \$(?P<a>\d+)，目前應付 \$(?P<b>\d+) (?P<rest>.*)$'), ('The total changed: shown ${a}, now ${b}. Please check and confirm again.', '金額が変わりました：表示 ${a}、現在 ${b}。ご確認のうえもう一度確定してください。')),
     (re.compile(r'^會員點數已變動 \(目前 (?P<p>\d+) 點，不足折抵 (?P<u>\d+) 點\)，(?P<rest>.*)$'), ('Your points changed (now {p}, not enough to redeem {u}); please check again.', 'ポイントが変わりました (現在 {p} pt、{u} pt の利用に不足)。もう一度ご確認ください。')),
     (re.compile(r'^PIN 碼錯誤次數過多，此帳號或裝置已暫時鎖定，請於 (?P<m>\d+) 分鐘後再試(?P<rest>.*)$'), ('Too many incorrect PINs; this account or device is temporarily locked. Please try again in {m} minutes.', 'PIN の誤りが多すぎるため一時的にロックされました。{m} 分後にお試しください。')),
-    (re.compile(r'^(?P<l>.+?)需輸入 PIN 碼確認身分 \(您是以人臉辨識登入\)$'), ('{l} requires your PIN (you logged in with face recognition)', '{l}には PIN の入力が必要です (顔認証でログインしているため)')),
+    (re.compile(r'^(?P<l>.+?)需輸入 PIN 碼確認身分 \(您是以人臉辨識登入\)$'), (_nested('{l} requires your PIN (you logged in with face recognition)', '{l}には PIN の入力が必要です (顔認証でログインしているため)', 'l', labels=_PIN_LABELS), None)),
+    (re.compile(r'^(?P<l>.+?)需輸入 PIN 碼確認身分 \(您是在門市以 LINE 登入\)$'), (_nested('{l} requires your PIN (you logged in with LINE at the store)', '{l}には PIN の入力が必要です (店頭で LINE ログインしているため)', 'l', labels=_PIN_LABELS), None)),
     (re.compile(r'^候位號碼 (?P<n>.+)$'), ('Waitlist number {n}', '受付番号 {n}')),
     (re.compile(r'^已送單，取餐號 #(?P<n>\d+)，請於 (?P<t>.+?) 到店取餐(?P<rest>.*)$'), ('Submitted: pickup #{n}, please pick up at {t}', '送信しました。番号 #{n}、{t} に店舗でお受け取りください')),
     (re.compile(r'^已建立團購「(?P<n>.+?)」，請把分享連結傳給客人$'), ('Group order "{n}" created; share the link with your group', 'グループ注文「{n}」を作成しました。共有リンクを送ってください')),
@@ -1045,6 +1180,35 @@ MESSAGE_PATTERNS = (
     (re.compile(r'^已新增訂位：(?P<n>.+?) (?P<p>\d+) 位$'), ('Reservation made: {n}, {p} guests', '予約しました：{n} 様 {p} 名')),
     (re.compile(r'^歡迎回來，(?P<n>.+?)！\(LINE 登入\)$'), ('Welcome back, {n}! (LINE login)', 'おかえりなさい、{n} さん！(LINE ログイン)')),
     (re.compile(r'^取餐分店：(?P<n>.+?) \(菜單已改為顯示該分店的供應狀況\)$'), ('Pickup branch: {n} (the menu now shows that branch\'s availability)', '受取店舗：{n} (メニューはその店舗の在庫状況を表示)')),
-    (re.compile(r'^您在 (?P<t>.+?)：點餐後餐點會送到桌上，用餐後請至櫃檯結帳。$'), ('You are at {t}: food is brought to your table; please pay at the counter after your meal.', '{t} のお席です。料理はお席までお届けします。お食事後はレジでお支払いください。')),
+    (re.compile(r'^您在 (?P<t>.+?)：點餐後餐點會送到桌上，用餐後請至櫃檯結帳。$'), (_table_at, None)),
     (re.compile(r'^暫存超過 (?P<h>\d+) 小時，請店員確認顧客是否仍在等候後重新點餐$'), ('Saved more than {h} hours ago; staff will check whether you are still waiting and reorder', '{h} 時間以上前の保存注文です。スタッフが確認のうえ再注文します')),
+    # 簡訊驗證碼、禮物卡、訂位取消 (訂金退款)、桌邊呼叫、評分
+    (re.compile(r'^驗證碼已寄出，請 (?P<s>\d+) 秒後再重新發送$'), ('A code was just sent; please wait {s} seconds before requesting another', '認証コードは送信済みです。{s} 秒後に再送信してください')),
+    (re.compile(r'^禮物卡餘額不足 \(餘額 \$(?P<b>-?[\d.]+)，需 \$(?P<a>[\d.]+)\)，請改用其他付款方式$'), ('Insufficient gift card balance (balance ${b}, ${a} needed); please choose another payment method', 'ギフトカードの残高が足りません (残高 ${b}、${a} 必要)。別の支払方法をお選びください')),
+    (re.compile(r'^已取消訂位；(?P<m>.+)$'), (_nested('Reservation cancelled; {m}', '予約をキャンセルしました。{m}', 'm'), None)),
+    (re.compile(r'^訂金 \$(?P<a>\d+) 將退回原信用卡$'), ('your ${a} deposit will be refunded to your credit card', 'デポジット ${a} はご利用のクレジットカードに返金されます')),
+    (re.compile(r'^訂金 \$(?P<a>\d+) 退款處理中，店家將與您聯繫$'), ('your ${a} deposit refund is being processed; the store will contact you', 'デポジット ${a} の返金手続き中です。店舗からご連絡します')),
+    (re.compile(r'^訂位前 (?P<h>\d+) 小時內取消，訂金 \$(?P<a>\d+) 不退還$'), ('cancelled within {h} hours of the reservation, so the ${a} deposit is not refunded', '予約の {h} 時間前を過ぎたキャンセルのため、デポジット ${a} は返金されません')),
+    (re.compile(r'^已通知服務人員：(?P<l>.+)$'), (_nested('Staff notified: {l}', 'スタッフに通知しました：{l}', 'l', labels=_CALL_LABELS), None)),
+    (re.compile(r'^已通知過服務人員 \((?P<l>.+?)\)，請稍候$'), (_nested('Staff already notified ({l}); please wait a moment', 'スタッフに通知済みです ({l})。少々お待ちください', 'l', labels=_CALL_LABELS), None)),
+    (re.compile(r'^超過 (?P<n>\d+) 天的訂單無法評分$'), ('Orders older than {n} days cannot be rated', '{n} 日を過ぎた注文は評価できません')),
+    # 線上點餐：原取餐分店暫停線上點餐，自動改到其他分店 (customer._pickup_node)
+    (re.compile(r'^您原本選擇的取餐分店目前暫停線上點餐，取餐分店已改為【(?P<n>.+?)】，請確認後再結帳$'), ('Your chosen pickup branch is not taking online orders now; pickup branch changed to "{n}". Please check before checking out.', '選択した受取店舗は現在オンライン注文を受け付けていないため、受取店舗を「{n}」に変更しました。ご確認のうえお会計ください。')),
+    # 團購 (group_orders._remember_entry、_check_shop)
+    (re.compile(r'^此瀏覽器最多記住 (?P<k>\d+) 筆點餐，「(?P<n>.+?)」已不在「我的點餐」中，要修改請用個人修改連結：(?P<u>\S+)$'), ('This browser remembers up to {k} orders; {n}\'s order is no longer listed under My order. Use the personal edit link to change it: {u}', 'このブラウザに保存できる注文は {k} 件までです。{n} の注文は「自分の注文」に表示されません。変更するには個人用リンクを使ってください：{u}')),
+    (re.compile(r'^您目前以「(?P<s>.+?)」員工身分登入，無法開啟其他店家的團購連結；請先登出或改用無痕視窗開啟$'), ('You are signed in as staff of {s} and cannot open another shop\'s group order link. Please sign out or use a private window.', '{s} のスタッフとしてログイン中のため、他店のグループ注文リンクは開けません。ログアウトするかシークレットウィンドウで開いてください。')),
+    # 紅利商城 (rewards.py 成功回應、reward_service)：🎉 不在 i18n_service._ICON_RE 內，樣式本身含圖示
+    (re.compile(r'^🎉 成功兌換【(?P<n>.+?)】！$'), ('🎉 Redeemed "{n}"!', '🎉「{n}」と交換しました！')),
+    (re.compile(r'^已退還 (?P<p>\d+) 點數$'), ('{p} points returned', '{p} pt を返却しました')),
+    (re.compile(r'^餐點【(?P<n>.+?)】目前不供應 \((?P<h>.+?)\)，暫時無法兌換！$'), (_nested('"{n}" is not available now ({h}) and cannot be redeemed.', '「{n}」は現在提供できません ({h})。交換できません。', 'h'), None)),
+    # 優惠代碼 (order_pricing.find_promo；活動期間原因來自 Coupon.period_error / coupon_service.find_usable)
+    (re.compile(r'^活動尚未開始 \((?P<d>[\d/]+) 起\)$'), ('The promotion has not started yet (starts {d})', 'キャンペーンはまだ始まっていません ({d} から)')),
+    (re.compile(r'^活動已結束 \((?P<d>[\d/]+) 止\)$'), ('The promotion has ended ({d})', 'キャンペーンは終了しました ({d} まで)')),
+    (re.compile(r'^未達使用門檻！需消費滿 \$(?P<n>\d+) 元才可折抵。$'), ('Minimum spend not reached: spend at least ${n} to use this.', '利用条件に達していません。${n} 以上のご注文で割引できます。')),
+    (re.compile(r'^已套用「(?P<label>.+?)」，折抵 \$(?P<n>\d+) 元！$'), (_nested('Applied "{label}": ${n} off!', '「{label}」を適用し、${n} 割引しました！', 'label'), None)),
+    (re.compile(r'^輸入錯誤的優惠代碼次數過多，請 (?P<m>\d+) 分鐘後再試！$'), ('Too many incorrect promo codes; please try again in {m} minutes.', 'クーポンコードの誤入力が多すぎます。{m} 分後にお試しください。')),
+    (re.compile(r'^此優惠代碼每位會員限用 (?P<n>\d+) 次，已達使用上限！$'), ('This promo code can be used {n} time(s) per member; you have reached the limit.', 'このクーポンコードは会員 1 人につき {n} 回までです。利用上限に達しました。')),
+    (re.compile(r'^此優惠代碼(?P<e>活動.+)！$'), (_nested('This promo code cannot be used: {e}.', 'このクーポンコードは使用できません：{e}。', 'e'), None)),
+    (re.compile(r'^(?P<e>活動.+|此優惠券已過期)，無法使用！$'), (_nested('{e}; this coupon cannot be used.', '{e}。このクーポンは使用できません。', 'e'), None)),
+    (re.compile(r'^此優惠券(?P<e>活動.+)，暫時無法兌換！$'), (_nested('This coupon cannot be redeemed now: {e}.', 'このクーポンは現在交換できません：{e}。', 'e'), None)),
 )

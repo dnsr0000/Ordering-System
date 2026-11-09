@@ -27,6 +27,57 @@
         return stream;
     }
 
+    /**
+     * 鏡頭開關：start() 已開啟或開啟中不重複開 (不會覆寫舊 stream 而漏關)；等待瀏覽器權限期間呼叫 stop()
+     * (關閉相機視窗、切到手機頁籤、離開頁面) 時，之後授權拿到的 stream 立即關閉，鏡頭不會在背景開著。
+     * start() 回傳 true = 已開啟，false = 等待期間已被 stop() 取消；開啟失敗時拋出錯誤。
+     */
+    function cameraController(video) {
+        let stream = null;
+        let pending = null;
+        let seq = 0;
+        function stop() {
+            seq += 1;
+            pending = null;
+            stream = stopStream(stream);
+            video.srcObject = null;
+        }
+        function start() {
+            if (stream) return Promise.resolve(true);
+            if (pending) return pending;
+            const token = ++seq;
+            pending = openCamera(video).then((opened) => {
+                if (token !== seq) {
+                    stopStream(opened);
+                    if (video.srcObject === opened) video.srcObject = null;
+                    return false;
+                }
+                pending = null;
+                stream = opened;
+                return true;
+            }, (err) => {
+                if (token !== seq) return false;
+                pending = null;
+                throw err;
+            });
+            return pending;
+        }
+        return { start, stop };
+    }
+
+    /** 送出前的弱 PIN 檢查：規則與後端 app/utils.py 的 is_weak_pin 相同 (後端仍會再檢查一次) */
+    function isWeakPin(pin, phone) {
+        const value = String(pin || '').trim();
+        if (!/^[0-9]+$/.test(value)) return false;
+        const digits = Array.from(value, Number);
+        const steps = new Set(digits.slice(1).map((d, i) => (d - digits[i] + 10) % 10));
+        if (new Set(value).size === 1) return true;
+        if (steps.size === 1 && (steps.has(1) || steps.has(9))) return true;
+        if (value.length % 2 === 0 && value === value.slice(0, 2).repeat(value.length / 2)) return true;
+        const tel = String(phone || '').trim();
+        return Boolean(tel) && tel.endsWith(value);
+    }
+
     /** 把 video 目前畫面畫到 canvas，回傳 JPEG Blob */
     function captureFrame(video, canvas) {
         canvas.width = video.videoWidth || 640;
@@ -50,17 +101,15 @@
         const faceBtn = document.getElementById('btn-login-snap');
         const phoneForm = document.getElementById('phoneLoginForm');
         const phoneBtn = document.getElementById('btn-phone-login');
-        let stream = null;
+        const camera = cameraController(video);
 
         const faceBtnIdle = html`<i class="bi bi-camera-fill me-1"></i> ${Kiosk.t('login', '登入')}`;
         const faceBtnRetry = html`<i class="bi bi-camera-fill me-1"></i> ${Kiosk.t('reg_face_retry', '重新辨識登入')}`;
         const phoneBtnIdle = html`<i class="bi bi-box-arrow-in-right me-1"></i> ${Kiosk.t('reg_phone_tab', '手機號碼登入')}`;
 
         async function startCamera() {
-            if (stream) return;
             try {
-                stream = await openCamera(video);
-                show(cameraStatus, false);
+                if (await camera.start()) show(cameraStatus, false);
             } catch (err) {
                 console.warn('相機開啟失敗:', err);
                 cameraStatus.textContent = Kiosk.t('reg_camera_failed', '無法開啟相機，請確認瀏覽器權限，或改用手機號碼登入');
@@ -69,8 +118,7 @@
         }
 
         function stopCamera() {
-            stream = stopStream(stream);
-            video.srcObject = null;
+            camera.stop();
         }
 
         function welcome(data) {
@@ -150,6 +198,17 @@
             submitBtn.innerHTML = submitIdle;
         });
 
+        // 弱 PIN (0000、1234、1212、手機末幾碼) 在送出前就由瀏覽器擋下並提示，不必送到後端被擋、整份表單清空
+        const pinInput = document.getElementById('regPin');
+        const phoneInput = document.getElementById('regPhone');
+        if (pinInput && phoneInput) {
+            const checkPin = () => pinInput.setCustomValidity(isWeakPin(pinInput.value, phoneInput.value)
+                ? Kiosk.t('reg_weak_pin', 'PIN 碼太容易被猜中 (例如 0000、1234、1212 或手機末幾碼)，請換一組！') : '');
+            pinInput.addEventListener('input', checkPin);
+            phoneInput.addEventListener('input', checkPin);
+            checkPin();
+        }
+
         // 人臉辨識為選填：勾選同意才顯示拍照區並要求照片 (線上端沒有這個區塊)
         const faceConsent = document.getElementById('faceConsent');
         const photoInput = document.getElementById('photoInput');
@@ -171,7 +230,7 @@
         const retakeBtn = document.getElementById('retakeBtn');
         const confirmBtn = document.getElementById('confirmBtn');
         const modal = Kiosk.modal(modalEl);
-        let stream = null;
+        const camera = cameraController(video);
         let capturedBlob = null;
 
         function setPhotoStatus(content) {
@@ -180,8 +239,7 @@
         }
 
         function stopCamera() {
-            stream = stopStream(stream);
-            video.srcObject = null;
+            camera.stop();
         }
 
         function retake() {
@@ -198,7 +256,7 @@
             retake();
             modal.show();
             try {
-                stream = await openCamera(video);
+                await camera.start();
             } catch (err) {
                 console.warn('相機存取失敗:', err);
                 alert(Kiosk.t('reg_camera_denied', '無法存取攝影機，請檢查瀏覽器權限！'));
@@ -233,6 +291,7 @@
 
         // 彈窗關閉 (取消、右上角 X、使用此照片) 一律關閉鏡頭
         modalEl.addEventListener('hidden.bs.modal', stopCamera);
+        window.addEventListener('pagehide', stopCamera);
 
         Kiosk.on(document, 'click', {
             'open-camera': () => openCameraModal(),

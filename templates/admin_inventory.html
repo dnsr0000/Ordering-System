@@ -35,7 +35,7 @@
                     {% for i in ingredients %}
                     <tr class="{{ 'table-danger' if i.is_low }}"><td class="fw-bold">{{ i.name }}{% if not i.is_active %} <span class="badge bg-secondary">停用</span>{% endif %}</td>
                         <td>{{ '%g' % i.stock }} {{ i.unit }}</td><td>{{ '%g' % i.low_threshold }}</td><td>${{ '%g' % i.unit_cost }}</td>
-                        <td><input class="form-control form-control-sm" type="number" step="any" name="count__{{ i.id }}" placeholder="實際數量" aria-label="{{ i.name }} 盤點數量" style="width: 8rem"></td></tr>
+                        <td><input class="form-control form-control-sm" type="number" step="any" min="0" name="count__{{ i.id }}" placeholder="實際數量" aria-label="{{ i.name }} 盤點數量" style="width: 8rem"></td></tr>
                     {% else %}<tr><td colspan="5" class="text-white-50 text-center">尚未建立原料</td></tr>{% endfor %}
                     </tbody>
                 </table>
@@ -62,7 +62,7 @@
                 <form method="POST" class="row g-2 align-items-end mb-3" id="addIngredientForm">{{ csrf() }}<input type="hidden" name="action" value="add">
                     <div class="col-md-3"><input class="form-control form-control-sm" name="name" placeholder="名稱 (例：牛肉片)" aria-label="名稱" required></div>
                     <div class="col-md-2"><input class="form-control form-control-sm" name="unit" placeholder="單位 g" aria-label="單位"></div>
-                    <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="stock" placeholder="期初庫存" aria-label="期初庫存"></div>
+                    <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" min="0" name="stock" placeholder="期初庫存" aria-label="期初庫存"></div>
                     <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="low_threshold" placeholder="安全量" aria-label="安全量"></div>
                     <div class="col-md-2"><input class="form-control form-control-sm" type="number" step="any" name="unit_cost" placeholder="單位成本" aria-label="單位成本"></div>
                     <div class="col-md-1"><button class="btn btn-warning btn-sm fw-bold text-dark w-100" type="submit">新增</button></div>
@@ -70,6 +70,7 @@
                     <div class="col-md-3"><input class="form-control form-control-sm" type="number" step="any" min="0" name="carbon_factor" placeholder="碳排係數 (g CO₂e / 單位)" aria-label="碳排係數" title="每 1 單位原料的 g CO₂e，例如牛肉每 g 約 60、雞肉約 6、白米約 4 (資料來源由店家自行查證，例如環境部產品碳足跡資料庫)"></div>
                     <div class="col-md-6 small text-white-50 align-self-center">碳足跡 = 配方用量 × 係數，點餐頁以「參考值」標示；係數請以環境部產品碳足跡資料庫或供應商提供的數字為準。</div>
                 </form>
+                {% set active_supplier_ids = suppliers|map(attribute='id')|list %}
                 {% for i in ingredients %}
                 <form method="POST" class="d-flex flex-wrap gap-1 align-items-center mb-1">{{ csrf() }}<input type="hidden" name="ingredient_id" value="{{ i.id }}">
                     <input class="form-control form-control-sm" name="name" value="{{ i.name }}" aria-label="名稱" style="width: 9rem">
@@ -77,15 +78,18 @@
                     <input class="form-control form-control-sm" type="number" step="any" name="low_threshold" value="{{ '%g' % i.low_threshold }}" aria-label="安全量" style="width: 6rem">
                     <input class="form-control form-control-sm" type="number" step="any" name="unit_cost" value="{{ '%g' % i.unit_cost }}" aria-label="單位成本" style="width: 6rem">
                     <select class="form-select form-select-sm" name="supplier_id" aria-label="供應商" style="width: 8rem"><option value="">(供應商)</option>
-                        {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if i.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}</select>
+                        {% for s in suppliers %}<option value="{{ s.id }}" {{ 'selected' if i.supplier_id == s.id }}>{{ s.name }}</option>{% endfor %}
+                        {# 目前選的供應商已停用：仍列出並選取，避免只改其他欄位儲存時預設供應商被清空 #}
+                        {% if i.supplier_id and i.supplier_id not in active_supplier_ids and i.supplier %}<option value="{{ i.supplier_id }}" selected>{{ i.supplier.name }} (停用)</option>{% endif %}</select>
                     <input class="form-control form-control-sm" type="number" step="any" min="0" name="par_level" value="{{ '%g' % i.par_level }}" aria-label="目標庫存" title="目標庫存 (建議採購補到此量)" style="width: 6rem">
                     <input class="form-control form-control-sm" type="number" step="any" min="0" name="pack_size" value="{{ '%g' % i.pack_size }}" aria-label="採購單位" title="採購單位 (一箱多少)" style="width: 5rem">
                     <input class="form-control form-control-sm" name="origin" value="{{ i.origin }}" placeholder="產地" aria-label="產地" maxlength="60" style="width: 7rem">
                     <input class="form-control form-control-sm" type="number" step="any" min="0" name="carbon_factor" value="{{ '%g' % i.carbon_factor }}" aria-label="碳排係數" title="碳排係數 (g CO₂e / 單位)" placeholder="碳排" style="width: 5.5rem">
                     <div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="ia-{{ i.id }}" {{ 'checked' if i.is_active }}><label class="form-check-label small" for="ia-{{ i.id }}">啟用</label></div>
                     <button class="btn btn-sm btn-outline-light" type="submit" name="action" value="edit">儲存</button>
-                    <button class="btn btn-sm btn-outline-danger" type="submit" name="action" value="delete">刪除</button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" form="del-ing-{{ i.id }}">刪除</button>
                 </form>
+                <form method="POST" id="del-ing-{{ i.id }}" class="d-none" data-confirm="確定刪除原料「{{ i.name }}」？配方中的這項原料會一併移除且無法復原 (有進出貨或採購紀錄的原料無法刪除，請改為取消「啟用」)">{{ csrf() }}<input type="hidden" name="action" value="delete"><input type="hidden" name="ingredient_id" value="{{ i.id }}"></form>
                 {% endfor %}
             </div>
         </section>

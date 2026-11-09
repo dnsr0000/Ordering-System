@@ -216,7 +216,7 @@ def test_dashboard_scope_and_audits(app, admin_client, kitchen_client):
         db.session.commit()
     data = admin_client.get('/api/admin_live_orders').get_json()
     names = [o['user_name'] for o in data['orders']]
-    assert 'M15舊單甲' not in names and 'M15舊單乙' not in names
+    assert 'M15舊單甲' not in names and 'M15舊單乙' in names
     assert data['analytics']['stale_pending_count'] >= 1
     admin_client.post('/admin/add_coupon', data={'code': 'M15AUD', 'title': '稽核測試', 'discount_type': 'fixed', 'discount_value': '5'})
     with app.app_context():   # 今天一張製作中的訂單 (KDS 畫面上看得到)，一鍵出餐會完成它並留下稽核
@@ -265,6 +265,19 @@ def test_eta_excludes_outliers():
     assert build_order_analytics([_order('Completed', 4)])['eta_minutes'] == 0
 
 
+def _function_param_fields(src, func_name):
+    """JS 原始碼中 function <func_name>(<參數>) { ... } 函式內讀取的 <參數>.<欄位> 名稱集合 (以大括號配對找出函式範圍)"""
+    fields = set()
+    for m in re.finditer(rf'function\s+{func_name}\s*\(\s*(\w+)\s*\)\s*\{{', src):
+        depth, end = 0, m.end() - 1
+        for end in range(m.end() - 1, len(src)):
+            depth += {'{': 1, '}': -1}.get(src[end], 0)
+            if depth == 0:
+                break
+        fields |= set(re.findall(rf'\b{m.group(1)}\.(\w+)', src[m.end():end]))
+    return fields
+
+
 @pytest.mark.usefixtures('noon_clock')
 def test_top_items_with_revenue(app, admin_client):
     def with_items(items, status='Completed'):
@@ -280,12 +293,16 @@ def test_top_items_with_revenue(app, admin_client):
     assert (top['雞排']['quantity'], top['雞排']['revenue'], top['紅茶']['revenue']) == (1, 70, 0)
     assert a['top_items'][0]['name'] == '香檸氣泡飲' and len(build_order_analytics(orders, limit=1)['top_items']) == 1
 
-    # 前端讀取的 analytics.<欄位> 必須都由後端提供 (模板與靜態 JS 都檢查)
+    # 前端讀取的 analytics 欄位必須都由後端提供 (模板與靜態 JS 都檢查)
     sources = [open(os.path.join(BASE_DIR, 'templates', name), encoding='utf-8').read() for name in ('admin.html',)]
-    js_dir = os.path.join(BASE_DIR, 'static', 'js')
-    if os.path.isdir(js_dir):
-        sources += [open(os.path.join(js_dir, f), encoding='utf-8').read() for f in os.listdir(js_dir) if f.endswith('.js')]
-    used = set().union(*(re.findall(r'analytics\.(\w+)', s) for s in sources))
+    js_sources = []
+    for root, _dirs, files in os.walk(os.path.join(BASE_DIR, 'static', 'js')):
+        js_sources += [open(os.path.join(root, f), encoding='utf-8').read() for f in files if f.endswith('.js')]
+    used = set().union(*(re.findall(r'analytics\.(\w+)', s) for s in sources + js_sources))
+    # 即時同步：admin.js 以 updateAnalytics(res.analytics) 傳入，函式內以參數名稱讀取欄位 (stats.today_orders 等)
+    js_used = set().union(*(_function_param_fields(s, 'updateAnalytics') for s in js_sources))
+    assert js_used, '找不到 updateAnalytics 讀取的欄位 (函式改名或改寫時請一併更新此檢查)'
+    used |= js_used
     assert used <= set(a) | {'ai_advice'}, sorted(used - set(a))
     live = admin_client.get('/api/admin_live_orders?limit=2').get_json()['analytics']
     assert len(live['top_items']) <= 2 and all('revenue' in t for t in live['top_items'])

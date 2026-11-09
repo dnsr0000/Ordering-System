@@ -12,7 +12,7 @@
  *     combo_name, is_add_on, is_reward, points_cost, can_addon, is_sold_out }
  * 金額僅供畫面預估，實際金額一律由後端依 menu_item_id / modifier_ids / combo_option_id 重新計算。
  */
-import { $, IDLE_TIMEOUT_MS, clearStoredCart, loadCart, pageData, state, storeCart } from './customer/core.js';
+import { $, IDLE_TIMEOUT_MS, clearStoredCart, isOnline, loadCart, pageData, state, storeCart } from './customer/core.js';
 import { changeQty, normalizeLine, removeLine, repriceCart } from './customer/cart.js';
 import { applyPromoCode, calculateTotal, renderCoupons, syncLatestUserCoupons, togglePoints } from './customer/totals.js';
 import {
@@ -23,7 +23,7 @@ import {
     checkGiftCard, confirmCheckout, fetchMyOrders, finishOrder, openPreview, openTableBill, payTableBill, reorder, sendReceipt,
     showMyOrders, togglePaymentExtras,
 } from './customer/checkout.js';
-import { startAvailabilityPolling } from './customer/live.js';
+import { refreshCardPrices, startAvailabilityPolling } from './customer/live.js';
 import { voiceActions } from './customer/voice.js';
 import { INVOICE_PLACEHOLDERS } from './shared/invoice.js';
 
@@ -84,6 +84,7 @@ function main() {
             $('takeoutExtraBox').classList.toggle('d-none', el.value !== '外帶' && el.value !== '外送到府');
             if ($('homeDeliveryBox')) $('homeDeliveryBox').classList.toggle('d-none', el.value !== '外送到府');
             repriceCart();
+            refreshCardPrices();   // 菜單卡片價與 data-price (價格篩選 / 排序) 也改用新的通路價 (外帶價)
         },
         'recalc-delivery': () => calculateTotal(),
     });
@@ -121,7 +122,7 @@ function main() {
     renderCoupons(pageData.coupons);
     storeCart(state.cart);   // 寫回正規化後的格式
     repriceCart();     // 購物車留在瀏覽器的是加入當時的價格：以目前菜單重算 (店家可能已改價)
-    // 點餐機無人操作自動登出；桌邊掃碼點餐是顧客自己的手機，不自動登出
-    if (!pageData.table) Kiosk.idleLogout({ timeoutMs: IDLE_TIMEOUT_MS });
+    // 點餐機無人操作自動登出；桌邊掃碼點餐與線上點餐是顧客自己的手機 / 電腦，不自動登出
+    if (!pageData.table && !isOnline) Kiosk.idleLogout({ timeoutMs: IDLE_TIMEOUT_MS });
     startAvailabilityPolling();   // 售完 / 恢復供應 / 改價不必重新整理 (每 30 秒，304 時不重畫)
 }

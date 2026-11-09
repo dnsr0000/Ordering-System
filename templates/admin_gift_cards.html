@@ -15,7 +15,7 @@
         {{ stat_tile('流通在外餘額 (預收款)', '$' ~ '{:,}'.format(outstanding), 'text-warning', id='giftOutstanding', col='col-6 col-md-4') }}
     </div>
     <form class="d-flex gap-2 mb-3" method="GET">
-        <input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="卡號 (可部分)" aria-label="卡號">
+        <input class="form-control form-control-sm" name="q" value="{{ q }}" placeholder="完整 16 碼，或前 4 碼 / 末 4 碼" aria-label="卡號">
         <button class="btn btn-sm btn-outline-info" type="submit">搜尋</button>
     </form>
     {% if detail %}

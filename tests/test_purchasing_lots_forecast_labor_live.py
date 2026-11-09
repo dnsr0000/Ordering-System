@@ -83,7 +83,7 @@ def test_supplier_and_suggested_purchase_order_flow(app, admin_client, store_set
         assert po.status == 'received' and po.received_by
         chicken = Ingredient.query.filter_by(name='採購雞腿').one()
         assert chicken.stock == 1600
-        lot = IngredientLot.query.filter_by(ingredient_id=chicken.id).one()
+        lot = IngredientLot.query.filter_by(ingredient_id=chicken.id, source='purchase').one()
         assert (lot.quantity, lot.remaining, lot.expires_on.isoformat()) == (1400, 1400, exp)
         assert StockMovement.query.filter_by(ingredient_id=chicken.id, reason='purchase').one().note == f'採購單 {po.number}'
     r = admin_client.post(f'/admin/purchasing/po/{po_id}', data={'action': 'cancel'})
@@ -123,7 +123,8 @@ def test_lots_first_expiry_first_out_alert_and_discard(app, admin_client, staff_
     assert lots() == {far: 90, near: 0}
 
     page = admin_client.get('/admin/inventory').get_data(as_text=True)
-    assert 'id="expiringLots"' not in page, '近到期批號已用完'
+    # 只看這個原料：其他測試留在本店的近到期批號也會出現在提醒區塊
+    assert '<strong>效期牛奶</strong> 剩' not in page, '近到期批號已用完'
     with app.app_context():
         lot = IngredientLot.query.filter_by(ingredient_id=milk.id, expires_on=far).one()
         lot.expires_on = date.today() - timedelta(days=1)
@@ -146,7 +147,7 @@ def test_lots_first_expiry_first_out_alert_and_discard(app, admin_client, staff_
     assert cancel_order(admin_client, oid).status_code == 200
     with app.app_context():
         restored = IngredientLot.query.filter_by(ingredient_id=milk.id, source='restore').one()
-        assert restored.remaining == 60 and restored.expires_on is None
+        assert restored.remaining == 60 and restored.expires_on == near
 
 
 # ===========================================================================

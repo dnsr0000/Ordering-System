@@ -28,7 +28,7 @@
             <input type="hidden" name="action" value="create">
             <div class="col-md-4">
                 <label class="form-label small fw-bold" for="staff-username">員工登入帳號</label>
-                <input class="form-control" id="staff-username" name="username" autocomplete="off" placeholder="例如：pos_staff_01" required>
+                <input class="form-control" id="staff-username" name="username" maxlength="50" autocomplete="off" placeholder="例如：pos_staff_01" required>
             </div>
             <div class="col-md-4">
                 <label class="form-label small fw-bold" for="staff-password">初始密碼（至少 10 字元）</label>
@@ -77,15 +77,30 @@
                         </td>
                         <td class="small text-white-50">{{ account.created_at.strftime('%Y-%m-%d %H:%M') if account.created_at else '' }}</td>
                         <td class="text-end">
+                            {# 分店：負責人的帳密 / 啟用狀態只能在線上端修改 (後端同樣拒絕) #}
+                            {% set owner_locked = sync_node and account.role == 'owner' %}
                             <div class="d-inline-flex gap-2 align-items-center">
+                                {% if owner_locked %}
+                                <span class="small text-white-50">負責人帳號請到線上端修改</span>
+                                {% else %}
                                 <form method="POST" class="d-inline-flex gap-1 align-items-center">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="reset_password">
                                     <input type="hidden" name="account_id" value="{{ account.id }}">
+                                    {% if account.id == current_staff_id %}
+                                    {# 變更自己的密碼需重新驗證本人 (後端 _verify_current_credentials) #}
+                                    <input type="password" name="current_password" class="form-control form-control-sm staff-reset-input"
+                                           placeholder="目前密碼" autocomplete="current-password" aria-label="目前密碼" required>
+                                    {% if account.totp_enabled %}
+                                    <input name="totp_code" class="form-control form-control-sm staff-reset-input" inputmode="numeric"
+                                           placeholder="驗證碼或備用碼" autocomplete="one-time-code" aria-label="兩步驟驗證碼或備用碼" required>
+                                    {% endif %}
+                                    {% endif %}
                                     <input type="password" name="new_password" class="form-control form-control-sm staff-reset-input" minlength="10"
                                            placeholder="新密碼(≥10碼)" autocomplete="new-password" aria-label="新密碼" required>
                                     <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap">重設密碼</button>
                                 </form>
+                                {% endif %}
                                 {% if account.role != 'owner' %}
                                 <form method="POST" class="d-inline">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -110,7 +125,7 @@
                                     <button type="submit" class="btn btn-sm btn-outline-warning text-nowrap">重設 2FA</button>
                                 </form>
                                 {% endif %}
-                                {% if account.id != current_staff_id %}
+                                {% if account.id != current_staff_id and not owner_locked %}
                                 <form method="POST" class="d-inline" data-confirm="確定刪除此員工帳號？刪除後會立即停用、無法再登入，帳號名稱可重新使用；歷史稽核紀錄會保留。">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="delete_account">

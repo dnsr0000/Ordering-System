@@ -5,24 +5,33 @@ from app.models.enums import DiscountType
 from app.models.mixins import TenantScoped
 
 
+MAX_FIXED_DISCOUNT = 1_000_000   # 固定金額券的折抵上限 (元)
+
+
 def parse_discount_value(discount_type, raw):
     """
     把後台/匯入輸入的折扣值轉成存檔格式。
     百分比折扣接受店家習慣的三種寫法：85、8.5、0.85 都代表「85 折」(存為 85，範圍 1~99)。
+    無法辨識 (空白、文字、非有限數)，或百分比換算後不在 1~99 (例如 0、1、10、100) 時回傳 None，
+    由呼叫端拒絕 (後台表單) 或略過該列 (匯入)；不可默默存成 0 (整單全免) 或夾成 1 / 99。
+    固定金額券：負數視為 0，上限 MAX_FIXED_DISCOUNT 元。
     """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
     try:
         val = float(raw)
     except (TypeError, ValueError):
-        return 0
+        return None
     if val != val or val in (float('inf'), float('-inf')):
-        return 0
+        return None
     if discount_type == DiscountType.PERCENT:
         if val <= 1:
             val *= 100
         elif val <= 10:
             val *= 10
-        return int(min(99, max(1, round(val))))
-    return max(0, int(round(val)))
+        pct = int(round(val))
+        return pct if 1 <= pct <= 99 else None
+    return min(MAX_FIXED_DISCOUNT, max(0, int(round(val))))
 
 
 class Coupon(TenantScoped, db.Model):
@@ -76,16 +85,20 @@ class Coupon(TenantScoped, db.Model):
         return None
 
     def expires_for(self, issued_at, valid_days=None):
-        """領取時間 issued_at 的到期時間 (到期日當天 23:59:59)：取「領取後 N 天」與活動結束日較早者；都沒有時回傳 None"""
+        """
+        領取時間 issued_at 要寫入 UserCoupon.expires_at 的到期時間 (到期日當天 23:59:59)：只有「領取後 N 天」；
+        沒有設定天數時回傳 None。
+        - 活動尚未開始就先發放時，N 天從活動開始日 (valid_from) 起算，不會在活動開始前就到期。
+        - 活動結束日不寫進持券：由 UserCoupon.status / expired_at 依券目前的 valid_until 動態判斷，
+          店家之後延長或縮短活動期間，已發出的券都會跟著生效。
+        """
         days = self.valid_days if valid_days is None else valid_days
-        candidates = []
-        if days and days > 0:
-            candidates.append(issued_at.date() + timedelta(days=days))
-        if self.valid_until:
-            candidates.append(self.valid_until)
-        if not candidates:
+        if not days or days <= 0:
             return None
-        return datetime.combine(min(candidates), time(23, 59, 59))
+        start = issued_at.date()
+        if self.valid_from and self.valid_from > start:
+            start = self.valid_from
+        return datetime.combine(start + timedelta(days=days), time(23, 59, 59))
 
     @property
     def usage_label(self):
@@ -130,6 +143,8 @@ class Coupon(TenantScoped, db.Model):
         if subtotal <= 0:
             return 0
         if self.discount_type == DiscountType.PERCENT:
+            if not 1 <= (self.discount_value or 0) <= 99:
+                return 0   # 舊版匯入錯誤留下的 0 / 超出範圍的折數：不折抵 (避免整單全免)
             amount = subtotal * (100 - self.discount_value) / 100
         else:
             amount = min(self.discount_value, subtotal)
@@ -138,7 +153,8 @@ class Coupon(TenantScoped, db.Model):
         return amount
 
 
-USER_COUPON_SOURCES = {'reward': '點數兌換', 'batch': '批量發放', 'birthday': '生日禮', 'admin': '後台發放', 'campaign': '自動行銷'}
+USER_COUPON_SOURCES = {'reward': '點數兌換', 'batch': '批量發放', 'birthday': '生日禮', 'admin': '後台發放', 'campaign': '自動行銷',
+                       'stamp': '集點卡'}
 HISTORY_DAYS = 7   # 後台核銷畫面只顯示近 7 天已使用 / 已過期的券 (資料保留)
 
 

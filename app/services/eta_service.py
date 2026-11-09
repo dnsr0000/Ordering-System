@@ -2,7 +2,7 @@
 預估等候時間 (系統設定 → 廚房看板)：
 - 一張訂單的工作量 = 品項中最長的製作時間 (餐點未設定時用預設值) + 其餘每份 1 分鐘 (同時備餐，只多裝盤時間)。
 - 等候時間 = 基本等候 + 本單工作量 + 排隊中訂單剩餘工作量 ÷ 廚房同時製作的訂單數；
-  排隊中 = 今天「製作中」且不是預約未來時段的訂單，剩餘工作量以結帳時存的 estimated_ready_at 推算 (越接近完成越少)。
+  排隊中 = 今天「製作中」且不是預約未來時段的訂單 (含前幾天預約、15 分鐘內要取餐的訂單)，剩餘工作量以結帳時存的 estimated_ready_at 推算 (越接近完成越少)。
 - 結帳時把預計完成時間存進 order.estimated_ready_at (預約單不存)；點餐頁 (購物車)、收據、我的訂單、出餐進度頁顯示。
 純估算，不影響出餐順序；數字一律無條件進位到整分鐘並限制在 1~180 分鐘。
 """
@@ -11,7 +11,7 @@ import math
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 from app.models.enums import OrderStatus
 from app.models.menu import MenuItem
@@ -44,14 +44,23 @@ def workload(pairs: Iterable[tuple[Any, int]], default_prep: int) -> int:
     return longest + max(0, units - 1)
 
 
-def _queue_minutes(tenant_id: int, now: datetime, default_prep: int) -> float:
-    """排隊中訂單的剩餘工作量合計 (有預計完成時間的以剩餘時間計，沒有的以工作量計)"""
+def _queue_minutes(tenant_id: int, now: datetime, default_prep: int, exclude_ids: Iterable[int] = ()) -> float:
+    """
+    排隊中訂單的剩餘工作量合計 (有預計完成時間的以剩餘時間計，沒有的以工作量計)。
+    排隊中 = 今天 (含前 6 小時) 建立、不是預約未來時段的訂單，或前幾天預約、今天取餐且快到取餐時間的訂單。
+    exclude_ids：不算進排隊量的訂單 (正在估算的那一張本身)。
+    """
     start, end = day_bounds(now.date())
-    orders = (Order.query.filter(Order.tenant_id == tenant_id, Order.status == OrderStatus.PENDING,
-                                 Order.created_at >= start - timedelta(hours=6), Order.created_at < end,
-                                 or_(Order.pickup_at.is_(None), Order.pickup_at <= now + timedelta(minutes=15)),
-                                 Order.payment_status.notin_(HIDDEN_PAYMENT_STATUSES))
-              .execution_options(skip_tenant_filter=True).all())
+    soon = now + timedelta(minutes=15)
+    q = Order.query.filter(Order.tenant_id == tenant_id, Order.status == OrderStatus.PENDING,
+                           or_(and_(Order.created_at >= start - timedelta(hours=6), Order.created_at < end,
+                                    or_(Order.pickup_at.is_(None), Order.pickup_at <= soon)),
+                               and_(Order.pickup_at >= start, Order.pickup_at <= soon)),
+                           Order.payment_status.notin_(HIDDEN_PAYMENT_STATUSES))
+    exclude_ids = {i for i in exclude_ids if i}
+    if exclude_ids:
+        q = q.filter(Order.id.notin_(exclude_ids))
+    orders = q.execution_options(skip_tenant_filter=True).all()
     if not orders:
         return 0.0
     menu = {m.id: m for m in MenuItem.query.filter(MenuItem.tenant_id == tenant_id)
@@ -67,9 +76,11 @@ def _queue_minutes(tenant_id: int, now: datetime, default_prep: int) -> float:
     return total
 
 
-def estimate(tenant_id: int, pairs: Iterable[tuple[Any, int]], now: datetime | None = None) -> int:
+def estimate(tenant_id: int, pairs: Iterable[tuple[Any, int]], now: datetime | None = None,
+             exclude_ids: Iterable[int] = ()) -> int:
     """
     pairs = [(MenuItem, 份數)]。回傳預估分鐘數 (int)；功能關閉時回傳 0。
+    exclude_ids：已存在資料庫中的訂單本身 (不可再算進排隊量，否則同一張單算兩次)。
     """
     cfg = config(tenant_id)
     if not cfg.get('eta_enabled', True):
@@ -79,7 +90,7 @@ def estimate(tenant_id: int, pairs: Iterable[tuple[Any, int]], now: datetime | N
     parallel = max(1, safe_int(cfg.get('eta_parallel'), 3))
     base = max(0, safe_int(cfg.get('eta_base_minutes'), 3))
     own = workload(list(pairs), default_prep)
-    queue = _queue_minutes(tenant_id, now, default_prep) / parallel
+    queue = _queue_minutes(tenant_id, now, default_prep, exclude_ids) / parallel
     minutes = int(math.ceil(base + own + queue))
     return max(1, min(MAX_MINUTES, minutes))
 
@@ -99,8 +110,11 @@ def pairs_from_items(items_data: list, tenant_id: int) -> list[tuple[Any, int]]:
     return pairs
 
 
-def ready_at_for_order(order: Any, now: datetime | None = None) -> datetime | None:
-    """新收到的訂單 (線上訂單到分店、斷線補送)：依目前排隊狀況算出預計完成時間；預約單回傳 None"""
+def ready_at_for_order(order: Any, now: datetime | None = None, exclude_ids: Iterable[int] = ()) -> datetime | None:
+    """
+    新收到的訂單 (線上訂單到分店、斷線補送)：依目前排隊狀況算出預計完成時間；預約單回傳 None。
+    訂單本身 (已加入 session) 不算進排隊量；exclude_ids 可再排除同一批中排在後面、尚未估算的新訂單。
+    """
     if order.pickup_at is not None:
         return None
     now = now or datetime.now()
@@ -108,7 +122,7 @@ def ready_at_for_order(order: Any, now: datetime | None = None) -> datetime | No
     menu = {m.id: m for m in MenuItem.query.filter(MenuItem.id.in_(menu_ids))
             .execution_options(skip_tenant_filter=True).all()} if menu_ids else {}
     pairs = [(menu.get(i.menu_item_id), i.quantity or 1) for i in order.items]
-    minutes = estimate(order.tenant_id, pairs, now)
+    minutes = estimate(order.tenant_id, pairs, now, {order.id, *exclude_ids})
     return now + timedelta(minutes=minutes) if minutes else None
 
 

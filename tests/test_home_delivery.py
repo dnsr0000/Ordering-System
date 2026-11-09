@@ -99,7 +99,9 @@ def test_online_home_delivery_status_syncs_back_to_hub():
         with tenant_ctx(env.hub) as tenant:
             settings_service.put('own_delivery', {'enabled': True, 'zones': ZONES, 'channels': ['online'],
                                                   'drivers': '阿明'}, tenant_id=tenant.id)
+            settings_service.publish_hq('own_delivery', tenant.id)   # 下發到分店
             db.session.commit()
+        env.sync(env.b, rounds=2)   # 分店收到總部設定並回報本店生效的外送設定 (線上端依取餐分店的設定驗證)
         hub = env.hub.test_client()
         hub.get('/?shop=default')
         order = _checkout(env.hub, [line(_item(env.hub, burger)['id'])], node_uuid=env.node_b_uuid,

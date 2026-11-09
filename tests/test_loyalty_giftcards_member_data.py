@@ -53,7 +53,7 @@ def test_points_expire_first_in_first_out(app, store_settings, monkeypatch):
     with app.app_context():
         assert loyalty_service.expire_points(tid, now) >= 1
         assert db.session.get(User, uid).points == 50, '最舊的 100 點扣掉已用的 30 點後，剩 70 點到期'
-        assert PointLedger.query.filter_by(user_id=uid, reason='expire').one().delta == -70
+        assert PointLedger.query.filter_by(user_id=uid, reason='expire:12').one().delta == -70
         loyalty_service.expire_points(tid, now)
         assert db.session.get(User, uid).points == 50, '不重複到期'
         up = loyalty_service.upcoming_expiry(db.session.get(User, uid), now)

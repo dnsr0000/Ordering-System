@@ -21,6 +21,42 @@
         </div>
     </div>
 
+    {% if conflict_payments %}
+    <section class="card rounded-4 p-4 mb-4 border border-danger" id="tablePayConflicts">
+        <h2 class="h5 fw-bold text-danger mb-2"><i class="bi bi-exclamation-triangle me-2"></i>桌邊線上結帳待退款 ({{ conflict_payments|length }})</h2>
+        <p class="small text-white-50 mb-3">
+            顧客已在綠界付款，但付款期間這一桌的訂單已在櫃檯結帳、取消或金額有異動，無法完成結帳。
+            請到綠界後台依「綠界交易編號」退款，完成後按「已到綠界退款」標記。
+        </p>
+        <div class="table-responsive">
+            <table class="table table-dark table-striped align-middle mb-0">
+                <thead>
+                    <tr><th>桌位</th><th class="text-end">金額</th><th>綠界交易編號</th><th>原因</th><th>付款時間</th><th class="text-end">處理</th></tr>
+                </thead>
+                <tbody>
+                    {% for p in conflict_payments %}
+                    <tr data-table-payment-id="{{ p.id }}">
+                        <td>{{ p.dining_table.label if p.dining_table else '已刪除的桌位' }}</td>
+                        <td class="text-end">${{ p.amount }}</td>
+                        <td><code>{{ p.provider_trade_no or '—' }}</code></td>
+                        <td class="small">{{ p.note or '—' }}</td>
+                        <td class="small text-nowrap">{{ p.paid_at.strftime('%Y-%m-%d %H:%M') if p.paid_at else '—' }}</td>
+                        <td class="text-end">
+                            <form method="POST" class="d-inline" data-confirm="確定已到綠界後台退款 ${{ p.amount }} (交易 {{ p.provider_trade_no or '—' }})？">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="action" value="table_pay_refunded">
+                                <input type="hidden" name="payment_id" value="{{ p.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap">已到綠界退款</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+
     <section class="card rounded-4 p-4 mb-4">
         <h2 class="h5 fw-bold text-info mb-2"><i class="bi bi-wifi me-2"></i>QR code 使用的門市網址</h2>
         <p class="small text-white-50 mb-3">
@@ -124,7 +160,7 @@
                                 <a class="btn btn-sm btn-outline-warning text-nowrap" href="{{ url_for('tables.print_cards', id=t.id) }}" target="_blank">
                                     <i class="bi bi-qr-code"></i> QR
                                 </a>
-                                <form method="POST" class="d-inline">
+                                <form method="POST" class="d-inline"{% if t.is_active and n %} data-confirm="{{ t.name }} 桌仍有 {{ n }} 張未結帳訂單，停用後 POS 平面圖將不再顯示這一桌 (仍可在 POS 未結帳清單結帳)。確定停用？"{% endif %}>
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="action" value="toggle">
                                     <input type="hidden" name="table_id" value="{{ t.id }}">

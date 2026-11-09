@@ -8,12 +8,16 @@ from tests.support import default_tenant_id, make_member
 
 def test_pin_lockout_after_five_failures(app):
     """同一裝置連續 5 次 PIN 錯誤後鎖定，鎖定期間正確 PIN 也回 429"""
+    make_member(app, '裝置鎖定會員', '0933140009', pin='2468')   # 自己建立會員，第 6 次送的才確定是正確 PIN
     c = app.test_client()
     c.get('/?shop=default')
     ip = {'X-Forwarded-For': '10.20.3.99'}
-    codes = [c.post('/phone_login', json={'phone': '0912345678', 'pin': '0000'}, headers=ip).status_code for _ in range(5)]
-    codes.append(c.post('/phone_login', json={'phone': '0912345678', 'pin': '2468'}, headers=ip).status_code)
+    codes = [c.post('/phone_login', json={'phone': '0933140009', 'pin': '0000'}, headers=ip).status_code for _ in range(5)]
+    codes.append(c.post('/phone_login', json={'phone': '0933140009', 'pin': '2468'}, headers=ip).status_code)
     assert codes == [401] * 5 + [429]
+    # 其他 IP (未達帳號層級門檻) 用正確 PIN 可登入：上面的 429 確實來自裝置鎖定
+    assert c.post('/phone_login', json={'phone': '0933140009', 'pin': '2468'},
+                  headers={'X-Forwarded-For': '10.20.3.100'}).status_code == 200
 
 
 def test_login_rate_limit(app):

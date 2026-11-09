@@ -132,17 +132,18 @@ def upgrade():
 
     # ---- 4. 兌換憑證：is_used / is_refunded → status ----
     _delete_orphans(bind, 'reward_redemption', 'user_id', 'user')
-    _null_orphans(bind, 'reward_redemption', 'menu_item_id', 'menu_item')
-    _null_orphans(bind, 'reward_redemption', 'order_id', 'order')
     with op.batch_alter_table('reward_redemption') as b:
         b.add_column(sa.Column('status', sa.String(20), nullable=False, server_default='open'))
+        # baseline 的 menu_item_id 是必填：先改成可空，下面才能把指向已刪除餐點的憑證設為 NULL
+        b.alter_column('menu_item_id', existing_type=sa.Integer(), nullable=True)
+    _null_orphans(bind, 'reward_redemption', 'menu_item_id', 'menu_item')
+    _null_orphans(bind, 'reward_redemption', 'order_id', 'order')
     rr = _t('reward_redemption', 'status', 'is_used', 'is_refunded')
     bind.execute(rr.update().where(rr.c.is_refunded == sa.true()).values(status='refunded'))
     bind.execute(rr.update().where(rr.c.is_refunded.is_not(True), rr.c.is_used == sa.true()).values(status='used'))
     with op.batch_alter_table('reward_redemption', naming_convention=NAMING) as b:
         b.drop_column('is_used')
         b.drop_column('is_refunded')
-        b.alter_column('menu_item_id', existing_type=sa.Integer(), nullable=True)
         _replace_fk(b, bind, 'reward_redemption', 'user_id', 'user', 'CASCADE')
         _replace_fk(b, bind, 'reward_redemption', 'menu_item_id', 'menu_item', 'SET NULL')
         b.create_foreign_key('fk_reward_redemption_order_id', 'order', ['order_id'], ['id'], ondelete='SET NULL')
@@ -212,4 +213,5 @@ def upgrade():
 
 
 def downgrade():
-    raise NotImplementedError('此版本不支援降版，請由升級前自動另存的資料庫備份 (database/menu.db.bak-*) 還原')
+    raise NotImplementedError('此版本不支援降版，請改用升級前的資料庫備份還原：update_store.cmd 升級前另存的 '
+                              'database/updates/menu-before-*.db，或 database/backups 底下的每日自動備份')

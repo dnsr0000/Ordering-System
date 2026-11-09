@@ -116,10 +116,19 @@ PREFIXES: tuple[tuple[str, str, str], ...] = (
 # 尾端規格「(大)」「（小）」
 _SIZE_RE = re.compile(r'\s*[\(（]\s*(大|中|小)\s*[\)）]\s*$')
 _SIZES = {'大': ('Large', '大'), '中': ('Medium', '中'), '小': ('Small', '小')}
+# 專有名詞 / 專有形容詞 / 品牌：接在前綴後面仍保留首字大寫 (Iced Americano、Signature Taiwanese meatball)
+PROPER_WORDS = frozenset({'Taiwan', 'Taiwanese', 'Yakult', 'Americano', 'Caesar', 'Sprite', 'Oriental'})
 
 
 def _capitalize(text: str) -> str:
     return text[:1].upper() + text[1:] if text else text
+
+
+def _after_prefix(text: str) -> str:
+    """接在前綴後面的基礎譯名：一般名詞首字改小寫，專有名詞不改"""
+    if text.split(' ', 1)[0] in PROPER_WORDS:
+        return text
+    return text[:1].lower() + text[1:]
 
 
 def lookup(name: str) -> tuple[str, str] | None:
@@ -137,7 +146,7 @@ def lookup(name: str) -> tuple[str, str] | None:
             base = text[len(zh):].strip()
             if text.startswith(zh) and base in WORDS:
                 b_en, b_ja = WORDS[base]
-                hit = (f'{en} {b_en[:1].lower()}{b_en[1:]}', f'{ja}{b_ja}')
+                hit = (f'{en} {_after_prefix(b_en)}', f'{ja}{b_ja}')
                 break
     if hit is None:
         return None

@@ -11,6 +11,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from urllib.parse import urlparse
 
 from flask import g, has_request_context
 
@@ -20,6 +21,7 @@ from app.models.settings import HqSetting, StoreSetting
 from app.utils import safe_float, safe_int
 
 TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+ZERO_WIDTH_RE = re.compile('[​‌‍⁠﻿]')
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class Field:
     placeholder: str = ''
     min: int | None = None
     max: int | None = None
+    max_len: int | None = None  # 文字欄位長度上限 (None = 多行 2000 / 單行 300 字)；超過時拒絕儲存，不靜默截斷
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class Section:
     description: str
     fields: tuple
     enabled_field: str = ''      # 用來判斷「已啟用」的欄位
+    enabled_fields: tuple = ()   # 有多個子功能時：任一欄位有值 (且不是 'none') 就算已啟用；空白 = 只看 enabled_field
     docs: tuple = field(default_factory=tuple)   # ((說明, 網址), ...)
     subgroup: str = ''           # 系統設定頁左欄：同一群組內的子群組標題 (只影響版面)
     keywords: str = ''           # 系統設定頁搜尋用的額外關鍵字 (標題沒出現、但使用者會這樣找的字)
@@ -51,6 +55,7 @@ class Section:
 
 ONLINE_PAYMENT_CHOICES = (('Credit', '信用卡'), ('ApplePay', 'Apple Pay'), ('ATM', 'ATM 轉帳 (虛擬帳號)'),
                           ('CVS', '超商代碼繳費'))
+PLATFORM_CODE_HELP = '同一台主機有兩家以上店家啟用此平台時必填，否則平台訂單無法判斷店家而全部被拒收'
 PAYMENT_CHOICES = (('Cash', '現金'), ('Credit Card', '信用卡 (刷卡機)'), ('Line Pay', 'LINE Pay'),
                    ('街口支付', '街口支付 (記帳)'), ('Apple Pay', 'Apple Pay (記帳)'), ('儲值金', '會員儲值金'))
 
@@ -117,6 +122,8 @@ SECTIONS = {s.key: s for s in (
                 Field('require_reason', '部分退款必須填寫原因', 'bool', True),
                 Field('allow_partial', '允許部分退款', 'bool', True),
                 Field('restock_on_cancel', '作廢時回補庫存', 'bool', True),
+                Field('restock_picked_up', '已取餐的訂單作廢時也回補庫存', 'bool', False,
+                      help='已被顧客帶走的現做餐點不應回補；只賣預包裝商品、退貨會放回貨架的店可開啟'),
             ),
             subgroup='發票與退款', keywords='退款 作廢'),
     # ------------------------------------------------------------------ B 收銀營運
@@ -158,11 +165,13 @@ SECTIONS = {s.key: s for s in (
             ),
             subgroup='廚房', keywords='廚房 看板 逾時'),
     Section('order_intake', '接單控制', 'C 廚房出餐', 'bi-pause-circle',
-            '暫停接單 (POS 右上角可一鍵切換) 與每時段訂單上限：只擋點餐機、顧客手機 (桌邊 / 線上) 與團購送單，'
-            'POS 櫃檯與外送平台訂單不受影響。分店的暫停狀態會隨同步回報線上端，線上點餐選到該分店時一併擋下。',
+            '暫停接單 (POS 右上角一鍵切換) 與每時段訂單上限：只擋點餐機、顧客手機 (桌邊 / 線上) 與團購的手動送單，'
+            'POS 櫃檯、外送平台訂單與團購排程自動送單不受影響。分店的暫停狀態會隨同步回報線上端，線上點餐選到該分店時一併擋下。',
             (
-                Field('paused', '暫停接單', 'bool', False),
-                Field('resume_at', '自動恢復時間 (由 POS 設定；空白 = 手動恢復)', placeholder='例如 2026-10-31T18:30'),
+                # 暫停狀態由 POS 隨時切換：這裡只顯示目前實際狀態，儲存此頁不會變更 (避免用頁面載入時的舊值蓋掉 POS 剛切換的狀態)
+                Field('paused', '目前暫停接單中 (僅顯示，請在 POS 右上角切換)', 'bool', False,
+                      help='此頁儲存不會變更暫停狀態；暫停 / 恢復與自動恢復時間請在 POS 設定'),
+                Field('resume_at', '自動恢復時間 (僅顯示，由 POS 設定；空白 = 手動恢復)'),
                 Field('message', '暫停時顯示給顧客的訊息', default='目前訂單較多，暫停接單中，請稍後再試或洽櫃檯。'),
                 Field('window_minutes', '時段長度 (分鐘)', 'int', 15, min=5, max=120),
                 Field('max_orders_per_window', '每時段最多接幾張訂單 (0 = 不限)', 'int', 0, min=0, max=1000,
@@ -263,7 +272,7 @@ SECTIONS = {s.key: s for s in (
                 Field('monthly_budget_usd', '每月預算上限 (美元，0 = 不限)', 'int', 0, min=0, max=100000,
                       help='依各家公開牌價估算本月費用 (系統監控頁可看)，達上限後本月改用本機模型 / 規則字典，下個月自動恢復；'
                            '估計值僅供參考，實際以各家帳單為準'),
-            ), enabled_field='key1',
+            ), enabled_field='key1', enabled_fields=('key1', 'key2', 'key3'),
             docs=(('Google AI Studio 金鑰', 'https://aistudio.google.com/apikey'),
                   ('Anthropic Console 金鑰', 'https://console.anthropic.com/settings/keys'),
                   ('OpenAI 金鑰', 'https://platform.openai.com/api-keys')),
@@ -275,9 +284,9 @@ SECTIONS = {s.key: s for s in (
                 Field('enabled', '啟用客服機器人', 'bool', False),
                 Field('bot_name', '機器人名稱', default='小幫手'),
                 Field('welcome', '開場白', default='您好！可以問我餐點內容、過敏原、營業時間或訂單進度。'),
-                Field('store_info', '營業資訊 (時間 / 地址 / 電話 / 停車)', 'textarea', '',
+                Field('store_info', '營業資訊 (時間 / 地址 / 電話 / 停車)', 'textarea', '', max_len=10000,
                       help='顧客問營業時間、地址、電話時直接回這段文字，例如「每日 11:00–21:00，週一公休。地址：…；電話：…」'),
-                Field('faq', '常見問答 (每行「關鍵字1 關鍵字2 => 回答」)', 'textarea', '',
+                Field('faq', '常見問答 (每行「關鍵字1 關鍵字2 => 回答」)', 'textarea', '', max_len=10000,
                       help='例如「停車 車位 => 店門口有 3 個機車位，汽車請停對面公有停車場」；關鍵字命中越多的優先'),
                 Field('llm_enabled', '其他問題交給 AI 回答', 'bool', True,
                       help='關閉時不在資料裡的問題一律回「請洽櫃檯」；每則 AI 回答會呼叫雲端 AI (有費用) 或本機模型'),
@@ -298,7 +307,7 @@ SECTIONS = {s.key: s for s in (
                 Field('messaging_enabled', '啟用官方帳號推播', 'bool', False),
                 Field('messaging_access_token', 'Messaging API Channel Access Token', 'secret'),
                 Field('admin_user_ids', '接收系統警示的 LINE userId (每行一個)', 'textarea'),
-            ), enabled_field='login_enabled',
+            ), enabled_field='login_enabled', enabled_fields=('login_enabled', 'messaging_enabled'),
             docs=(('LINE Login', 'https://developers.line.biz/en/docs/line-login/'),
                   ('Messaging API', 'https://developers.line.biz/en/docs/messaging-api/')),
             subgroup='通訊服務', keywords='LINE 登入 官方帳號 推播'),
@@ -386,13 +395,15 @@ SECTIONS = {s.key: s for s in (
                 Field('ubereats_enabled', '啟用 Uber Eats 串接', 'bool', False),
                 Field('ubereats_client_id', 'Uber Client ID'),
                 Field('ubereats_client_secret', 'Uber Client Secret (也用來驗證 Webhook 簽章)', 'secret'),
-                Field('ubereats_store_id', 'Uber Eats Store ID'),
-                Field('ubereats_auto_accept', '自動接單', 'bool', True),
+                Field('ubereats_store_id', 'Uber Eats Store ID', help=PLATFORM_CODE_HELP),
+                Field('ubereats_auto_accept', '自動接單', 'bool', True,
+                      help='關閉後本系統不會替您接單，請在 Uber Eats 平板上手動接單；逾時未接單平台會自動取消 '
+                           '(本店訂單會依平台取消通知自動取消並回補庫存)'),
                 Field('foodpanda_enabled', '啟用 foodpanda 串接', 'bool', False),
                 Field('foodpanda_token', 'foodpanda Webhook 權杖 (Bearer)', 'secret'),
-                Field('foodpanda_vendor_code', 'foodpanda 店家代碼'),
+                Field('foodpanda_vendor_code', 'foodpanda 店家代碼', help=PLATFORM_CODE_HELP),
                 Field('manual_platforms', 'POS 手動登錄的平台名稱 (逗號分隔)', default='Uber Eats, foodpanda'),
-            ), enabled_field='ubereats_enabled',
+            ), enabled_field='ubereats_enabled', enabled_fields=('ubereats_enabled', 'foodpanda_enabled'),
             subgroup='線上與外送', keywords='uber eats foodpanda 外送平台'),
     Section('own_delivery', '自有外送', 'F 通路', 'bi-scooter',
             '本店人員外送到府：線上點餐與 POS 電話訂餐可選「外送到府」，依配送區域收外送費，後台「外送派車」指派外送員與追蹤。',
@@ -468,7 +479,7 @@ SECTIONS = {s.key: s for s in (
             '每天 (或每週一) 把前一天 (或上週) 的營運報表 Excel 寄給指定信箱。',
             (
                 Field('enabled', '啟用', 'bool', False),
-                Field('recipients', '收件者 (逗號分隔)'),
+                Field('recipients', '收件者 (逗號分隔)', max_len=2000),
                 Field('send_time', '寄送時間', 'time', '08:00'),
                 Field('frequency', '頻率', 'select', 'daily', (('daily', '每天 (前一天)'), ('weekly', '每週一 (上週)'))),
             ), enabled_field='enabled',
@@ -489,6 +500,7 @@ SECTIONS = {s.key: s for s in (
                 Field('acct_tax', '銷項稅額', default='2204 銷項稅額'),
                 Field('acct_petty', '零用金', default='1112 零用金'),
                 Field('acct_misc', '雜項費用 (零用金支出)', default='6188 雜項費用'),
+                Field('acct_bonus', '儲值加值贈送 (行銷費用)', default='6150 儲值贈送 (行銷費用)'),
             ),
             subgroup='財務', keywords='會計 科目 傳票'),
     Section('pnl', '損益表手續費', 'G 報表與總部', 'bi-percent',
@@ -542,11 +554,11 @@ SECTIONS = {s.key: s for s in (
             '系統發生錯誤、印表機或發票失敗、時鐘誤差過大時通知 (同一問題 10 分鐘內只通知一次)。',
             (
                 Field('webhook_url', 'Webhook 網址 (Slack / Discord / Teams)', 'secret'),
-                Field('email_recipients', '通知 Email (逗號分隔)'),
+                Field('email_recipients', '通知 Email (逗號分隔)', max_len=2000),
                 Field('line_alerts', '以 LINE 通知 (LINE 設定中的管理者)', 'bool', False),
                 Field('clock_server', '校時伺服器 (NTP)', default='time.stdtime.gov.tw'),
                 Field('clock_warn_seconds', '時鐘誤差警告 (秒)', 'int', 60, min=5, max=3600),
-            ), enabled_field='webhook_url',
+            ), enabled_field='webhook_url', enabled_fields=('webhook_url', 'email_recipients', 'line_alerts'),
             keywords='監控 錯誤 通知 webhook'),
     Section('archive', '舊資料封存', 'H 維運', 'bi-archive',
             '把超過指定月數的已結束訂單與日誌搬到封存檔 (database/archive)，主資料庫保持輕量；封存檔可下載與查詢。',
@@ -557,7 +569,8 @@ SECTIONS = {s.key: s for s in (
             ), enabled_field='auto',
             keywords='封存 舊資料'),
     Section('backup', '自動備份 (本機資料庫)', 'H 維運', 'bi-hdd',
-            '門市主機 (SQLite) 每天自動備份到 database/backups；線上端 (PostgreSQL) 由 docker-compose 的 backup 服務備份。',
+            '門市主機 (SQLite) 每天自動備份到 database/backups；線上端 (PostgreSQL) 由 docker-compose 的 backup 服務備份。'
+            '備份的是整台主機的資料庫 (含所有店家)，整台主機共用一份設定 (預設店家)，只有平台管理者可以檢視與修改。',
             (
                 Field('enabled', '啟用每日自動備份', 'bool', True),
                 Field('time', '備份時間', 'time', '03:30'),
@@ -601,11 +614,42 @@ for _s in SECTIONS.values():
 # ---------------------------------------------------------------------------
 # 不由總部下發的區塊 (沒有金鑰但屬於這台主機本身的設定)
 LOCAL_ONLY_SECTIONS = {'backup', 'order_intake'}
+# 整台主機共用、只有平台管理者 (預設店家負責人) 可以檢視與修改的區塊：自動備份是整個資料庫 (含所有店家) 的備份，
+# 設定一律存放 / 讀取預設店家 (slug=default) 的那一份，其他店家的同名設定不會生效
+PLATFORM_SECTIONS = {'backup'}
+# 不含金鑰、但只有負責人可以檢視與修改的區塊 (帳號安全政策不能讓受它約束的店長自己取消)
+OWNER_ONLY_SECTIONS = {'security'}
 
 
 def hq_managed(key):
     section = SECTIONS[key]
     return key not in LOCAL_ONLY_SECTIONS and not any(f.type == 'secret' for f in section.fields)
+
+
+def has_secret(key):
+    return any(f.type == 'secret' for f in SECTIONS[key].fields)
+
+
+def owner_only(key):
+    """只有負責人可以檢視 / 修改 / 匯出 / 匯入的區塊：含金鑰，或屬於 OWNER_ONLY_SECTIONS"""
+    return key in OWNER_ONLY_SECTIONS or has_secret(key)
+
+
+def _platform_tenant_id(tid):
+    from app.models.tenant import Tenant
+    cache = _cache()
+    if cache is not None and ('_platform_tid', None) in cache:
+        return cache[('_platform_tid', None)] or tid
+    t = Tenant.query.filter_by(slug='default').first()
+    pid = t.id if t is not None else None
+    if cache is not None:
+        cache[('_platform_tid', None)] = pid
+    return pid or tid
+
+
+def _resolve_tenant_id(key, tenant_id):
+    tid = _current_tenant_id(tenant_id)
+    return _platform_tenant_id(tid) if key in PLATFORM_SECTIONS else tid
 
 
 def _row(model, tid, key):
@@ -619,12 +663,18 @@ def _is_node():
 
 def source(key, tenant_id=None):
     """目前生效的設定來源：local (本機 / 本店自訂) / hq (總部下發) / default (預設值)"""
-    tid = _current_tenant_id(tenant_id)
+    tid = _resolve_tenant_id(key, tenant_id)
     if _row(StoreSetting, tid, key) is not None:
         return 'local'
     if _is_node() and hq_managed(key) and _row(HqSetting, tid, key) is not None:
         return 'hq'
     return 'default'
+
+
+def has_hq(key, tenant_id=None):
+    """分店：總部是否已下發過此區塊 (有 HqSetting)"""
+    tid = _current_tenant_id(tenant_id)
+    return hq_managed(key) and _row(HqSetting, tid, key) is not None
 
 
 def _defaults(section):
@@ -651,7 +701,7 @@ def _current_tenant_id(tenant_id):
 def get(key, tenant_id=None):
     """回傳合併預設值後的設定 dict (同一請求內快取)"""
     section = SECTIONS[key]
-    tid = _current_tenant_id(tenant_id)
+    tid = _resolve_tenant_id(key, tenant_id)
     cache = _cache()
     if cache is not None and (tid, key) in cache:
         return dict(cache[(tid, key)])
@@ -692,15 +742,21 @@ def flag(key, field_name='enabled', default=False):
 
 def is_enabled(key, tenant_id=None):
     section = SECTIONS[key]
-    if not section.enabled_field:
+    names = section.enabled_fields or ((section.enabled_field,) if section.enabled_field else ())
+    if not names:
         return True
-    value = get(key, tenant_id).get(section.enabled_field)
-    return bool(value) and value != 'none'
+    cfg = get(key, tenant_id)
+
+    def on(value):
+        if isinstance(value, str):
+            value = value.strip()
+        return bool(value) and value != 'none'
+    return any(on(cfg.get(n)) for n in names)
 
 
 def put(key, values, tenant_id=None, changed_by='system'):
     """直接寫入 (程式內部或測試使用；不做表單解析)。由呼叫端 commit。"""
-    tid = _current_tenant_id(tenant_id)
+    tid = _resolve_tenant_id(key, tenant_id)
     current = get(key, tid)
     current.update({k: v for k, v in values.items() if any(f.name == k for f in SECTIONS[key].fields)})
     row = StoreSetting.query.filter_by(tenant_id=tid, key=key).execution_options(skip_tenant_filter=True).first()
@@ -735,6 +791,8 @@ def revert_to_hq(key, tenant_id=None):
     if not hq_managed(key):
         raise AppError('此設定含金鑰或屬於本機設定，不由總部下發')
     tid = _current_tenant_id(tenant_id)
+    if _row(HqSetting, tid, key) is None:   # 總部從未下發：刪掉本店設定只會退回預設值，不是「改回總部設定」
+        raise AppError('總部尚未下發此設定，無法改回')
     row = _row(StoreSetting, tid, key)
     if row is not None:
         db.session.delete(row)
@@ -744,12 +802,31 @@ def revert_to_hq(key, tenant_id=None):
     return row is not None
 
 
+def text_max_len(f):
+    """文字欄位的長度上限 (設定頁與匯入共用同一套規則)"""
+    return f.max_len or (2000 if f.type == 'textarea' else 300)
+
+
+def _check_len(f, text):
+    limit = text_max_len(f)
+    if len(text) > limit:
+        raise AppError(f'「{f.label}」最多 {limit} 字，目前 {len(text)} 字')
+    return text
+
+
+# 設定頁只顯示、儲存時不寫回的欄位 (執行期狀態，由其他頁面切換；表單送出的值一律忽略)
+FORM_READONLY_FIELDS = {'order_intake': ('paused', 'resume_at')}
+
+
 def parse_form(key, form):
     """把後台表單轉成設定值 (驗證失敗拋 AppError)；secret 欄位留空保持原值"""
     section = SECTIONS[key]
     current = get(key)
+    readonly = FORM_READONLY_FIELDS.get(key, ())
     values = {}
     for f in section.fields:
+        if f.name in readonly:
+            continue   # 不放進 values：put() 保留資料庫目前的值
         raw = form.get(f.name)
         if f.type == 'bool':
             values[f.name] = raw not in (None, '', '0')
@@ -760,7 +837,12 @@ def parse_form(key, form):
             if form.get(f'{f.name}__clear'):
                 values[f.name] = ''
             elif raw:
-                values[f.name] = raw.strip()[:500]
+                secret = raw.strip()
+                if key == 'ai':   # 從 LINE / Notion 複製常夾帶零寬字元；金鑰放進 HTTP 標頭只能是 ASCII
+                    secret = ZERO_WIDTH_RE.sub('', raw).strip()
+                    if not (secret.isascii() and secret.isprintable()) or ' ' in secret:
+                        raise AppError(f'「{f.label}」含無效字元 (全形字、中文或空白)，請重新貼上金鑰')
+                values[f.name] = secret[:500]
             else:
                 values[f.name] = current.get(f.name, '')
         elif f.type == 'int':
@@ -771,7 +853,12 @@ def parse_form(key, form):
                 num = min(f.max, num)
             values[f.name] = num
         elif f.type == 'float':
-            values[f.name] = safe_float(raw, f.default or 0.0)
+            num = safe_float(raw, f.default or 0.0)   # NaN / Infinity 回預設值
+            if f.min is not None:
+                num = max(f.min, num)
+            if f.max is not None:
+                num = min(f.max, num)
+            values[f.name] = num
         elif f.type == 'select':
             allowed = {o[0] for o in f.options}
             values[f.name] = raw if raw in allowed else f.default
@@ -784,10 +871,66 @@ def parse_form(key, form):
             raw = (raw or '').strip()
             if raw and not re.match(r'^https?://', raw):
                 raise AppError(f'「{f.label}」必須是 http:// 或 https:// 開頭的網址')
+            # 反斜線等字元：urlparse 與 requests 解析出的主機不同，可繞過內網位址檢查
+            try:
+                netloc = urlparse(raw).netloc
+            except ValueError:   # 方括號不成對等 (Invalid IPv6 URL)
+                raise AppError(f'「{f.label}」網址格式不正確')
+            if any(c == '\\' or c.isspace() or ord(c) < 32 or ord(c) == 127 for c in netloc):
+                raise AppError(f'「{f.label}」網址含不允許的字元')
             values[f.name] = raw[:500]
         else:
-            values[f.name] = (raw or '').strip()[:2000 if f.type == 'textarea' else 300]
+            values[f.name] = _check_len(f, (raw or '').strip())
+    _validate(key, values, form)
     return values
+
+
+def _validate(key, values, form):
+    """區塊專屬的交叉驗證 (設定頁儲存時)：存進去會讓執行期出錯的組合直接拒絕"""
+    if key == 'einvoice' and values.get('default_carrier') == 'donate':
+        if not re.fullmatch(r'[0-9]{3,7}', str(values.get('default_love_code') or '').strip()):
+            raise AppError('「顧客未選擇時」選擇捐贈時，預設捐贈愛心碼需為 3~7 碼數字')
+    elif key == 'delivery':
+        _validate_delivery_codes(values)
+    elif key == 'monitor':
+        # Webhook 是金鑰欄位：留空 = 沿用原值，只檢查這次實際送出的新網址
+        new_hook = (form.get('webhook_url') or '').strip()
+        if new_hook and not form.get('webhook_url__clear'):
+            from app.services import webhook_service
+            webhook_service.validate_url(new_hook)
+            webhook_service.check_public(new_hook)   # 不可送到內網或本機位址 (WEBHOOK_ALLOW_PRIVATE=1 放寬)
+        server = str(values.get('clock_server') or '').strip()
+        if server and not _valid_host(server):
+            raise AppError('校時伺服器名稱格式不正確 (例如 time.stdtime.gov.tw)')
+
+
+def _valid_host(host):
+    """主機名稱 (含中文網域) 或 IP；不可含空白、路徑、埠號，空標籤 (a..b) 與超過 63 字的標籤也不行"""
+    import ipaddress
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if any(c.isspace() or c in '/:\\@?#' or ord(c) < 32 or ord(c) == 127 for c in host):
+        return False
+    try:
+        host.encode('idna')
+    except ValueError:   # UnicodeError 屬於 ValueError
+        return False
+    return True
+
+
+def _validate_delivery_codes(values):
+    """同一台主機有其他店家也啟用同一平台且沒填代碼時，本店必須填代碼 (否則平台訂單無法判斷店家而全部被拒收)"""
+    from app.services import delivery_service
+    tid = _current_tenant_id(None)
+    for platform, code_field in (('ubereats', 'ubereats_store_id'), ('foodpanda', 'foodpanda_vendor_code')):
+        if not values.get(f'{platform}_enabled') or str(values.get(code_field) or '').strip():
+            continue
+        if any(t != tid for t in delivery_service.unconfigured_tenants(platform, code_field)):
+            label = next(f.label for f in SECTIONS['delivery'].fields if f.name == code_field)
+            raise AppError(f'「{label}」{PLATFORM_CODE_HELP}')
 
 
 def form_view(key):
@@ -796,7 +939,29 @@ def form_view(key):
     view = {}
     for f in SECTIONS[key].fields:
         view[f.name] = bool(data.get(f.name)) if f.type == 'secret' else data.get(f.name)
+    if key == 'order_intake':   # 顯示實際狀態 (已過自動恢復時間 = 已恢復接單)，不是原始值
+        from app.services import intake_service
+        st = intake_service.status()
+        view['paused'], view['resume_at'] = st['paused'], st['resume_at']
     return view
+
+
+def change_summary(key, old, new, limit=40):
+    """稽核用：只列出有變動的欄位 (一般欄位「舊值→新值」，金鑰只記已設定 / 更新 / 清除)；沒有變動回傳空清單"""
+    def short(v):
+        text = ', '.join(map(str, v)) if isinstance(v, list) else str(v if v is not None else '')
+        text = text.replace('\r', ' ').replace('\n', ' ')
+        return text if len(text) <= limit else text[:limit] + '…'
+    out = []
+    for f in SECTIONS[key].fields:
+        if f.name not in new or old.get(f.name) == new.get(f.name):
+            continue
+        if f.type == 'secret':
+            state = '已清除' if not new.get(f.name) else ('已設定' if not old.get(f.name) else '已更新')
+            out.append(f'{f.label} {state}')
+        else:
+            out.append(f'{f.label}: {short(old.get(f.name))}→{short(new.get(f.name))}')
+    return out
 
 
 # 「測試連線」：{key: callable(settings_dict) -> 訊息字串 (失敗拋 AppError)}，由各服務模組註冊
@@ -820,31 +985,55 @@ def split_lines(value):
 EXPORT_VERSION = 1
 
 
-def export_all(tenant_id=None, include_secrets=False):
-    """{'version', 'exported_at', 'sections': {key: {欄位: 值}}}"""
+def export_all(tenant_id=None, include_secrets=False, allow_owner_only=True):
+    """{'version', 'exported_at', 'sections': {key: {欄位: 值}}}
+    allow_owner_only=False (非負責人)：只有負責人能檢視的區塊 (含金鑰 / 帳號安全) 整個不匯出，與設定頁、匯入的權限一致。"""
     out = {}
     for key, section in SECTIONS.items():
-        if key in LOCAL_ONLY_SECTIONS:
+        if key in LOCAL_ONLY_SECTIONS or key in PLATFORM_SECTIONS:
+            continue
+        if not allow_owner_only and owner_only(key):
             continue
         data = get(key, tenant_id)
         out[key] = {f.name: data.get(f.name) for f in section.fields if include_secrets or f.type != 'secret'}
     return {'version': EXPORT_VERSION, 'exported_at': datetime.now().isoformat(timespec='seconds'), 'sections': out}
 
 
-def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, allow_secrets=False):
+_TRUE_TEXT = {'true', '1', 'yes', 'on'}
+_FALSE_TEXT = {'false', '0', 'no', 'off', ''}
+
+
+def _import_bool(v):
+    """匯入檔的布林值：只接受 true/false、0/1 與明確的文字 ("false" 不會被當成 True)；其他回 None (略過)"""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str) and v.strip().lower() in _TRUE_TEXT | _FALSE_TEXT:
+        return v.strip().lower() in _TRUE_TEXT
+    return None
+
+
+def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, allow_secrets=False, applied_keys=None):
     """套用匯出檔：只認得的區塊 / 欄位、型別檢查後寫入；回傳 (套用的區塊數, 略過的鍵)。由呼叫端 commit。
-    allow_secrets=False (非負責人)：含金鑰的區塊整個略過 (與設定頁只有負責人能改相同)，金鑰欄位一律不從匯入檔寫入。"""
+    allow_secrets=False (非負責人)：只有負責人能改的區塊 (含金鑰 / 帳號安全) 整個略過 (與設定頁相同)，
+    金鑰欄位一律不從匯入檔寫入。applied_keys 傳入 list 時會加入實際套用的區塊鍵。"""
     if not isinstance(payload, dict) or not isinstance(payload.get('sections'), dict):
         raise AppError('匯入檔格式不正確 (需要 sections)')
-    if int(payload.get('version') or 0) > EXPORT_VERSION:
+    version = payload.get('version')
+    version_num = 0 if version in (None, '') else safe_float(version, None)
+    if version_num is None or isinstance(version, bool):
+        raise AppError('匯入檔的版本欄位不正確')
+    if version_num > EXPORT_VERSION:
         raise AppError('匯入檔版本比目前系統新，請先更新系統')
     applied, skipped = 0, []
     for key, values in payload['sections'].items():
         section = SECTIONS.get(key)
-        if section is None or key in LOCAL_ONLY_SECTIONS or (only_keys is not None and key not in only_keys):
+        if (section is None or key in LOCAL_ONLY_SECTIONS or key in PLATFORM_SECTIONS
+                or (only_keys is not None and key not in only_keys)):
             skipped.append(key)
             continue
-        if not allow_secrets and any(f.type == 'secret' for f in section.fields):
+        if not allow_secrets and owner_only(key):
             skipped.append(key)
             continue
         if not isinstance(values, dict):
@@ -856,25 +1045,32 @@ def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, all
                 continue
             v = values[f.name]
             if f.type == 'bool':
-                clean[f.name] = bool(v)
-            elif f.type in ('int', 'float'):
-                try:
-                    clean[f.name] = int(v) if f.type == 'int' else float(v)
-                except (TypeError, ValueError):
+                b = _import_bool(v)
+                if b is None:
                     skipped.append(f'{key}.{f.name}')
                     continue
+                clean[f.name] = b
+            elif f.type in ('int', 'float'):
+                num = None if isinstance(v, (bool, list, dict)) else safe_float(v, None)   # NaN / Infinity → None
+                if num is None:
+                    skipped.append(f'{key}.{f.name}')
+                    continue
+                clean[f.name] = int(num) if f.type == 'int' else num
                 if f.min is not None:
                     clean[f.name] = max(f.min, clean[f.name])
                 if f.max is not None:
                     clean[f.name] = min(f.max, clean[f.name])
             elif f.type == 'multi':
                 allowed = {o[0] for o in f.options}
-                clean[f.name] = [x for x in (v if isinstance(v, list) else []) if x in allowed]
+                clean[f.name] = [x for x in (v if isinstance(v, list) else []) if isinstance(x, str) and x in allowed]
             elif f.type == 'select':
-                if v in {o[0] for o in f.options}:
+                if isinstance(v, str) and v in {o[0] for o in f.options}:
                     clean[f.name] = v
                 else:
                     skipped.append(f'{key}.{f.name}')
+            elif isinstance(v, (list, dict)):   # 文字類欄位不接受陣列 / 物件
+                skipped.append(f'{key}.{f.name}')
+                continue
             elif f.type == 'time':
                 # 與設定頁相同的檢查：9:00 這種格式會讓每日排程的字串比較永遠不成立 (備份、定期報表不再執行)
                 t = str(v or '').strip()
@@ -889,8 +1085,39 @@ def import_all(payload, tenant_id=None, changed_by='import', only_keys=None, all
                     continue
                 clean[f.name] = u[:500]
             else:
-                clean[f.name] = str(v if v is not None else '')[:2000]
+                text = str(v if v is not None else '')
+                if len(text) > text_max_len(f):   # 與設定頁相同的長度上限：超過就略過，不靜默截斷
+                    skipped.append(f'{key}.{f.name}')
+                    continue
+                clean[f.name] = text
         if clean:
             put(key, clean, tenant_id, changed_by=changed_by)
             applied += 1
+            if applied_keys is not None:
+                applied_keys.append(key)
     return applied, skipped
+
+
+# 啟用後一定要有金鑰才能運作的設定：{區塊: ((判斷是否啟用的函式, (需要的金鑰欄位, ...)), ...)}
+_REQUIRED_SECRETS = {
+    'sms': ((lambda c: c.get('provider') in ('mitake', 'every8d'), ('password',)),),
+    'einvoice': ((lambda c: c.get('enabled') and not c.get('stage'), ('hash_key', 'hash_iv')),),
+    'linepay': ((lambda c: c.get('enabled'), ('channel_secret',)),),
+    'line': ((lambda c: c.get('login_enabled'), ('login_channel_secret',)),
+             (lambda c: c.get('messaging_enabled'), ('messaging_access_token',))),
+    'delivery': ((lambda c: c.get('ubereats_enabled'), ('ubereats_client_secret',)),
+                 (lambda c: c.get('foodpanda_enabled'), ('foodpanda_token',))),
+}
+
+
+def missing_secrets(keys, tenant_id=None):
+    """已啟用但還沒填金鑰的區塊標題 (匯入設定後提醒負責人補填)"""
+    out = []
+    for key in keys:
+        rules = _REQUIRED_SECRETS.get(key)
+        if not rules:
+            continue
+        cfg = get(key, tenant_id)
+        if any(on(cfg) and any(not str(cfg.get(name) or '').strip() for name in names) for on, names in rules):
+            out.append(SECTIONS[key].title)
+    return out

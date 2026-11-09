@@ -2,6 +2,7 @@
 import os
 import re
 import runpy
+import subprocess
 
 import app.routes.health as health_routes
 from app.extensions import limiter
@@ -99,7 +100,16 @@ def test_deploy_files():
     assert 'HEALTHCHECK' in dockerfile and '/healthz' in dockerfile
 
     entrypoint = _read('deploy/entrypoint.sh')
-    assert '\r' not in entrypoint
+    # 文字模式讀檔會把 \r\n 轉成 \n，換行要用二進位讀取才檢查得到
+    with open(os.path.join(ROOT, 'deploy', 'entrypoint.sh'), 'rb') as fh:
+        raw = fh.read()
+    if b'\r' in raw:
+        # Windows 取出的工作檔 (core.autocrlf / text=auto) 會是 CRLF：改確認版本庫存的是 LF，
+        # 且映像建置時會去掉 \r (否則容器啟動會因 /bin/sh^M 失敗)
+        eol = subprocess.run(['git', 'ls-files', '--eol', 'deploy/entrypoint.sh'], cwd=ROOT,
+                             capture_output=True, text=True, check=False).stdout
+        assert eol.startswith('i/lf'), f'entrypoint.sh 不可含 CRLF：{eol or raw[:80]!r}'
+        assert "sed -i 's/\\r$//' deploy/entrypoint.sh" in dockerfile
     assert 'flask --app run setup' in entrypoint and 'exec gunicorn' in entrypoint
     assert 'AUTO_MIGRATE=0' in entrypoint
     if os.name != 'nt':

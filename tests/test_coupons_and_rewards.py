@@ -73,8 +73,10 @@ def test_redeem_coupon_with_per_user_limit(app, staff_client, member_client):
     with app.app_context():
         chen_id = User.query.filter_by(phone='0912345678').first().id
         vip_id = Coupon.query.filter_by(code='VIP85').first().id
-    # 櫃檯協助重設 PIN，同時解除 5.4 的鎖定
-    assert staff_client.post('/api/pos/set_member_pin', json={'user_id': chen_id, 'pin': '1357'}).status_code == 200
+    # 櫃檯協助重設 PIN，同時解除 5.4 的鎖定 (會員已有 PIN，重設需主管核准)
+    assert staff_client.post('/api/pos/set_member_pin', json={'user_id': chen_id, 'pin': '1357',
+                                                             'approver_username': 'admin_test',
+                                                             'approver_password': 'AdminPass!2026'}).status_code == 200
     member_client.get('/?shop=default')
     r = member_client.post('/phone_login', json={'phone': '0912345678', 'pin': '1357'}, headers={'X-Forwarded-For': '10.40.1.1'})
     assert r.status_code == 200 and r.get_json()['success'] is True
@@ -198,7 +200,8 @@ def test_voucher_claim_and_refund_are_atomic(app):
         assert statuses <= {VoucherStatus.USED, VoucherStatus.REFUNDED}
 
     # 端對端：同一會員同時「結帳使用憑證」與「退點」，點數與餐點必須守恆
-    leaks = []
+    # (退點搶先時結帳改為當場扣點，所以結帳成功時點數一律不變)
+    leaks, successes = [], 0
     for rnd in range(8):
         a = member_client(app, '0933140003', '2468', ip=f'198.51.101.{rnd * 2 + 1}')
         b = member_client(app, '0933140003', '2468', ip=f'198.51.101.{rnd * 2 + 2}')
@@ -223,6 +226,14 @@ def test_voucher_claim_and_refund_are_atomic(app):
         with app.app_context():
             pts_after = db.session.get(User, user_id).points
             orders_after = Order.query.filter_by(user_id=user_id).count()
-        if res['order'].status_code == 200 and (pts_after != pts_before or orders_after != orders_before + 1):
-            leaks.append((rnd, pts_before, pts_after, res['order'].status_code, res['refund'].status_code))
+        order_ok, refund_ok = res['order'].status_code == 200, res['refund'].status_code == 200
+        successes += order_ok
+        # 結帳成功：點數不變、多一張訂單；結帳失敗：沒有新訂單，退點成功時剛好退回 10 點
+        expected = ((pts_before, orders_before + 1) if order_ok
+                    else (pts_before + (10 if refund_ok else 0), orders_before))
+        if (pts_after, orders_after) != expected:
+            leaks.append((rnd, pts_before, pts_after, orders_before, orders_after,
+                          res['order'].status_code, res['refund'].status_code))
     assert not leaks, leaks
+    # 結帳一輪都沒成功時上面的守恆檢查形同虛設 (例如紅利兌換品結帳一律失敗)
+    assert successes > 0, '8 輪結帳全部失敗，競態防護沒有被驗證到'

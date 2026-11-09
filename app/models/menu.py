@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.extensions import db
 from app.models.branch import active_overrides
@@ -34,21 +34,52 @@ WEEKDAY_LABELS = '一二三四五六日'
 
 
 
-def parse_size_options(text):
-    """「小杯:-10,中杯:0,大杯:+15」→ [('小杯', -10), ('中杯', 0), ('大杯', 15)]；格式錯誤的項目略過"""
-    out, seen = [], set()
+def service_day(now, start, end):
+    """
+    比對供應星期 / 販售期間要用的時間：跨午夜時段 (start > end，例如 22:00~02:00) 在午夜後 (HH:MM <= end) 的部分
+    屬於前一晚的營業日，回傳 now 的前一天；其他情況回傳 now。菜單供應時段與促銷活動共用這套規則。
+    """
+    start, end = (start or '').strip(), (end or '').strip()
+    if start and end and start > end and now.strftime('%H:%M') <= end:
+        return now - timedelta(days=1)
+    return now
+
+
+# 中文輸入法常打出的全形符號：冒號、加號、減號 (含數學減號) 一律視為半形
+_SIZE_FULLWIDTH = str.maketrans({'：': ':', '＋': '+', '－': '-', '−': '-'})
+
+
+def _size_parts(text):
+    """把規格文字拆成 [(原始片段, 名稱, 加減價或 None)]；加減價無法辨識時為 None"""
+    out = []
     for part in re.split(r'[,，、\n]+', str(text or '')):
-        name, _, delta = part.partition(':')
-        name = name.strip()[:20]
-        if not name or name in seen:
+        if not part.strip():
             continue
+        name, _, delta = part.translate(_SIZE_FULLWIDTH).partition(':')
+        # 「大杯:15:0」(舊版把全形冒號整段當成名稱後存檔的格式) 只取第一個加減價
+        delta = delta.partition(':')[0]
         try:
-            value = int(str(delta).strip() or 0)
+            value = int(delta.strip() or 0)
         except ValueError:
+            value = None
+        out.append((part.strip(), name.strip()[:20], value))
+    return out
+
+
+def parse_size_options(text):
+    """「小杯:-10,中杯:0,大杯:+15」→ [('小杯', -10), ('中杯', 0), ('大杯', 15)]；接受全形冒號 / 加減號，格式錯誤的項目略過"""
+    out, seen = [], set()
+    for _part, name, value in _size_parts(text):
+        if not name or name in seen or value is None:
             continue
         seen.add(name)
         out.append((name, max(-10000, min(10000, value))))
     return out[:8]
+
+
+def invalid_size_options(text):
+    """格式錯誤 (沒有名稱、加減價不是整數) 的規格片段；後台存檔時用來指出是哪一段，不要默默略過"""
+    return [part for part, name, value in _size_parts(text) if not name or value is None]
 
 class MenuItem(TenantScoped, db.Model):
     """
@@ -138,10 +169,19 @@ class MenuItem(TenantScoped, db.Model):
         """內用價 (含分店價差)"""
         return max(0, (self.price or 0) + self.branch_delta)
 
+    def _branch_adjusted(self, base):
+        """特價 / 通路價 / 會員價加上分店價差；未設定 (<= 0)，或加上價差後 <= 0 (分店價比總部便宜太多、
+        總部之後改價) 時回傳 None，視為未設定而退回內用價，不可夾成 0 元"""
+        if (base or 0) <= 0:
+            return None
+        price = base + self.branch_delta
+        return price if price > 0 else None
+
     @property
     def sale_price(self):
-        """特價 (含分店價差)"""
-        return max(0, (self.discount_price or 0) + self.branch_delta)
+        """特價 (含分店價差；加上價差後 <= 0 時退回內用價)"""
+        price = self._branch_adjusted(self.discount_price)
+        return price if price is not None else self.list_price
 
     @property
     def unit_price(self):
@@ -154,14 +194,18 @@ class MenuItem(TenantScoped, db.Model):
 
     def price_for(self, channel='dine_in', member=False):
         """依通路的售價：特價優先；否則該通路有設定價格 (> 0) 時使用，未設定與內用同價 (都含分店價差)。
-        member=True (登入 / 綁定會員) 且有設會員價時，取會員價與上述價格較低者。"""
-        if self.is_discount and (self.discount_price or 0) > 0:
-            price = self.sale_price
-        else:
+        member=True (登入 / 綁定會員) 且有設會員價時，取會員價與上述價格較低者。
+        加上分店價差後 <= 0 的特價 / 通路價 / 會員價視為未設定 (見 _branch_adjusted)。"""
+        price = self._branch_adjusted(self.discount_price) if self.is_discount else None
+        if price is None:
             custom = {'takeout': self.takeout_price, 'online': self.online_price, 'delivery': self.delivery_price}.get(channel)
-            price = max(0, custom + self.branch_delta) if (custom or 0) > 0 else self.list_price
-        if member and (self.member_price or 0) > 0:
-            price = min(price, max(0, self.member_price + self.branch_delta))
+            price = self._branch_adjusted(custom)
+        if price is None:
+            price = self.list_price
+        if member:
+            member_price = self._branch_adjusted(self.member_price)
+            if member_price is not None:
+                price = min(price, member_price)
         return price
 
     def member_deal(self, channel='dine_in'):
@@ -174,15 +218,17 @@ class MenuItem(TenantScoped, db.Model):
     def service_status(self, now=None):
         """(是否在供應時段內, 說明)；不在販售期間、非供應星期或時段時不可點"""
         now = now or datetime.now()
-        today = now.date()
+        start, end = (self.avail_start or '').strip(), (self.avail_end or '').strip()
+        # 跨午夜時段 (22:00~02:00) 午夜後的部分屬於前一晚：星期與販售期間都用前一天比對
+        day = service_day(now, start, end)
+        today = day.date()
         if self.sale_from and today < self.sale_from:
             return False, f'{self.sale_from:%m/%d} 起供應'
         if self.sale_until and today > self.sale_until:
             return False, '已停售'
         days = self.avail_days or '1234567'
-        if str(now.isoweekday()) not in days:
+        if str(day.isoweekday()) not in days:
             return False, '供應日：週' + '、'.join(WEEKDAY_LABELS[int(d) - 1] for d in sorted(set(days)) if d.isdigit() and 1 <= int(d) <= 7)
-        start, end = (self.avail_start or '').strip(), (self.avail_end or '').strip()
         if start or end:
             hm = now.strftime('%H:%M')
             start, end = start or '00:00', end or '23:59'

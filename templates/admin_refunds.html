@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">{% endblock %}
 {% block content %}
 <main class="container-fluid px-4 py-4" id="refunds-page">
-    {% call page_header('作廢與退款紀錄', 'bi-arrow-counterclockwise', '現金與儲值金當場退回；刷卡機、街口、線上付款需在對應系統退款後於此標記完成；LINE Pay 自動退款') %}
+    {% call page_header('作廢與退款紀錄', 'bi-arrow-counterclockwise', '現金與儲值金當場退回；刷卡機、街口、線上付款需在對應系統退款後於此標記完成；LINE Pay 自動退款，綠界線上刷卡由線上端退刷 (失敗可重試)') %}
     <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('settings_admin.edit', key='refund') }}">退款規則</a>
     {% endcall %}
     {% if pending_online %}
@@ -16,15 +16,21 @@
             <tbody>
             {% for o in pending_online %}
             <tr><td>#{{ o.id }}</td><td>{{ o.table_number }}</td><td>${{ o.total_price }}</td><td>{{ o.payment_method }}</td>
-                <td class="small text-white-50">{{ o.payment_trade_no or o.payment_reference or '' }}
+                <td class="small text-white-50">{{ o.payment_trade_no or o.masked_payment_reference or '' }}
                     {% if o.payment_note %}<div class="text-warning">{{ o.payment_note }}</div>{% endif %}</td>
                 <td class="text-end text-nowrap">
+                    {% if o.id in remote_orders %}
+                    <span class="small text-white-50 refund-remote">分店的訂單，請在分店處理</span>
+                    {% elif o.id in hub_orders %}
+                    <span class="small text-info refund-by-hub">由總部向綠界退刷</span>
+                    {% else %}
                     {% if o.id in ecpay_refundable %}
                     <form class="d-inline" method="POST" action="{{ url_for('refunds.online_refund_ecpay', order_id=o.id) }}" data-confirm="向綠界退刷 ${{ o.total_price }}？">{{ csrf() }}
                         <button class="btn btn-sm btn-outline-warning ecpay-refund-btn" type="submit"><i class="bi bi-arrow-counterclockwise me-1"></i>綠界退刷</button></form>
                     {% endif %}
                     <form class="d-inline" method="POST" action="{{ url_for('refunds.online_refund_done', order_id=o.id) }}" data-confirm="確認已在金流後台 / 櫃檯完成退款？">{{ csrf() }}
-                    <button class="btn btn-sm btn-outline-success" type="submit">已完成退款</button></form></td></tr>
+                    <button class="btn btn-sm btn-outline-success" type="submit">已完成退款</button></form>
+                    {% endif %}</td></tr>
             {% endfor %}
             </tbody>
         </table>
@@ -35,7 +41,8 @@
         <div class="col-auto"><label class="form-label small" for="rf-end">迄</label><input class="form-control form-control-sm" type="date" id="rf-end" name="end" value="{{ end }}"></div>
         <div class="col-auto"><label class="form-label small" for="rf-status">狀態</label>
             <select class="form-select form-select-sm" id="rf-status" name="status"><option value="">全部</option>
-                {% for k, v in labels.items() %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ v[0] }}</option>{% endfor %}</select></div>
+                {% for k, v in labels.items() %}<option value="{{ k }}" {{ 'selected' if status == k }}>{{ v[0] }}</option>{% endfor %}
+                <option value="manual,failed" {{ 'selected' if status == 'manual,failed' }}>需處理 (人工 + 失敗)</option></select></div>
         <div class="col-auto"><button class="btn btn-outline-info btn-sm" type="submit">查詢</button></div>
     </form>
     <div class="row g-3 mb-3">
@@ -56,13 +63,20 @@
                 <td class="small">{{ r.reason }}</td><td class="small">{{ r.staff_username }}{% if r.approved_by and r.approved_by != r.staff_username %} / {{ r.approved_by }}{% endif %}</td>
                 <td>{{ status_badge(lab[0], lab[1]) }}</td><td class="small text-white-50">{{ r.provider_result }}</td>
                 <td class="text-end">
+                    {% if r.id in remote_refunds %}
+                    {% if r.status != 'done' %}<span class="small text-white-50 refund-remote">請在分店處理</span>{% endif %}
+                    {% elif r.id in hub_refunds and r.status != 'done' %}
+                    <span class="small text-info refund-by-hub">{{ '總部已退刷' if r.order and r.order.payment_status == 'refunded' else '由總部向綠界退刷' }}</span>
+                    {% else %}
                     {% if r.status in ('manual', 'failed') %}
                     <form method="POST" action="{{ url_for('refunds.refund_action', refund_id=r.id) }}" class="d-inline">{{ csrf() }}
                         <input type="hidden" name="action" value="done"><button class="btn btn-sm btn-outline-success" type="submit">已完成</button></form>
                     {% endif %}
-                    {% if r.status == 'failed' and r.method == 'Line Pay' %}
+                    {% if r.status == 'failed' and r.method in ('Line Pay', 'Credit Card', 'Apple Pay') %}
+                    {# 失敗只會來自線上自動退款：LINE Pay 退款，或線上端的綠界信用卡 / Apple Pay 退刷 #}
                     <form method="POST" action="{{ url_for('refunds.refund_action', refund_id=r.id) }}" class="d-inline">{{ csrf() }}
-                        <input type="hidden" name="action" value="retry"><button class="btn btn-sm btn-outline-warning" type="submit">重試 LINE Pay</button></form>
+                        <input type="hidden" name="action" value="retry"><button class="btn btn-sm btn-outline-warning" type="submit">重試{{ ' LINE Pay' if r.method == 'Line Pay' else '綠界退刷' }}</button></form>
+                    {% endif %}
                     {% endif %}
                 </td>
             </tr>

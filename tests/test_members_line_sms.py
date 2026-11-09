@@ -160,8 +160,8 @@ def test_line_login_binding_flow(app, line_api):
     assert_flash(c3, 'LINE 登入驗證失敗')
     r = _line_login(c3, posts, code='bad')
     assert r.status_code == 401 and '授權碼無效' in r.get_data(as_text=True)
-    # 解除綁定
-    c2.post('/auth/line/unbind')
+    # 解除綁定 (c2 是在門市共用點餐機以 LINE 登入，屬弱驗證，要再輸入 PIN)
+    c2.post('/auth/line/unbind', data={'pin': '1357'})
     assert _user(app, '0966100005')['line'] == ''
 
 
@@ -203,10 +203,13 @@ def _last_code(app, phone):
 
 
 def test_register_with_sms_otp(app, store_settings):
-    store_settings('sms', provider='log', otp_on_register=True, allow_pin_reset=True)
+    # 表單的 data-otp-purpose 一律都會輸出，要看驗證碼欄位本身 (regOtp) 有沒有渲染
+    store_settings('sms', provider='log', otp_on_register=False, allow_pin_reset=True)
     c = app.test_client()
     c.get('/?shop=default')
-    assert 'otp' in c.get('/register').get_data(as_text=True).lower()
+    assert 'id="regOtp"' not in c.get('/register').get_data(as_text=True)
+    store_settings('sms', provider='log', otp_on_register=True, allow_pin_reset=True)
+    assert 'id="regOtp"' in c.get('/register').get_data(as_text=True)
     form = {'name': '簡訊會員', 'phone': '0966100007', 'pin': '2580', 'agree_privacy': '1',
             'birthday_year': '1995', 'birthday_month': '5', 'birthday_day': '5'}
     r = c.post('/register', data=form)

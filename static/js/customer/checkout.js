@@ -5,11 +5,13 @@
 import {
     $, REWARD_TAG, api, html, isGuest, isOnline, menuItems, modal, modifierById, pageData, pro, setText, state, toggleRow, ui,
 } from './core.js';
-import { lineDescription, makeLine, saveCart, updateCartUI } from './cart.js';
+import { availableChoiceIds, itemName, lineAvailable, lineDescription, makeLine, persistCart, saveCart, updateCartUI } from './cart.js';
 import { calculateTotal, computeTotals, setUserPoints, toggleCalories, verifyPromo, toggleCarbon } from './totals.js';
 import { payloadLine } from '../shared/orderpayload.js';
 import { applyLinePrices, mergeLine } from '../shared/cartline.js';
 import { invoicePayload as sharedInvoicePayload } from '../shared/invoice.js';
+
+const PAGE_DAY = new Date().toDateString();   // 頁面載入日 (預約取餐時段的「今天 / 明天」以此為準)
 
 export async function openTableBill() {
     try {
@@ -74,9 +76,15 @@ export async function openPreview() {
         alert(ui.choose_branch_first || '請先在頁面上方選擇取餐分店，再進行結帳！');
         return;
     }
+    // 預約取餐時段 (今天 / 明天) 是頁面載入時產生的：跨過午夜後重新載入，取得正確的時段與標籤
+    if ($('pickupTime') && new Date().toDateString() !== PAGE_DAY) {
+        alert(`⚠️ ${ui.pickup_slots_refreshed || '取餐時段已更新，請重新選擇取餐時間'}`);
+        window.location.reload();
+        return;
+    }
     const soldOut = state.cart.find((l) => l.is_sold_out);
     if (soldOut) {
-        alert(`⚠️ ${(ui.cart_has_sold_out || '購物車中有已售完餐點【{n}】，請先點擊「移除」後再結帳！').replace('{n}', soldOut.name)}`);
+        alert(`⚠️ ${(ui.cart_has_sold_out || '購物車中有已售完餐點【{n}】，請先點擊「移除」後再結帳！').replace('{n}', itemName(soldOut.menu_item_id, soldOut.name))}`);
         return;
     }
     if ($('paymentMethod').value === '儲值金') {
@@ -97,11 +105,13 @@ export async function openPreview() {
             return;
         }
     }
-    // 購物車可能在套用優惠碼後變動 (百分比折扣、低消門檻)：送出前重新驗證一次
-    if (state.activePromoCode) await verifyPromo(state.activePromoCode, { silent: true });
-
+    // 購物車可能在套用優惠碼後變動 (百分比折扣、低消門檻)：送出前重新驗證一次；連線失敗時中止 (保留優惠碼，不以原價開確認視窗 / 斷線暫存)
+    if (state.activePromoCode && !(await verifyPromo(state.activePromoCode, { silent: true }))) return alert(`⚠️ ${ui.promo_verify_failed || '無法驗證優惠碼，請確認網路連線後再試'}`);
     const t = calculateTotal();
     const info = takeoutInfo();
+    const cutlery = info.needCutlery ? (ui.need_cutlery || '需要餐具') : (ui.no_cutlery || '不需要餐具');
+    const zone = $('deliveryZone') && $('deliveryZone').selectedIndex >= 0 ? $('deliveryZone').options[$('deliveryZone').selectedIndex].text : '';
+    const address = info.orderType === '外送到府' ? [($('deliveryAddress').value || '').trim(), zone].filter(Boolean).join(' / ') : '';
     Kiosk.setHtml($('preview-items'), html`
         <ul class="list-group">
             ${state.cart.map((l) => {
@@ -109,7 +119,7 @@ export async function openPreview() {
                 return html`
                 <li class="list-group-item bg-dark text-white border-secondary d-flex justify-content-between align-items-center">
                     <div>
-                        <div>${l.is_reward ? `${REWARD_TAG} ` : ''}${l.name} x${l.quantity}</div>
+                        <div>${l.is_reward ? `${REWARD_TAG} ` : ''}${itemName(l.menu_item_id, l.name)} x${l.quantity}</div>
                         ${desc ? html`<small class="text-info">${desc}</small>` : ''}
                     </div>
                     <span class="fw-bold">${Kiosk.money(l.price * l.quantity)}</span>
@@ -119,7 +129,8 @@ export async function openPreview() {
         <div class="mt-3 p-3 rounded bg-secondary bg-opacity-10 border border-secondary">
             <div class="small text-white-50">${pageData.table ? (ui.table_ordering || '桌邊點餐') : (ui.takeout_settings || '外帶設定')}</div>
             <div class="fw-bold text-white">${pageData.table ? `${pageData.table}${ui.table_dine_in || ' 桌 • 內用 • 用餐後至櫃檯結帳'}`
-                : (info.orderType === '外帶' ? (info.needCutlery ? (ui.need_cutlery || '需要餐具') : (ui.no_cutlery || '不需要餐具')) : (ui.dinein || '內用'))}</div>
+                : ({ '外帶': cutlery, '外送到府': `${orderTypeLabel(info.orderType)} • ${cutlery}` }[info.orderType] || (ui.dinein || '內用'))}</div>
+            ${address ? html`<div class="small text-white mt-1">${ui.delivery_label || '外送到府：'}${address}</div>` : ''}
             ${info.note ? html`<div class="small text-warning mt-2">${ui.note_label || '備註：'}${info.note}</div>` : ''}
         </div>`);
     toggleRow('preview-promotion-row', 'preview-promotion', t.promotionDiscount);
@@ -176,7 +187,7 @@ export function checkoutPayload() {
 /** 伺服器回報金額與畫面不同 (剛改價等)：以伺服器的單價更新購物車；仍有差異時記住伺服器金額 (顧客確認後再送出) */
 export function applyServerPrices(data) {
     applyLinePrices(state.cart, data.line_prices);
-    saveCart();
+    persistCart();   // 只改單價：沿用結帳編號
     updateCartUI();
     const again = checkoutPayload();
     const total = Number(data.server_total) || 0;
@@ -192,7 +203,8 @@ export function invoicePayload() {
 export function handleCheckoutError(err) {
     const data = err.data || {};
     if (data.sold_out && Array.isArray(data.sold_out_items)) {
-        state.cart.forEach((l) => { if (data.sold_out_items.includes(l.name)) l.is_sold_out = true; });
+        // 售完的可能是套餐的配餐 (sold_out_items 為配餐名稱)：依目前菜單 (含配餐) 一併標示；重新整理後由 normalizeLine 依新菜單標示
+        state.cart.forEach((l) => { if (data.sold_out_items.includes(l.name) || !lineAvailable(l)) l.is_sold_out = true; });
         saveCart();
         modal('confirmModal').hide();
         alert(`⚠️ ${(ui.just_sold_out || '抱歉！以下餐點剛好售罄：\n【{n}】\n已為您更新菜單並在購物車中劃掉標記，請移除後再結帳！').replace('{n}', data.sold_out_items.join('、'))}`);
@@ -206,8 +218,8 @@ export function handleCheckoutError(err) {
         bootstrap.Offcanvas.getOrCreateInstance($('cart-sidebar')).show();
         return;
     }
-    if (data.coupon_unavailable || data.points_changed) {
-        // 優惠券或點數剛在其他裝置 / 門市 / 線上用掉：重新載入最新的點數與可用券，讓顧客確認金額後再送出
+    if (data.coupon_unavailable || data.points_changed || data.refresh_slots) {
+        // 優惠券或點數剛在其他裝置 / 門市 / 線上用掉、預約時段已過或額滿：重新載入最新的點數、可用券與取餐時段，讓顧客確認後再送出
         modal('confirmModal').hide();
         alert(`⚠️ ${err.message}`);
         window.location.reload();
@@ -227,13 +239,34 @@ export function handleCheckoutError(err) {
     alert(err.message || ui.checkout_failed || '結帳失敗，請稍後再試！');
 }
 
+/** 人臉 / 門市 LINE 登入動用儲值金、點數、紅利或寄杯 (403 need_pin)：確認視窗內以遮蔽欄位輸入 PIN (共用螢幕不用 window.prompt)，以同一個 client_order_id 重送；關閉視窗 = 取消 (拋出原錯誤) */
+async function submitOrder(pin = '') {
+    try {
+        return await api('/submit_order', { json: pin ? { ...checkoutPayload(), pin } : checkoutPayload() });
+    } catch (err) {
+        if (err.status !== 403 || !(err.data && err.data.need_pin)) throw err;
+        const form = Object.assign(document.createElement('form'), { className: 'mt-3', autocomplete: 'off' });
+        Kiosk.setHtml(form, html`<label class="form-label small text-warning mb-1" for="checkoutPin">${err.message} ${ui.enter_pin || '請輸入 PIN 碼：'}</label><div class="d-flex gap-1">
+            <input class="form-control" type="password" id="checkoutPin" inputmode="numeric" maxlength="6" autocomplete="off" aria-label="${ui.pin || 'PIN 碼'}" required>
+            <button class="btn btn-warning text-nowrap" type="submit">${ui.confirm || '確認'}</button></div>`);
+        $('confirmModal').querySelector('.modal-body').append(form);
+        form.querySelector('input').focus();
+        const next = await new Promise((resolve) => {
+            $('confirmModal').addEventListener('hidden.bs.modal', () => resolve(''), { once: true });
+            form.addEventListener('submit', (ev) => { ev.preventDefault(); resolve(form.querySelector('input').value.trim()); });
+        });
+        form.remove();
+        return next ? submitOrder(next) : Promise.reject(err);   // PIN 錯誤時再顯示一次輸入欄位
+    }
+}
+
 export async function confirmCheckout() {
     if (!state.cart.length || state.submitting) return;
     state.submitting = true;
     const btn = $('confirmCheckoutBtn');
     btn.disabled = true;
     try {
-        const data = await api('/submit_order', { json: checkoutPayload() });
+        const data = await submitOrder();
         if (data.payment_url) {  // 線上點餐：先付款，付款完成後訂單才送到分店
             state.cart = [];
             saveCart();
@@ -259,7 +292,7 @@ export async function confirmCheckout() {
 /** 連不到門市主機：可暫存的訂單 (現金、未用點數 / 券) 存在點餐機，連線恢復後自動補送 */
 export function queueOffline(err) {
     const payload = checkoutPayload();
-    const reason = KioskOffline.blockReason(payload);
+    const reason = KioskOffline.blockReason(payload, { member: !isGuest });   // 會員價 / 贈點需要連線，補送一律是訪客單
     if (reason) {
         alert(`${err.message}\n\n（${reason}${ui.offline_blocked_suffix || '，請稍後再試或至櫃檯點餐'}）`);
         return;
@@ -288,7 +321,9 @@ export function showReceipt(data) {
     setText('receipt-user', data.user_name);
     setText('receipt-type', data.order_type === '外帶'
         ? `${orderTypeLabel(data.order_type)} • ${data.need_cutlery ? (ui.need_cutlery || '要餐具') : (ui.no_cutlery || '不用餐具')}` : orderTypeLabel(data.order_type));
-    setText('receipt-payment', data.payment_method);
+    // 與付款方式下拉選單相同的翻譯文字 (templates/customer.html 的 pay_labels)
+    setText('receipt-payment', { Cash: ui.pay_cash, 'Credit Card': ui.pay_card, '儲值金': ui.pay_wallet, '禮物卡': ui.pay_gift_card }[data.payment_method]
+        || data.payment_method);
     setText('receipt-note', data.note || '');
     $('receipt-note-row').classList.toggle('d-none', !data.note);
     setText('receipt-delivery', data.delivery_address ? `${data.delivery_address} (${ui.delivery_fee || '外送費'} $${data.delivery_fee || 0})` : '');
@@ -438,14 +473,17 @@ export async function reorder(orderId) {
             return;
         }
         const combo = raw.combo_option_id ? (item.combos || []).find((c) => Number(c.id) === Number(raw.combo_option_id)) : null;
-        if (raw.combo_option_id && !combo) {
+        // 套餐：固定配餐要有供應；對不回來 / 售完的任選改選第一個有供應的選項 (舊明細的該群組文字不帶回)
+        const choiceIds = combo ? availableChoiceIds(combo, raw.combo_choices) : [];
+        if ((raw.combo_option_id && !combo) || !choiceIds) {
             skipped.push(item.name);
             return;
         }
+        const customization = String(raw.customization || '').split('、')
+            .filter((p) => p && !(combo ? combo.choices || [] : []).some((g) => p.startsWith(`${g.group}:`))).join('、');
         const line = makeLine(item, {
-            combo, isAddon: Boolean(raw.is_add_on), customization: raw.customization || '', size: raw.size || '',
-            modifierIds: (raw.modifier_ids || []).map(Number).filter((id) => modifierById.has(id)),
-            choiceIds: (raw.combo_choices || []).map(Number),
+            combo, isAddon: Boolean(raw.is_add_on), customization, size: raw.size || '',
+            modifierIds: (raw.modifier_ids || []).map(Number).filter((id) => modifierById.has(id)), choiceIds,
         });
         line.quantity = Math.max(1, Number(raw.quantity) || 1);
         mergeLine(state.cart, line);

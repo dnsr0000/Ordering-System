@@ -19,13 +19,20 @@ def order_ready(order):
 
 
 def push_ready(order_id):
+    from app.models.enums import OrderStatus, OrderType
     from app.models.order import Order
     from app.services import line_service
     order = db.session.get(Order, order_id)
     if order is None or order.user is None or not order.user.line_user_id:
         return False
     cfg = settings_service.get('notify', order.tenant_id)
-    template = cfg.get('line_ready_template') or '您的餐點 (取餐號 {number}) 已完成，請至櫃檯取餐！'
+    if order.order_type == OrderType.HOME_DELIVERY:
+        # 外送到府：已送達 / 配送失敗就不再通知；店家範本通常寫「請至櫃檯取餐」，外送單改用固定文字
+        if order.status == OrderStatus.PICKED_UP or order.delivery_status in ('delivered', 'failed'):
+            return False
+        template = '您的餐點 (取餐號 {number}) 已完成，外送員即將出發！'
+    else:
+        template = cfg.get('line_ready_template') or '您的餐點 (取餐號 {number}) 已完成，請至櫃檯取餐！'
     shop = order.user.tenant.name if getattr(order.user, 'tenant', None) else ''
     if not shop:
         from app.models.tenant import Tenant

@@ -2,6 +2,11 @@
 # 沒有這個檔案時，CRLF 的工作檔會讓 git 把整個檔案視為已修改，真正的修改被淹沒。
 * text=auto
 
+# Windows 批次檔一律 CRLF (不論在哪個作業系統取出，GitHub zipball / Download ZIP 也照此輸出)：
+# cmd.exe 讀 LF 換行、含中文的批次檔會錯位，REM 片段被當成指令執行 (門市一鍵更新會把更新包的 .cmd 覆蓋到主機上)
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # 二進位檔不做換行轉換
 *.png binary
 *.jpg binary

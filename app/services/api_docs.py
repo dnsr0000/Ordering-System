@@ -10,12 +10,18 @@ ORDER_SCHEMA = {
     'properties': {
         'uuid': {'type': 'string', 'description': '訂單唯一識別碼 (跨分店不重複)'},
         'id': {'type': 'integer', 'description': '本機流水號 (各分店各自編號，請以 uuid 為準)'},
-        'pickup_number': {'type': 'string', 'description': '取餐號碼'},
-        'status': {'type': 'string', 'enum': ['pending', 'preparing', 'ready', 'completed', 'cancelled']},
-        'payment_status': {'type': 'string', 'description': 'paid / unpaid / awaiting_payment / refunded …'},
-        'payment_method': {'type': 'string'},
-        'order_type': {'type': 'string', 'description': 'dine_in / takeout / delivery'},
-        'order_source': {'type': 'string', 'description': 'kiosk / pos / online / table / delivery …'},
+        'pickup_number': {'type': 'integer', 'description': '取餐號碼 (線上點餐尚未由取餐分店編號時為 0)'},
+        'status': {'type': 'string', 'enum': ['Pending', 'Completed', 'PickedUp', 'Cancelled'],
+                   'description': 'Pending 製作中 / Completed 已出餐 / PickedUp 已取餐 / Cancelled 已取消 (大小寫如列)'},
+        'payment_status': {'type': 'string',
+                           'description': 'paid 已付款 (點餐機 / POS 當場結帳) / unpaid 掃碼點餐未結帳 / settled 已於櫃檯結帳 / '
+                                          'pending 線上付款待付款 / authorizing 授權中 / expired 逾時未付 / '
+                                          'refund_required 已付款但訂單取消 (待退款) / refunded 已退款'},
+        'payment_method': {'type': 'string', 'description': 'Cash / Credit Card / Line Pay / 街口支付 / Apple Pay / 儲值金 / '
+                                                            'ATM 轉帳 / 超商代碼 / 禮物卡 / 平台代收 / 混合付款'},
+        'order_type': {'type': 'string', 'description': '內用 / 外帶 / 外送 (外送平台) / 外送到府 (本店自有外送)'},
+        'order_source': {'type': 'string', 'description': 'Kiosk 點餐機 / POS / Online 線上點餐 / Table 桌邊掃碼 / UberEats / foodpanda / '
+                                        'Delivery 其他外送平台'},
         'total_price': {'type': 'integer'}, 'subtotal': {'type': 'integer'}, 'discount_amount': {'type': 'integer'},
         'note': {'type': 'string'}, 'table': {'type': 'string'},
         'node_uuid': {'type': 'string', 'description': '下單的分店 (線上端 / 單機為空字串)'},
@@ -29,9 +35,20 @@ MENU_ITEM_SCHEMA = {
     'type': 'object',
     'properties': {
         'id': {'type': 'integer'}, 'uuid': {'type': 'string'}, 'name': {'type': 'string'}, 'category': {'type': 'string'},
-        'price': {'type': 'integer', 'description': '目前售價 (含特價)'},
+        'price': {'type': 'integer', 'description': '目前內用售價 (特價中為特價，含分店價差)'},
+        'list_price': {'type': 'integer', 'description': '內用原價 (不含特價，含分店價差)'},
         'prices': {'type': 'object', 'description': '各通路價格：dine_in / takeout / online / delivery'},
-        'stock': {'type': 'integer'}, 'is_sold_out': {'type': 'boolean'}, 'is_available': {'type': 'boolean'},
+        'stock': {'type': 'integer', 'nullable': True,
+                  'description': '庫存。線上端：帶 node 時為該分店回報的庫存，未帶 node 時為 null (線上點餐依各分店庫存)'},
+        'is_sold_out': {'type': 'boolean', 'description': '已標示售完 (線上端帶 node 時含該分店回報的售完 / 無庫存)'},
+        'is_available': {'type': 'boolean',
+                         'description': '目前可點：未售完、有庫存、未下架，且在販售期間 / 供應星期 / 供應時段內'},
+        'service_hint': {'type': 'string', 'description': '目前不在供應時間時的說明 (例如「已停售」「供應時段 11:00~14:00」)，可供應時為空字串'},
+        'sale_from': {'type': 'string', 'format': 'date', 'nullable': True, 'description': '販售開始日 (null = 不限)'},
+        'sale_until': {'type': 'string', 'format': 'date', 'nullable': True, 'description': '販售結束日 (null = 不限)'},
+        'avail_days': {'type': 'string', 'description': '供應星期 (1=一 … 7=日)，例如 12345'},
+        'avail_start': {'type': 'string', 'description': '供應時段開始 HH:MM (空字串 = 全天)'},
+        'avail_end': {'type': 'string', 'description': '供應時段結束 HH:MM (空字串 = 全天；可跨午夜)'},
         'branch_hidden': {'type': 'boolean', 'description': '本分店已下架 (分店主機才可能為 true)'},
         'external_code': {'type': 'string', 'description': '外部系統代碼 (ERP 料號)'},
     },
@@ -40,24 +57,31 @@ MENU_ITEM_SCHEMA = {
 # (方法, 路徑, 權限, 摘要, 說明, 參數 [(名稱, 位置, 必填, 說明, 範例)], 請求本文範例, 回應 schema 名稱)
 ENDPOINTS: tuple = (
     ('GET', '/api/v1/orders', 'orders:read', '訂單列表 (依時間)',
-     '依建立時間排序。回應的 next 有值時，帶入 since 與 after_id 取下一頁 (同一時間的訂單不會漏)。',
-     [('since', 'query', False, '起始時間 (不含)，ISO 8601', '2026-10-01T00:00:00'),
+     '依建立時間排序。回應的 next 有值時，帶入 since 與 after_id 取下一頁 (同一時間的訂單不會漏)。'
+     '時間以門市本地時間解讀：不帶時區即為本地時間；帶時區 (Z、+08:00) 時換算為門市主機的本地時間。',
+     [('since', 'query', False, '起始時間 (不含)，ISO 8601 (無時區 = 門市本地時間)', '2026-10-01T00:00:00'),
       ('after_id', 'query', False, '與 since 一起使用：since 同一時間、id 大於此值的訂單', ''),
-      ('until', 'query', False, '結束時間 (含)', ''),
-      ('status', 'query', False, '只列此狀態', ''),
+      ('until', 'query', False, '結束時間 (含)，ISO 8601 (無時區 = 門市本地時間)', ''),
+      ('status', 'query', False, '只列此狀態：Pending / Completed / PickedUp / Cancelled (不分大小寫)', ''),
       ('limit', 'query', False, '每頁筆數 1 ~ 500，預設 100', '50')], None, 'OrderList'),
     ('GET', '/api/v1/orders?cursor', 'orders:read', '訂單異動追蹤 (cursor)',
      '第一次帶 cursor=0；回傳新增或狀態 / 付款改變的訂單 (依本機提交順序，含之後才同步進來的分店訂單)，'
-     '把 next_cursor 存起來，下次帶入就只拿到之後的異動。has_more 為 true 時請立即再呼叫。',
-     [('cursor', 'query', True, '上次回傳的 next_cursor，第一次填 0', '0'),
+     '把 next_cursor 原樣存起來，下次帶入就只拿到之後的異動。has_more 為 true 時請立即再呼叫。'
+     'next_cursor 通常是整數；同一筆提交改到的訂單比一頁多時為「序號:id」字串 (請視為不透明的值，原樣帶回)。',
+     [('cursor', 'query', True, '上次回傳的 next_cursor (整數或「序號:id」)，第一次填 0', '0'),
       ('limit', 'query', False, '每頁筆數 1 ~ 500', '100')], None, 'OrderFeed'),
     ('GET', '/api/v1/orders/{uuid}', 'orders:read', '單筆訂單', '以訂單 uuid 查詢。',
      [('uuid', 'path', True, '訂單 uuid', '')], None, 'OrderOne'),
     ('GET', '/api/v1/menu', 'menu:read', '菜單與庫存',
-     '全部餐點 (含已下架 / 售完)。分店主機回傳本分店的價格與下架狀態。回應帶 ETag，定期拉取時請帶 If-None-Match，'
-     '沒變化回 304 (無內容)。', [], None, 'Menu'),
+     '全部餐點 (含已下架 / 售完)。分店主機回傳本分店的價格與下架狀態。is_available 已考慮販售期間 / 供應星期 / 供應時段。'
+     '線上端 (多分店) 的線上點餐依各分店回報的庫存：帶 node=分店 uuid 取得該分店的庫存與可點狀態；'
+     '未帶 node 時 stock 為 null，任一開放線上點餐的分店有貨即視為未售完。'
+     '回應帶 ETag，定期拉取時請帶 If-None-Match，沒變化回 304 (無內容)。',
+     [('node', 'query', False, '(只用於線上端) 分店 uuid', '')], None, 'Menu'),
     ('POST', '/api/v1/menu/{item_id}/availability', 'menu:write', '更新售完 / 庫存',
-     '可只傳其中一個欄位；sold_out=true 立即在點餐機顯示售完。',
+     '可只傳其中一個欄位；sold_out=true 立即在點餐機顯示售完。只傳 stock 時：設為 0 自動標示售完，'
+     '庫存原本為 0 (自動售完) 補貨後自動解除售完 (店員手動標示的售完不變)。sold_out 需為布林值，其他值回 400。'
+     '線上端的庫存以各分店回報為準，不接受 stock (回 400，請到分店主機調整)。',
      [('item_id', 'path', True, '餐點 id (GET /api/v1/menu 的 id)', '')],
      {'sold_out': False, 'stock': 20}, 'Availability'),
     ('GET', '/api/v1/members/{phone}', 'members:read', '查詢會員',
@@ -74,7 +98,9 @@ RESPONSES = {
         'next_since': {'type': 'string', 'nullable': True}}},
     'OrderFeed': {'type': 'object', 'properties': {
         'success': {'type': 'boolean'}, 'orders': {'type': 'array', 'items': {'$ref': '#/components/schemas/Order'}},
-        'next_cursor': {'type': 'integer'}, 'has_more': {'type': 'boolean'}}},
+        'next_cursor': {'oneOf': [{'type': 'integer'}, {'type': 'string'}],
+                        'description': '下次帶入 cursor 的值 (整數，或同一筆提交跨頁時的「序號:id」；原樣帶回)'},
+        'has_more': {'type': 'boolean'}}},
     'OrderOne': {'type': 'object', 'properties': {'success': {'type': 'boolean'}, 'order': {'$ref': '#/components/schemas/Order'}}},
     'Menu': {'type': 'object', 'properties': {
         'success': {'type': 'boolean'}, 'items': {'type': 'array', 'items': {'$ref': '#/components/schemas/MenuItem'}}}},
@@ -132,7 +158,7 @@ def openapi_spec(base_url=''):
                             + ('_feed' if '?cursor' in path else '')),
             'tags': [scope.split(':')[0]], 'security': [{'bearerAuth': []}],
             'parameters': [{'name': n, 'in': w, 'required': bool(r), 'description': d,
-                            'schema': {'type': 'integer' if n in ('limit', 'after_id', 'cursor', 'item_id') else 'string'},
+                            'schema': {'type': 'integer' if n in ('limit', 'after_id', 'item_id') else 'string'},
                             **({'example': e} if e else {})} for n, w, r, d, e in params],
             'responses': {'200': {'description': '成功', 'content': {'application/json': {
                 'schema': {'$ref': f'#/components/schemas/{resp}'}}}},

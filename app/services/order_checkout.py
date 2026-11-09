@@ -2,44 +2,50 @@
 原子結帳 process_checkout (由 order_service 拆出；Kiosk / POS / 桌邊 / 線上 / 外送 / 團購 / 斷線補送共用)。
 併發控制說明見 app/services/order_service.py。
 """
+import json
 import logging
 import math
 from datetime import datetime, timedelta
 
-from flask import current_app
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import (
-    DELIVERY_SOURCES, OrderSource, OrderStatus, OrderType, PaymentMethod, VoucherStatus, normalize_payment_method,
+    OrderSource, OrderStatus, OrderType, PaymentMethod, VoucherStatus,
 )
 from app.models.menu import MenuItem
 from app.models.order import Order, OrderItem
 from app.models.payment import InvoiceStatus, PaymentKind
 from app.models.sync import NodeStock, PointLedger
 from app.models.table import DiningTable
-from app.models.user import CustomerLog, RewardRedemption, User
-from app.services import inventory_service, payment_service, promotion_service, settings_service, wallet_service
+from app.models.user import CustomerLog, RewardRedemption
+from app.services import inventory_service, payment_service, settings_service, wallet_service
 from app.services.ai_service import invalidate_ai_advice
 from app.services.audit import record_staff_audit
 from app.services.event_bus import order_event_bus
 from app.services.order_pricing import (
-    CheckoutLine, _apply_promo, _combo_sides_snapshot, _lock_member, _manual_discount, _parse_lines, _price_channel,
-    _service_charge_applies, _validate_addon_quota, normalize_code,
+    _apply_promo, _combo_sides_snapshot, _lock_member, _manual_discount, _service_charge_applies, normalize_code,
 )
-from app.services.order_stock import _deduct_stock, next_pickup_number, online_pickup_node
+from app.services.order_stock import _deduct_stock, business_day, next_pickup_number
+from app.services.order_validate import _validate
 from app.services.points_service import change_points
 from app.services.reward_service import get_or_create_reward_setting
 from app.services.member_rewards import PAID_STATUSES, grant_paid_rewards
 from app.services.voucher_service import claim_vouchers_for_item
-from app.sync import runtime as sync_runtime
 from app.utils import safe_int
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+# POS 實收現金最多可超過應付金額多少 (找零上限)：避免誤按 / 條碼槍誤掃出天文數字，
+# 存入 Integer 欄位 (PostgreSQL 上限約 21 億) 時結帳失敗或同步卡住
+MAX_CASH_CHANGE = 100000
+
+
+class _DiscountApprovalNeeded(Exception):
+    """交易內發現整單折扣需主管核准：撤銷交易後在交易外核准，再重新結帳 (見 process_checkout)"""
+
 
 def find_by_client_order_id(tenant_id, client_order_id):
     """同店內以前端送單識別找訂單 (舊資料的 uuid 即當時的 client_order_id，遷移時已補到新欄位)"""
@@ -59,6 +65,13 @@ def _replay(order, *, user_id, customer_log_id, cashier_username):
             or (cashier_username and order.cashier_username == cashier_username))
     if not same:
         raise AppError('訂單編號重複，請重新整理後再送出！', 409)
+    # 原單尚未確認付款 / 已取消 (例如 LINE Pay 扣款中或扣款失敗)：不可回傳「已結帳」的收據
+    if (order.payment_status or '') == 'authorizing':
+        raise AppError(f'訂單 #{order.id} 的 LINE Pay 付款仍在處理中，請稍候到「當日訂單」確認結果，勿重複收款！', 409,
+                       still_authorizing=True, order_id=order.id)
+    if order.status == OrderStatus.CANCELLED and order.order_source == OrderSource.POS:
+        raise AppError(f'訂單 #{order.id} 已取消 (付款未完成)，請重新結帳！', 409, payment_failed=True,
+                       order_id=order.id)
     return order
 
 
@@ -100,23 +113,37 @@ def process_checkout(*, tenant_id, items, payment_method='Cash', order_type='內
     if replayed is not None:
         return replayed, True
     _validate(c)
-    try:
-        # ---- 交易開始：先取號 (鎖住今日計數列)，之後的寫入都在同一筆交易 ----
-        _reserve(c)
-        _price(c)
-        _persist(c)
-    except IntegrityError:
-        # 同一個 client_order_id 同時送出兩次：後到的撞上唯一索引，回傳先完成的那張
-        db.session.rollback()
-        existing = find_by_client_order_id(c.tenant_id, c.client_order_id) if c.client_order_id else None
-        if existing is None:
-            if c.dining_table_id is not None and db.session.get(DiningTable, c.dining_table_id) is None:
-                raise AppError('此桌位剛被店家移除，請洽服務人員或掃描其他桌的 QR code！', 409)
+    # _reserve 會改動品項 (移除送完的贈品)、備註與庫存需求：需要重新結帳時還原
+    snapshot = (list(c.lines), c.note, dict(c.demands))
+    c.discount_approver = None
+    while True:
+        try:
+            # ---- 交易開始：先取號 (鎖住今日計數列)，之後的寫入都在同一筆交易 ----
+            _reserve(c)
+            _price(c)
+            _persist(c)
+            break
+        except _DiscountApprovalNeeded:
+            # 整單折扣需主管核准：核准會寫入並 commit 錯誤次數 / 清除鎖定，不可在結帳交易中途進行
+            # (會把已取號、扣庫存、核銷的券 / 點數一起提交)。先撤銷本次交易，在交易外核准後重新結帳。
+            db.session.rollback()
+            if c.discount_approver is not None:
+                raise AppError('整單折扣核准失敗，請重新結帳', 409) from None
+            c.discount_approver = c.approve('discount', '整單折扣') or ''
+            c.lines, c.note, c.demands = list(snapshot[0]), snapshot[1], dict(snapshot[2])
+            continue
+        except IntegrityError:
+            # 同一個 client_order_id 同時送出兩次：後到的撞上唯一索引，回傳先完成的那張
+            db.session.rollback()
+            existing = find_by_client_order_id(c.tenant_id, c.client_order_id) if c.client_order_id else None
+            if existing is None:
+                if c.dining_table_id is not None and db.session.get(DiningTable, c.dining_table_id) is None:
+                    raise AppError('此桌位剛被店家移除，請洽服務人員或掃描其他桌的 QR code！', 409)
+                raise
+            return _replay(existing, **c.owner), True
+        except Exception:
+            db.session.rollback()
             raise
-        return _replay(existing, **c.owner), True
-    except Exception:
-        db.session.rollback()
-        raise
 
     return _after_commit(c), False
 
@@ -138,147 +165,13 @@ def _prepare(c):
     return None
 
 
-def _validate(c):
-    """
-    交易前的所有檢查 (不寫資料庫)：付款方式與通路、外送到府、班別、會員、品項 (含改價核准)、寄杯 / 混合付款 / 禮物卡、
-    加購配額、促銷、庫存需求、線上 / 桌邊的付款狀態、刷卡 / LINE Pay / 發票 / 預約時間。
-    """
-    c.payment = normalize_payment_method(c.payment_method)
-    if c.payment is None:
-        raise AppError(f'不支援的付款方式：{c.payment_method}')
-    if c.order_type not in {t.value for t in OrderType}:
-        raise AppError(f'不支援的用餐方式：{c.order_type}')
-    c.is_pos = c.order_source == OrderSource.POS
-    c.is_delivery = c.order_source in DELIVERY_SOURCES
-    c.is_hub = sync_runtime.is_hub()
-    if c.is_delivery:
-        c.order_type, c.payment = OrderType.DELIVERY, PaymentMethod.PLATFORM
-    elif c.order_type == OrderType.DELIVERY:
-        raise AppError('外送訂單請由外送平台串接或 POS「外送單」登錄')
-    elif c.payment == PaymentMethod.PLATFORM:
-        raise AppError('平台代收只用於外送平台訂單')
-    elif c.dining_table is None and not c.is_hub:
-        allowed = payment_service.allowed_methods('pos' if c.is_pos else 'kiosk')
-        wallet_ok = c.payment == PaymentMethod.STORED_VALUE and settings_service.get('member', c.tenant_id).get('wallet_enabled')
-        gift_cfg = settings_service.get('gift_card', c.tenant_id)
-        gift_ok = c.payment == PaymentMethod.GIFT_CARD and gift_cfg.get('enabled') and (c.is_pos or gift_cfg.get('kiosk_enabled'))
-        split_ok = c.payment == PaymentMethod.SPLIT and c.is_pos   # 各筆付款方式在 parse_tenders 檢查
-        if c.payment not in allowed and not wallet_ok and not gift_ok and not split_ok:
-            raise AppError(f'此點餐管道未開放「{c.payment}」付款，請改用其他付款方式')
-
-    c.home = None
-    if c.order_type == OrderType.HOME_DELIVERY:   # 自有外送 (外送到府)
-        if c.dining_table is not None or not (c.is_hub or c.is_pos):
-            raise AppError('外送到府請由線上點餐或 POS 電話訂餐')
-        from app.services import own_delivery_service
-        c.home = own_delivery_service.validate(c.delivery, 'online' if c.is_hub else 'pos', c.tenant_id)
-
-    c.pos_cfg = settings_service.get('pos', c.tenant_id)
-    c.shift_open = payment_service.open_shift_id(c.tenant_id)
-    if c.is_pos and c.pos_cfg.get('require_shift') and c.shift_open is None:
-        raise AppError('尚未開班：請先在 POS 按「交班」輸入開班零用金後再結帳', 409, need_shift=True)
-
-    c.user = db.session.get(User, safe_int(c.user_id, 0)) if c.user_id else None
-    if c.user is not None and c.user.tenant_id != c.tenant_id:
-        c.user = None
-    c.price_channel = _price_channel(c.order_source, c.order_type, c.is_hub)
-    # 分店價格 / 上下架：分店 (與桌邊、點餐機) 用本分店的設定；線上端用顧客選擇的取餐分店
-    from app.services import branch_service
-    branch_service.activate(c.tenant_id, c.node_uuid if c.is_hub else sync_runtime.local_node_uuid())
-    c.lines = _parse_lines(c.items, c.tenant_id, c.price_channel, c.now, allow_override=c.is_pos, member=c.user is not None)
-    c.approved_by = ''
-    if any(ln.original_price is not None for ln in c.lines):
-        if not c.pos_cfg.get('allow_price_override', True):
-            raise AppError('目前設定不允許收銀改價', 403)
-        if not c.approve:
-            raise AppError('改價需要主管核准', 403, need_approval=True)
-        c.approved_by = c.approve('discount', '收銀改價')
-
-    if any(ln.is_reward for ln in c.lines) and c.user is None:
-        raise AppError('請先綁定會員才可使用紅利點數兌換商品！')
-    if c.payment == PaymentMethod.STORED_VALUE and c.user is None:
-        raise AppError('使用儲值金付款請先登入 / 綁定會員！')
-    c.pass_lines = []
-    if any(ln.is_pass for ln in c.lines):   # 寄杯兌換：必須是會員自己的寄杯、餐點相符 (次數於交易中條件式扣除)
-        from app.services import pass_service
-        if c.is_delivery:
-            raise AppError('外送平台訂單不能使用寄杯')
-        c.pass_lines = [(ln, pass_service.find_for_line(c.tenant_id, ln.pass_id, c.user, ln.menu_item))
-                      for ln in c.lines if ln.is_pass]
-    c.tenders = None
-    if c.payment == PaymentMethod.SPLIT:   # 混合付款 (POS)：各筆付款先檢查格式，金額合計於交易中比對應付金額
-        if not c.is_pos or c.dining_table is not None:
-            raise AppError('混合付款只能在 POS 櫃檯結帳使用')
-        c.tenders = payment_service.parse_tenders(c.tenant_id, (c.payment_info or {}).get('tenders'), c.user)
-    c.gift_code = ''
-    if c.payment == PaymentMethod.GIFT_CARD:
-        from app.services import giftcard_service
-        c.gift_code = giftcard_service.find(c.tenant_id, (c.payment_info or {}).get('gift_code')).code
-    quota_error = _validate_addon_quota(
-        [(ln.menu_item, ln.quantity) for ln in c.lines
-         if not ln.is_add_on and not ln.is_reward and not ln.is_pass and not (ln.combo and ln.combo.can_addon is False)],
-        [(ln.menu_item, ln.quantity) for ln in c.lines if ln.is_add_on],
-    )
-    if quota_error:
-        raise AppError(quota_error)
-
-    # 促銷活動 (外送平台訂單以平台價格為準，不套用本店促銷)
-    c.promo_result = promotion_service.PromotionResult() if c.is_delivery else promotion_service.evaluate(
-        c.lines, promotion_service.channel_for(c.order_source, c.order_type, c.is_hub), has_member=c.user is not None, now=c.now)
-    for gift, qty, promo_name in c.promo_result.gifts:
-        c.lines.append(CheckoutLine(gift, qty, 0, f'[{promo_name}] 贈品', is_gift=True))
-
-    c.demands, c.gift_demands = {}, {}
-    for ln in c.lines:
-        target = c.gift_demands if ln.is_gift else c.demands
-        target[ln.menu_item.id] = target.get(ln.menu_item.id, 0) + ln.quantity
-        for side_id in ln.side_item_ids:
-            c.demands[side_id] = c.demands.get(side_id, 0) + ln.quantity
-    c.subtotal = sum(ln.unit_price * ln.quantity for ln in c.lines)
-    c.stock_node = None
-    c.payment_status = ''
-    if c.is_hub:
-        if c.user is None:
-            raise AppError('線上點餐請先登入會員 (訪客請至門市點餐)！', 401)
-        c.stock_node = online_pickup_node(c.tenant_id, c.node_uuid)
-        c.node_uuid, c.order_source = c.stock_node.uuid, OrderSource.ONLINE
-        if current_app.config.get('ONLINE_PAYMENT', True):
-            from app.services import payment_ecpay
-            payment_ecpay.require_keys_allowed()   # 測試金鑰未被允許時不成立待付款訂單 (付不了，只會逾時取消)
-            c.payment_status = 'pending'  # 付款完成前不送分店 (見 payment_ecpay)
-    else:
-        c.node_uuid = sync_runtime.local_node_uuid()
-        if c.dining_table is not None:
-            c.payment_status = 'unpaid'
-
-    # 付款細節 (交易外先檢查，避免取號後才發現資料不完整)
-    c.card_auth, c.card_last4, c.one_time_key = '', '', ''
-    if c.payment == PaymentMethod.CREDIT_CARD and not c.is_hub and c.dining_table is None:
-        c.card_auth, c.card_last4 = payment_service.validate_card_details(c.payment_info, c.is_pos)
-    if c.payment == PaymentMethod.LINE_PAY and c.is_pos:
-        from app.services import linepay
-        if linepay.is_enabled(c.tenant_id):
-            c.one_time_key = linepay.normalize_one_time_key((c.payment_info or {}).get('one_time_key'))
-            c.payment_status = 'authorizing'   # 建單後立即向 LINE Pay 扣款，失敗則取消
-    if c.invoice_info:
-        from app.services import einvoice_ecpay
-        einvoice_ecpay.normalize_invoice_info(c.invoice_info, settings_service.get('einvoice', c.tenant_id))
-    # 線上點餐的預約取餐時間 (空白 = 盡快)
-    c.scheduled_at = None
-    if isinstance(c.pickup_at, datetime):   # 系統內部建立的預約單 (團體預購，時間已在建立時驗證)
-        c.scheduled_at = c.pickup_at
-    elif c.is_hub and c.pickup_at:
-        from app.services import pickup_service
-        c.scheduled_at = pickup_service.parse(c.pickup_at, c.tenant_id)
-    # 接單控制：暫停接單 / 每時段訂單上限 (POS、外送平台、系統內部建立的預約單不檢查)
-    if not c.skip_intake:
-        from app.services import intake_service
-        intake_service.check(c)
-
-
 def _reserve(c):
     """交易內：取號 (鎖住今日計數列)、扣庫存 (不足時整筆失敗)、贈品售完處理、鎖會員列、重讀開著的班別"""
-    c.pickup = 0 if c.stock_node else next_pickup_number(c.tenant_id)
+    # 系統內部建立的預約單 (團體預購) 取餐日晚於今天：用取餐營業日的計數器取號，取餐當天不會和現場訂單同號
+    pickup_day = business_day(c.pickup_at) if isinstance(c.pickup_at, datetime) else None
+    if pickup_day is not None and pickup_day <= business_day():
+        pickup_day = None
+    c.pickup = 0 if c.stock_node else next_pickup_number(c.tenant_id, pickup_day)
 
     short_id, c.dropped_gifts = _deduct_stock(c.tenant_id, c.demands, c.gift_demands,
                                             node_id=c.stock_node.id if c.stock_node else None)
@@ -346,22 +239,27 @@ def _price(c):
     # 會員等級折扣
     c.member_discount = 0
     c.tier = c.user.tier if c.user is not None and not c.is_delivery else None
-    if c.tier is not None and (c.tier.discount_percent or 0) > 0 \
-            and settings_service.get('member', c.tenant_id).get('tiers_enabled', True):
-        c.member_discount = c.remaining * min(100, c.tier.discount_percent) / 100
+    if c.tier is not None and not settings_service.get('member', c.tenant_id).get('tiers_enabled', True):
+        c.tier = None   # 已關閉會員等級：折扣與贈點倍數都不套用
+    if c.tier is not None and (c.tier.discount_percent or 0) > 0:
+        # 先四捨五入成整數再往下算：存檔的會員折扣與實際扣掉的金額一致 (收據各項折扣加總 = 折扣總額)
+        c.member_discount = int(math.floor(c.remaining * min(100, c.tier.discount_percent) / 100 + 0.5))
         c.remaining = max(0, c.remaining - c.member_discount)
 
     # 整單折扣 (POS)：超過門檻或沒有權限時需主管核准
     c.manual_discount = 0
     if c.order_discount and c.is_pos:
         c.manual_discount, pct = _manual_discount(c.order_discount, c.remaining)
+        c.manual_discount = int(math.floor(c.manual_discount + 0.5))   # 同會員折扣：先取整數再扣 (百分比折扣會留下小數)
         if c.manual_discount > 0:
             limit = c.pos_cfg.get('discount_approval_percent') or 0
             from app.services.approval_service import has_permission
             if not has_permission('discount') and (limit == 0 or pct > limit):
                 if not c.approve:
                     raise AppError('整單折扣需要主管核准', 403, need_approval=True)
-                c.approved_by = c.approve('discount', '整單折扣')
+                if getattr(c, 'discount_approver', None) is None:
+                    raise _DiscountApprovalNeeded()   # 交易外核准後重新結帳 (見 process_checkout)
+                c.approved_by = c.discount_approver
             c.remaining = max(0, c.remaining - c.manual_discount)
 
     # 點數折抵 (受單筆上限限制，只能折整數元)
@@ -395,7 +293,8 @@ def _price(c):
     c.delivery_fee = 0
     if c.home is not None:
         from app.services import own_delivery_service
-        c.delivery_fee = own_delivery_service.fee_for(c.home['zone'], int(c.subtotal), c.tenant_id)
+        c.delivery_fee = own_delivery_service.fee_for(c.home['zone'], int(c.subtotal), c.tenant_id,
+                                                      node=c.stock_node if c.is_hub else None)
 
     # 應付金額四捨五入到整數元，折扣總額以「小計 + 服務費 + 外送費 - 應付」反推，確保金額一致
     c.final_price = int(math.floor(c.after_discounts + 0.5)) + c.service_charge + c.delivery_fee
@@ -404,8 +303,13 @@ def _price(c):
                        f'(可能剛調整價格、優惠或點數)，已更新為最新金額，請確認後再送出！', 409, price_changed=True,
                        expected_total=safe_int(c.expected_total, 0), server_total=c.final_price,
                        line_prices=[ln.unit_price for ln in c.lines if not ln.is_gift])
+    if c.final_price <= 0 and (c.payment_status in ('pending', 'authorizing')
+                               or (c.payment_status == 'unpaid' and c.dining_table is None)):
+        # 應付 $0 (點數全額折抵、全額優惠、只兌換紅利商品)：沒有要收的款項，不導向綠界 / 不向 LINE Pay 扣 0 元，直接成立
+        c.payment_status, c.one_time_key = '', ''
     c.total_discount = max(0, c.subtotal + c.service_charge + c.delivery_fee - c.final_price)
-    multiplier = c.tier.points_multiplier if c.tier is not None and (c.tier.points_multiplier or 0) > 0 else 1
+    # 贈點倍數：0 = 此等級不累積點數 (後台允許設為 0，不可當成沒設定)
+    multiplier = max(0, c.tier.points_multiplier) if c.tier is not None and c.tier.points_multiplier is not None else 1
     # 本單可得的贈點先記在訂單上；實際入帳在付款完成時 (grant_paid_rewards)
     c.points_earned = int((c.final_price - c.delivery_fee) // max(1, c.setting.spend_per_point or 100) * multiplier) \
         if c.user and not c.is_delivery else 0
@@ -414,6 +318,8 @@ def _price(c):
     c.pays_cash_at_pos = c.is_pos and c.payment == PaymentMethod.CASH
     if c.pays_cash_at_pos and 0 < c.cash_in < c.final_price:
         raise AppError(f'實收現金 (${c.cash_in}) 小於應付總額 (${c.final_price})！')
+    if c.pays_cash_at_pos and c.cash_in - c.final_price > MAX_CASH_CHANGE:
+        raise AppError(f'實收現金 (${c.cash_in}) 比應付總額 (${c.final_price}) 多出太多，請確認輸入的金額是否正確！')
     c.actual_received = c.cash_in if (c.pays_cash_at_pos and c.cash_in >= c.final_price) else c.final_price
     c.cash_change = c.actual_received - c.final_price if c.pays_cash_at_pos else 0
     if c.tenders is not None:
@@ -426,6 +332,8 @@ def _price(c):
             given = c.cash_in or cash_t['amount']
             if given < cash_t['amount']:
                 raise AppError(f'現金實收 (${given}) 小於現金應付 (${cash_t["amount"]})！')
+            if given - cash_t['amount'] > MAX_CASH_CHANGE:
+                raise AppError(f'現金實收 (${given}) 比現金應付 (${cash_t["amount"]}) 多出太多，請確認輸入的金額是否正確！')
             cash_t['received'], c.cash_change = given, given - cash_t['amount']
         c.actual_received = c.final_price + c.cash_change
 
@@ -449,7 +357,7 @@ def _persist(c):
         c.log = CustomerLog(
             tenant_id=c.tenant_id,
             user_type=('POS會員' if c.user else 'POS訪客') if c.is_pos else ('會員' if c.user else '訪客'),
-            identifier=(f"{c.user.name} ({c.user.phone})" if c.is_pos else c.user.name) if c.user else c.table_display[:100],
+            identifier=((f"{c.user.name} ({c.user.phone})" if c.is_pos else c.user.name) if c.user else c.table_display)[:100],
             login_at=c.now, logout_at=c.now, ip_address=c.client_ip,
             ordered_items=f"[{'POS ' if c.is_pos else ''}取餐#{c.pickup}] {c.summary}",
         )
@@ -475,6 +383,10 @@ def _persist(c):
         dining_table_id=c.dining_table_id, service_charge=c.service_charge,
         manual_discount=int(math.floor(c.manual_discount + 0.5)), promotion_discount=c.promotion_discount,
         member_discount=int(math.floor(c.member_discount + 0.5)), promotion_names='、'.join(c.promo_result.names)[:200],
+        # 各活動的折扣明細 (names 與 details 一一對應；滿額贈的 details 名稱帶「(贈 X)」，所以用 names 的名稱)
+        promotion_details=json.dumps([{'name': n, 'amount': int(d['amount'])}
+                                      for n, d in zip(c.promo_result.names, c.promo_result.details)], ensure_ascii=False)
+        if c.promo_result.names else '',
         approved_by=c.approved_by, payment_reference=c.card_auth, card_last4=c.card_last4, is_rush=bool(c.is_rush),
         external_ref=str(c.external_ref or '')[:60], shift_id=c.shift_open, pickup_at=c.scheduled_at,
         estimated_ready_at=c.estimated_ready_at,
@@ -557,7 +469,8 @@ def _persist(c):
             c.order, PaymentKind.SALE, c.payment, c.final_price, received=c.actual_received, change=c.cash_change,
             reference=c.card_auth, card_last4=c.card_last4, staff=c.cashier_username or 'kiosk')
         payment_service.after_paid(c.order, c.invoice_info)
-    elif c.payment_status == 'pending':
+    elif c.payment_status in ('pending', 'authorizing'):
+        # 先以「等待付款」建立發票並保存收銀 / 顧客輸入的載具、統編、捐贈；付款完成才改為待開立
         payment_service.maybe_create_invoice(c.order, c.invoice_info, status=InvoiceStatus.WAITING)
     elif c.payment_status == 'unpaid':
         from app.services import deferred, print_service
@@ -585,7 +498,24 @@ def _persist(c):
 def _after_commit(c):
     """交易提交後：LINE Pay 當場扣款 (失敗則取消訂單)、AI 建議快取失效、即時通知；回傳訂單"""
     if c.one_time_key:
-        c.order = payment_service.charge_linepay(c.order.id, c.one_time_key)
+        c.order = payment_service.charge_linepay(c.order.id, c.one_time_key, c.invoice_info)
+        _release_waiting_invoices(c.order)
     invalidate_ai_advice(c.tenant_id)
     order_event_bus.notify(c.tenant_id)
     return c.order
+
+
+def _release_waiting_invoices(order):
+    """LINE Pay 扣款成功：建單時以「等待付款」建立的發票 (含收銀輸入的載具 / 統編) 改為待開立並開立"""
+    from app.models.payment import Invoice
+    from app.services import deferred, einvoice_ecpay
+    invoices = Invoice.query.filter_by(order_id=order.id, status=InvoiceStatus.WAITING).all()
+    if not invoices:
+        return
+    auto_issue = settings_service.get('einvoice', order.tenant_id).get('auto_issue', True)
+    for inv in invoices:
+        inv.status = InvoiceStatus.PENDING
+        db.session.flush()
+        if auto_issue:
+            deferred.defer(einvoice_ecpay.issue_invoice, inv.id)
+    db.session.commit()

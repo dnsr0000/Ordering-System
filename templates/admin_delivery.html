@@ -11,6 +11,7 @@
     <a class="btn btn-outline-warning btn-sm fw-bold" href="{{ url_for('menu_pro.manage') }}">品項代碼對應</a>
     {% endcall %}
     {% if unmapped %}<div class="alert alert-warning">有 {{ unmapped }} 項餐點尚未填寫「外送 / 條碼代碼」，平台訂單會改以品名比對，品名不同時無法匯入。</div>{% endif %}
+    {% if ambiguous %}<div class="alert alert-warning" id="deliveryAmbiguousAlert">此主機上有多家店啟用同一外送平台，但都沒有填寫平台店家代碼，平台訂單無法判斷屬於哪一家，會被拒收：請到「平台金鑰設定」填寫 {{ ambiguous|join('、') }}。</div>{% endif %}
     <div class="row g-3 mb-4">
         <div class="col-md-6"><div class="card rounded-4 p-3 h-100">
             <h2 class="h6 fw-bold">Uber Eats {% if cfg.ubereats_enabled %}<span class="badge bg-success">已啟用</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
@@ -21,8 +22,15 @@
         <div class="col-md-6"><div class="card rounded-4 p-3 h-100">
             <h2 class="h6 fw-bold">foodpanda {% if cfg.foodpanda_enabled %}<span class="badge bg-success">已啟用</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>
             <div class="small text-white-50 mb-1">提供給 foodpanda (Delivery Hero) 的訂單接收網址：</div>
+            {% if foodpanda_url %}
             <div class="d-flex gap-2"><code class="flex-grow-1 text-break" id="foodpandaWebhookUrl">{{ foodpanda_url }}</code>
                 <button class="btn btn-sm btn-outline-light" type="button" data-action="copy-text" data-text="{{ foodpanda_url }}">複製</button></div>
+            {% elif 'foodpanda 店家代碼' in ambiguous %}{# 多店家歧義且未填代碼：不給 VENDOR 佔位網址 #}
+            <div class="small text-warning" id="foodpandaWebhookUrl">請先填寫 foodpanda 店家代碼</div>
+            {% else %}{# 線上端 (hub) 不產生網址：照舊顯示空白 #}
+            <div class="d-flex gap-2"><code class="flex-grow-1 text-break" id="foodpandaWebhookUrl">{{ foodpanda_url }}</code>
+                <button class="btn btn-sm btn-outline-light" type="button" data-action="copy-text" data-text="{{ foodpanda_url }}">複製</button></div>
+            {% endif %}
         </div></div>
     </div>
     <h2 class="h5 fw-bold">最近的外送訂單</h2>

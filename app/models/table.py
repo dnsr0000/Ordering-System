@@ -35,15 +35,21 @@ class DiningTable(CreatedAtMixin, TenantScoped, db.Model):
 class TablePayment(CreatedAtMixin, TenantScoped, db.Model):
     """
     桌邊掃碼點餐的「線上結帳」(顧客用手機付清這一桌未結帳的訂單)。門市本機資料 (不同步)。
-    pending → paid (綠界通知付款成功後完成桌位結帳) / conflict (付款時訂單已在櫃檯結帳或有異動，需退款) / failed。
+    pending → processing (結帳中) → paid (綠界通知付款成功後完成桌位結帳) /
+    conflict (付款時訂單已在櫃檯結帳或有異動，需退款) / failed。
     """
     __tablename__ = 'table_payment'
 
     id = db.Column(db.Integer, primary_key=True)
-    dining_table_id = db.Column(db.Integer, db.ForeignKey('dining_table.id', ondelete='CASCADE'), nullable=False, index=True)
-    order_ids = db.Column(db.String(300), nullable=False, default='')   # 逗號分隔
+    # 刪除桌位時保留付款紀錄 (桌位設為空)：付款中 / 待人工退款的紀錄不能跟著消失；
+    # 之後才進來的付款通知會因找不到桌位而轉為 conflict 並發警示 (含綠界交易編號)，供人工退款
+    dining_table_id = db.Column(db.Integer, db.ForeignKey('dining_table.id', ondelete='SET NULL',
+                                                          name='fk_table_payment_dining_table_id'),
+                                nullable=True, index=True)
+    order_ids = db.Column(db.Text, nullable=False, default='')   # 逗號分隔 (同桌累積的未結帳訂單可能很多，不限長度)
     amount = db.Column(db.Integer, nullable=False, default=0)
-    trade_no = db.Column(db.String(20), nullable=False, unique=True)     # 送綠界的特店訂單編號
+    # 這筆線上結帳的編號 (付款頁網址用；送綠界時 CustomField1 為 T:<此編號>，每次開付款頁的特店訂單編號另外產生)
+    trade_no = db.Column(db.String(20), nullable=False, unique=True)
     status = db.Column(db.String(12), nullable=False, default='pending', index=True)
     provider_trade_no = db.Column(db.String(30), nullable=False, default='')
     note = db.Column(db.String(200), nullable=False, default='')

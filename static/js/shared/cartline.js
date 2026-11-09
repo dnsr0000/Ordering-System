@@ -5,12 +5,13 @@
  *     pass_id, is_add_on, is_reward, ... }
  */
 
-/** 同一品項 + 同樣的套餐 / 規格 / 客製化 / 加料 (順序無關) / 任選 / 寄杯 才視為同一列 */
+/** 同一品項 + 同樣的套餐 / 規格 / 客製化 / 加料 (順序無關) / 任選 / 寄杯 / 改價 (POS) 才視為同一列 */
 export function lineKey(line) {
     return [
         line.menu_item_id, line.combo_option_id || 0, line.is_add_on ? 1 : 0, line.is_reward ? 1 : 0, line.size || '',
         line.customization || '', [...(line.modifier_ids || [])].map(Number).sort((a, b) => a - b).join(','),
         (line.combo_choices || []).join(','), line.pass_id || 0,
+        line.override_price ?? '',   // 改過價的列不併入新加的份數 (新份數照原價，改價只核准那一列)
     ].join('|');
 }
 

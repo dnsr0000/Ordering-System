@@ -55,9 +55,8 @@
                      sub=health.face_reason or 'YuNet 偵測 + SFace 特徵 (models/*.onnx)') }}
     </div>
     <div class="row g-3 mb-4">
-        {% for label, value, url in [('待開立發票', health.invoice_pending, url_for('invoices.list_invoices', status='pending')), ('開立失敗發票', health.invoice_failed, url_for('invoices.list_invoices', status='failed')),
-                                     ('列印失敗', health.print_failed, url_for('printing.manage')), ('待列印', health.print_queued, url_for('printing.manage')),
-                                     ('需人工退款', health.refund_manual, url_for('refunds.list_refunds', status='manual'))] %}
+        {# 發票 / 退款計數不限日期，連結帶上最早可查詢日 (清單預設只看近 30 天)；退款拆成需人工 / 失敗，各自連到對應狀態 #}
+        {% for label, value, url in backlog[:2] + [('列印失敗', health.print_failed, url_for('printing.manage')), ('待列印', health.print_queued, url_for('printing.manage'))] + backlog[2:] %}
         <div class="col-6 col-md"><a class="stat-tile d-block text-decoration-none" href="{{ url }}"><div class="stat-label">{{ label }}</div><div class="stat-value {{ 'text-warning' if value else 'text-white' }}">{{ value }}</div></a></div>
         {% endfor %}
     </div>
@@ -70,6 +69,7 @@
                 <td class="small text-white-50">{{ e.source }}</td><td class="small">{{ e.message }}</td></tr>
             {% else %}<tr><td class="text-white-50">沒有事件紀錄</td></tr>{% endfor %}
             </tbody></table></div>
+            {% if not is_platform_admin %}<div class="small text-white-50 mt-2">只顯示本店的事件；系統層級與其他店家的事件僅平台管理者 (預設店家負責人) 可見。</div>{% endif %}
         </div></section>
         <section class="col-xl-4"><div class="card rounded-4 p-3">
             <h2 class="h6 fw-bold">自動備份 {% if backup_cfg.enabled %}<span class="badge bg-success">每天 {{ backup_cfg.time }}</span>{% else %}<span class="badge bg-secondary">未啟用</span>{% endif %}</h2>

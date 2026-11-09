@@ -61,6 +61,9 @@ class SyncNode(CreatedAtMixin, LastSeenMixin, TenantScoped, db.Model):
     # 分店回報的「暫停接單」狀態 (intake_service；線上點餐選到暫停中的分店時擋下)
     paused_until = db.Column(db.DateTime, nullable=True)
     paused_message = db.Column(db.String(200), nullable=False, default='', server_default='')
+    # 分店回報本店生效中的自有外送設定 (JSON：enabled / channels / zones / free_over / eta_minutes)；
+    # 空值代表分店尚未回報 (舊版分店)，線上端沿用總部設定 (hub._save_own_delivery 寫入，遷移 0032 建立)
+    own_delivery_json = db.Column(db.Text, nullable=True)
 
     tenant = db.relationship('Tenant')
 

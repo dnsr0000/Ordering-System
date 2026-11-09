@@ -6,7 +6,7 @@ import { $, api, cartRewardPoints, channel, displayName, html, itemMap, num, pos
 import { startConfigure } from './menu.js';
 import { recalcTotals, resetPromo, revalidatePromo } from './totals.js';
 import * as addons from '../shared/addons.js';
-import { mergeLine } from '../shared/cartline.js';
+import { mergeLine, passRemaining } from '../shared/cartline.js';
 import { createPreviewScheduler, payloadLine } from '../shared/orderpayload.js';
 
 // ======================================================================
@@ -60,22 +60,40 @@ export function changeQty(idx, delta) {
             return;
         }
     }
+    if (delta > 0 && line.pass_id) {   // 寄杯兌換不可超過剩餘次數 (與兌換按鈕相同的檢查)
+        const pass = ((state.member && state.member.passes) || []).find((p) => Number(p.id) === Number(line.pass_id));
+        if (!pass || passRemaining(state.cart, pass) <= 0) {
+            alert('⚠️ 寄杯剩餘次數不足，無法再增加兌換數量！');
+            return;
+        }
+    }
     line.quantity += delta;
     if (line.quantity <= 0) state.cart.splice(idx, 1);
+    if (state.cart.length === 0) resetOrderAdjustments();   // 逐列刪光等同清空
     renderCart();
+}
+
+/** 整單折扣與優惠券跟著這張單走，購物車清空後不可帶到下一位顧客 */
+function resetOrderAdjustments() {
+    state.orderDiscount = null;
+    resetPromo();
 }
 
 export function clearCart() {
     if (state.cart.length === 0) return;
     state.cart = [];
-    state.orderDiscount = null;   // 整單折扣跟著這張單走，不可帶到下一位顧客
-    resetPromo();
+    resetOrderAdjustments();
     renderCart();
 }
 
 /** 依購物車順序逐份保留加購，配不到合格餐點的加購自動減量 */
 export function enforceAddonQuota() {
     state.cart = addons.enforceAddonQuota(state.cart, addonRules()).lines;
+}
+
+/** 可改價的品項 (與後端 _parse_lines 相同：紅利 / 寄杯兌換不能改價，外送單不是櫃檯收銀單也不能改價) */
+export function canOverridePrice(line) {
+    return Boolean(posCfg.allowPriceOverride) && !line.is_reward && !line.pass_id && !state.deliveryMode;
 }
 
 export function renderCart({ revalidate = true } = {}) {
@@ -87,6 +105,8 @@ export function renderCart({ revalidate = true } = {}) {
     if (state.cart.length === 0) {
         setHtml(listEl, html`<div class="text-center text-white-50 py-4 small">尚未點選任何餐點</div>`);
         addonBox.textContent = '';
+        preview.cancel();   // 進行中的促銷預覽作廢，上一單的折扣與贈品不留在畫面上
+        state.promotion = { discount: 0, names: [], gifts: [], blocks_coupon: false };
         recalcTotals();
         return;
     }
@@ -98,12 +118,13 @@ export function renderCart({ revalidate = true } = {}) {
                     <span class="pos-cart-name">${displayName(line)}</span>
                     ${line.is_add_on ? html`<span class="badge bg-info text-dark ms-1 pos-xxs">加購</span>` : ''}
                     ${line.is_reward ? html`<span class="badge bg-warning text-dark ms-1 pos-xxs">-${line.points_cost}點</span>` : ''}
+                    ${line.pass_id ? html`<span class="badge bg-info text-dark ms-1 pos-xxs">寄杯</span>` : ''}
                 </div>
                 ${line.customization ? html`<div class="text-info pos-cart-custom">${line.customization}</div>` : ''}
                 <div class="text-white-50 pos-xs">${line.original_price !== undefined ? html`<del class="me-1">$${line.original_price}</del>` : ''}$${line.price} x ${line.quantity} = <strong class="text-warning">$${line.price * line.quantity}</strong></div>
             </div>
             <div class="btn-group btn-group-sm flex-shrink-0">
-                ${posCfg.allowPriceOverride && !line.is_reward ? html`<button type="button" class="btn btn-outline-warning px-2 py-0" data-action="priceLine" data-idx="${idx}" title="改價" aria-label="改價"><i class="bi bi-pencil"></i></button>` : ''}
+                ${canOverridePrice(line) ? html`<button type="button" class="btn btn-outline-warning px-2 py-0" data-action="priceLine" data-idx="${idx}" title="改價" aria-label="改價"><i class="bi bi-pencil"></i></button>` : ''}
                 <button type="button" class="btn btn-outline-secondary text-white px-2 py-0" data-action="cartQty" data-idx="${idx}" data-delta="-1" aria-label="減少">-</button>
                 <button type="button" class="btn btn-outline-secondary text-white px-2 py-0" data-action="cartQty" data-idx="${idx}" data-delta="1" aria-label="增加">+</button>
                 <button type="button" class="btn btn-outline-danger px-2 py-0" data-action="cartQty" data-idx="${idx}" data-delta="-999" aria-label="移除"><i class="bi bi-x"></i></button>

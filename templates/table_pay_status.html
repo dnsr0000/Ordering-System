@@ -1,12 +1,23 @@
 {% extends "base.html" %}
 {% block title %}{{ ui.tps_page_title }}{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
+{# 尚未收到付款結果 / 處理中 (綠界通知正在結帳)：自動重新整理 #}
+{% block head %}{% if tp.status in ('pending', 'processing') %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
 <main class="container py-5" style="max-width: 560px">
-    <div class="card p-4 text-center" id="tablePayResult" data-status="{{ tp.status }}">
+    <div class="card p-4 text-center" id="tablePayResult" data-status="{{ tp.status }}" data-remaining="{{ remaining or 0 }}">
         {% if tp.status == 'paid' %}
         <i class="bi bi-check-circle-fill text-success display-3"></i>
         <h1 class="h4 fw-bold mt-3">{{ ui.tp_done }}</h1>
+        {% if remaining %}
+        {# 付款期間同桌又有人加點：這次只結了按下線上結帳時的訂單 #}
+        <p class="text-secondary" id="tablePayRemaining">{{ ui.tp_paid_a }}{{ tp.amount }}{{ ui.tp_remaining_a }}{{ remaining }}{{ ui.tp_remaining_b }}</p>
+        {% else %}
         <p class="text-secondary">{{ ui.tp_paid_a }}{{ tp.amount }}{{ ui.tp_paid_b }}</p>
+        {% endif %}
+        {% elif tp.status == 'processing' %}
+        <i class="bi bi-hourglass-split text-warning display-3"></i>
+        <h1 class="h4 fw-bold mt-3">{{ ui.tp_processing or ui.pr_unknown }}</h1>
+        <p class="text-secondary">{{ ui.tp_processing_text or ui.tp_unknown_text }}</p>
         {% elif tp.status == 'pending' %}
         <i class="bi bi-hourglass-split text-warning display-3"></i>
         <h1 class="h4 fw-bold mt-3">{{ ui.pr_unknown }}</h1>

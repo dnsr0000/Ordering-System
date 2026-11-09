@@ -171,6 +171,8 @@ def apply(zip_path: str) -> str:
     running = os.path.join(updates_dir(), 'update_store.run.cmd')
     shutil.copyfile(script, running)
     creation = getattr(subprocess, 'DETACHED_PROCESS', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
-    subprocess.Popen(['cmd.exe', '/c', running, zip_path, str(os.getpid()), sys.executable], cwd=ROOT,
-                     creationflags=creation, close_fds=True)
+    # 不能傳 list：路徑含空白時 list2cmdline 會加上多組引號，cmd /c 去掉第一個與最後一個引號後命令被截斷 (腳本不會執行)。
+    # 改用 /s 並整段再包一層引號：cmd 只去掉最外層那一對，內層各參數的引號保留
+    command = f'cmd.exe /s /c ""{running}" "{zip_path}" {os.getpid()} "{sys.executable}""'
+    subprocess.Popen(command, cwd=ROOT, creationflags=creation, close_fds=True)
     return running

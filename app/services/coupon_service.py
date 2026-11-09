@@ -4,7 +4,7 @@
 - 發放 (issue)：依對象 (全部會員 / 會員等級 / 本月壽星 / 已綁 LINE / 手機清單) 一次發給多位會員，
   每位可發多張；遵守「每位會員上限」(已持有的張數 + 本次 ≤ 上限，超過的人略過)。
   同一次發放的券共用 batch_id，可整批撤回「尚未使用」的券。
-- 到期：UserCoupon.expires_at (發放 / 兌換時依「領取後 N 天」與活動結束日計算，發放時也可另外指定)；
+- 到期：UserCoupon.expires_at (發放 / 兌換時依「領取後 N 天」計算，活動結束日於使用時動態判斷；發放時也可另外指定)；
   過期或活動期間外的券不能使用，也不會出現在點餐頁 / POS 的可用清單。
 - 後台核銷畫面只顯示未使用的券，以及近 7 天內已使用 / 已過期的券 (資料不刪除，次數上限與報表照常計算)。
 """
@@ -112,25 +112,30 @@ def parse_phones(text):
 
 
 def resolve_targets(tenant_id, target, tier_id=None, phones_text='', today=None):
-    """回傳 (會員清單, 說明, 找不到的手機)"""
+    """
+    回傳 (會員清單, 說明, 找不到的手機)。
+    全部會員 / 等級 / 壽星 / 已綁 LINE 屬於行銷發送，排除拒絕行銷的會員 (user.marketing_opt_out)；
+    指定手機為店家逐一指定 (例如客訴補償)，照常發券，但 LINE 通知 (notify_line) 仍不推播給拒絕行銷的會員。
+    """
     today = today or date.today()
     q = User.query.filter(User.tenant_id == tenant_id)
+    marketing = q.filter(User.marketing_opt_out.is_(False))
     missing = []
     if target == 'all':
-        users = q.all()
+        users = marketing.all()
         desc = TARGET_LABELS['all']
     elif target == 'tier':
         from app.models.member import MemberTier
         tier = db.session.get(MemberTier, int(tier_id or 0))
         if tier is None or tier.tenant_id != tenant_id:
             raise AppError('請選擇會員等級')
-        users = q.filter(User.tier_id == tier.id).all()
+        users = marketing.filter(User.tier_id == tier.id).all()
         desc = f'會員等級「{tier.name}」'
     elif target == 'birthday_month':
-        users = [u for u in q.filter(User.birthday.isnot(None)).all() if u.birthday.month == today.month]
+        users = [u for u in marketing.filter(User.birthday.isnot(None)).all() if u.birthday.month == today.month]
         desc = f'{today.month} 月壽星'
     elif target == 'line':
-        users = q.filter(User.line_user_id != '').all()
+        users = marketing.filter(User.line_user_id != '').all()
         desc = TARGET_LABELS['line']
     elif target == 'phones':
         phones, bad = parse_phones(phones_text)
@@ -169,8 +174,10 @@ def issue(tenant_id, coupon, users, quantity=1, expires_on=None, valid_days=None
     if expires_on is not None:
         if expires_on < now.date():
             raise AppError('到期日不可早於今天')
-        expires_at = datetime.combine(min(expires_on, coupon.valid_until) if coupon.valid_until else expires_on,
-                                      time(23, 59, 59))
+        if coupon.valid_from and expires_on < coupon.valid_from:
+            raise AppError(f'到期日不可早於活動開始日 ({coupon.valid_from:%Y/%m/%d})')
+        # 活動結束日不寫進持券 (由 UserCoupon.status / expired_at 動態套用)，延長活動後這些券才會跟著延長
+        expires_at = datetime.combine(expires_on, time(23, 59, 59))
     else:
         expires_at = coupon.expires_for(now, valid_days)
     limit = coupon.per_user_limit or 0
@@ -194,15 +201,24 @@ def issue(tenant_id, coupon, users, quantity=1, expires_on=None, valid_days=None
             issued += 1
     db.session.add_all(rows)
     db.session.flush()
-    return {'batch_id': batch_id, 'issued': issued, 'members': members, 'skipped': skipped, 'expires_at': expires_at,
+    display = expires_at   # 後台訊息 / LINE 通知顯示的實際失效時間 (持券到期與活動結束日較早者)
+    if coupon.valid_until:
+        end = datetime.combine(coupon.valid_until, time(23, 59, 59))
+        display = min(display, end) if display else end
+    return {'batch_id': batch_id, 'issued': issued, 'members': members, 'skipped': skipped, 'expires_at': display,
             'user_ids': [r.user_id for r in rows]}
 
 
-def revoke_batch(tenant_id, batch_id):
-    """撤回一次發放中尚未使用的券 (已使用的保留)；回傳撤回張數。由呼叫端 commit。"""
+def revoke_batch(tenant_id, batch_id, now=None):
+    """
+    撤回一次發放中尚未使用 (可使用 / 尚未開始) 的券；回傳撤回張數 (與發放紀錄的「未使用」張數一致)。由呼叫端 commit。
+    已使用與已過期的券保留 (會員票券紀錄、每人上限與報表照常計算)。
+    """
     if not batch_id:
         raise AppError('查無此發放紀錄', 404)
-    rows = UserCoupon.query.filter_by(tenant_id=tenant_id, batch_id=batch_id, is_used=False).all()
+    now = now or datetime.now()
+    rows = [uc for uc in UserCoupon.query.filter_by(tenant_id=tenant_id, batch_id=batch_id, is_used=False).all()
+            if uc.status(now) in ('available', 'upcoming')]
     for uc in rows:
         db.session.delete(uc)
     return len(rows)
@@ -232,11 +248,12 @@ def recent_batches(tenant_id, limit=20):
 
 
 def notify_line(tenant_id, user_ids, coupon, expires_at):
-    """以 LINE 通知收到券的會員 (有綁定 LINE 且已啟用推播時)；回傳通知人數，失敗只記錄"""
+    """以 LINE 通知收到券的會員 (有綁定 LINE、未拒絕行銷且已啟用推播時)；回傳通知人數，失敗只記錄"""
     from app.services import line_service
     if not line_service.messaging_enabled(tenant_id):
         return 0
-    ids = [u.line_user_id for u in User.query.filter(User.id.in_(set(user_ids)), User.line_user_id != '').all()]
+    ids = [u.line_user_id for u in User.query.filter(User.id.in_(set(user_ids)), User.line_user_id != '',
+                                                     User.marketing_opt_out.is_(False)).all()]
     if not ids:
         return 0
     text = f'您收到一張優惠券「{coupon.title}」({coupon.discount_label})'

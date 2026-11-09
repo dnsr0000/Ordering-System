@@ -29,6 +29,21 @@ def _env_int(name, default):
         return default
 
 
+def _env_float(name, default, low=None, high=None):
+    """浮點數設定：格式錯誤 (例如 10%、0,1) 或 NaN 時回傳 default，並夾在 low..high 之間 (打錯選用設定不可讓整個系統起不來)"""
+    try:
+        value = float(_env(name) or default)
+    except ValueError:
+        value = default
+    if value != value:
+        value = default
+    if low is not None:
+        value = max(low, value)
+    if high is not None:
+        value = min(high, value)
+    return value
+
+
 def _load_or_create_secret_key():
     """
     Session 簽章金鑰：.env 的 SECRET_KEY 優先；未設定時第一次啟動自動產生並存到
@@ -97,6 +112,9 @@ class Config:
     RATELIMIT_STORAGE_URI = REDIS_URL or "memory://"
     RATELIMIT_ENABLED = _env_flag("RATELIMIT_ENABLED", True)
     RATELIMIT_HEADERS_ENABLED = True
+    # Redis 暫時斷線 (容器重啟、網路中斷) 時頻率限制改用行程內記憶體計數並吞掉儲存區錯誤，不可讓登入、送單等路由一律 500
+    RATELIMIT_IN_MEMORY_FALLBACK_ENABLED = bool(REDIS_URL)
+    RATELIMIT_SWALLOW_ERRORS = True
 
     # ---- 線上 / 分店同步 (說明見 docs/SYNC.txt) ----
     # standalone：單機 (預設，不同步)；hub：線上端；node：分店 (本機) 端
@@ -151,11 +169,14 @@ class Config:
     # ---- 預設店家負責人 ----
     ADMIN_USERNAME = _env("ADMIN_USERNAME")
     ADMIN_PASSWORD = _env("ADMIN_PASSWORD")
-    # 帳號或密碼任一未設定時，產生一組新的隨機憑證 (啟動時印出一次)
+    # 帳號或密碼任一未設定時，產生一組新的隨機憑證 (啟動時印出一次)；
+    # 例外：只填密碼 (帳號留空) 時沿用填的密碼，既有負責人沿用原帳號名稱 (忘記密碼的救援流程，見 app/services/bootstrap.py)
     ADMIN_CREDENTIALS_GENERATED = not (ADMIN_USERNAME and ADMIN_PASSWORD)
+    ADMIN_PASSWORD_GENERATED = ADMIN_CREDENTIALS_GENERATED and not (ADMIN_PASSWORD and not ADMIN_USERNAME)
     if ADMIN_CREDENTIALS_GENERATED:
         ADMIN_USERNAME = f"owner-{secrets.token_urlsafe(9)}"
-        ADMIN_PASSWORD = secrets.token_urlsafe(24)
+        if ADMIN_PASSWORD_GENERATED:
+            ADMIN_PASSWORD = secrets.token_urlsafe(24)
     ADMIN_PASSWORD_HASH = generate_password_hash(ADMIN_PASSWORD)
     # 設為 1：每次啟動都把預設負責人密碼重設為 .env 的值 (忘記密碼時的救援手段)
     RESET_ADMIN_PASSWORD_ON_START = _env_flag("RESET_ADMIN_PASSWORD_ON_START", False)
@@ -169,7 +190,11 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     # 全站 HTTPS 時設為 1；門市內網常以 http://區網IP 存取，預設關閉
     SESSION_COOKIE_SECURE = _env_flag("SESSION_COOKIE_SECURE", False)
+    # 員工工作階段 (permanent，每次請求刷新)：閒置 30 分鐘失效
     PERMANENT_SESSION_LIFETIME = timedelta(seconds=1800)
+    # 顧客 / 未登入的工作階段 (非 permanent，只有內容變動時才重新簽章)：最後一次變動後的有效期。
+    # 需涵蓋點餐機整天停在首頁 (CSRF Token)、桌位綁定 (4 小時) 與會員登入；見 app/utils.py 的 KioskSessionInterface
+    CUSTOMER_SESSION_LIFETIME = timedelta(hours=24)
     # CSRF Token 在整個工作階段內有效 (kiosk 頁面可能整天開著，不使用 Flask-WTF 預設的 1 小時期限)
     WTF_CSRF_TIME_LIMIT = None
     # 內容安全政策：enforce (預設) / report-only (排查用) / off
@@ -181,9 +206,12 @@ class Config:
     LOG_BACKUP_COUNT = max(1, _env_int("LOG_BACKUP_COUNT", 5))
     # ---- 錯誤回報與指標 (app/services/observability.py)：都是選用 ----
     SENTRY_DSN = _env("SENTRY_DSN")                      # 設定後 (並 pip install sentry-sdk) 未預期錯誤送到 Sentry，帶請求識別碼
-    SENTRY_TRACES_SAMPLE_RATE = float(_env("SENTRY_TRACES_SAMPLE_RATE") or 0)
+    SENTRY_TRACES_SAMPLE_RATE = _env_float("SENTRY_TRACES_SAMPLE_RATE", 0.0, 0.0, 1.0)
     METRICS_TOKEN = _env("METRICS_TOKEN")                # 設定後 GET /metrics?token=… (或 Bearer) 回 Prometheus 文字格式
     UPDATE_REPO = _env("UPDATE_REPO")                    # 版本更新來源 (GitHub owner/repo)，預設 dnsr0000/Ordering-System
+
+    # 營業日換日時間 (點)：營業跨午夜的店設 4 或 5，深夜訂單在打烊前不會被換日結案、也不會從看板消失
+    BUSINESS_DAY_START_HOUR = min(12, max(0, _env_int("BUSINESS_DAY_START_HOUR", 0)))
 
     # 交易提交後的工作 (開發票、列印、推播) 直接在請求中執行 (測試用；正式環境交給背景執行緒)
     DEFERRED_INLINE = _env_flag("DEFERRED_INLINE", False)

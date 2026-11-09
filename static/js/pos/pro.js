@@ -62,6 +62,7 @@ export async function withApproval(fn) {
                 return await fn(extra);
             } catch (err) {
                 if (!(err.status === 403 && err.data && err.data.need_approval)) throw err;
+                if (attempt === 3) break;   // 最後一輪：不再跳視窗要帳密 (輸入了也不會送出)
                 const creds = await askApproval(err.message, attempt > 0);
                 if (!creds) {
                     err.cancelled = true;
@@ -117,6 +118,7 @@ export async function withMemberVerify(fn) {
                 return await fn(extra);
             } catch (err) {
                 if (!(err.data && err.data.need_member_pin)) throw err;
+                if (attempt === 3) break;   // 最後一輪：不再跳視窗要 PIN (輸入了也不會送出)
                 const answer = await askMemberPin(err, attempt > 0);
                 if (!answer) {
                     err.cancelled = true;
@@ -196,7 +198,19 @@ $('posLinePayModal').addEventListener('hidden.bs.modal', () => {
 });
 $('posLinePayModal').addEventListener('shown.bs.modal', () => $('posLinePayKey').focus());
 
-/** 桌位結帳等場合的付款細節：刷卡授權碼、LINE Pay 付款碼；取消時回傳 null */
+/** 刷卡機設定「必填卡號末四碼」時詢問末四碼：回傳 4 位數字字串；取消或格式不對回傳 null */
+export function askCardLast4(amount) {
+    const raw = window.prompt(`刷卡金額 $${num(amount)}：請輸入信用卡卡號末四碼`, '');
+    if (raw === null) return null;
+    const last4 = raw.replace(/\D/g, '');
+    if (last4.length !== 4) {
+        alert('⚠️ 卡號末四碼須為 4 位數字');
+        return null;
+    }
+    return last4;
+}
+
+/** 桌位結帳等場合的付款細節：刷卡授權碼 / 卡號末四碼、LINE Pay 付款碼；取消時回傳 null */
 export async function paymentDetails(method, amount) {
     if (method === 'Credit Card') {
         const auth = window.prompt(`刷卡金額 $${num(amount)}：請輸入刷卡機簽單上的授權碼${cfg.cardRequireAuth ? '' : ' (可留空)'}`, '');
@@ -205,7 +219,13 @@ export async function paymentDetails(method, amount) {
             alert('⚠️ 必須輸入授權碼');
             return null;
         }
-        return { auth_code: auth.trim() };
+        const details = { auth_code: auth.trim() };
+        if (cfg.cardRequireLast4) {
+            const last4 = askCardLast4(amount);
+            if (last4 === null) return null;
+            details.card_last4 = last4;
+        }
+        return details;
     }
     if (method === 'Line Pay' && cfg.linePayIntegrated) {
         const key = await askLinePayKey(amount);

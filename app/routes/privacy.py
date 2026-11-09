@@ -13,6 +13,9 @@ from app.utils import member_required, role_required
 
 privacy_bp = Blueprint('privacy', __name__)
 
+# 刪除帳號的確認字：繁體 / 簡體 / 日文 (さくじょ → 削除) / 英文 (不分大小寫)，各語言介面都打得出來
+DELETE_CONFIRM_WORDS = ('刪除', '删除', '削除', 'delete')
+
 
 @privacy_bp.route('/privacy', endpoint='notice')
 def notice():
@@ -51,11 +54,21 @@ def my_data(member):
 @member_required('auth.member_login')
 def delete_account(member):
     """會員刪除帳號：需再次輸入 PIN 並輸入「刪除」確認"""
+    from app.services import auth_throttle
     from app.services.customer_session import close_customer_session
-    if (request.form.get('confirm') or '').strip() != '刪除':
+    if (request.form.get('confirm') or '').strip().lower() not in DELETE_CONFIRM_WORDS:
         raise AppError('請在確認欄輸入「刪除」兩個字')
+    # 與 phone_login / require_confirmed 相同的 PIN 鎖定 (人臉登入的工作階段不可在這裡無限次猜 PIN)
+    keys = auth_throttle.pin_keys(member.tenant_id, member.phone, request.remote_addr or '-')
+    if auth_throttle.lock_remaining(keys.values()):
+        raise AppError('PIN 碼錯誤次數過多，已暫時鎖定，請稍後再試', 429)
+    # 驗證前先預扣裝置 / 帳號層級的額度 (同時送出的一批請求不會都通過「未鎖定」檢查)
+    if auth_throttle.reserve_pin_attempt(keys):
+        raise AppError('PIN 碼錯誤次數過多，已暫時鎖定，請稍後再試', 429)
     if not member.check_pin(request.form.get('pin')):
+        auth_throttle.record_pin_failure(keys, ip_only=True)
         raise AppError('PIN 碼不正確', 403)
+    auth_throttle.clear_keys(keys['device'], keys['account'])
     privacy_service.delete_member_account(member)
     db.session.commit()
     close_customer_session()   # 會員已刪除：只結束進場紀錄並清除登入狀態

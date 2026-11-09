@@ -5,8 +5,12 @@
 from flask import Blueprint, abort, redirect, render_template, request, url_for
 
 from app.extensions import csrf, limiter
+from app.models.enums import OrderStatus
 from app.models.order import Order
 from app.services import payment_ecpay
+# LINE Pay 的「測試連線」在模組載入時註冊 (settings_service.TESTERS)：啟動時就載入，否則剛啟動的行程 /
+# 其他 worker / flask ops check-integrations 都沒有 LINE Pay 的測試 (其他地方只在函式內延遲 import)
+from app.services import linepay  # noqa: F401
 from app.services.customer_session import current_member
 
 payment_bp = Blueprint('payment', __name__)
@@ -30,7 +34,8 @@ def pay(order_uuid):
     """自動送出表單到綠界付款頁 (每次開啟都產生新的特店訂單編號)"""
     _require_enabled()
     order = _member_order(order_uuid)
-    if order.payment_status != 'pending':
+    # 已取消 (店員取消待付款的訂單時付款狀態仍是 pending)：不可再付款，結果頁顯示訂單已取消
+    if order.payment_status != 'pending' or order.status == OrderStatus.CANCELLED:
         return redirect(url_for('payment.payment_return', order_uuid=order.uuid))
     return payment_ecpay.render_checkout_page('pay.html', order=order, fields=payment_ecpay.build_payment_form(order))
 

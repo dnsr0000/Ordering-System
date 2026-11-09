@@ -12,7 +12,8 @@
 {# 沒有網站圖示：避免瀏覽器請求 /favicon.ico 得到 404 (建議移到 base.html) #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/customer.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/pro.css') }}">
-<link rel="manifest" href="{{ url_for('public.manifest') }}">
+{# 瀏覽器抓 manifest 預設不帶 Cookie：帶 ?shop= 讓 tenant_context 解析到這家店 (不加 crossorigin="use-credentials") #}
+<link rel="manifest" href="{{ url_for('public.manifest', shop=g.tenant.slug if g.tenant else None) }}">
 <meta name="theme-color" content="#ffc107">
 {% endblock %}
 
@@ -34,7 +35,7 @@
 {% set on_sale = item.is_discount and (item.discount_price or 0) > 0 %}
 <div class="col-sm-6 col-md-4">
     <div class="quick-card p-3 rounded-3 d-flex justify-content-between align-items-center shadow-sm {{ 'quick-favorite' if favorite }} {{ 'card-sold-out' if sold_out else 'card-available' }}"
-        {% if not sold_out %}data-action="add" data-id="{{ item.id }}" role="button" tabindex="0"{% endif %}>
+        data-id="{{ item.id }}" {% if not sold_out %}data-action="add" role="button" tabindex="0"{% endif %}>
         <div>
             <div class="fw-bold text-white fs-6">
                 {{ tr[0] }}
@@ -43,16 +44,17 @@
             {% if tr[1] %}
             <small class="text-white-50 d-block menu-desc">{{ tr[1] }}</small>
             {% endif %}
-            {% set deal = item.member_deal() if member is not none else none %}
+            {% set channel = 'online' if is_online else 'dine_in' %}
+            {% set deal = item.member_deal(channel) if member is not none else none %}
             <div class="mt-1">
                 {% if deal is not none %}
-                    <del class="text-white-50 small me-1">${{ item.sale_price if on_sale else item.list_price }}</del>
+                    <del class="text-white-50 small me-1">${{ item.price_for(channel) }}</del>
                     <span class="text-info fw-bold">${{ deal }}</span> <span class="badge bg-info text-dark">{{ ui.member_price_label }}</span>
                 {% elif on_sale %}
                     <del class="text-white-50 small me-1">${{ item.list_price }}</del>
                     <span class="text-danger fw-bold">${{ item.sale_price }}</span>
                 {% else %}
-                    <span class="text-warning fw-bold">${{ item.list_price }}</span>
+                    <span class="text-warning fw-bold">${{ item.price_for(channel) }}</span>
                 {% endif %}
             </div>
         </div>
@@ -306,8 +308,10 @@
         {% set tr = item.translated(lang) %}
         {% set on_sale = item.is_discount and (item.discount_price or 0) > 0 %}
         {% set popular = item.is_recommended or item.is_manual_popular %}
+        {#- 卡片標價與購物車 / 結帳同一個通路價：線上端 (hub) 一律線上價，門市預設內用價 (切換外帶由前端依 item.prices 重算) -#}
+        {% set channel = 'online' if is_online else 'dine_in' %}
         <div class="col-md-6 menu-row" data-id="{{ item.id }}" data-category="{{ (item.category or '未分類') | trim }}"
-             data-price="{{ item.price_for('dine_in', member is not none) }}" data-popular="{{ 1 if popular else 0 }}"
+             data-price="{{ item.price_for(channel, member is not none) }}" data-popular="{{ 1 if popular else 0 }}"
              data-new="{{ 1 if item.is_new else 0 }}" data-discount="{{ 1 if on_sale else 0 }}"
              data-allergens="{{ item.allergen_codes | join(',') }}" data-diet="{{ item.diet or '' }}" data-spicy="{{ item.spicy_level or 0 }}">
             <div class="menu-card p-3 {{ 'menu-card-sold-out' if sold_out }}">
@@ -327,17 +331,17 @@
                                 {% if on_sale %}<span class="badge bg-warning text-dark">{{ ui.sale }}</span>{% endif %}
                                 <div class="mt-1 menu-diet">{{ diet_badges(item) }}</div>
                             </div>
-                            {% set deal = item.member_deal() if member is not none else none %}
+                            {% set deal = item.member_deal(channel) if member is not none else none %}
                             <div class="text-nowrap">
                                 {% if deal is not none %}
-                                    <del class="text-white-50 small me-1">${{ item.sale_price if on_sale else item.list_price }}</del>
+                                    <del class="text-white-50 small me-1">${{ item.price_for(channel) }}</del>
                                     <span class="text-info fw-bold fs-5">${{ deal }}</span>
                                     <span class="badge bg-info text-dark">{{ ui.member_price_label }}</span>
                                 {% elif on_sale %}
                                     <del class="text-white-50 small me-1">${{ item.list_price }}</del>
                                     <span class="text-danger fw-bold fs-5">${{ item.sale_price }}</span>
                                 {% else %}
-                                    <span class="text-success fw-bold fs-5">${{ item.list_price }}</span>
+                                    <span class="text-success fw-bold fs-5">${{ item.price_for(channel) }}</span>
                                 {% endif %}
                             </div>
                         </div>
@@ -391,13 +395,13 @@
                 <!-- 優惠券與代碼 -->
                 <div class="mb-2">
                     <div class="d-flex justify-content-between align-items-center mb-1">
-                        <small class="text-white-50 fw-bold cart-small"><i class="bi bi-ticket-perforated"></i> {{ ui.promo_code }}</small>
+                        <small class="text-white-50 fw-bold cart-small" id="promoCodeLabel"><i class="bi bi-ticket-perforated" aria-hidden="true"></i> {{ ui.promo_code }}</small>
                         {% if not is_guest %}<span id="user-coupon-badge" class="cart-tiny"></span>{% endif %}
                     </div>
                     <div class="row g-1">
                         {% if not is_guest %}
                         <div class="col-7">
-                            <select id="userCouponSelect" class="form-select form-select-sm bg-dark text-warning border-secondary cart-small" data-action="pick-coupon">
+                            <select id="userCouponSelect" class="form-select form-select-sm bg-dark text-warning border-secondary cart-small" data-action="pick-coupon" aria-labelledby="promoCodeLabel">
                                 <option value="" disabled selected>{{ ui.no_coupons }}</option>
                             </select>
                         </div>
@@ -428,7 +432,7 @@
                     </div>
                     <div id="points-input-box" class="mt-1 d-none">
                         <div class="input-group input-group-sm">
-                            <span class="input-group-text py-0 cart-small">{{ ui.use_points }}</span>
+                            <label class="input-group-text py-0 cart-small mb-0" for="pointsToUse">{{ ui.use_points }}</label>
                             <input type="number" id="pointsToUse" class="form-control py-0 cart-small" min="0" value="0" data-action="recalc">
                         </div>
                         <div class="text-white-50 mt-1 cart-tiny">
@@ -506,10 +510,16 @@
                         </select>
                     </div>
                     <div class="col-6">
+                        {% if pro.onlinePayment %}
+                        {# 線上端開啟線上付款：送出後一律前往綠界付款頁 (付款方式在綠界選)，不列點餐機的付款方式 #}
+                        <input type="hidden" id="paymentMethod" value="Credit Card">
+                        <div class="small text-info cart-small" id="online-pay-hint"><i class="bi bi-credit-card me-1"></i>{{ ui.pay_online_hint or '線上付款 (送出後前往綠界付款頁選擇信用卡 / ATM / 超商等付款方式)' }}</div>
+                        {% else %}
                         <select id="paymentMethod" class="form-select form-select-sm bg-dark text-white border-secondary cart-small" data-action="payment-method" aria-label="{{ ui.payment }}">
                             {% set pay_labels = {'Cash': ui.pay_cash, 'Credit Card': ui.pay_card, 'Line Pay': 'Line Pay', '街口支付': '街口支付', 'Apple Pay': 'Apple Pay', '儲值金': ui.pay_wallet ~ ' ($' ~ pro.walletBalance ~ ')', '禮物卡': ui.pay_gift_card} %}
                             {% for m in pro.methods %}<option value="{{ m }}">{{ pay_labels.get(m, m) }}</option>{% endfor %}
                         </select>
+                        {% endif %}
                     </div>
                 </div>
                 {% if '禮物卡' in pro.methods %}
@@ -904,5 +914,6 @@
 {% if not is_online and not dining_table %}<script src="{{ url_for('static', filename='js/kiosk-offline.js') }}" data-shop="{{ g.tenant.slug }}"></script>{% endif %}
 {% if not session.get('user_name') %}<script src="{{ url_for('static', filename='js/kiosk-attract.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}"></script>
-{% if chat %}<script src="{{ url_for('static', filename='js/chatbot.js') }}"></script>{% endif %}
+{# defer：在 customer.js (module) 之後才執行，避免 chatbot.js 先呼叫 Kiosk.on 讓 common.js 停止記錄模組載入前的點擊 (加入購物車等不補跑) #}
+{% if chat %}<script defer src="{{ url_for('static', filename='js/chatbot.js') }}"></script>{% endif %}
 {% endblock %}

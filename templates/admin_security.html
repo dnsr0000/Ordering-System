@@ -13,21 +13,54 @@
             {% if staff.totp_enabled %}<span class="badge bg-success ms-2">已啟用</span>{% else %}<span class="badge bg-secondary ms-2">未啟用</span>{% endif %}
             {% if required %}<span class="badge bg-warning text-dark ms-1">本店要求</span>{% endif %}
         </h2>
+        {% if owner_on_node %}<div class="alert alert-info small" id="ownerOnNodeNotice">負責人帳號的兩步驟驗證請到線上端設定 (分店的修改不會同步到線上端)。</div>{% endif %}
         {% if new_codes %}
         <div class="alert alert-warning" id="backupCodes">
             <div class="fw-bold mb-2">備用碼 (只顯示這一次，請抄下或列印並妥善保存；每組只能用一次)</div>
             <div class="row row-cols-2 g-1 font-monospace">{% for c in new_codes %}<div class="col">{{ c }}</div>{% endfor %}</div>
         </div>
         {% endif %}
-        {% if staff.totp_enabled %}
+        {% if setup_secret and not owner_on_node %}
+        <ol class="small mb-3">
+            <li>在手機安裝驗證 App (Google Authenticator、Microsoft Authenticator…)。</li>
+            <li>掃描下方 QR code，或手動輸入金鑰。</li>
+            <li>輸入 App 上顯示的 6 位數完成啟用。</li>
+        </ol>
+        <div class="d-flex flex-wrap gap-4 align-items-center mb-3">
+            {% if qr %}<img src="{{ qr }}" alt="驗證 App 設定 QR code" class="totp-qr rounded bg-white p-1" width="180" height="180">{% endif %}
+            <div><div class="small text-white-50">手動輸入金鑰</div><code class="fs-6 text-warning" id="totpSecret">{{ setup_secret }}</code></div>
+        </div>
+        <form method="POST" class="d-flex gap-2" autocomplete="off" id="confirmTotpForm">
+            {{ csrf() }}<input type="hidden" name="action" value="confirm_2fa">
+            {% if not rebinding %}<input class="form-control" type="password" name="current_password" id="confirmTotpPassword" placeholder="目前的密碼" aria-label="目前的密碼" autocomplete="current-password" required>{% endif %}
+            <input class="form-control" name="code" id="confirmTotpCode" inputmode="numeric" maxlength="6" placeholder="6 位數驗證碼" aria-label="驗證碼" required>
+            <button class="btn btn-warning fw-bold text-dark text-nowrap" type="submit">確認啟用</button>
+        </form>
+        {% if rebinding %}
+        <p class="small text-warning mt-3 mb-0">正在重新設定驗證 App：完成前舊的驗證 App 與備用碼仍然有效。</p>
+        <form method="POST" class="mt-2">{{ csrf() }}<input type="hidden" name="action" value="cancel_rebind">
+            <button class="btn btn-sm btn-outline-light" type="submit">取消重新設定</button>
+        </form>
+        {% endif %}
+        {% elif staff.totp_enabled %}
         <p class="small text-white-50">登入時除了密碼，還需要輸入手機驗證 App 上的 6 位數。剩餘備用碼：<strong class="text-white">{{ backup_left }}</strong> 組。</p>
+        {% if not owner_on_node %}
         <div class="row g-3">
             <form method="POST" class="col-md-6" autocomplete="off">
                 {{ csrf() }}<input type="hidden" name="action" value="regen_backup">
-                <label class="form-label small fw-bold" for="regenCode">重新產生備用碼 (輸入目前的驗證碼)</label>
+                <label class="form-label small fw-bold" for="regenCode">重新產生備用碼 (輸入目前的驗證碼或一組備用碼)</label>
                 <div class="input-group">
-                    <input class="form-control" id="regenCode" name="code" inputmode="numeric" maxlength="6" required>
+                    <input class="form-control" id="regenCode" name="code" inputmode="numeric" maxlength="9" required>
                     <button class="btn btn-outline-warning" type="submit">產生</button>
+                </div>
+            </form>
+            <form method="POST" class="col-md-6" autocomplete="off">
+                {{ csrf() }}<input type="hidden" name="action" value="rebind_2fa">
+                <label class="form-label small fw-bold" for="rebindPassword">重新設定驗證 App (手機遺失 / 換手機)</label>
+                <input class="form-control mb-1" type="password" id="rebindPassword" name="password" placeholder="目前的密碼" autocomplete="current-password" required>
+                <div class="input-group">
+                    <input class="form-control" name="code" inputmode="numeric" maxlength="9" placeholder="驗證碼或備用碼" aria-label="驗證碼或備用碼" required>
+                    <button class="btn btn-outline-warning" type="submit">重新設定</button>
                 </div>
             </form>
             {% if not required %}
@@ -42,26 +75,14 @@
             </form>
             {% endif %}
         </div>
-        {% elif setup_secret %}
-        <ol class="small mb-3">
-            <li>在手機安裝驗證 App (Google Authenticator、Microsoft Authenticator…)。</li>
-            <li>掃描下方 QR code，或手動輸入金鑰。</li>
-            <li>輸入 App 上顯示的 6 位數完成啟用。</li>
-        </ol>
-        <div class="d-flex flex-wrap gap-4 align-items-center mb-3">
-            {% if qr %}<img src="{{ qr }}" alt="驗證 App 設定 QR code" class="totp-qr rounded bg-white p-1" width="180" height="180">{% endif %}
-            <div><div class="small text-white-50">手動輸入金鑰</div><code class="fs-6 text-warning" id="totpSecret">{{ setup_secret }}</code></div>
-        </div>
-        <form method="POST" class="d-flex gap-2" autocomplete="off" id="confirmTotpForm">
-            {{ csrf() }}<input type="hidden" name="action" value="confirm_2fa">
-            <input class="form-control" name="code" id="confirmTotpCode" inputmode="numeric" maxlength="6" placeholder="6 位數驗證碼" aria-label="驗證碼" required>
-            <button class="btn btn-warning fw-bold text-dark text-nowrap" type="submit">確認啟用</button>
-        </form>
+        {% endif %}
         {% else %}
         <p class="small text-white-50">啟用後，即使密碼外洩，沒有你的手機也無法登入。負責人與店長強烈建議啟用。</p>
+        {% if not owner_on_node %}
         <form method="POST">{{ csrf() }}<input type="hidden" name="action" value="start_2fa">
             <button class="btn btn-warning fw-bold text-dark" type="submit" id="start2faBtn"><i class="bi bi-shield-plus me-1"></i>開始設定</button>
         </form>
+        {% endif %}
         {% endif %}
     </section>
 

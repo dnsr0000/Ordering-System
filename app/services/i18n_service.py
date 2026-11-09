@@ -60,7 +60,14 @@ STAFF_BLUEPRINTS = frozenset({
     'gift_cards', 'purchasing', 'live', 'dispatch', 'passes', 'branches', 'marketing', 'integrations', 'devices', 'archive',
     'pnl', 'audit', 'tenants', 'api_v1', 'sync_api', 'delivery', 'health',
 })
+# 同一 blueprint 兼有顧客頁 (掃碼點餐、訂位、候位、隱私權、團購) 與員工頁的：員工頁另列 endpoint
+STAFF_ENDPOINTS = frozenset({
+    'tables.manage', 'tables.save_layout', 'tables.print_cards', 'reservations.board', 'privacy.settings',
+    'group_orders.admin',
+})
 _ICON_RE = re.compile(r'^(✅|❌|⚠️|ℹ️|🔔|🖨️)\s*')
+# 帶圖示的 MESSAGES 鍵也能以去掉圖示的本文查到 (flash 顯示時 flash_text 會先去掉開頭圖示再交給 tr_msg)
+_MESSAGES_BODY = {_ICON_RE.sub('', k): v for k, v in MESSAGES.items() if _ICON_RE.match(k)}
 
 
 def ui_strings(lang):
@@ -69,7 +76,7 @@ def ui_strings(lang):
 
 def effective_language():
     """目前請求要用的語言：員工頁面固定 zh；顧客頁依 current_language()"""
-    if request.blueprint in STAFF_BLUEPRINTS:
+    if request.blueprint in STAFF_BLUEPRINTS or request.endpoint in STAFF_ENDPOINTS:
         return 'zh'
     return current_language()
 
@@ -85,7 +92,7 @@ def translate_message(text, lang=None):
     body = text
     if m:
         icon, body = m.group(0), text[m.end():]
-    hit = MESSAGES.get(body) or MESSAGES.get(text)
+    hit = MESSAGES.get(body) or MESSAGES.get(text) or _MESSAGES_BODY.get(body)
     if hit:
         return icon + hit[0 if lang == 'en' else 1]
     for pattern, (en, ja) in MESSAGE_PATTERNS:

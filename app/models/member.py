@@ -81,7 +81,9 @@ class GiftCard(TenantScoped, CreatedAtMixin, db.Model):
     依「商品 (服務) 禮券定型化契約應記載及不得記載事項」：不得記載使用期限，售出時需提供履約保證 (見 docs/DEPLOY.txt)。
     """
     __tablename__ = 'gift_card'
-    __table_args__ = (db.UniqueConstraint('tenant_id', 'code', name='uq_gift_card_tenant_code'),)
+    __table_args__ = (db.UniqueConstraint('tenant_id', 'code', name='uq_gift_card_tenant_code'),
+                      # POS 售出的冪等鍵：同店唯一 (NULL 不受限制，後台 / 舊資料不帶)
+                      db.Index('ix_gift_card_tenant_request_id', 'tenant_id', 'request_id', unique=True))
 
     id = db.Column(db.Integer, primary_key=True)
     code = db.Column(db.String(20), nullable=False)
@@ -90,6 +92,8 @@ class GiftCard(TenantScoped, CreatedAtMixin, db.Model):
     note = db.Column(db.String(100), nullable=False, default='')
     sold_by = db.Column(db.String(120), nullable=False, default='')
     voided_at = db.Column(db.DateTime, nullable=True)
+    # POS 售出視窗產生的 request_id：回應遺失後重按售出時回傳原本的卡，不重複發卡、記預收 (本機欄位，不同步)
+    request_id = db.Column(db.String(36), nullable=True)
 
     @property
     def masked_code(self):

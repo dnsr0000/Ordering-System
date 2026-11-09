@@ -145,7 +145,7 @@ class AdminLog(TenantScoped, db.Model):
     __tablename__ = 'admin_log'
 
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(50), nullable=False)
+    username = db.Column(db.String(120), nullable=False)   # 與 staff_account.username 同長 (較短時 PostgreSQL 上長帳號登入會失敗)
     login_at = db.Column(db.DateTime, default=datetime.now)
     logout_at = db.Column(db.DateTime, nullable=True)
     ip_address = db.Column(db.String(50), default='')
@@ -157,7 +157,7 @@ class StaffAuditLog(TenantScoped, db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     staff_account_id = db.Column(db.Integer, nullable=True)
-    staff_username = db.Column(db.String(100), nullable=False, default='')
+    staff_username = db.Column(db.String(120), nullable=False, default='')   # 與 staff_account.username 同長
     staff_role = db.Column(db.String(30), nullable=False, default='staff')
     action_type = db.Column(db.String(60), nullable=False)
     target_order_id = db.Column(db.Integer, nullable=True)

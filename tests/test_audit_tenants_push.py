@@ -2,11 +2,14 @@
 稽核紀錄完整頁 (分頁 / 篩選 / 匯出)、平台端店家管理、Web Push 推播。
 """
 import io
+import os
 from datetime import datetime
 
 import pytest
 
 from tests.support import checkout, default_tenant_id, line, login_staff, make_item, other_shop_owner_client
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # 專案根目錄 (不依賴執行 pytest 時的工作目錄)
 
 
 # ---------------------------------------------------------------------------
@@ -107,14 +110,20 @@ def test_tenant_toggle_disables_login_storefront_and_audits(app):
         tid = Tenant.query.filter_by(slug='tenant-toggle-shop').first().id
         did = Tenant.query.filter_by(slug='default').first().id
     assert app.test_client().get('/shop/tenant-toggle-shop').status_code != 404
+    assert 'id="adminSidebar"' in other.get('/admin').get_data(as_text=True), '停用前負責人看得到後台'
     r = platform.post(f'/admin/tenants/{tid}/toggle')
     assert r.status_code == 302
     with app.app_context():
         assert Tenant.query.filter_by(slug='tenant-toggle-shop').first().is_active is False
         assert StaffAuditLog.query.filter_by(action_type='TENANT_TOGGLE').count() >= 1
     assert app.test_client().get('/shop/tenant-toggle-shop').status_code == 404
-    assert '登入' in other.get('/admin').get_data(as_text=True), '已登入的員工因店家停用而失效'
-    assert other.get('/admin/menu').status_code in (302, 401, 403)
+    # 已登入的員工因店家停用而失效：沒有後台側欄，看到登入表單或暫停服務的 404
+    # (後台頁本身就含「登入」二字，不能只比對文字)
+    r = other.get('/admin')
+    html = r.get_data(as_text=True)
+    assert 'id="adminSidebar"' not in html, '已登入的員工因店家停用而失效'
+    assert r.status_code == 404 or 'id="login-password"' in html, '已登入的員工因店家停用而失效'
+    assert other.get('/admin/menu').status_code in (302, 401, 403, 404)
     assert '已停用' in platform.get('/admin/tenants').get_data(as_text=True)
     # 再啟用
     platform.post(f'/admin/tenants/{tid}/toggle')
@@ -158,7 +167,7 @@ def _browser_subscription():
     key = ec.generate_private_key(ec.SECP256R1())
     raw = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
     b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b'=').decode()  # noqa: E731
-    return {'endpoint': 'https://push.example.com/send/abc123', 'keys': {'p256dh': b64(raw), 'auth': b64(b'0123456789abcdef')}}
+    return {'endpoint': 'https://fcm.googleapis.com/fcm/send/abc123','keys': {'p256dh': b64(raw), 'auth': b64(b'0123456789abcdef')}}
 
 
 def test_vapid_keys_generated_once_and_public_key_served(app, push_enabled):
@@ -212,7 +221,8 @@ def test_subscribe_and_notify_on_ready_and_delivery(app, push_enabled, monkeypat
         def __init__(self, code):
             self.status_code = code
 
-    def fake_post(url, data=None, headers=None, timeout=None):
+    def fake_post(url, data=None, headers=None, timeout=None, allow_redirects=True):
+        assert allow_redirects is False, '推播送出時不跟隨轉址'
         sent.append((url, data, headers))
         return FakeResp(201)
     monkeypatch.setattr(push_service.requests, 'post', fake_post)
@@ -225,7 +235,7 @@ def test_subscribe_and_notify_on_ready_and_delivery(app, push_enabled, monkeypat
     assert headers['Authorization'].startswith('vapid t=') and 'k=' in headers['Authorization']
     assert isinstance(body, bytes) and len(body) > 100 and '餐點'.encode() not in body, '內容已加密'
     with app.app_context():
-        assert PushSubscription.query.filter_by(order_uuid=uuid).count() == 0, '送出後刪除訂閱'
+        assert PushSubscription.query.filter_by(order_uuid=uuid).count() == 1, '送出後保留訂閱 (之後的外送出發 / 店家回覆評價也要通知)'
     # 已完成的訂單不再接受訂閱
     assert c.post(f'/api/track/{uuid}/push', json={'subscription': sub}).status_code == 409
 
@@ -241,7 +251,7 @@ def test_push_gone_removes_subscription_and_errors_are_kept(app, push_enabled, m
     c.post('/guest_login')
     uuid = checkout(c, [line(item)]).get_json()['order_uuid']
     s1, s2 = _browser_subscription(), _browser_subscription()
-    s2['endpoint'] = 'https://push.example.com/send/other'
+    s2['endpoint'] = 'https://fcm.googleapis.com/fcm/send/other'
     for s in (s1, s2):
         assert c.post(f'/api/track/{uuid}/push', json={'subscription': s}).status_code == 200
 
@@ -269,6 +279,6 @@ def test_service_worker_and_track_page_have_push_code(app):
     c = app.test_client()
     sw = c.get('/sw.js').get_data(as_text=True)
     assert "addEventListener('push'" in sw and "addEventListener('notificationclick'" in sw
-    with open('static/js/track.js', encoding='utf-8') as fh:
+    with open(os.path.join(BASE_DIR, 'static', 'js', 'track.js'), encoding='utf-8') as fh:
         js = fh.read()
     assert 'pushManager.subscribe' in js and '/api/push/vapid' in js

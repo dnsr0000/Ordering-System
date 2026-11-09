@@ -4,6 +4,8 @@ from datetime import datetime
 from flask import Blueprint, flash, g, redirect, render_template, request, send_file, url_for
 from flask_login import current_user
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from sqlalchemy import update
 
 from app.errors import AppError
 from app.extensions import db
@@ -15,6 +17,7 @@ from app.services.approval_service import permission_required
 from app.utils import get_own, workbook_bytes
 
 marketing_bp = Blueprint('marketing', __name__)
+MEMBER_LIST_LIMIT = 300   # 頁面上的分群名單最多列出幾位 (完整名單請匯出 Excel)
 
 
 def _campaign(cid):
@@ -54,6 +57,13 @@ def index():
             flash(f'「{c.name}」已發送給 {sent} 位會員', 'success')
         elif action == 'delete':
             c = _campaign(f.get('campaign_id'))
+            # 執行中 (逐一發券 / 推播) 刪除會讓已送出推播的那批券整批回滾；條件式更新同時擋下剛好開始執行的情況
+            locked = 0 if c.status == 'running' else db.session.execute(
+                update(MarketingCampaign).where(MarketingCampaign.id == c.id, MarketingCampaign.status != 'running')
+                .values(status=MarketingCampaign.status).execution_options(synchronize_session=False)).rowcount
+            if not locked:
+                db.session.rollback()
+                raise AppError('活動正在執行中，請等執行完畢再刪除', 409)
             record_staff_audit('MARKETING', details=f'刪除自動行銷「{c.name}」(已發出的券保留)')
             db.session.delete(c)
             db.session.commit()
@@ -64,15 +74,23 @@ def index():
 
     rows = marketing_service.member_stats(g.tenant_id)
     segment = request.args.get('segment') or ''
+    if segment not in marketing_service.SEGMENTS:   # 打錯 / 舊書籤：回到總覽 (原本樣板取不到分群名稱而 500)
+        segment = ''
+    # 分群名單 (姓名、手機) 屬會員個資：與會員名冊 / 匯出相同，需要「會員」權限；只有優惠券權限時只看各分群人數
+    can_view_members = current_user.has_permission('members')
     members = sorted([r for r in rows if r['segment'] == segment], key=lambda r: -r['spend']) if segment else []
     if segment and request.args.get('format') == 'xlsx':
+        if not can_view_members:
+            raise AppError('權限不足：匯出會員名單需要「後台：會員名冊 / 票券 / 會員經營」權限，請洽負責人授權！', 403)
         wb = Workbook()
         ws = wb.active
         ws.title = marketing_service.SEGMENTS.get(segment, {}).get('label', segment)
         ws.append(['姓名', '手機', '最近消費', '距今天數', '近一年次數', '近一年金額', 'R', 'F', 'M', 'LINE', '拒絕行銷'])
         for r in members:
-            ws.append([r['name'], r['phone'], r['last_at'].strftime('%Y-%m-%d') if r['last_at'] else '', r['days'],
-                       r['orders'], r['spend'], r['r'], r['f'], r['m'], '是' if r['line'] else '', '是' if r['opt_out'] else ''])
+            row = [r['name'], r['phone'], r['last_at'].strftime('%Y-%m-%d') if r['last_at'] else '', r['days'],
+                   r['orders'], r['spend'], r['r'], r['f'], r['m'], '是' if r['line'] else '', '是' if r['opt_out'] else '']
+            # 姓名等含 \x0b 之類控制字元時 openpyxl 會拋 IllegalCharacterError (整個匯出 500)
+            ws.append([ILLEGAL_CHARACTERS_RE.sub('', v) if isinstance(v, str) else v for v in row])
         buf = workbook_bytes(wb)
         buf.seek(0)
         return send_file(buf, as_attachment=True, download_name=f'會員分群_{ws.title}.xlsx',
@@ -80,7 +98,9 @@ def index():
     campaigns = MarketingCampaign.query.order_by(MarketingCampaign.id.desc()).all()
     coupons = [c for c in Coupon.query.order_by(Coupon.id.desc()).all() if c.period_error() is None]
     return render_template('admin_marketing.html', can_run=can_run, summary=marketing_service.summary(rows),
-                           segments=marketing_service.SEGMENTS, segment=segment, members=members[:300],
+                           segments=marketing_service.SEGMENTS, segment=segment,
+                           members=members[:MEMBER_LIST_LIMIT] if can_view_members else [], member_count=len(members),
+                           member_limit=MEMBER_LIST_LIMIT, can_view_members=can_view_members,
                            member_total=len(rows), campaigns=campaigns,
                            stats={c.id: marketing_service.stats(c) for c in campaigns}, coupons=coupons,
                            kinds=CAMPAIGN_KINDS, now=datetime.now())

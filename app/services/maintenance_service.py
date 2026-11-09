@@ -3,7 +3,7 @@
 
 背景排程 (每個行程一條執行緒；測試與 CLI 不啟動)：
 - 每 5 秒：送出列印佇列、送出監控通知
-- 每 5 分鐘：重送待開立的電子發票、重試失敗的 LINE Pay 退款
+- 每 5 分鐘：重送待開立的電子發票、重試失敗的 LINE Pay 退款、卡在「退款中」的退款改為失敗並通知
 - 每 10 分鐘：時鐘誤差檢查 (誤差過大時通知)
 - 每 15 秒：Webhook 事件與送出
 - 每分鐘：排程推播、訂位逾時與提醒；每天：自動備份、生日禮、點數到期、自動行銷、定期報表、員工異常通知、每月封存
@@ -67,32 +67,55 @@ def backup_dir():
     return os.path.join(current_app.config['DATABASE_DIR'], 'backups')
 
 
+_backup_lock = threading.Lock()
+
+
 def run_sqlite_backup(keep_days=14):
-    """建立 database/backups/menu-YYYYmmdd-HHMMSS.zip (含一致性快照) 並刪除超過保留天數的備份；回傳檔案路徑"""
-    from app.services.backup_service import _resolve_live_db_path, _snapshot_database
+    """
+    建立 database/backups/menu-YYYYmmdd-HHMMSS.zip (menu.db 與舊資料封存檔 archive/*.db 的一致性快照)
+    並刪除超過保留天數的備份；回傳檔案路徑。
+    同一行程內的備份依序執行 (連按兩下「立即備份」、手動備份碰上排程備份)；快照與 zip 先寫入唯一的暫存檔，
+    完成後才換成正式檔名，不會有兩個備份寫同一個檔案、也不會留下寫到一半的 zip。
+    """
+    import tempfile
+    from app.services.backup_service import _resolve_live_db_path, _snapshot_database, write_archive_snapshots
     if db.engine.dialect.name != 'sqlite':
         return None
     folder = backup_dir()
     os.makedirs(folder, exist_ok=True)
-    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    tmp = os.path.join(folder, f'.menu-{stamp}.db')
-    target = os.path.join(folder, f'menu-{stamp}.zip')
-    _snapshot_database(_resolve_live_db_path(), tmp)
-    try:
-        with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.write(tmp, 'menu.db')
-    finally:
+    with _backup_lock:
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        target = os.path.join(folder, f'menu-{stamp}.zip')
+        fd, tmp = tempfile.mkstemp(prefix=f'.menu-{stamp}-', suffix='.db', dir=folder)
+        os.close(fd)
+        fd, tmp_zip = tempfile.mkstemp(prefix=f'.menu-{stamp}-', suffix='.zip.tmp', dir=folder)
+        os.close(fd)
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    prune_backups(keep_days)
+            _snapshot_database(_resolve_live_db_path(), tmp)
+            with zipfile.ZipFile(tmp_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(tmp, 'menu.db')
+                with tempfile.TemporaryDirectory(prefix=f'.menu-{stamp}-', dir=folder) as snap_dir:
+                    write_archive_snapshots(zf, snap_dir)   # 封存檔 (database/archive/*.db)：沒有就略過
+            os.replace(tmp_zip, target)
+        finally:
+            for leftover in (tmp, tmp_zip):
+                try:
+                    os.remove(leftover)
+                except OSError:
+                    pass
+        prune_backups(keep_days, keep=target)
     return target
 
 
-def prune_backups(keep_days):
+def prune_backups(keep_days, keep=None):
+    """刪除超過保留天數的備份；最新的一份 (以及 keep 指定的檔案) 一律保留，保留天數至少 1 天"""
+    keep_days = max(1, int(keep_days or 0))
     cutoff = time.time() - keep_days * 86400
-    for path in glob.glob(os.path.join(backup_dir(), 'menu-*.zip')):
+    paths = sorted(glob.glob(os.path.join(backup_dir(), 'menu-*.zip')), key=os.path.getmtime)
+    keep_paths = {os.path.abspath(p) for p in paths[-1:]} | ({os.path.abspath(keep)} if keep else set())
+    for path in paths:
+        if os.path.abspath(path) in keep_paths:
+            continue
         if os.path.getmtime(path) < cutoff:
             try:
                 os.remove(path)
@@ -163,27 +186,53 @@ def _tenant_ids():
     return [t.id for t in Tenant.query.filter_by(is_active=True).all()]
 
 
+def _platform_tenant_id():
+    """平台 (預設店家 slug=default) 的店家 id；沒有預設店家時用第一家啟用中的店家"""
+    from app.models.tenant import Tenant
+    t = Tenant.query.filter_by(slug='default').first()
+    if t is not None:
+        return t.id
+    ids = _tenant_ids()
+    return ids[0] if ids else None
+
+
+def _run_daily_backup(now, done):
+    """
+    每日整庫備份 (SQLite)：備份含所有店家的資料，只依平台 (預設店家) 的「自動備份」設定執行一次，
+    異地上傳也只用平台的設定 (其他店家的同名設定不會拿到整庫備份、也不能清掉平台的本機備份)。
+    """
+    if db.engine.dialect.name != 'sqlite':
+        return
+    tid = _platform_tenant_id()
+    if tid is None:
+        return
+    cfg = settings_service.get('backup', tid)
+    due, mark = _due_today('backup', cfg.get('time') or '03:30', now)
+    if not (cfg.get('enabled', True) and due):
+        return
+    mark(now.date().isoformat())
+    db.session.commit()
+    try:
+        path = run_sqlite_backup(cfg.get('keep_days') or 14)
+        done.append('backup')
+    except Exception as exc:  # noqa: BLE001
+        from app.services import monitor_service
+        monitor_service.alert(f'自動備份失敗：{exc}', key='auto-backup', tenant_id=tid)
+    else:
+        from app.services import offsite_backup_service
+        offsite_backup_service.upload_after_backup(path, tid)   # 異地備份 (失敗只通知)
+
+
 def run_daily_jobs(now=None):
     """每日工作 (排程每分鐘呼叫；也可由 CLI 手動執行)"""
     from app.services import report_service, wallet_service
     from app.sync import runtime as sync_runtime
     now = now or datetime.now()
     done = []
-    for tid in _tenant_ids():
-        cfg = settings_service.get('backup', tid)
-        due, mark = _due_today('backup', cfg.get('time') or '03:30', now)
-        if cfg.get('enabled', True) and due and db.engine.dialect.name == 'sqlite':
-            mark(now.date().isoformat())
-            db.session.commit()
-            try:
-                path = run_sqlite_backup(cfg.get('keep_days') or 14)
-                done.append('backup')
-            except Exception as exc:  # noqa: BLE001
-                from app.services import monitor_service
-                monitor_service.alert(f'自動備份失敗：{exc}', key='auto-backup', tenant_id=tid)
-            else:
-                from app.services import offsite_backup_service
-                offsite_backup_service.upload_after_backup(path, tid)   # 異地備份 (失敗只通知)
+    tenant_ids = _tenant_ids()
+    if tenant_ids:
+        _run_daily_backup(now, done)
+    for tid in tenant_ids:
         if not sync_runtime.is_node():
             due, mark = _due_today(f'birthday:{tid}', '09:00', now)
             if due:
@@ -277,9 +326,112 @@ def check_clock():
                                   key='clock-drift', tenant_id=tid, level='warning')
 
 
+def _local_refunds(q):
+    """
+    線上端不處理分店上傳的分店訂單退款 (由分店自己的 LINE Pay 設定退款；線上端再退一次會重複退款，
+    或把狀態改成失敗後讓分店之後同步上來的完成狀態被忽略)；線上點餐訂單由線上端收款，仍由線上端處理。
+    """
+    from sqlalchemy import or_
+    from app.models.enums import OrderSource
+    from app.models.order import Order
+    from app.models.payment import Refund
+    from app.sync import runtime as sync_runtime
+    if sync_runtime.is_hub():
+        q = q.outerjoin(Order, Order.id == Refund.order_id).filter(
+            or_(Order.node_uuid.is_(None), Order.order_source == OrderSource.ONLINE))
+    return q
+
+
+def retry_pending_refunds(now=None, limit=20):
+    """重試建立超過 2 分鐘仍在處理中的線上退款 (延後工作遺失：重啟、當機)；線上端只處理本機的退款"""
+    from app.models.payment import Refund
+    from app.services import payment_service
+    now = now or datetime.now()
+    q = _local_refunds(Refund.query.filter(Refund.status == 'pending', Refund.created_at < now - timedelta(minutes=2)))
+    ids = [r.id for r in q.order_by(Refund.id).execution_options(skip_tenant_filter=True).limit(limit).all()]
+    for rid in ids:
+        payment_service.process_refund(rid)
+    return ids
+
+
+REFUND_STUCK_MINUTES = 30
+REFUND_STUCK_RESULT = '退款中斷 (伺服器重新啟動等)，請先到金流後台確認是否已退款再重試'
+_processing_seen: dict = {}   # 退款 id → 本行程第一次看到它停在「退款中」的時間
+
+
+def recover_stuck_refunds(now=None):
+    """
+    呼叫金流時行程重新啟動，退款會一直停在「退款中」(processing)，後台也無法重試。
+    排程主控連續看到同一筆退款停在退款中超過 30 分鐘 (金流呼叫不會這麼久) 就改為「退款失敗」並通知；
+    不自動重試：不知道金流端是否已經退款，需人工到金流後台確認後再按重試。線上端只處理本機的退款。
+    (退款紀錄沒有更新時間欄位，以本行程的觀察時間判斷；換了排程主控行程時重新計時。)
+    """
+    from sqlalchemy import update
+    from app.models.payment import Refund
+    from app.services import monitor_service
+    now = now or datetime.now()
+    rows = _local_refunds(Refund.query.filter(Refund.status == 'processing')) \
+        .order_by(Refund.id).execution_options(skip_tenant_filter=True).all()
+    current = {r.id: r for r in rows}
+    for rid in list(_processing_seen):
+        if rid not in current:   # 已完成 / 失敗 (或不再處理)：不再追蹤
+            _processing_seen.pop(rid, None)
+    failed = []
+    for rid, refund in current.items():
+        first_seen = _processing_seen.setdefault(rid, now)
+        if now - first_seen < timedelta(minutes=REFUND_STUCK_MINUTES):
+            continue
+        _processing_seen.pop(rid, None)
+        changed = db.session.execute(
+            update(Refund).where(Refund.id == rid, Refund.status == 'processing')
+            .values(status='failed', provider_result=REFUND_STUCK_RESULT)
+            .execution_options(synchronize_session=False, skip_tenant_filter=True)).rowcount
+        db.session.commit()
+        if changed:
+            failed.append(rid)
+            monitor_service.alert(f'退款中斷 (訂單 #{refund.order_id}，${refund.amount})：{REFUND_STUCK_RESULT}',
+                                  key=f'refund-stuck-{rid}', tenant_id=refund.tenant_id)
+    return failed
+
+
+TABLE_PAY_STUCK_MINUTES = 10
+TABLE_PAY_STUCK_NOTE = '結帳中斷 (伺服器重新啟動等)：顧客已付款，請確認這一桌的訂單是否已結帳，未結帳請退款或於櫃檯補結帳'
+
+
+def recover_stuck_table_payments(now=None):
+    """
+    桌邊線上結帳 (綠界已收款) 結帳途中行程中斷會一直停在 processing：超過 10 分鐘改為 conflict 並通知店家確認 / 退款。
+    搶到處理權時會同時寫入 paid_at，以它判斷逾時；paid_at 為空的是部署前就停住的舊資料，改用建立時間超過 60 分鐘判斷
+    (付款頁時限 15 分鐘)。排程沒有店家情境，用條件式 UPDATE (同 recover_stuck_refunds)。
+    """
+    from sqlalchemy import and_, or_, update
+    from app.models.table import TablePayment
+    from app.services import monitor_service
+    now = now or datetime.now()
+    cutoff = now - timedelta(minutes=TABLE_PAY_STUCK_MINUTES)
+    rows = TablePayment.query.filter(
+        TablePayment.status == 'processing',
+        or_(TablePayment.paid_at < cutoff,
+            and_(TablePayment.paid_at.is_(None), TablePayment.created_at < now - timedelta(minutes=60)))) \
+        .order_by(TablePayment.id).execution_options(skip_tenant_filter=True).all()
+    done = []
+    for tp in rows:
+        changed = db.session.execute(
+            update(TablePayment).where(TablePayment.id == tp.id, TablePayment.status == 'processing')
+            .values(status='conflict', note=TABLE_PAY_STUCK_NOTE)
+            .execution_options(synchronize_session=False, skip_tenant_filter=True)).rowcount
+        db.session.commit()
+        if changed:
+            done.append(tp.id)
+            monitor_service.alert(
+                f'桌邊線上結帳 {tp.trade_no} (${tp.amount}) 顧客已付款但結帳中斷，請確認訂單是否已結帳，'
+                f'未結帳請到綠界後台退款 (交易 {tp.provider_trade_no or "未知"})',
+                key=f'table-pay-stuck-{tp.id}', tenant_id=tp.tenant_id, level='warning', source='payment')
+    return done
+
+
 def _loop(app):
     from app.services import einvoice_ecpay, monitor_service, print_service
-    from app.models.payment import Refund
     ticks = 0
     while True:
         time.sleep(5)
@@ -300,9 +452,9 @@ def _loop(app):
                 if ticks % 60 == 0:          # 每 5 分鐘
                     einvoice_ecpay.retry_pending()
                     from app.services import payment_service
-                    for r in Refund.query.filter_by(status='pending').execution_options(skip_tenant_filter=True).limit(20).all():
-                        if r.created_at < datetime.now() - timedelta(minutes=2):
-                            payment_service.process_refund(r.id)
+                    retry_pending_refunds()
+                    recover_stuck_refunds()
+                    recover_stuck_table_payments()
                     payment_service.run_auto_refunds()
                 if ticks % 120 == 1:         # 每 10 分鐘
                     check_clock()

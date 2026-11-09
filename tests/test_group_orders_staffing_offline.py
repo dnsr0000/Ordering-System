@@ -143,7 +143,7 @@ def test_group_order_create_join_edit_manage_and_submit(app):
         grp = db.session.get(GroupOrder, gid)
         order = grp.order
         assert grp.status == 'submitted' and order.client_order_id == grp.uuid and order.pickup_at == pickup
-        assert order.order_type == '外帶' and order.total_price == 455 and order.payment_status in ('', None)
+        assert order.order_type == '外帶' and order.total_price == 455 and order.payment_status == 'unpaid'
         lines = sorted((i.item_name, i.quantity, i.customization or '') for i in order.items)
         assert lines[0][:2] == ('團購紅茶', 2) and '大杯' in lines[0][2] and '少冰' in lines[0][2]
         assert lines[1] == ('團購雞腿飯', 3, '')
@@ -183,7 +183,7 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
     with tenant_request(app, tid):
         assert group_order_service.run_due(tid, now=deadline - timedelta(minutes=1)) == (0, 0)
         sent, cancelled = group_order_service.run_due(tid, now=deadline + timedelta(minutes=1))
-        assert (sent, cancelled) == (3, 0)
+        assert (sent, cancelled) == (1, 0)   # 只計成功送出的；「會失敗」與「沒人點」送單失敗不算
         g_ok, g_fail, g_manual, g_empty = (db.session.get(GroupOrder, i) for i in (ok, fail, manual, empty))
         assert g_ok.status == 'submitted' and sum(i.quantity for i in g_ok.order.items) == 3
         assert g_fail.status == 'failed' and '限量湯' in g_fail.error and g_fail.order_id is None
@@ -213,7 +213,8 @@ def test_group_order_auto_submit_failure_cancel_and_race(app, alerts):
     try:
         with tenant_request(app, tid):
             grp, err = group_order_service.submit(boom)
-            assert err == '送單時發生錯誤，請稍後再試' and grp.status == 'failed' and '資料庫連線中斷' in grp.error
+            assert err == '送單時發生錯誤，請稍後再試' and grp.status == 'failed' and grp.error == group_order_service.SYSTEM_ERROR \
+                and '資料庫連線中斷' not in grp.error
     finally:
         order_service.process_checkout = real
     with tenant_request(app, tid):
@@ -411,10 +412,16 @@ def test_kiosk_offline_order_replay(app):
     peek['order']['client_order_id'] = member_cid
     leaked = g.post('/api/kiosk/offline_order', json=peek)
     assert leaked.status_code == 409 and '斷線會員' not in leaked.get_data(as_text=True)
-    # 不是本機的訂單編號 (例如 POS 單) 不回傳內容
+    # 不是本機的訂單編號 (例如 POS 單) 不回傳內容：自己以 POS 建一張帶訂單編號的單，再用同一個編號補送
+    pos_cid = str(uuid.uuid4())
+    pos = login_staff(app, 'offline_pos_clash', 'staff')
+    r = pos.post('/api/pos/checkout', json={'client_order_id': pos_cid, 'items': [{'menu_item_id': item, 'quantity': 1}],
+                                            'payment_method': 'Cash', 'order_type': '內用'})
+    assert r.status_code == 200, r.get_data(as_text=True)
     with app.app_context():
-        pos_order = Order.query.filter(Order.order_source == 'POS').first()
-    if pos_order is not None and pos_order.client_order_id:
-        clash = _offline_body(item)
-        clash['order']['client_order_id'] = pos_order.client_order_id
-        assert g.post('/api/kiosk/offline_order', json=clash).status_code == 409
+        pos_order = Order.query.filter_by(client_order_id=pos_cid).one()
+        assert pos_order.order_source == 'POS'
+    clash = _offline_body(item)
+    clash['order']['client_order_id'] = pos_cid
+    r = g.post('/api/kiosk/offline_order', json=clash)
+    assert r.status_code == 409 and r.get_json().get('order_id') is None, r.get_data(as_text=True)

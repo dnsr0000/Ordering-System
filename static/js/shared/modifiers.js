@@ -118,11 +118,11 @@ export function syncChoiceMods(root) {
 }
 
 /**
- * 讀取一個客製化區塊 → { parts: [冰塊/甜度、辣度 (、加料文字)], modifierIds: 勾選的加料 }
+ * 讀取一個客製化區塊 → { parts: [冰塊/甜度、辣度 (、加料文字)], addonParts: [其中的加料文字], modifierIds: 勾選的加料 }
  * describeAddon(id) 回傳加料的顯示文字 (POS 把加料寫進客製化文字)，回傳 null 表示不認得、略過；不傳時只收 ID
  */
 export function readSection(section, describeAddon = null) {
-    if (!section) return { parts: [], modifierIds: [] };
+    if (!section) return { parts: [], addonParts: [], modifierIds: [] };
     const val = (name) => {
         const el = section.querySelector(`[data-mod="${name}"]`);
         return el ? el.value : '';
@@ -131,19 +131,22 @@ export function readSection(section, describeAddon = null) {
     if (val('ice') && val('sugar')) parts.push(`${val('ice')}/${val('sugar')}`);
     if (val('spicy')) parts.push(val('spicy'));
     const modifierIds = [];
+    const addonParts = [];
     section.querySelectorAll('[data-mod="addon"]:checked').forEach((cb) => {
         const id = Number(cb.dataset.id);
         const text = describeAddon ? describeAddon(id) : '';
         if (text === null || text === undefined) return;
         modifierIds.push(id);
-        if (text) parts.push(text);
+        if (text) addonParts.push(text);
     });
-    return { parts, modifierIds };
+    return { parts: [...parts, ...addonParts], addonParts, modifierIds };
 }
 
 /**
  * 讀回整個客製化視窗：主餐、配餐 (sides)、任選群組 (choices) 與規格。
  * 回傳 { texts: 客製化文字片段 (配餐 / 任選為「名稱(文字)」), modifierIds, choiceIds, size, missing: 沒選的任選群組或 null }
+ * 配餐 / 任選括號內不放「、」也不放加料文字：後端以「、」切段並移除加料片段後再依 modifier_ids 重新產生加料，
+ * 加料文字 (POS 的「起司(+15)」) 另列為獨立片段，括號才不會被切斷。
  */
 export function readModifierModal(root, { hasMain = true, sides = [], choices = [], describeAddon = null } = {}) {
     const texts = [];
@@ -151,7 +154,13 @@ export function readModifierModal(root, { hasMain = true, sides = [], choices = 
     const take = (section, wrap) => {
         const r = readSection(section, describeAddon);
         modifierIds.push(...r.modifierIds);
-        if (r.parts.length) texts.push(wrap ? `${wrap}(${r.parts.join('、')})` : r.parts.join('、'));
+        if (!wrap) {
+            if (r.parts.length) texts.push(r.parts.join('、'));
+            return;
+        }
+        const own = r.parts.slice(0, r.parts.length - r.addonParts.length);
+        if (own.length) texts.push(`${wrap}(${own.join('，')})`);
+        texts.push(...r.addonParts);
     };
     if (hasMain) take(root.querySelector('[data-key="main"]'), '');
     sides.forEach((side, i) => take(root.querySelector(`[data-key="side${i}"]`), side.name));

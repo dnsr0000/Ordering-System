@@ -31,13 +31,18 @@
 .env 的值優先於系統環境變數。
   一般
     ADMIN_USERNAME / ADMIN_PASSWORD   預設店家負責人 (第一次建立時使用)
-    RESET_ADMIN_PASSWORD_ON_START     1 = 重啟時把負責人密碼重設為 ADMIN_PASSWORD (忘記密碼時用，用完改回 0)
+    RESET_ADMIN_PASSWORD_ON_START     1 = 重啟時把負責人密碼重設為 ADMIN_PASSWORD (忘記密碼時用，用完改回 0)；
+                                      ADMIN_USERNAME 留空時沿用既有負責人的帳號名稱 (記錄檔會寫出帳號)，只把密碼重設為
+                                      ADMIN_PASSWORD；ADMIN_PASSWORD 留空時 (不論 ADMIN_USERNAME)，則把負責人輪替成一組
+                                      新的隨機帳密 (印在啟動畫面)
     SECRET_KEY                        Session 簽章金鑰；留空自動產生並存於 database/.secret_key (線上端必填)
     DATABASE_URL                      留空 = database/menu.db (SQLite)；線上端為 postgresql://…
     AUTO_MIGRATE                      1 = 啟動時升級資料庫；0 = 需先執行 flask --app run setup
     UPLOAD_FOLDER_MEMBER / _MENU      上傳檔位置 (預設 uploads/member、uploads/menu)
     HOST / PORT                       python run.py 的監聽位址與埠號 (預設 0.0.0.0:5000；FLASK_DEBUG=1 時只監聽本機)
     WAITRESS_THREADS                  Waitress 執行緒數 (每條 SSE 看板連線占 1 條，預設 128)
+    BUSINESS_DAY_START_HOUR           營業日換日時間 (0~12 點，預設 0)；營業跨午夜的店設 4 → 凌晨 04:00 才換日結案，
+                                      各看板的「今天的訂單」與取餐號也依此計算
   安全
     TRUSTED_PROXY_COUNT               前面有幾層反向代理 (直接對外 0；Nginx / Cloudflare / Caddy 後面 1)
     SESSION_COOKIE_SECURE             全站 HTTPS 時 1 (門市以 http://區網IP 使用時維持 0)
@@ -90,7 +95,9 @@
   flask --app run payments expire                    (線上端) 取消逾時未付款的訂單 (背景也會每分鐘執行)
   flask --app run privacy purge-inactive [--apply]   刪除停止使用超過設定月數的會員 (多分店時在線上端執行)
   flask --app run tables check [--fix]               檢查桌邊點餐的資料衝突 (沒有桌位的未結帳訂單、已取消卻已收款、
-                                                     久未結帳)；--fix 把「已取消卻已收款」改為需退款
+                                                     跨店桌位、久未結帳)；--fix 把「已取消卻已收款」改為需退款。
+                                                     有問題時結束代碼為 1；加 --fix 時，修正後仍有需人工確認的項目
+                                                     (沒有桌位的未結帳訂單、久未結帳、跨店桌位) 也回 1
   flask --app run ops check-integrations            檢查後台填寫的外部服務 (電子發票、LINE Pay、LINE、簡訊、SMTP、外送平台)
   flask --app run ops retry-invoices                 立即重送待開立的電子發票 (背景每 5 分鐘也會執行)
   flask --app run ops backup [--keep-days 14]        立即備份門市資料庫到 database/backups/

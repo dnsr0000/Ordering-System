@@ -1,10 +1,16 @@
 """
 原物料庫存：原料、配方 (每份餐點用量)、進貨 / 扣料 / 盤點異動、供應商與採購單、批號效期 (門市本機資料，不同步)
 """
+import math
 from datetime import datetime
 
 from app.extensions import db
 from app.models.mixins import CreatedAtMixin, TenantScoped
+
+
+def _finite_round(value):
+    """金額四捨五入到元；數量 / 單價為異常極大值 (例如 1e308) 相乘溢位成 inf / nan 時回傳 0，避免 round() 拋 OverflowError"""
+    return round(value) if math.isfinite(value) else 0
 
 
 class Ingredient(TenantScoped, db.Model):
@@ -104,7 +110,7 @@ class PurchaseOrder(CreatedAtMixin, TenantScoped, db.Model):
 
     @property
     def total(self):
-        return round(sum((ln.quantity or 0) * (ln.unit_cost or 0) for ln in self.lines))
+        return _finite_round(sum((ln.quantity or 0) * (ln.unit_cost or 0) for ln in self.lines))
 
 
 class PurchaseOrderLine(TenantScoped, db.Model):
@@ -118,6 +124,11 @@ class PurchaseOrderLine(TenantScoped, db.Model):
     received_qty = db.Column(db.Float, nullable=True)
 
     ingredient = db.relationship('Ingredient')
+
+    @property
+    def amount(self):
+        """小計 (數量 × 單價，四捨五入到元)；異常極大值溢位時為 0，頁面不會 500"""
+        return _finite_round((self.quantity or 0) * (self.unit_cost or 0))
 
 
 class IngredientLot(TenantScoped, db.Model):

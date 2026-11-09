@@ -25,8 +25,8 @@ import {
     quickCash, recalcTotals, setTable, togglePoints, updateCashChange,
 } from './pos/totals.js';
 import {
-    addTender, applyLinePrice, applyOrderDiscount, openPriceModal, readTenders, resetLinePrice, submitOrder, syncTenderRows,
-    toggleDeliveryMode,
+    addTender, applyLinePrice, applyOrderDiscount, openPriceModal, readTenders, resetLinePrice, submitOrder, syncQuickNotes,
+    syncTenderRows, toggleDeliveryMode,
 } from './pos/checkout.js';
 import {
     drawFloor, filterLiveOrders, getHeld, holdOrder, openHoldModal, openLiveOrders, openTables, recallHold,
@@ -40,13 +40,21 @@ import './pos/split.js';
 // ======================================================================
 // 11. 事件綁定
 // ======================================================================
+/** 掛單：結帳進行中 (含 LINE Pay 付款碼、主管核准等視窗) 不可掛單，否則同一份餐點取回後會再結一次 */
+function holdCurrentOrder() {
+    if (state.submitting) return;
+    holdOrder();
+    syncQuickNotes();   // 掛單後整單備註已清空，常用備註反白跟著清掉
+}
+
+
 Kiosk.on(document, 'click', {
     quickNote: (el) => {   // 常用備註快捷鍵：加進整單備註 (已有就移除，像開關)
         const input = $('posOrderNote');
         const parts = (input.value || '').split(/[、,，]\s*/).map((x) => x.trim()).filter(Boolean);
         const note = el.dataset.note;
         input.value = (parts.includes(note) ? parts.filter((x) => x !== note) : [...parts, note]).join('、');
-        el.classList.toggle('active', !parts.includes(note));
+        syncQuickNotes();
     },
     category: (el) => selectCategory(el),
     clearSearch: () => clearSearch(),
@@ -64,10 +72,13 @@ Kiosk.on(document, 'click', {
     applyPromo: () => applyPromo(),
     setTable: (el) => setTable(el.dataset.value),
     quickCash: (el) => quickCash(el.dataset.mode),
-    holdOrder: () => holdOrder(),
+    holdOrder: () => holdCurrentOrder(),
     submitOrder: () => submitOrder(),
     openHold: () => openHoldModal(),
-    recallHold: (el) => recallHold(Number(el.dataset.idx)),
+    recallHold: (el) => {
+        recallHold(Number(el.dataset.idx));
+        syncQuickNotes();   // 取回的整單備註與常用備註反白一致
+    },
     removeHold: (el) => removeHold(Number(el.dataset.idx)),
     openLiveOrders: () => openLiveOrders(),
     tablesView: (el) => setTablesView(el.dataset.view),
@@ -122,6 +133,7 @@ if ($('posRush')) $('posRush').addEventListener('change', () => {});
 
 
 $('posSearchInput').addEventListener('input', filterMenu);
+$('posOrderNote').addEventListener('input', syncQuickNotes);
 if ($('posTablesGrid')) {
     $('posTablesGrid').addEventListener('input', tableCardChanged);
     $('posTablesGrid').addEventListener('change', tableCardChanged);
@@ -158,12 +170,12 @@ $('posReceiptModal').addEventListener('shown.bs.modal', () => $('rcpt-close-btn'
 // 條碼掃描槍 (鍵盤模擬)：焦點不在輸入框時，短時間內連續輸入的字元 + Enter 視為一次掃描
 const scanBuffer = { text: '', at: 0 };
 document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'F2') {
+    if (ev.key === 'F2' || ev.key === 'F4') {
         ev.preventDefault();
-        submitOrder();
-    } else if (ev.key === 'F4') {
-        ev.preventDefault();
-        holdOrder();
+        // 結帳進行中或有視窗開著 (客製化 / 套餐 / LINE Pay / 核准…) 時快捷鍵不動作，避免結到未完成的購物車或重複結帳
+        if (state.submitting || document.querySelector('.modal.show')) return;
+        if (ev.key === 'F2') submitOrder();
+        else holdCurrentOrder();
     } else if (ev.key === 'Escape' && document.activeElement === $('posSearchInput')) {
         clearSearch();
     } else if (ev.key === 'Enter' && document.activeElement === $('posSearchInput')) {
@@ -173,7 +185,11 @@ document.addEventListener('keydown', (ev) => {
                && !document.querySelector('.modal.show')) {
         const now = Date.now();
         if (ev.key === 'Enter') {
-            if (scanBuffer.text.length >= 3 && now - scanBuffer.at < 1500 && scanCode(scanBuffer.text)) ev.preventDefault();
+            // 判定為掃描輸入時一律攔下 Enter：查無條碼時也不可觸發焦點所在的按鈕 (清空 / 掛單…)
+            if (scanBuffer.text.length >= 3 && now - scanBuffer.at < 1500) {
+                ev.preventDefault();
+                if (!scanCode(scanBuffer.text)) alert(`⚠️ 查無此條碼：${scanBuffer.text}`);
+            }
             scanBuffer.text = '';
         } else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
             if (now - scanBuffer.at > 300) scanBuffer.text = '';

@@ -63,7 +63,12 @@ def test_face_status_reports_missing_models(monkeypatch, tmp_path):
         assert ok is False and 'x.onnx' in reason and 'models download' in reason
     else:
         assert cv_service.face_status()[0] is False
-    assert cv_service.get_face_models() == (None, None) or cv_service.FACE_AVAILABLE
+    # 缺檔時不載入模型：get_face_models 讀的是 Config 的模型路徑與模組快取，兩者都要指向「沒有模型」的狀態
+    monkeypatch.setattr(cv_service.Config, 'SFACE_MODEL', str(tmp_path / 'missing-sface.onnx'))
+    monkeypatch.setattr(cv_service.Config, 'YUNET_MODEL', str(tmp_path / 'missing-yunet.onnx'))
+    monkeypatch.setattr(cv_service, '_detector', None)
+    monkeypatch.setattr(cv_service, '_recognizer', None)
+    assert cv_service.get_face_models() == (None, None)
     assert cv_service.find_best_match_vectorized(None, []) == (None, 0.0)
 
 

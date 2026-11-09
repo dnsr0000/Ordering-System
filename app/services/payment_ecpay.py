@@ -8,7 +8,8 @@
    訂單這時才同步到取餐分店；回應純文字 1|OK (否則綠界會在 5~15 分鐘後重送，一天最多 4 次)
 3. 顧客瀏覽器由 OrderResultURL 回到本站顯示結果 (僅顯示用，以 ReturnURL 的通知為準)
 4. 超過 PAYMENT_TIMEOUT_MINUTES 仍未收到通知：先向綠界查詢訂單，確定未付款才取消並回補庫存與點數
-   (ATM / 超商代碼：綠界取號後以 PaymentInfoURL 通知繳費期限，期限過後才取消)
+   (ATM / 超商代碼：綠界取號後以 PaymentInfoURL 通知繳費期限，期限過後才取消；
+   快到期才重新開啟付款頁時，以最近一次綠界交易的成立時間再給一次完整的時限)
 5. 取消已用信用卡 / Apple Pay 付款的訂單：可設定自動向綠界退刷 (信用卡請退款 CreditDetail/DoAction)，
    失敗或未開啟時在後台「作廢與退款紀錄」手動處理 / 重試
 
@@ -27,7 +28,7 @@ from datetime import datetime, timedelta
 
 import requests
 from flask import Response, abort, current_app, redirect, render_template, request
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from app.errors import AppError
 from app.extensions import db
@@ -116,7 +117,9 @@ def verify(params):
         logger.warning('拒絕綠界通知 %s：使用公開測試金鑰且未設定 ECPAY_ALLOW_TEST_KEYS=1', params.get('MerchantTradeNo'))
         return False
     given = str(params.get('CheckMacValue', ''))
-    return bool(given) and secrets.compare_digest(given.upper(), check_mac_value(params, hash_key, hash_iv))
+    # compare_digest 遇到含非 ASCII 字元的 str 會拋 TypeError (公開端點回 500)：檢查碼只會是 ASCII，其他直接視為錯誤
+    return bool(given) and given.isascii() and \
+        secrets.compare_digest(given.upper(), check_mac_value(params, hash_key, hash_iv))
 
 
 def ecpay_unique_no(ts_fmt='%y%m%d', rand_len=13):
@@ -133,6 +136,13 @@ def new_trade_no():
     return ecpay_unique_no('%y%m%d', 13)
 
 
+MAX_PAYMENT_REFS = 20   # Order.payment_refs 最多保留最近幾個特店訂單編號
+
+
+def payment_refs_of(refs_csv, latest=None):
+    """Order.payment_refs (逗號分隔) → 編號清單 (舊到新)；latest (目前的 payment_ref) 一律排在最後 (最新)"""
+    refs = [r for r in str(refs_csv or '').split(',') if r and r != latest]
+    return refs + ([latest] if latest else [])
 
 
 def _item_name(order):
@@ -191,6 +201,9 @@ def build_payment_form(order, base_url=None):
     from app.services import settings_service
     trade_no = new_trade_no()
     order.payment_ref = trade_no
+    # 歷次產生的編號 (顧客可能用較早開啟的付款頁付款)：付款通知據此驗證、逾時查詢逐一查詢；最多保留最近 20 個
+    refs = [r for r in (order.payment_refs or '').split(',') if r]
+    order.payment_refs = ','.join((refs + [trade_no])[-MAX_PAYMENT_REFS:])
     db.session.commit()
     choose, ignore = payment_choice(order.tenant_id)
     extra = {'IgnorePayment': ignore} if ignore else {}
@@ -289,8 +302,18 @@ def parse_result(form, label='付款'):
 
 
 def _touch_order_rows(order):
-    """付款完成：讓訂單與明細重新出現在同步中 (先前待付款時分店不會收到這些列)"""
+    """
+    付款完成：讓訂單明細重新出現在同步中 (先前待付款時分店不會收到這些列)。
+    建單時一併寫入的異動帳 (寄杯、兌換憑證、點數、儲值金、集點、禮物卡) 待付款期間就可能已送到分店，
+    當時分店找不到訂單而存成 order_id 為空；這裡一併重新標記，讓它們跟著訂單再送一次 (分店據此補上 order_id，
+    取消這張訂單時才找得到要回補的紀錄)。
+    """
+    from app.models.member import GiftCardLedger, PassLedger, StampLedger, WalletLedger
+    from app.models.sync import PointLedger
+    from app.models.user import RewardRedemption
     marker = tracking.mark_rows(db.session, OrderItem, OrderItem.__table__.c.order_id == order.id)
+    for model in (RewardRedemption, PointLedger, WalletLedger, StampLedger, GiftCardLedger, PassLedger):
+        tracking.mark_rows(db.session, model, model.__table__.c.order_id == order.id)
     return marker
 
 
@@ -306,11 +329,17 @@ def method_for(payment_type):
     return PaymentMethod.CREDIT_CARD
 
 
-def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None):
+def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None, merchant_trade_no=None):
     """
-    標記已付款 (只有「待付款且未取消」→ paid)。回傳 'paid' / 'already' / 'refund_required' / 'amount_mismatch' / 'not_found'。
+    標記已付款 (只有「待付款且未取消」→ paid)。
+    回傳 'paid' / 'already' / 'duplicate' / 'refund_required' / 'amount_mismatch' / 'not_found'。
     訂單已逾時或已取消後才收到付款：標記 refund_required，讓後台人工退款。
     判斷與更新在同一個條件式 UPDATE 中完成，與逾時取消、店員取消同時發生時也不會漏標退款。
+    merchant_trade_no：實際付款的特店訂單編號 (顧客可能開過多次付款頁、用較早的那一頁付款)，寫回 payment_ref 供退刷使用；
+    這個編號與 CustomField1 (訂單 uuid) 一起經綠界簽章，只會是本系統替這張訂單產生過的編號。
+    同一張訂單已用另一筆綠界交易付過款 (兩個付款頁都付了)：回傳 'duplicate' 並發出告警，需人工退還重複的款項。
+    編號不在這張訂單歷次產生過的編號 (payment_refs / payment_ref) 中時不覆寫 payment_ref；
+    升級前建立的訂單沒有 payment_refs 紀錄，沿用通知帶回的編號。
     """
     from app.services.event_bus import order_event_bus
     from app.tenant_context import tenant_bypass
@@ -318,6 +347,14 @@ def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None):
         order = Order.query.filter_by(uuid=order_uuid).first()
         if order is None:
             return 'not_found'
+        ref = {}
+        if merchant_trade_no:
+            merchant_trade_no = str(merchant_trade_no)[:20]
+            if not order.payment_refs or merchant_trade_no in payment_refs_of(order.payment_refs, order.payment_ref):
+                ref = {'payment_ref': merchant_trade_no}
+            else:
+                logger.warning('訂單 %s 的付款通知特店訂單編號 %s 不是本訂單產生過的編號，不覆寫 payment_ref',
+                               order_uuid, merchant_trade_no)
         if int(amount or 0) != int(order.total_price or 0):
             logger.error('綠界付款金額不符：訂單 %s 應付 %s，通知金額 %s', order_uuid, order.total_price, amount)
             return 'amount_mismatch'
@@ -327,25 +364,57 @@ def mark_paid(order_uuid, trade_no, amount, paid_at=None, payment_type=None):
             update(Order).where(Order.id == order.id, Order.payment_status == 'pending',
                                 Order.status != OrderStatus.CANCELLED)
             .values(payment_status='paid', payment_trade_no=trade_no, paid_at=paid_at,
-                    payment_method=method)
+                    payment_method=method, **ref)
             .execution_options(synchronize_session=False)).rowcount
         if not swapped:
             refund = db.session.execute(
                 update(Order).where(Order.id == order.id, Order.payment_status.in_(('pending', 'expired')))
                 .values(payment_status='refund_required', payment_trade_no=trade_no, paid_at=paid_at,
-                        payment_method=method)
+                        payment_method=method, **ref)
                 .execution_options(synchronize_session=False)).rowcount
             db.session.commit()
             if refund:
                 logger.warning('訂單 %s 已取消後才收到付款，需人工退款 (綠界交易 %s)', order_uuid, trade_no)
                 return 'refund_required'
+            recorded = order.payment_trade_no   # 提交後重新讀取 (同時到達的另一筆通知可能剛寫入)
+            if trade_no and recorded and str(trade_no) != recorded:
+                logger.warning('訂單 %s 重複付款：已記錄綠界交易 %s，又收到交易 %s ($%s)', order_uuid, recorded, trade_no, amount)
+                from app.services import monitor_service
+                monitor_service.alert(f'線上訂單 #{order.id} 重複付款 ${int(amount or 0)} (綠界交易 {trade_no}，'
+                                      f'原付款交易 {recorded})，請到綠界後台退還重複的款項',
+                                      key=f'order-dup-pay-{trade_no}', tenant_id=order.tenant_id,
+                                      level='warning', source='payment')
+                return 'duplicate'
             return 'already'
+        # 舊資料：修正前換日自動結案會把待付款的單改成已出餐 (completed_at 為空)，付款後改回製作中才會進分店廚房
+        db.session.execute(
+            update(Order).where(Order.id == order.id, Order.status == OrderStatus.COMPLETED,
+                                Order.completed_at.is_(None))
+            .values(status=OrderStatus.PENDING)
+            .execution_options(synchronize_session=False))
         _touch_order_rows(order)
         tenant_id = order.tenant_id
         _after_online_paid(order, trade_no, method)
         db.session.commit()
+        _warn_if_node_disabled(order)
     order_event_bus.notify(tenant_id)
     return 'paid'
+
+
+def _warn_if_node_disabled(order):
+    """已付款的線上單指定的取餐分店已停用：停用期間分店收不到這張訂單，只警示 (不改付款狀態)"""
+    if not order.node_uuid:
+        return
+    from app.models.sync import SyncNode
+    node = SyncNode.query.filter_by(tenant_id=order.tenant_id, uuid=order.node_uuid) \
+        .execution_options(skip_tenant_filter=True).first()
+    if node is None or node.is_active:
+        return
+    from app.services import monitor_service
+    monitor_service.alert(f'線上訂單 #{order.id} 已付款，但取餐分店【{node.name}】已停用，停用期間分店收不到這張訂單；'
+                          '請重新啟用分店或取消並退款',
+                          key=f'order-node-disabled-{order.uuid}', tenant_id=order.tenant_id,
+                          level='warning', source='payment')
 
 
 def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
@@ -369,7 +438,7 @@ def _after_online_paid(order, trade_no, method=PaymentMethod.CREDIT_CARD):
 def _mark_paid_from(params, paid_at=None):
     """通知 / 瀏覽器帶回的參數 → mark_paid (CustomField1 為訂單 uuid)"""
     return mark_paid(params.get('CustomField1'), params.get('TradeNo'), params.get('TradeAmt'), paid_at,
-                     params.get('PaymentType'))
+                     params.get('PaymentType'), merchant_trade_no=params.get('MerchantTradeNo'))
 
 
 def handle_notification(form):
@@ -463,30 +532,54 @@ def expire_unpaid_orders(force=False, query=query_trade):
     from app.models.tenant import StaffAccount
     from app.services.order_service import change_order_status
     from app.tenant_context import tenant_bypass
-    deadline = datetime.now() - timedelta(minutes=current_app.config.get('PAYMENT_TIMEOUT_MINUTES', 15))
+    timeout = timedelta(minutes=current_app.config.get('PAYMENT_TIMEOUT_MINUTES', 15))
+    deadline = datetime.now() - timeout
     cancelled = 0
     with tenant_bypass():
+        # 已標記逾時、但取消時失敗 (例如資料庫暫時鎖住) 的訂單也要再試一次取消，否則點數、優惠券與庫存永遠不回補
         stale = db.session.execute(select(Order.id, Order.uuid, Order.tenant_id, Order.payment_ref, Order.total_price,
-                                          Order.payment_due_at)
-                                   .where(Order.payment_status == 'pending', Order.created_at < deadline)).all()
+                                          Order.payment_due_at, Order.payment_status, Order.payment_refs)
+                                   .where(or_(and_(Order.payment_status == 'pending', Order.created_at < deadline),
+                                              and_(Order.payment_status == 'expired',
+                                                   Order.status != OrderStatus.CANCELLED)))).all()
     now = datetime.now()
-    for order_id, uuid, tenant_id, ref, total, due_at in stale:
-        if due_at is not None and now < due_at + timedelta(minutes=DUE_GRACE_MINUTES):
-            continue   # ATM / 超商代碼：繳費期限內 (另加入帳緩衝) 不取消
-        info = query(ref) if ref else {'TradeStatus': '10200095'}
-        if info is None:
-            continue  # 查不到 (網路問題)：下次再試，不冒險取消
-        if str(info.get('TradeStatus')) == '1':
-            mark_paid(uuid, info.get('TradeNo'), info.get('TradeAmt') or total, payment_type=info.get('PaymentType'))
-            continue
-        with tenant_bypass():
-            # 先把付款狀態改為逾時 (條件式，與付款通知只有一方成功)；之後才到的付款會被標記為需退款
-            expired = db.session.execute(update(Order).where(Order.id == order_id, Order.payment_status == 'pending')
-                                         .values(payment_status='expired')
-                                         .execution_options(synchronize_session=False)).rowcount
-            db.session.commit()
+    for order_id, uuid, tenant_id, ref, total, due_at, pay_status, refs_csv in stale:
+        if pay_status == 'pending':
+            if due_at is not None and now < due_at + timedelta(minutes=DUE_GRACE_MINUTES):
+                continue   # ATM / 超商代碼：繳費期限內 (另加入帳緩衝) 不取消
+            # 顧客可能開過多次付款頁、用較早的那一頁付款：從最新的編號往回逐一查詢
+            refs = payment_refs_of(refs_csv, ref)
+            latest, settled = None, False
+            for r in reversed(refs):
+                info = query(r)
+                if info is None:
+                    settled = True   # 查不到 (網路問題)：下次再試，不冒險取消
+                    break
+                if str(info.get('TradeStatus')) == '1':
+                    mark_paid(uuid, info.get('TradeNo'), info.get('TradeAmt') or total,
+                              payment_type=info.get('PaymentType'), merchant_trade_no=info.get('MerchantTradeNo') or r)
+                    settled = True
+                    break
+                if latest is None:
+                    latest = info
+            if settled:
+                continue
+            info = latest if refs else {'TradeStatus': '10200095'}
+            # 都未付款：以最新那筆綠界交易的成立時間判斷是否仍在付款時限內
+            started = parse_paid_at(info.get('TradeDate'))
+            if started is not None and now < started + timeout:
+                # 期限是從建單起算，但顧客可能快到期才從「我的訂單」重新付款 (每次都是新的綠界交易，頁面顯示完整的分鐘數)：
+                # 這筆綠界交易成立未滿付款時限 (例如還在 3D 驗證) 就先不取消
+                continue
+            with tenant_bypass():
+                # 先把付款狀態改為逾時 (條件式，與付款通知只有一方成功)；之後才到的付款會被標記為需退款
+                expired = db.session.execute(update(Order).where(Order.id == order_id, Order.payment_status == 'pending')
+                                             .values(payment_status='expired')
+                                             .execution_options(synchronize_session=False)).rowcount
+                db.session.commit()
             if not expired:
                 continue  # 剛好付款完成
+        with tenant_bypass():
             system = StaffAccount(tenant_id=tenant_id, username='系統 (付款逾時)', role='owner', password_hash='-')
             try:
                 change_order_status(order_id, OrderStatus.CANCELLED, system, tenant_id)

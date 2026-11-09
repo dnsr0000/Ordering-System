@@ -2,8 +2,7 @@
  * 全站共用的深色主題。頁面搭配 <html data-bs-theme="dark"> 使用 Bootstrap 5.3 內建深色模式，
  * 這裡只放品牌色與 Bootstrap 沒處理到的對比修正；頁面專屬樣式放在 static/css/<頁面>.css。
  */
-:root,
-[data-bs-theme="dark"] {
+:root {
     --kiosk-bg: #0b0f19;
     --kiosk-surface: #151e32;
     --kiosk-card: #1e293b;
@@ -15,7 +14,12 @@
     --kiosk-warning: #eab308;
     --kiosk-danger: #ef4444;
     --kiosk-font: "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", -apple-system, "Segoe UI", sans-serif;
+}
 
+/* 深色的 Bootstrap 變數：樣板宣告淺色的頁面 (採購單 / 團購分裝 / 桌卡列印，base.html 的 data-page-theme) 不套用，
+ * 維持 Bootstrap 原本的淺色變數；顧客頁以按鈕切換的淺色仍沿用 (customer.css 的淺色覆寫以此為基礎) */
+:root:not([data-page-theme="light"]),
+[data-bs-theme="dark"] {
     --bs-body-bg: var(--kiosk-bg);
     --bs-body-color: var(--kiosk-text);
     --bs-body-font-family: var(--kiosk-font);
@@ -143,6 +147,8 @@ select option {
 /* 斷線提示 (common.js) */
 .offline-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 3000; text-align: center; padding: .4rem;
     background: #b02a37; color: #fff; font-weight: 700; }
+/* 斷線時點餐機左下角的「暫存單」按鈕 (kiosk-offline.js) 移到提示條上方，不被蓋住 (--offline-banner-h 由 common.js 設定) */
+#offlineQueueBadge { bottom: calc(12px + var(--offline-banner-h, 0px)) !important; }
 
 /* 大字 / 高對比模式 (點餐頁「大字」按鈕，見 common.js) */
 html.a11y-large { font-size: 125%; }
@@ -195,6 +201,8 @@ html.a11y-large :focus-visible { outline: 4px solid #ffc107 !important; outline-
 .fp-occupied { border-color: #ffc107; background: #4a3d12; }
 .fp-calling { border-color: #dc3545; background: #4a1820; animation: fp-blink 1.2s infinite; }
 .fp-reserved { border-color: #0dcaf0; background: #10333d; }
+.fp-table.is-inactive { border-style: dashed; opacity: .75; }
+.fp-inactive-tag { font-size: .6rem; vertical-align: middle; }
 @keyframes fp-blink { 50% { box-shadow: 0 0 0 4px rgba(220, 53, 69, .45); } }
 @media (prefers-reduced-motion: reduce) { .fp-calling { animation: none; } }
 .fp-legend { border: 2px solid; color: #fff; }
