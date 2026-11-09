@@ -1,9 +1,9 @@
 """修正小組 ops-backup-maintenance-2 的回歸測試：系統監控事件跨店外洩、一鍵更新路徑含空白、待處理磁磚連結"""
 import html as html_lib
 import json
-import os
 import re
 import subprocess
+import sys
 import uuid
 from datetime import datetime, timedelta
 
@@ -68,7 +68,7 @@ def test_update_apply_quotes_paths_with_spaces(app, monkeypatch, tmp_path):
     cmd = captured['args']
     assert isinstance(cmd, str) and cmd.startswith('cmd.exe /s /c ""') and cmd.endswith('""')
     assert f'"{running}"' in cmd and f'"{zip_path}"' in cmd
-    if os.name == 'nt':   # 實際以 cmd 執行一次 (不分離行程，等它跑完)，確認含空白的路徑沒有被截斷
+    if sys.platform == 'win32':   # (os.name 已被上面改成 'nt'，要看實際平台) 實際以 cmd 執行一次 (不分離行程，等它跑完)，確認含空白的路徑沒有被截斷
         monkeypatch.undo()
         rc = subprocess.run(cmd, cwd=str(root), check=False, timeout=30).returncode
         assert rc == 0 and marker.exists()
