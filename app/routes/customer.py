@@ -1,3 +1,6 @@
+
+from app.services import menu_service
+
 import re
 from datetime import datetime
 from types import SimpleNamespace
@@ -18,7 +21,7 @@ from app.services import (branch_service, coupon_service, eta_service, feedback_
                           pickup_service, privacy_service, receipt_service, reorder_service, settings_service,
                           table_pay_service, table_service)
 from app.services.customer_session import close_customer_session, current_member, needs_pin_confirm, require_confirmed
-from app.services.menu_service import menu_categories, storefront_payload
+
 from app.services.order_service import find_by_client_order_id, find_promo, process_checkout
 from app.services.reward_service import get_or_create_reward_setting
 from app.sync import runtime as sync_runtime
@@ -131,37 +134,44 @@ def customer_index():
     if member is None and not is_hub and session.get('line_pending'):
         # 共用點餐機：授權 LINE 後沒有登入 / 註冊就回到點餐首頁 → 作廢待綁定 (不可綁到下一位註冊 / 登入的顧客)
         session.pop('line_pending', None)
-    pickup_nodes = _online_nodes() if is_hub else []
-    pickup_node = _pickup_node(pickup_nodes) if is_hub else None
+        
+    # --- 改由 menu_service 處理分店與庫存 ---
+    pickup_nodes = menu_service.get_online_nodes(g.tenant_id) if is_hub else []
+    pickup_node = menu_service.resolve_pickup_node(pickup_nodes) if is_hub else None
+    
     # 分店價格 / 上下架 (線上端依顧客選擇的取餐分店)：下架的餐點不顯示
     branch_service.activate(g.tenant_id, branch_service.storefront_branch(pickup_node))
     items = [i for i in items if not i.is_branch_hidden]
-    node_stock = _node_stock(pickup_node) if is_hub else None
-    sold_out_ids = _sold_out_ids(items, node_stock)
+    node_stock = menu_service.get_node_stock(pickup_node) if is_hub else None
+    sold_out_ids = menu_service.get_sold_out_ids(items, node_stock)
+    
     # 不在供應時段 / 販售期間、或原料不足 (禁止販售模式) 的餐點：顯示原因並不可點
     unavailable = {i.id: i18n_service.translate_message(i.service_status()[1]) for i in items if not i.service_status()[0]}
     for item_id in (inventory_service.shortage_items(g.tenant_id) if not is_hub else ()):
         unavailable.setdefault(item_id, '')
         sold_out_ids = sold_out_ids | {item_id}
-    menu_data = storefront_payload(items, modifiers, setting)
+        
+    menu_data = menu_service.storefront_payload(items, modifiers, setting)
     if is_hub:
-        _apply_node_stock(menu_data, node_stock, sold_out_ids)
+        menu_service.apply_node_stock_to_payload(menu_data, node_stock, sold_out_ids)
+        
     for data in menu_data['items']:
         if data['id'] in sold_out_ids or data['id'] in unavailable:
             data['is_available'] = False
+            
     lang = i18n_service.current_language()
     pro = _storefront_extras(member, dining_table=None if is_hub else table_service.current_table(), is_hub=is_hub,
                              pickup_node=pickup_node)
     return render_template(
         'customer.html',
         items=items,
-        categories=menu_categories(items),
+        categories=menu_service.menu_categories(items),
         member=member,
         needs_privacy_consent=privacy_service.needs_consent(member),
         user_points=member.points if member else 0,
         user_coupons=coupon_service.usable_coupons(member.id) if member else [],
         member_passes=[mp.to_dict() for mp in pass_service.member_passes(member.id)] if member else [],
-        personalized_items=[i for i in _favorite_items(member.id) if not i.is_branch_hidden] if member else [],
+        personalized_items=[i for i in menu_service.get_favorite_items(member.id) if not i.is_branch_hidden] if member else [],
         is_guest=bool(session.get('is_guest')),
         reward_setting=setting,
         modifier_options=modifiers,
@@ -181,12 +191,10 @@ def customer_index():
         lang=lang, langs=i18n_service.available_languages(), lang_labels=i18n_service.LANG_LABELS,
         ui=i18n_service.ui_strings(lang), cat_labels=i18n_service.category_labels(lang),
         allergen_labels=i18n_service.allergen_labels(lang), diet_labels=i18n_service.diet_labels(lang),
-        used_allergens=sorted({a for i in items for a in i.allergen_codes}),   # 飲食篩選列只列菜單用到的過敏原
+        used_allergens=sorted({a for i in items for a in i.allergen_codes}),
         pro=pro,
-        # 待機輪播只在門市點餐機首頁 (未登入、不是顧客手機掃桌位 QR code)
         attract=None if member is not None or session.get('user_name') or (not is_hub and table_service.current_table())
         else _attract_slides(items, is_hub),
-        # 未登入頁的顧客好評 (店長在顧客評價頁勾「公開」的，匿名)
         public_reviews=feedback_service.public_reviews(g.tenant_id) if not session.get('user_name') else [],
         chat=_chat_widget(),
     )

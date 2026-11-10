@@ -10,6 +10,7 @@ from datetime import datetime, time, timedelta
 from flask import current_app, has_app_context
 from sqlalchemy import and_, case, func, or_, select, update
 
+from app.domain.lifecycle.service import LifecycleDomainService
 from app.errors import AppError
 from app.extensions import db
 from app.models.coupon import UserCoupon
@@ -82,6 +83,7 @@ def change_order_status(order_id, target_status, staff, tenant_id, approve=None,
     if order is None or order.tenant_id != tenant_id:
         raise AppError('查無此訂單！', 404)
     current = OrderStatus(order.status)
+    LifecycleDomainService.validate_transition(current.value, target.value)
     if current == target:
         raise AppError(f'訂單已處於【{ORDER_STATUS_LABELS.get(current, current)}】狀態，請勿重複操作！', 409)
     if target not in LEGAL_TRANSITIONS[current]:

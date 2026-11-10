@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
+from app.domain.order.service import OrderDomainService
+from app.domain.pricing.service import PricingDomainService
 from app.errors import AppError
 from app.extensions import db
 from app.models.enums import (
@@ -287,7 +289,7 @@ def _price(c):
     c.service_charge = 0
     pct = c.pos_cfg.get('service_charge_percent') or 0
     if pct > 0 and _service_charge_applies(c.order_source, c.order_type, c.pos_cfg):
-        c.service_charge = int(math.floor(c.after_discounts * pct / 100 + 0.5))
+        c.service_charge = PricingDomainService.calculate_service_charge(c.after_discounts, pct)
 
     # 外送到府：依配送區域加外送費 (最低消費以商品小計計算)
     c.delivery_fee = 0
@@ -298,6 +300,15 @@ def _price(c):
 
     # 應付金額四捨五入到整數元，折扣總額以「小計 + 服務費 + 外送費 - 應付」反推，確保金額一致
     c.final_price = int(math.floor(c.after_discounts + 0.5)) + c.service_charge + c.delivery_fee
+    c.total_discount = max(0, c.subtotal + c.service_charge + c.delivery_fee - c.final_price)
+    server_total = OrderDomainService.validate_expected_total(
+        c.subtotal,
+        c.total_discount,
+        service_charge=c.service_charge,
+        delivery_fee=c.delivery_fee,
+        expected_total=c.expected_total,
+    )
+    c.final_price = int(math.floor(server_total + 0.5))
     if c.expected_total not in (None, '') and safe_int(c.expected_total, -1) != c.final_price:
         raise AppError(f'金額已變動：畫面顯示 ${safe_int(c.expected_total, 0)}，目前應付 ${c.final_price} '
                        f'(可能剛調整價格、優惠或點數)，已更新為最新金額，請確認後再送出！', 409, price_changed=True,
@@ -307,7 +318,6 @@ def _price(c):
                                or (c.payment_status == 'unpaid' and c.dining_table is None)):
         # 應付 $0 (點數全額折抵、全額優惠、只兌換紅利商品)：沒有要收的款項，不導向綠界 / 不向 LINE Pay 扣 0 元，直接成立
         c.payment_status, c.one_time_key = '', ''
-    c.total_discount = max(0, c.subtotal + c.service_charge + c.delivery_fee - c.final_price)
     # 贈點倍數：0 = 此等級不累積點數 (後台允許設為 0，不可當成沒設定)
     multiplier = max(0, c.tier.points_multiplier) if c.tier is not None and c.tier.points_multiplier is not None else 1
     # 本單可得的贈點先記在訂單上；實際入帳在付款完成時 (grant_paid_rewards)

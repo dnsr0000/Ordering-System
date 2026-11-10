@@ -15,6 +15,7 @@
 - 重送：前端每次結帳產生一個 client_order_id (存為 Order.client_order_id，同店唯一索引)，重送時直接回傳同一張訂單；
   Order.uuid 由伺服器產生 (追蹤頁憑證)。
 """
+from app.domain.order.service import OrderDomainService
 from app.services.order_pricing import (  # noqa: F401
     NON_MAIN_ADDON_CATEGORIES, _PRICE_TAG, _COMBO_TAG, PromoResult, normalize_code, find_promo, _addon_qualifies,
     _validate_addon_quota, CheckoutLine, _clean_customization, _combo_choice_sides, _check_combo_sides,
@@ -38,11 +39,52 @@ from app.services.order_lifecycle import (  # noqa: F401
     _is_pre_ledger_order,
 )
 
+order_domain_service = OrderDomainService()
+
+
+def create_order(payload: dict, tenant_id: int) -> dict:
+    """Create a draft order via the domain layer before persistence."""
+    return order_domain_service.create_order(payload, tenant_id)
+
+
+def transition_order_status(order: dict, next_status: str) -> dict:
+    """Validate and apply status transitions using the business rules in the domain layer."""
+    return order_domain_service.transition_status(order, next_status)
+
+
+def validate_cancel_allowed(order: dict) -> None:
+    """Refuse cancellation when the order is already completed or cancelled."""
+    order_domain_service.validate_cancel_allowed(order)
+
+
+def validate_payment_status(status: str) -> str:
+    """Normalize and validate payment status using the domain contract."""
+    return order_domain_service.validate_payment_status(status)
+
+
+def validate_expected_total(subtotal: float, discount: float, *, service_charge: float = 0, delivery_fee: float = 0,
+                           expected_total: str | int | float | None = None) -> float:
+    """Validate that the server-calculated total matches the client expectation."""
+    return order_domain_service.validate_expected_total(
+        subtotal,
+        discount,
+        service_charge=service_charge,
+        delivery_fee=delivery_fee,
+        expected_total=expected_total,
+    )
+
+
+def calculate_total(items: list[dict]) -> float:
+    """Compute order total using the domain rules for quantity and pricing."""
+    return order_domain_service.calculate_total(items)
+
+
 __all__ = [
     'NON_MAIN_ADDON_CATEGORIES', 'PromoResult', 'normalize_code', 'find_promo', 'CheckoutLine', 'PICKUP_COUNTER',
     'MAX_PICKUP_NUMBER', 'next_pickup_number', 'consume_stock_unchecked', 'online_pickup_node', 'order_stock_demands',
     'restock_demands', 'business_day',
     'process_checkout', 'find_by_client_order_id', 'LEGAL_TRANSITIONS', 'ROLE_TRANSITIONS', 'change_order_status', 'system_cancel', 'void_item',
     'flag_refund_if_paid', 'complete_all_pending_orders', 'auto_close_stale_orders', 'ensure_daily_auto_close',
-    'todays_range', 'todays_orders_condition',
+    'todays_range', 'todays_orders_condition', 'create_order', 'transition_order_status', 'validate_cancel_allowed',
+    'validate_payment_status', 'validate_expected_total', 'calculate_total',
 ]

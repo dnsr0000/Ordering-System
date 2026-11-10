@@ -73,6 +73,21 @@ def test_addon_quota_matching(app, ctx):
                 line(ids['松露沾醬'], is_add_on=True), ip='10.31.1.45') == 200
 
 
+def test_addon_any_allows_main_item(app, ctx):
+    """任意餐點可加購時，主餐仍可合法搭配加購，且不會被誤判為非主餐"""
+    ids = ctx['menu_ids']
+    c = guest_client(app)
+    with app.app_context():
+        tea = db.session.get(MenuItem, ids['錫蘭紅茶'])
+        tea.can_be_add_on = True
+        tea.add_on_price = 20
+        tea.addon_trigger_type = 'any'
+        tea.addon_trigger_target = ''
+        db.session.commit()
+    r = checkout(c, [line(ids['招牌和牛堡']), line(ids['錫蘭紅茶'], is_add_on=True)], payment_method='Line Pay', ip='10.31.1.46')
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+
 def test_whitelists_and_invalid_combo(app, ctx):
     """付款方式 / 用餐方式白名單，以及不屬於該餐點的套餐選項"""
     ids = ctx['menu_ids']
