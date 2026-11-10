@@ -480,7 +480,9 @@
 七、本機模擬線上端 (同一台電腦同時跑線上端與門市；開發與同步測試用)
 --------------------------------------------------------------------
 1. cp deploy/hub.env.example .env.hub，設定 SITE_DOMAIN=localhost、PUBLIC_BASE_URL=https://localhost，填 POSTGRES_PASSWORD
-   (DATABASE_URL 裡的密碼要相同) 與 SECRET_KEY → docker compose up -d --build。第一次的負責人帳密在
+  (DATABASE_URL 裡的密碼要相同) 與 SECRET_KEY → docker compose -f docker-compose.yml -f docker-compose.local-hub.yml up -d --build。
+  本機 override 只把 Caddy 綁到 IPv4 loopback，避免 Windows Docker Desktop 的 IPv6 localhost listener 中止 TLS 握手；正式部署仍使用一般 docker-compose.yml。
+  第一次的負責人帳密在
    docker compose logs app；後台 https://localhost/admin (自簽憑證，瀏覽器警告按繼續)。
 2. 線上端後台「分店管理」新增分店 (或 docker compose exec app flask --app run sync create-node --name 台南店) 取得權杖。
 3. 匯出 Caddy 的本機憑證讓門市信任：

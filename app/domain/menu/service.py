@@ -11,7 +11,7 @@ from app.core.errors import ValidationError
 class MenuDomainService:
     """Business rules and validations for menu entities."""
 
-    NON_MAIN_ADDON_CATEGORIES = ("加購", "附餐", "飲料", "加料", "加點")
+    NON_MAIN_ADDON_CATEGORIES = ("飲料", "點心", "副餐", "配餐")
     MAX_AMOUNT = 1_000_000
     NAME_MAX = 100
     CATEGORY_MAX = 50
@@ -159,15 +159,48 @@ class MenuDomainService:
             raise ValidationError(f"餐點「{item_name}」的{label}不可超過 {limit}")
         return normalized
 
-    @staticmethod
-    def validate_addon_quota(main_units: int, addon_units: int) -> str | None:
-        """
-        加購配額規則：1 份主餐最多加購 2 份加購品。
-        超額時回傳錯誤訊息字串，未超額回傳 None。
-        """
-        quota = main_units * 2
-        if addon_units > quota:
-            return f"加購品數量 ({addon_units}) 超出配額 (主餐 {main_units} 份最多加購 {quota} 份)"
+    @classmethod
+    def addon_qualifies(cls, main_item: Any, addon_item: Any) -> bool:
+        """Return whether one regular main item may carry one unit of an add-on."""
+        category = str(getattr(main_item, "category", "") or "未分類").strip()
+        trigger = getattr(addon_item, "addon_trigger_type", "any") or "any"
+        target = str(getattr(addon_item, "addon_trigger_target", "") or "").strip().casefold()
+        if trigger == "category":
+            target = target or str(getattr(addon_item, "category", "") or "").strip().casefold()
+            return category.casefold() == target
+        if trigger == "item":
+            main_id = str(getattr(main_item, "id", ""))
+            main_name = str(getattr(main_item, "name", "") or "").strip().casefold()
+            return main_id == target or main_name == target
+        return category.casefold() not in {value.casefold() for value in cls.NON_MAIN_ADDON_CATEGORIES}
+
+    @classmethod
+    def validate_addon_quota(cls, main_units: list[tuple[Any, int]],
+                              addon_units: list[tuple[Any, int]]) -> str | None:
+        """Check that each add-on unit can be matched to a distinct eligible main-item unit."""
+        mains = [item for item, quantity in main_units for _ in range(max(0, int(quantity)))]
+        addons = [item for item, quantity in addon_units for _ in range(max(0, int(quantity)))]
+        if not addons:
+            return None
+        if len(addons) > len(mains):
+            return "加購品數量超出配額：每份合格正價餐點最多搭配一份加購品！"
+
+        matched_addon = [-1] * len(mains)
+
+        def assign(addon_index: int, seen: list[bool]) -> bool:
+            for main_index, main in enumerate(mains):
+                if seen[main_index] or not cls.addon_qualifies(main, addons[addon_index]):
+                    continue
+                seen[main_index] = True
+                if matched_addon[main_index] == -1 or assign(matched_addon[main_index], seen):
+                    matched_addon[main_index] = addon_index
+                    return True
+            return False
+
+        for addon_index, addon in enumerate(addons):
+            if not assign(addon_index, [False] * len(mains)):
+                name = str(getattr(addon, "name", "加購品") or "加購品")
+                return f"加購品「{name}」沒有符合條件的正價餐點可搭配！"
         return None
 
 
