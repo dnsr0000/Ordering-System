@@ -4,7 +4,8 @@ import re
 import unicodedata
 import uuid
 
-from sqlalchemy import case, func, or_, update
+from flask import current_app, flash, session
+from sqlalchemy import case, func, or_, select, update
 
 from app.core.errors import ValidationError
 from app.domain.menu.service import MenuDomainService
@@ -13,7 +14,7 @@ from app.extensions import db
 from app.models.menu import MODIFIER_GROUPS, ComboOption, ComboOptionItem, MenuItem
 from app.services.audit import record_staff_audit
 from app.services.cv_service import save_and_fix_image
-from app.utils import safe_float, safe_int, safe_round
+from app.utils import safe_float, safe_int
 
 menu_domain_service = MenuDomainService()
 
@@ -540,11 +541,6 @@ def item_form_data(item):
     }
 
 
-# app/services/menu_service.py (最末尾新增)
-
-from sqlalchemy import func, select
-from flask import session, flash, current_app
-from app.extensions import db
 from app.models.enums import OrderStatus
 from app.models.order import Order, OrderItem
 from app.models.sync import NodeStock, SyncNode
