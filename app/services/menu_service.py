@@ -74,6 +74,8 @@ def apply_menu_form(item, form, flag):
     """
     name = (form.get('name') or '').strip()
     price = safe_float(form.get('price'), None)
+    if not name or price is None:
+        raise AppError('❌ 請輸入餐點名稱，且單價必須是數字！')
     try:
         validated = menu_domain_service.validate_item_payload({'name': name, 'price': price})
         validated.update(menu_domain_service.validate_item_submission(

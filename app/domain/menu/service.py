@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 from app.core.errors import ValidationError
@@ -42,7 +43,9 @@ class MenuDomainService:
         if price < 0:
             raise ValidationError("品項價格不能為負數")
         if price > MenuDomainService.MAX_AMOUNT:
-            raise ValidationError(f"品項價格不可超過 {MenuDomainService.MAX_AMOUNT}")
+            raise ValidationError(
+                f"單價必須介於 0 ~ {MenuDomainService.MAX_AMOUNT:,}！(目前為 {price:,})"
+            )
         return {
             "name": name,
             "price": round(price, 2),
@@ -91,15 +94,13 @@ class MenuDomainService:
     def validate_length(value: Any, limit: int, label: str) -> str:
         text = str(value or "")
         if len(text) > limit:
-            raise ValidationError(f"{label}不可超過 {limit} 個字元")
+            raise ValidationError(f"{label}最多 {limit} 個字 (目前 {len(text)} 字)，請縮短後再儲存！")
         return text
 
     @staticmethod
     def validate_range(value: Any, limit: int, label: str) -> Any:
-        if value < 0:
-            raise ValidationError(f"{label}不可為負數")
-        if value > limit:
-            raise ValidationError(f"{label}不可超過 {limit}")
+        if not 0 <= value <= limit:
+            raise ValidationError(f"{label}必須介於 0 ~ {limit:,}！(目前為 {value:,})")
         return value
 
     @classmethod
@@ -132,7 +133,7 @@ class MenuDomainService:
             raise ValidationError("請選擇主餐")
         price = cls._number(additional_price, "套餐加價")
         cls.validate_range(price, cls.MAX_AMOUNT, "套餐加價")
-        normalized_description = cls.validate_length(str(description or "").strip(), cls.DESCRIPTION_MAX, "套餐描述")
+        normalized_description = cls.validate_length(str(description or "").strip(), cls.DESCRIPTION_MAX, "套餐說明")
         return {
             "name": normalized_name,
             "main_item_id": normalized_main_id,
@@ -145,18 +146,20 @@ class MenuDomainService:
                               to_int=round) -> Any:
         if value is None or value == "":
             return 0
-        cleaned = re.sub(r"(?i)ntd?|[$元,\s]", "", str(value)).strip()
+        cleaned = re.sub(r"(?i)ntd?|[$元,\s]", "", unicodedata.normalize("NFKC", str(value))).strip()
         try:
             number = float(cleaned)
             if to_int is int and not number.is_integer():
                 raise ValueError
             normalized = to_int(number)
         except (ValueError, TypeError, OverflowError) as exc:
-            raise ValidationError(f"餐點「{item_name}」的{label}格式錯誤") from exc
+            raise ValidationError(
+                f"餐點「{item_name}」的{label}「{value}」無法辨識，請填寫 0 以上的數字"
+            ) from exc
         if normalized < 0:
-            raise ValidationError(f"餐點「{item_name}」的{label}不可為負數")
+            raise ValidationError(f"餐點「{item_name}」的{label}「{value}」無法辨識，請填寫 0 以上的數字")
         if normalized > limit:
-            raise ValidationError(f"餐點「{item_name}」的{label}不可超過 {limit}")
+            raise ValidationError(f"{label}必須介於 0 ~ {limit:,}！(目前為 {normalized:,})")
         return normalized
 
     @classmethod
