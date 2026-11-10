@@ -28,6 +28,7 @@ from app.services.points_service import change_points
 from app.sync import runtime as sync_runtime
 from app.tenant_context import tenant_bypass
 from app.utils import safe_int
+from app.core.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ def change_order_status(order_id, target_status, staff, tenant_id, approve=None,
     try:
         target = OrderStatus(str(target_status or '').strip())
     except ValueError:
-        raise AppError(f'不支援的訂單狀態：{target_status}')
+        raise AppError(f'不支援的訂單狀態：{target_status}', 409)
     reachable = {t for tgts in LEGAL_TRANSITIONS.values() for t in tgts}
     if target not in reachable:
         raise AppError(f'非法狀態轉換：沒有任何流程可以將訂單變更為【{ORDER_STATUS_LABELS.get(target, target)}】！', 409)
@@ -83,7 +84,11 @@ def change_order_status(order_id, target_status, staff, tenant_id, approve=None,
     if order is None or order.tenant_id != tenant_id:
         raise AppError('查無此訂單！', 404)
     current = OrderStatus(order.status)
-    LifecycleDomainService.validate_transition(current.value, target.value)
+    try:
+        LifecycleDomainService.validate_transition(current.value, target.value)
+    except ValidationError as e:
+        raise AppError(str(e), 409)
+
     if current == target:
         raise AppError(f'訂單已處於【{ORDER_STATUS_LABELS.get(current, current)}】狀態，請勿重複操作！', 409)
     if target not in LEGAL_TRANSITIONS[current]:
