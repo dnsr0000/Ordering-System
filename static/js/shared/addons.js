@@ -8,6 +8,13 @@
  */
 export const NON_MAIN_CATEGORIES = ['飲料', '點心', '副餐', '配餐'];
 
+const normalizeCategory = (value) => String(value || '').trim().toLowerCase();
+const isMainCategory = (category) => {
+    const cat = normalizeCategory(category);
+    if (!cat) return true;
+    return !NON_MAIN_CATEGORIES.map(normalizeCategory).includes(cat);
+};
+
 /** 可加購的品項 (加購價 add_on_price；售完或關閉加購的品項不列入) */
 export function filterAddons(items) {
     return [...items].filter((i) => i.can_be_add_on && i.is_available);
@@ -19,10 +26,10 @@ export function qualifiesForAddon(line, addon, categoryOf) {
     const cat = String(categoryOf(line) || '未分類').trim();
     const trigger = addon.addon_trigger_type || 'any';
     const target = (addon.addon_trigger_target || '').trim().toLowerCase();
-    if (trigger === 'category') return cat.toLowerCase() === (target || (addon.category || '').trim().toLowerCase());
+    if (trigger === 'category') return normalizeCategory(cat) === (target || normalizeCategory(addon.category));
     // 後台存餐點名稱，舊資料可能存餐點 ID；兩種都接受
     if (trigger === 'item') return String(line.menu_item_id) === target || String(line.name || '').trim().toLowerCase() === target;
-    return !NON_MAIN_CATEGORIES.includes(cat);
+    return isMainCategory(cat);
 }
 
 /** 可搭配加購的正價餐點，一份一個元素 (數量 3 就出現 3 次) */

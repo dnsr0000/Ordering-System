@@ -10,6 +10,7 @@ from datetime import datetime, time, timedelta
 from flask import current_app, has_app_context
 from sqlalchemy import and_, case, func, or_, select, update
 
+from app.domain.lifecycle.service import LifecycleDomainService
 from app.errors import AppError
 from app.extensions import db
 from app.models.coupon import UserCoupon
@@ -27,6 +28,7 @@ from app.services.points_service import change_points
 from app.sync import runtime as sync_runtime
 from app.tenant_context import tenant_bypass
 from app.utils import safe_int
+from app.core.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -56,38 +58,50 @@ NO_VOID_PAYMENT_STATUSES = UNPAID_PAYMENT_STATUSES + ('refund_required', 'refund
 # ============================================================================
 # 訂單狀態機
 # ============================================================================
-def change_order_status(order_id, target_status, staff, tenant_id, approve=None, reason=''):
+def change_order_status(order_id, target_status, staff, tenant_id, approve=None, reason='', trusted_delivery_pickup=False):
     """
     變更訂單狀態。判斷順序刻意先驗權限 (403) 再查訂單 (404 / 409)，
     無權限者不論訂單存在與否、狀態為何，回應都相同，無法藉此探測訂單資訊。
     作廢 (取消) 已收款的訂單，或已出餐但未結帳的訂單 (桌邊掃碼點餐吃完未付，取消等於整單免收)：
     沒有「作廢 / 退款」權限的員工需主管核准 (approve 回呼，後台可關閉此規則)；製作中的未結帳訂單仍可直接取消。
     線上端 (hub)：分店的訂單不可在線上端出餐 / 核銷取餐；分店建立且已收款的訂單須在出餐分店作廢退款。
+    trusted_delivery_pickup 僅供已通過派車路由角色驗證的內部送達流程使用。
     """
     try:
         target = OrderStatus(str(target_status or '').strip())
     except ValueError:
-        raise AppError(f'不支援的訂單狀態：{target_status}')
+        raise AppError(f'不支援的訂單狀態：{target_status}', 409)
     reachable = {t for tgts in LEGAL_TRANSITIONS.values() for t in tgts}
     if target not in reachable:
         raise AppError(f'非法狀態轉換：沒有任何流程可以將訂單變更為【{ORDER_STATUS_LABELS.get(target, target)}】！', 409)
 
     role = getattr(staff, 'role', '')
     allowed = ROLE_TRANSITIONS.get(role, set())
+    internal_pickup = trusted_delivery_pickup and target == OrderStatus.PICKED_UP
     forbidden = AppError(f'權限不足：角色 [{role}] 無權將訂單變更為【{ORDER_STATUS_LABELS.get(target, target)}】！', 403)
-    if target not in {t for _, t in allowed}:
+    if not internal_pickup and target not in {t for _, t in allowed}:
         raise forbidden
 
     order = db.session.get(Order, order_id)
     if order is None or order.tenant_id != tenant_id:
         raise AppError('查無此訂單！', 404)
     current = OrderStatus(order.status)
+
+    # 1. 先做原本的重複操作與合法狀態機中文檢查 (滿足 test_status_error_message_uses_chinese_labels)
     if current == target:
         raise AppError(f'訂單已處於【{ORDER_STATUS_LABELS.get(current, current)}】狀態，請勿重複操作！', 409)
-    if target not in LEGAL_TRANSITIONS[current]:
+    if target not in LEGAL_TRANSITIONS.get(current, set()):
         raise AppError(f'非法狀態轉換：不可從【{ORDER_STATUS_LABELS.get(current, current)}】'
                        f'轉換為【{ORDER_STATUS_LABELS.get(target, target)}】！', 409)
-    if (current, target) not in allowed:
+
+    # 2. 領域層驗證
+    try:
+        LifecycleDomainService.validate_transition(current.value, target.value)
+    except ValidationError as e:
+        raise AppError(str(e), 409)
+
+
+    if not internal_pickup and (current, target) not in allowed:
         raise forbidden
     # 待付款 / LINE Pay 扣款中 / 逾時未付款的訂單不可出餐或核銷 (付款完成才進廚房；否則會先發出取餐通知)
     serving = target in (OrderStatus.COMPLETED, OrderStatus.PICKED_UP)

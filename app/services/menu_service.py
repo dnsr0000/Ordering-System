@@ -4,14 +4,19 @@ import re
 import unicodedata
 import uuid
 
-from sqlalchemy import case, func, or_, update
+from flask import current_app, flash, session
+from sqlalchemy import case, func, or_, select, update
 
+from app.core.errors import ValidationError
+from app.domain.menu.service import MenuDomainService
 from app.errors import AppError
 from app.extensions import db
 from app.models.menu import MODIFIER_GROUPS, ComboOption, ComboOptionItem, MenuItem
 from app.services.audit import record_staff_audit
 from app.services.cv_service import save_and_fix_image
-from app.utils import safe_float, safe_int, safe_round
+from app.utils import safe_float, safe_int
+
+menu_domain_service = MenuDomainService()
 
 ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
 LOW_STOCK = 5   # 庫存 ≤ 此值的徽章顯示黃色 (樣板的 stock_badge 與前端 Kiosk.stockClass 都讀這個值)
@@ -24,15 +29,17 @@ NAME_MAX, CATEGORY_MAX, DESCRIPTION_MAX = 100, 50, 200
 
 def _check_len(value, limit, label):
     """文字超過資料庫欄位長度時指出是哪個欄位 (PostgreSQL 會 500、分店存入後同步會卡住)"""
-    if len(value or '') > limit:
-        raise AppError(f'❌ {label}最多 {limit} 個字 (目前 {len(value)} 字)，請縮短後再儲存！')
-    return value
+    try:
+        return menu_domain_service.validate_length(value, limit, label)
+    except ValidationError as exc:
+        raise AppError(f'❌ {exc}') from exc
 
 
 def _check_range(value, limit, label):
-    if not 0 <= value <= limit:
-        raise AppError(f'❌ {label}必須介於 0 ~ {limit:,}！(目前為 {value:,})')
-    return value
+    try:
+        return menu_domain_service.validate_range(value, limit, label)
+    except ValidationError as exc:
+        raise AppError(f'❌ {exc}') from exc
 
 
 # ---------------------------------------------------------------------------
@@ -69,19 +76,26 @@ def apply_menu_form(item, form, flag):
     price = safe_float(form.get('price'), None)
     if not name or price is None:
         raise AppError('❌ 請輸入餐點名稱，且單價必須是數字！')
-    category = form.get('category', '主餐')
-    description = form.get('description', '')
-    _check_len(name, NAME_MAX, '餐點名稱')
-    _check_len(category, CATEGORY_MAX, '分類')
-    _check_len(description, DESCRIPTION_MAX, '餐點說明')
-    price = _check_range(max(0, round(price)), MAX_AMOUNT, '單價')
-    can_be_add_on = flag('can_be_add_on')
-    add_on_price = _check_range(max(0, safe_round(form.get('add_on_price'))), MAX_AMOUNT, '加購專屬價')
-    discount_price = _check_range(max(0, safe_round(form.get('discount_price'))), MAX_AMOUNT, '特價金額')
-    if can_be_add_on and add_on_price <= 0:
-        raise AppError('❌ 已開啟加購品標籤，請輸入大於 0 的加購專屬價！')
-    if can_be_add_on and add_on_price >= price:
-        raise AppError(f'❌ 加購專屬價 (${add_on_price}) 不得高於或等於原單價 (${price})！')
+    try:
+        validated = menu_domain_service.validate_item_payload({'name': name, 'price': price})
+        validated.update(menu_domain_service.validate_item_submission(
+            name,
+            price,
+            category=form.get('category', '主餐'),
+            description=form.get('description', ''),
+            can_be_add_on=bool(flag('can_be_add_on')),
+            add_on_price=form.get('add_on_price'),
+            discount_price=form.get('discount_price'),
+        ))
+    except ValidationError as exc:
+        raise AppError(f'❌ {exc}') from exc
+    name = validated['name']
+    price = validated['price']
+    category = validated['category']
+    description = validated['description']
+    can_be_add_on = validated['can_be_add_on']
+    add_on_price = validated['add_on_price']
+    discount_price = validated['discount_price']
 
     submitted_stock = max(0, safe_int(form.get('stock'), 0))
     loaded_stock = form.get('loaded_stock')
@@ -156,20 +170,12 @@ def _retarget_addon_rules(item, trigger, old, new, column):
 
 def set_item_reward_status(item, is_reward, reward_points=0, reward_discount_points=0):
     """紅利商城上下架：兌換點數必須 > 0 且不高於原價、特惠點數必須小於兌換點數；有實質變動才寫稽核"""
-    pts = max(0, safe_int(reward_points, 0))
-    disc = max(0, safe_int(reward_discount_points, 0))
-    if is_reward:
-        if pts <= 0:
-            raise AppError('啟用紅利兌換時，「兌換所需點數」必須大於 0！')
-        # $0 的紅利專用品 (例如非賣品贈品) 不受「不高於原價」限制，與後台前端驗證、Excel 匯入同一套規則
-        if (item.price or 0) > 0 and pts > item.price:
-            raise AppError(f'兌換所需點數 ({pts} 點) 不得高於原單價 (${item.price})！')
-        if pts > MAX_AMOUNT:
-            raise AppError(f'兌換所需點數不得超過 {MAX_AMOUNT:,} 點！')
-        if disc and disc >= pts:
-            raise AppError('「限時特惠點數」必須小於「兌換所需點數」！')
-    else:
-        pts = disc = 0
+    try:
+        normalized = menu_domain_service.validate_reward_status(item.price or 0, bool(is_reward), reward_points, reward_discount_points)
+    except ValidationError as exc:
+        raise AppError(str(exc)) from exc
+    pts = normalized['reward_points']
+    disc = normalized['reward_discount_points']
     changed = (bool(item.is_reward), item.reward_points or 0, item.reward_discount_points or 0) != (bool(is_reward), pts, disc)
     item.is_reward, item.reward_points, item.reward_discount_points = bool(is_reward), pts, disc
     if changed:
@@ -194,12 +200,19 @@ def save_combo(combo, form, flag):
 
     if not name:
         raise AppError('❌ 請輸入套餐名稱！')
-    _check_len(name, NAME_MAX, '套餐名稱')
-    description = form.get('description', '')
-    _check_len(description, DESCRIPTION_MAX, '套餐說明')
-    additional_price = _check_range(max(0, safe_int(form.get('additional_price'), 0)), MAX_AMOUNT, '套餐加價')
-    if not main_id:
-        raise AppError('❌ 請選擇主餐！')
+    try:
+        validated = menu_domain_service.validate_combo_submission(
+            name,
+            main_id=main_id,
+            additional_price=form.get('additional_price', 0),
+            description=form.get('description', ''),
+        )
+        name = validated['name']
+        main_id = validated['main_item_id']
+        additional_price = validated['additional_price']
+    except ValidationError as exc:
+        raise AppError(f'❌ {exc}') from exc
+    description = validated['description']
     if len({sid for sid, _ in sides}) != len(sides):
         raise AppError('❌ 配餐不可重複選擇相同的餐點！')
     ids = {main_id, *(sid for sid, _ in sides)}
@@ -390,18 +403,10 @@ def _import_number(row, key, label, item_name, limit, to_int=round):
     無法辨識、負數或超出範圍時報錯讓整批 rollback，不默默寫成 0 (否則餐點會以 $0 販售)。空白回傳 0。
     """
     val = _cell(row, key)
-    if val is None:
-        return 0
-    if isinstance(val, (int, float)) and not isinstance(val, bool):
-        num = safe_float(val, None)
-    else:
-        num = safe_float(_NUMBER_NOISE_RE.sub('', unicodedata.normalize('NFKC', str(val))), None)
-    if num is None or num < 0:
-        raise AppError(f'❌ 餐點「{item_name}」的{label}「{val}」無法辨識，請填寫 0 以上的數字')
-    num = to_int(num)
-    if num > limit:
-        raise AppError(f'❌ 餐點「{item_name}」的{label}必須介於 0 ~ {limit:,}！(目前為 {num:,})')
-    return num
+    try:
+        return menu_domain_service.validate_import_number(val, label, item_name, limit, to_int=to_int)
+    except ValidationError as exc:
+        raise AppError(f'❌ {exc}') from exc
 
 
 def _is_placeholder_sheet(rows, columns):
@@ -534,3 +539,120 @@ def item_form_data(item):
         'add_on_price': item.add_on_price or 0, 'addon_trigger_type': item.addon_trigger_type or 'any',
         'addon_trigger_target': item.addon_trigger_target or '',
     }
+
+
+from app.models.enums import OrderStatus
+from app.models.order import Order, OrderItem
+from app.models.sync import NodeStock, SyncNode
+from app.services import inventory_service
+
+PICKUP_NODE_KEY = 'pickup_node_uuid'
+
+def get_favorite_items(user_id, limit=3):
+    """會員最常點的餐點 (不含兌換品與已取消訂單)"""
+    qty = func.sum(OrderItem.quantity)
+    rows = db.session.execute(
+        select(OrderItem.menu_item_id)
+        .join(Order, Order.id == OrderItem.order_id)
+        .where(Order.user_id == user_id, Order.status != OrderStatus.CANCELLED,
+               OrderItem.is_reward.is_(False), OrderItem.menu_item_id.is_not(None))
+        .group_by(OrderItem.menu_item_id).order_by(qty.desc()).limit(limit)
+    ).scalars().all()
+    from app.models.menu import MenuItem
+    by_id = {m.id: m for m in MenuItem.query.filter(MenuItem.id.in_(rows)).all()} if rows else {}
+    return [by_id[i] for i in rows if i in by_id]
+
+def get_online_nodes(tenant_id):
+    """開放線上點餐、且目前連線中的分店"""
+    offline_after = current_app.config['SYNC_NODE_OFFLINE_AFTER']
+    return [n for n in SyncNode.query.filter_by(tenant_id=tenant_id, is_active=True, accepts_online_orders=True)
+            .order_by(SyncNode.id).all() if n.is_online(offline_after)]
+
+def resolve_pickup_node(nodes, adjust=True):
+    """目前選擇的取餐分店狀態解析"""
+    chosen = session.get(PICKUP_NODE_KEY)
+    node = next((n for n in nodes if n.uuid == chosen), None)
+    if node is not None:
+        return node
+    if chosen:
+        if not adjust:
+            return None
+        session.pop(PICKUP_NODE_KEY, None)
+    if len(nodes) != 1:
+        return None
+    node = nodes[0]
+    session[PICKUP_NODE_KEY] = node.uuid
+    if chosen:
+        flash(f'您原本選擇的取餐分店目前暫停線上點餐，取餐分店已改為【{node.name}】，請確認後再結帳', 'warning')
+    return node
+
+def get_node_stock(node):
+    """所選分店回報的庫存快照"""
+    if node is None:
+        return {}
+    return {s.menu_item_id: (s.stock or 0, bool(s.is_sold_out))
+            for s in NodeStock.query.filter_by(node_id=node.id).all()}
+
+def get_sold_out_ids(items, node_stock=None):
+    """售完的品項 ID 集合"""
+    if node_stock is None:
+        return {i.id for i in items if not i.is_available}
+    return {i.id for i in items if i.id not in node_stock or node_stock[i.id][1] or node_stock[i.id][0] <= 0}
+
+def apply_node_stock_to_payload(payload, node_stock, sold_out_ids):
+    """線上端：把菜單 JSON 中的庫存欄位換成所選分店的庫存"""
+    for data in payload['items']:
+        data['is_available'] = data['id'] not in sold_out_ids
+        data['stock'] = node_stock.get(data['id'], (0, True))[0]
+        for combo in data.get('combos') or ():
+            combo['is_available'] = all(s['menu_item_id'] not in sold_out_ids for s in combo.get('sides') or ())
+    return payload
+
+def build_availability_map(items, is_hub, pickup_node, tenant_id):
+    """品項即時供應狀態計算 (供輪詢與語音解析共用)"""
+    node_stock = get_node_stock(pickup_node) if is_hub else None
+    sold_out_ids = get_sold_out_ids(items, node_stock)
+    out = {}
+    for i in items:
+        in_service, hint = i.service_status()
+        if not in_service:
+            out[i.id] = (False, hint)
+        elif i.id in sold_out_ids:
+            out[i.id] = (False, '')
+        else:
+            out[i.id] = (True, '')
+    if not is_hub:
+        for item_id in inventory_service.shortage_items(tenant_id):
+            if item_id in out and out[item_id][0]:
+                out[item_id] = (False, '')
+    return out
+
+
+# app/services/menu_service.py 最末尾新增
+
+def get_own_order(order_id, member, session_log_id, tenant_id):
+    """取得會員自己或本次進場訪客的單筆訂單 (含權限檢查)"""
+    from app.errors import AppError
+    from app.utils import safe_id
+    from app.models.order import Order
+    order = db.session.get(Order, safe_id(order_id))
+    if order is None or order.tenant_id != tenant_id:
+        raise AppError('查無此訂單', 404)
+    if member is not None and order.user_id == member.id:
+        return order
+    if member is None and session_log_id and order.customer_log_id == session_log_id and order.user_id is None:
+        return order
+    raise AppError('查無此訂單', 404)
+
+
+def get_customer_orders(member, session_log_id, tenant_id):
+    """查詢會員或本次訪客的歷史訂單列表 (依建立時間倒序)"""
+    from sqlalchemy.orm import selectinload
+    from app.models.order import Order
+    if member is not None:
+        query = Order.query.filter_by(user_id=member.id, tenant_id=tenant_id)
+    elif session_log_id:
+        query = Order.query.filter_by(customer_log_id=session_log_id, user_id=None, tenant_id=tenant_id)
+    else:
+        return []
+    return query.options(selectinload(Order.items)).order_by(Order.id.desc()).all()

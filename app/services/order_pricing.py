@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import select, update
 
+from app.domain.menu.service import MenuDomainService
 from app.errors import AppError
 from app.services.coupon_service import normalize_code  # noqa: F401  (其他模組以 order_pricing.normalize_code 取用)
 from app.extensions import db
@@ -23,7 +24,17 @@ logger = logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
 
-NON_MAIN_ADDON_CATEGORIES = ('飲料', '點心', '副餐', '配餐')
+NON_MAIN_ADDON_CATEGORIES = MenuDomainService.NON_MAIN_ADDON_CATEGORIES
+
+
+def _norm_category(value):
+    return MenuDomainService.normalize_category(value)
+
+
+def _is_main_category(category):
+    return MenuDomainService.is_main_category(category)
+
+
 # 每一列 / 整張訂單的份數上限 (團購合併送單同一品項最多 300 人 × 20 份 = 6000 份)；
 # 防止「1e10 份」這類請求讓促銷計算、庫存檢查耗盡伺服器資源
 MAX_LINE_QUANTITY = 9999
@@ -104,71 +115,13 @@ def find_promo(code, subtotal, user_id=None, is_pos=False, guard=None):
 # 加購配額
 # ============================================================================
 def _addon_qualifies(main_item, addon_item):
-    """正價餐點 main_item 是否符合加購品 addon_item 的觸發條件 (與前端同一套規則)"""
-    trigger = addon_item.addon_trigger_type or 'any'
-    target = (addon_item.addon_trigger_target or '').strip().lower()
-    main_cat = (main_item.category or '未分類').strip()
-    if trigger == 'category':
-        return main_cat.lower() == (target or (addon_item.category or '').strip().lower())
-    if trigger == 'item':  # 後台存餐點名稱，舊資料可能存 ID，兩種都接受
-        return str(main_item.id) == target or (main_item.name or '').strip().lower() == target
-    return main_cat not in NON_MAIN_ADDON_CATEGORIES
+    """正價餐點 main_item 是否符合加購品 addon_item 的觸發條件 (與前端同一套規則)。"""
+    return MenuDomainService.addon_qualifies(main_item, addon_item)
 
 
 def _validate_addon_quota(main_units, addon_units):
-    """
-    每一份合格正價餐點最多搭配一份加購，且加購品必須符合觸發條件。
-    以二分圖最大流量判斷是否存在合法配對 (依品項分組帶入數量)。合法回傳 None，否則回傳錯誤訊息。
-    """
-    mains, addons = {}, {}
-    for item, qty in main_units:
-        mains.setdefault(item.id, [item, 0])[1] += qty
-    for item, qty in addon_units:
-        addons.setdefault(item.id, [item, 0])[1] += qty
-    total_addons = sum(q for _, q in addons.values())
-    if total_addons == 0:
-        return None
-    msg = '加購品數量超過可搭配的合格餐點數量，請調整購物車後重新結帳！'
-    if total_addons > sum(q for _, q in mains.values()):
-        return msg
-
-    src, snk = ('s',), ('t',)
-    cap, adj = {}, {}
-
-    def add_edge(u, v, c):
-        cap[(u, v)] = cap.get((u, v), 0) + c
-        cap.setdefault((v, u), 0)
-        adj.setdefault(u, set()).add(v)
-        adj.setdefault(v, set()).add(u)
-
-    for aid, (a_item, a_qty) in addons.items():
-        add_edge(src, ('a', aid), a_qty)
-        for mid, (m_item, _m_qty) in mains.items():
-            if _addon_qualifies(m_item, a_item):
-                add_edge(('a', aid), ('m', mid), a_qty)
-    for mid, (_m_item, m_qty) in mains.items():
-        add_edge(('m', mid), snk, m_qty)
-
-    flow = 0
-    while True:
-        parent, frontier = {src: None}, [src]
-        for u in frontier:
-            for v in adj.get(u, ()):
-                if v not in parent and cap[(u, v)] > 0:
-                    parent[v] = u
-                    frontier.append(v)
-        if snk not in parent:
-            break
-        path, v = [], snk
-        while parent[v] is not None:
-            path.append((parent[v], v))
-            v = parent[v]
-        bottleneck = min(cap[e] for e in path)
-        for u, v in path:
-            cap[(u, v)] -= bottleneck
-            cap[(v, u)] += bottleneck
-        flow += bottleneck
-    return None if flow >= total_addons else msg
+    """每一份合格正價餐點最多搭配一份加購，且加購品必須符合觸發條件。"""
+    return MenuDomainService.validate_addon_quota(main_units, addon_units)
 
 
 # ============================================================================

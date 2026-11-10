@@ -8,7 +8,8 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from app.config import Config, engine_options_for
+from app.config import engine_options_for
+from app.core.config import resolve_config_class
 from app.errors import json_error, register_error_handlers, wants_json
 from app.extensions import csrf, db, limiter, login_manager, migrate
 
@@ -40,7 +41,9 @@ CSP_POLICY = "; ".join([
 ])
 
 
-def create_app(config_class=Config):
+def create_app(config_class=None):
+    if config_class is None:
+        config_class = resolve_config_class()
     app = Flask(__name__,
                 template_folder=os.path.join(config_class.BASE_DIR, 'templates'),
                 static_folder=os.path.join(config_class.BASE_DIR, 'static'))
