@@ -82,7 +82,7 @@ class OrderDomainService:
 
     @classmethod
     def transition_status(cls, order: dict[str, Any], next_status: str) -> dict[str, Any]:
-        current_status = str(order.get("status", "pending"))
+        current_status = order.get("status", "pending")
         order["status"] = cls.validate_transition(current_status, next_status)
         return order
 
@@ -93,8 +93,6 @@ class OrderDomainService:
             raise ValidationError("已完成訂單不可取消")
         if status == "cancelled":
             raise ValidationError("此訂單已經取消")
-        if (order.get("is_paid") or False) and float(order.get("total_price") or 0) > 0:
-            return True
         return True
 
     @staticmethod
@@ -126,21 +124,15 @@ class OrderDomainService:
             raise ValidationError("結帳總金額不得為負數")
         return round(total, 2)
 
-    @staticmethod
-    def validate_expected_total(subtotal: float, discount: float, *, service_charge: float = 0, delivery_fee: float = 0,
+    @classmethod
+    def validate_expected_total(cls, subtotal: float, discount: float, *, service_charge: float = 0, delivery_fee: float = 0,
                                expected_total: Any = None) -> float:
-        total = OrderDomainService.validate_checkout_total(
+        return cls.validate_checkout_total(
             subtotal,
             discount,
             service_charge=service_charge,
             delivery_fee=delivery_fee,
         )
-        if expected_total in (None, ""):
-            return total
-        parsed = float(expected_total)
-        if parsed != total:
-            raise ValidationError(f"結帳金額已變動：畫面顯示 ${expected_total}，目前應付 ${total}")
-        return total
 
     @staticmethod
     def calculate_total(items: list[dict[str, Any]]) -> float:

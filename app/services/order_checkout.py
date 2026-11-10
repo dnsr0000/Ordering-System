@@ -306,7 +306,6 @@ def _price(c):
         c.total_discount,
         service_charge=c.service_charge,
         delivery_fee=c.delivery_fee,
-        expected_total=c.expected_total,
     )
     c.final_price = int(math.floor(server_total + 0.5))
     if c.expected_total not in (None, '') and safe_int(c.expected_total, -1) != c.final_price:

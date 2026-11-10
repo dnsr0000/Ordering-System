@@ -10,22 +10,47 @@ from app.core.errors import ValidationError
 class LifecycleDomainService:
     """Business rules for order lifecycle and refund decisions."""
 
-    VALID_STATUSES = {"pending", "completed", "picked_up", "cancelled"}
+    VALID_STATUSES = {
+        "pending",
+        "preparing",
+        "ready",
+        "served",
+        "completed",
+        "picked_up",
+        "cancelled",
+    }
     LEGAL_TRANSITIONS = {
-        "pending": {"completed", "cancelled"},
+        "pending": {"preparing", "completed", "cancelled"},
+        "preparing": {"ready", "completed", "cancelled"},
+        "ready": {"served", "completed", "picked_up", "cancelled"},
         "completed": {"picked_up", "cancelled"},
         "picked_up": {"cancelled"},
+        "served": {"completed", "cancelled"},
         "cancelled": set(),
     }
 
-    @staticmethod
-    def normalize_status(value: Any) -> str:
-        status = str(value or "").strip().lower()
-        if not status:
+    @classmethod
+    def normalize_status(cls, value: Any) -> str:
+        raw = str(getattr(value, "value", value) or "").strip()
+        if not raw:
             return "pending"
-        if status not in LifecycleDomainService.VALID_STATUSES:
+
+        cleaned = raw.lower().replace("-", "_").replace(" ", "")
+
+        alias_map = {
+            "pickedup": "picked_up",
+            "completed": "completed",
+            "cancelled": "cancelled",
+            "pending": "pending",
+            "ready": "ready",
+            "preparing": "preparing",
+            "served": "served",
+        }
+        normalized = alias_map.get(cleaned, cleaned)
+
+        if normalized not in cls.VALID_STATUSES:
             raise ValidationError(f"不支援的訂單狀態: {value}")
-        return status
+        return normalized
 
     @classmethod
     def validate_transition(cls, current_status: Any, next_status: Any) -> str:

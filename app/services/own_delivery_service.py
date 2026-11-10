@@ -191,7 +191,7 @@ def complete(order, staff):
         change_order_status(order.id, OrderStatus.COMPLETED, staff, order.tenant_id)
     db.session.refresh(order)
     if order.status == OrderStatus.COMPLETED:
-        change_order_status(order.id, OrderStatus.PICKED_UP, staff, order.tenant_id)
+        change_order_status(order.id, OrderStatus.PICKED_UP, staff, order.tenant_id, trusted_delivery_pickup=True)
     db.session.refresh(order)
     order.delivery_status, order.delivered_at = 'delivered', datetime.now()
 

@@ -81,8 +81,6 @@ def apply_menu_form(item, form, flag):
             price,
             category=form.get('category', '主餐'),
             description=form.get('description', ''),
-            stock=form.get('stock'),
-            total_stock=form.get('total_stock'),
             can_be_add_on=bool(flag('can_be_add_on')),
             add_on_price=form.get('add_on_price'),
             discount_price=form.get('discount_price'),
