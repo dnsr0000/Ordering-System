@@ -18,6 +18,8 @@ REM db upgrade -> restart. On failure: delete files the new version added, resto
 REM files and the database, restart. Log: database\updates\update.log
 REM ==========================================================================================
 setlocal enabledelayedexpansion
+set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%POWERSHELL%" set "POWERSHELL=powershell.exe"
 REM Both possible locations (deploy\windows and database\updates) are two levels below the root.
 cd /d "%~dp0..\.."
 set ROOT=%cd%
@@ -41,14 +43,14 @@ if "%ZIP%"=="" ( echo No update zip found in database\updates & exit /b 1 )
 if "%PY%"=="" if exist ".venv\Scripts\python.exe" set PY=.venv\Scripts\python.exe
 if "%PY%"=="" if exist "venv\Scripts\python.exe" set PY=venv\Scripts\python.exe
 if "%PY%"=="" set PY=python
-for /f %%T in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set STAMP=%%T
+for /f %%T in ('%POWERSHELL% -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set STAMP=%%T
 echo [%STAMP%] update start: %ZIP% >> "%LOG%"
 
 REM 1. Extract to a temp folder and check it is a full program package (has run.py).
 REM    The server is still running here, so on failure just stop.
 set TMPDIR=database\updates\extract-%STAMP%
 rmdir /s /q "%TMPDIR%" >nul 2>&1
-powershell -NoProfile -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%TMPDIR%' -Force" >> "%LOG%" 2>&1
+"%POWERSHELL%" -NoProfile -Command "Expand-Archive -Path '%ZIP%' -DestinationPath '%TMPDIR%' -Force" >> "%LOG%" 2>&1
 if errorlevel 1 ( echo FAILED: cannot extract the zip, update aborted >> "%LOG%" & rmdir /s /q "%TMPDIR%" >nul 2>&1 & exit /b 1 )
 set SRC=
 if exist "%TMPDIR%\run.py" set SRC=%TMPDIR%
@@ -57,7 +59,7 @@ if not exist "%SRC%\run.py" ( echo FAILED: not a program package - run.py not fo
 
 REM 2. Back up program files (no data, virtualenv, model files, logs or kiosk browser profile)
 set PREV=database\updates\previous-%STAMP%.zip
-powershell -NoProfile -Command "$items = Get-ChildItem -Force | Where-Object { $_.Name -notin @('database','uploads','.venv','venv','.git','.env','node_modules','models','logs','chrome-kiosk') }; Compress-Archive -Path $items.FullName -DestinationPath '%PREV%' -Force" >> "%LOG%" 2>&1
+"%POWERSHELL%" -NoProfile -Command "$items = Get-ChildItem -Force | Where-Object { $_.Name -notin @('database','uploads','.venv','venv','.git','.env','node_modules','models','logs','chrome-kiosk') }; Compress-Archive -Path $items.FullName -DestinationPath '%PREV%' -Force" >> "%LOG%" 2>&1
 if errorlevel 1 ( echo FAILED: cannot back up program files, update aborted >> "%LOG%" & rmdir /s /q "%TMPDIR%" >nul 2>&1 & exit /b 1 )
 
 REM 3. Stop the server (wait 3 seconds so the admin page response is sent first)
@@ -67,7 +69,7 @@ if not "%PID%"=="" taskkill /pid %PID% /f >nul 2>&1
 sc query KioskPOS >nul 2>&1 && ( nssm stop KioskPOS >nul 2>&1 || net stop KioskPOS >nul 2>&1 )
 REM Wait (up to 15 seconds) until the server process is gone before the database snapshot.
 REM (No pipes in this script: a "a | b" pipe hangs when started without a console by the admin page.)
-if not "%PID%"=="" powershell -NoProfile -Command "try { Wait-Process -Id %PID% -Timeout 15 -ErrorAction Stop } catch {}" >nul 2>&1
+if not "%PID%"=="" "%POWERSHELL%" -NoProfile -Command "try { Wait-Process -Id %PID% -Timeout 15 -ErrorAction Stop } catch {}" >nul 2>&1
 timeout /t 2 /nobreak >nul 2>&1
 
 REM Database snapshot with the SQLite online backup API: it includes transactions still in
@@ -81,7 +83,7 @@ if exist database\menu.db (
 REM 4. Record files the new version adds (deleted on rollback, e.g. new migrations), then copy
 REM    the contents of the top folder over the program files.
 set ADDED=database\updates\added-%STAMP%.txt
-powershell -NoProfile -Command "$s = (Resolve-Path -LiteralPath '%SRC%').Path; $x = @('database','uploads','.venv','venv','.git','node_modules'); Get-ChildItem -LiteralPath $s -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($s.Length).TrimStart('\') } | Where-Object { $d = Split-Path $_ -Parent; $n = Split-Path $_ -Leaf; -not ($d -and ($d.Split('\') | Where-Object { $x -contains $_ })) -and $n -ne '.env' -and $n -notlike '.env.*' -and -not (Test-Path -LiteralPath (Join-Path '%ROOT%' $_)) } | Set-Content -LiteralPath '%ADDED%' -Encoding UTF8" >> "%LOG%" 2>&1
+"%POWERSHELL%" -NoProfile -Command "$s = (Resolve-Path -LiteralPath '%SRC%').Path; $x = @('database','uploads','.venv','venv','.git','node_modules'); Get-ChildItem -LiteralPath $s -Recurse -File -Force | ForEach-Object { $_.FullName.Substring($s.Length).TrimStart('\') } | Where-Object { $d = Split-Path $_ -Parent; $n = Split-Path $_ -Leaf; -not ($d -and ($d.Split('\') | Where-Object { $x -contains $_ })) -and $n -ne '.env' -and $n -notlike '.env.*' -and -not (Test-Path -LiteralPath (Join-Path '%ROOT%' $_)) } | Set-Content -LiteralPath '%ADDED%' -Encoding UTF8" >> "%LOG%" 2>&1
 if errorlevel 1 ( echo FAILED: cannot list new files, update aborted >> "%LOG%" & goto :restart )
 robocopy "%SRC%" "%ROOT%" /e /xd database uploads .venv venv .git node_modules /xf .env .env.* /np /nfl /ndl >> "%LOG%" 2>&1
 if errorlevel 8 ( echo FAILED: copying program files, rolling back >> "%LOG%" & goto :rollback )
@@ -98,8 +100,8 @@ goto :restart
 :rollback
 REM Delete files the new version added first (a new migration left behind stays the Alembic
 REM head and AUTO_MIGRATE would apply it again on restart), then restore the program backup.
-if exist "%ADDED%" powershell -NoProfile -Command "Get-Content -LiteralPath '%ADDED%' -Encoding UTF8 | Where-Object { $_ } | ForEach-Object { Remove-Item -LiteralPath (Join-Path '%ROOT%' $_) -Force -ErrorAction SilentlyContinue }" >> "%LOG%" 2>&1
-powershell -NoProfile -Command "Expand-Archive -Path '%PREV%' -DestinationPath '%ROOT%' -Force" >> "%LOG%" 2>&1
+if exist "%ADDED%" "%POWERSHELL%" -NoProfile -Command "Get-Content -LiteralPath '%ADDED%' -Encoding UTF8 | Where-Object { $_ } | ForEach-Object { Remove-Item -LiteralPath (Join-Path '%ROOT%' $_) -Force -ErrorAction SilentlyContinue }" >> "%LOG%" 2>&1
+"%POWERSHELL%" -NoProfile -Command "Expand-Archive -Path '%PREV%' -DestinationPath '%ROOT%' -Force" >> "%LOG%" 2>&1
 REM Restore the database: delete -wal / -shm first (they do not belong to the snapshot and
 REM would be replayed onto it), then copy the snapshot back.
 if exist "%SNAP%" (
@@ -118,5 +120,5 @@ start "" /min cmd /c "deploy\windows\start_store.cmd"
 echo server restarted >> "%LOG%"
 REM Keep only the newest 3 program backups, database snapshots (they contain member data) and
 REM update zips (never the one just applied) so the disk does not keep filling up.
-powershell -NoProfile -Command "$d = 'database\updates'; foreach ($p in @('previous-*.zip','menu-before-*.db')) { Get-ChildItem -LiteralPath $d -Filter $p -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue }; $keep = (Resolve-Path -LiteralPath '%ZIP%').Path; Get-ChildItem -LiteralPath $d -Filter *.zip -File | Where-Object { $_.Name -notlike 'previous-*' -and $_.FullName -ne $keep } | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
+"%POWERSHELL%" -NoProfile -Command "$d = 'database\updates'; foreach ($p in @('previous-*.zip','menu-before-*.db')) { Get-ChildItem -LiteralPath $d -Filter $p -File | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue }; $keep = (Resolve-Path -LiteralPath '%ZIP%').Path; Get-ChildItem -LiteralPath $d -Filter *.zip -File | Where-Object { $_.Name -notlike 'previous-*' -and $_.FullName -ne $keep } | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force -ErrorAction SilentlyContinue" >> "%LOG%" 2>&1
 endlocal
