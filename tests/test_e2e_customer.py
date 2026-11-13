@@ -257,12 +257,23 @@ def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, 
             new_order = Order.query.filter_by(client_order_id=submitted_client_order_ids[-1]).first()
             assert new_order.payment_status == 'pending' and new_order.total_price == 129
             assert new_order.uuid != old_order_uuid
-            new_order_id, new_order_uuid = new_order.id, new_order.uuid
+            new_order_id, new_order_uuid, payment_ref = new_order.id, new_order.uuid, new_order.payment_ref
         mine = next(order for order in page.request.get('/my_orders').json() if order['order_id'] == new_order_id)
         assert mine['payment_url'].endswith('/pay/' + new_order_uuid)
         payment_page = page.request.get(mine['payment_url'])
         assert payment_page.status == 200
         assert 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5' in payment_page.text()
+
+        from tests.test_payment_ecpay import _notify_params, _signed
+        notification = _signed(app, _notify_params(
+            {'uuid': new_order_uuid, 'total': 129}, MerchantTradeNo=payment_ref, TradeNo=f'E2E{uuid4().hex[:16]}'))
+        notify_response = page.request.post('/payment/ecpay/notify', form=notification)
+        assert notify_response.status == 200 and notify_response.text() == '1|OK'
+        paid_order = next(order for order in page.request.get('/my_orders').json()
+                          if order['order_id'] == new_order_id)
+        assert paid_order['payment_status'] == 'paid' and paid_order['payment_url'] == ''
+        page.goto('/payment/return/' + new_order_uuid)
+        expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
     finally:
         with tenant_ctx(app):
             db.session.rollback()
