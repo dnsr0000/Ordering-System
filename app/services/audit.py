@@ -15,6 +15,7 @@ ACTION_LABELS = {
     'EDIT_USER': ('修改會員/點數', 'bg-info text-dark'),
     'POS_SET_MEMBER_PIN': ('櫃檯設定PIN', 'bg-info text-dark'),
     'DELETE_USER': ('刪除會員', 'bg-secondary'),
+    'MEMBER_PHOTO_CLEANUP': ('清理會員照片', 'bg-warning text-dark'),
     'DELETE_MENU_ITEM': ('刪除菜單品項', 'bg-secondary'),
     'COUPON_CHANGE': ('優惠券異動', 'bg-secondary'),
     'COMBO_CHANGE': ('套餐異動', 'bg-secondary'),

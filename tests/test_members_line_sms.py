@@ -128,6 +128,92 @@ def test_member_photo_audit_on_hub_does_not_report_store_files_missing(app, admi
     assert '本機未找到' not in page and '本機找到' not in page
 
 
+def test_owner_cleans_photo_at_source_node_and_keeps_face_feature(app, admin_client, staff_client, monkeypatch, tmp_path):
+    import app.routes.members_pro as members_routes
+    from app.models.user import StaffAuditLog
+
+    photo_dir = tmp_path / 'source-member'
+    photo_dir.mkdir()
+    photo_name = 'source_face.jpg'
+    photo_file = photo_dir / photo_name
+    photo_file.write_bytes(b'face image')
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER_MEMBER', str(photo_dir))
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_hub', lambda: False)
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_node', lambda: True)
+    monkeypatch.setattr(members_routes.sync_runtime, 'local_node_uuid', lambda: 'source-node')
+    feature = [1.0] + [0.0] * 127
+    user_id = make_member(app, '來源店會員', '0966100110', photo_path=photo_name,
+                          photo_source_node_uuid='source-node', feature=feature)
+
+    endpoint = f'/admin/members/photo-audit/{user_id}/clear'
+    assert staff_client.post(endpoint).status_code == 403
+    response = admin_client.post(endpoint)
+    assert response.status_code == 302
+    assert not photo_file.exists()
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        assert user.photo_path == '' and user.photo_source_node_uuid is None and user.feature is not None
+        audit = StaffAuditLog.query.filter_by(action_type='MEMBER_PHOTO_CLEANUP', target_user_id=user_id).one()
+        assert '人臉特徵保留' in audit.details
+
+
+def test_member_photo_cleanup_refuses_a_file_shared_by_members(app, admin_client, monkeypatch, tmp_path):
+    import app.routes.members_pro as members_routes
+
+    photo_dir = tmp_path / 'shared-member'
+    photo_dir.mkdir()
+    photo_name = 'shared_face.jpg'
+    photo_file = photo_dir / photo_name
+    photo_file.write_bytes(b'shared face image')
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER_MEMBER', str(photo_dir))
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_hub', lambda: False)
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_node', lambda: True)
+    monkeypatch.setattr(members_routes.sync_runtime, 'local_node_uuid', lambda: 'source-node')
+    first = make_member(app, '共用照片會員甲', '0966100113', photo_path=photo_name, photo_source_node_uuid='source-node')
+    make_member(app, '共用照片會員乙', '0966100114', photo_path=photo_name, photo_source_node_uuid='source-node')
+
+    admin_client.post(f'/admin/members/photo-audit/{first}/clear')
+
+    assert photo_file.read_bytes() == b'shared face image'
+    with app.app_context():
+        assert db.session.get(User, first).photo_path == photo_name
+
+
+def test_hub_cleanup_requires_active_source_and_never_deletes_hub_file(app, admin_client, monkeypatch, tmp_path):
+    import app.routes.members_pro as members_routes
+    from app.models.sync import SyncNode
+    from tests.support import default_tenant_id
+
+    photo_dir = tmp_path / 'hub-member'
+    photo_dir.mkdir()
+    (photo_dir / 'unknown.jpg').write_bytes(b'unknown source')
+    (photo_dir / 'known.jpg').write_bytes(b'hub copy')
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER_MEMBER', str(photo_dir))
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_hub', lambda: True)
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_node', lambda: False)
+    tid = default_tenant_id(app)
+    source_uuid = 'cleanup-source-node'
+    with app.app_context():
+        db.session.add(SyncNode(tenant_id=tid, uuid=source_uuid, name='來源門市', token_hash='y' * 64))
+        db.session.commit()
+    unknown_id = make_member(app, '來源未知會員', '0966100111', photo_path='unknown.jpg')
+    known_id = make_member(app, '來源已知會員', '0966100112', photo_path='known.jpg',
+                           photo_source_node_uuid=source_uuid, feature=[1.0] + [0.0] * 127)
+
+    admin_client.post(f'/admin/members/photo-audit/{unknown_id}/clear')
+    assert (photo_dir / 'unknown.jpg').exists()
+    with app.app_context():
+        unknown = db.session.get(User, unknown_id)
+        assert unknown.photo_path == 'unknown.jpg'
+
+    response = admin_client.post(f'/admin/members/photo-audit/{known_id}/clear')
+    assert response.status_code == 302
+    assert (photo_dir / 'known.jpg').exists(), 'Hub 不可刪除來源分店的本機照片'
+    with app.app_context():
+        known = db.session.get(User, known_id)
+        assert known.photo_path == '' and known.photo_source_node_uuid is None and known.feature is not None
+
+
 def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api):
     posts, _ = line_api
     store_settings('member', birthday_enabled=True, birthday_points=50)

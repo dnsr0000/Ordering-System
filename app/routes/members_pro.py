@@ -15,9 +15,9 @@ from app.models.user import User
 from app.services import coupon_service, line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
-from app.services.upload_paths import MEMBER_PHOTO_RE, is_valid_member_photo, upload_file_path
+from app.services.upload_paths import MEMBER_PHOTO_RE, is_valid_member_photo, remove_upload, upload_file_path
 from app.sync import runtime as sync_runtime
-from app.utils import get_own, paginate, parse_birthday, safe_float, safe_int
+from app.utils import get_own, paginate, parse_birthday, role_required, safe_float, safe_int
 
 members_pro_bp = Blueprint('members_pro', __name__)
 TIER_COLORS = ('secondary', 'info', 'warning', 'danger', 'success', 'primary', 'light')
@@ -219,6 +219,12 @@ def photo_audit():
         else:
             source_name = '本機 (單機)'
 
+        can_clear = valid and (
+            (is_hub and bool(source_uuid) and source_uuid in node_names)
+            or (is_node and bool(local_node_uuid) and source_uuid == local_node_uuid)
+            or not (is_hub or is_node)
+        )
+
         if not valid:
             status = 'invalid'
         elif is_hub:
@@ -238,6 +244,7 @@ def photo_audit():
             'filename': os.path.basename(user.photo_path) if valid else '',
             'source_name': source_name,
             'status': status,
+            'can_clear': can_clear,
         })
 
     valid_records = [(path, source) for path, source in photo_records if is_valid_member_photo(path)]
@@ -253,3 +260,50 @@ def photo_audit():
                            present_count=present_count, missing_count=missing_count, invalid_count=invalid_count,
                            unknown_source_count=unknown_source_count, other_store_count=other_store_count,
                            is_hub=is_hub, is_node=is_node, files_readable=files_readable)
+
+
+@members_pro_bp.route('/admin/members/photo-audit/<int:user_id>/clear', methods=['POST'], endpoint='clear_photo')
+@role_required('owner')
+def clear_photo(user_id):
+    """逐筆清理已確認來源的會員原始照片，保留人臉特徵與會員資料。"""
+    user = _user(user_id)
+    if not user.photo_path:
+        raise AppError('此會員沒有待清理的照片路徑', 409)
+    if not is_valid_member_photo(user.photo_path):
+        raise AppError('照片路徑格式不合法，無法安全清理', 409)
+
+    source_uuid = user.photo_source_node_uuid
+    shared_reference = User.query.filter(User.photo_path == user.photo_path, User.id != user.id) \
+        .execution_options(skip_tenant_filter=True).first()
+    if shared_reference is not None:
+        raise AppError('此照片檔仍被其他會員引用，請先確認重複路徑再清理', 409)
+
+    remove_local_file = not sync_runtime.is_hub()
+    if sync_runtime.is_hub():
+        source = SyncNode.query.filter_by(uuid=source_uuid).first() if source_uuid else None
+        if source is None or not source.is_active:
+            raise AppError('照片來源未記錄或來源分店未啟用，無法安全清理', 409)
+    elif sync_runtime.is_node():
+        local_uuid = sync_runtime.local_node_uuid()
+        if not local_uuid or source_uuid != local_uuid:
+            raise AppError('只能在已確認的來源門市清理照片', 409)
+
+    photo_path = user.photo_path
+    photo_file = upload_file_path(current_app.config['UPLOAD_FOLDER_MEMBER'], photo_path)
+    local_file_exists = bool(remove_local_file and photo_file and os.path.isfile(photo_file))
+    if local_file_exists and not remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], photo_path):
+        raise AppError('無法刪除本機照片檔，照片路徑尚未清除', 500)
+
+    user.photo_path = ''
+    user.photo_source_node_uuid = None
+    record_staff_audit('MEMBER_PHOTO_CLEANUP', target_user_id=user.id,
+                       details=f'清理會員照片路徑 {photo_path}；人臉特徵保留')
+    db.session.commit()
+
+    if sync_runtime.is_hub():
+        flash('已清除照片路徑；來源門市將在同步時刪除照片檔，人臉特徵保留。', 'success')
+    elif local_file_exists:
+        flash('已刪除照片檔並清除照片路徑；人臉特徵保留。', 'success')
+    else:
+        flash('照片檔原本不存在；已清除照片路徑，人臉特徵保留。', 'success')
+    return redirect(url_for('members_pro.photo_audit'))
