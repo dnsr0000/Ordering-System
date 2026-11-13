@@ -326,6 +326,27 @@ def test_my_orders_cancelled_pending_has_no_payment_url(app):
             db.session.commit()
     row = next(o for o in c.get('/my_orders').get_json() if o['order_id'] == oid)
     assert row['payment_url'] == '' and row['payment_note'] == ''
+    assert row['can_reorder'] is False
+
+
+def test_my_orders_expired_cancelled_can_reorder_without_payment_url(app):
+    from app.models.enums import OrderStatus
+    from app.models.order import Order
+    item = make_item(app, 'CB1 逾時重下單餐', price=50)
+    c = guest_client(app)
+    r = checkout(c, [line(item)])
+    assert r.status_code == 200, r.get_data(as_text=True)
+    oid = r.get_json()['order_id']
+    with app.app_context():
+        from app.tenant_context import tenant_bypass
+        with tenant_bypass():
+            order = db.session.get(Order, oid)
+            order.payment_status = 'expired'
+            order.status = OrderStatus.CANCELLED
+            db.session.commit()
+    row = next(o for o in c.get('/my_orders').get_json() if o['order_id'] == oid)
+    assert row['payment_url'] == '' and row['payment_note'] == ''
+    assert row['can_reorder'] is True
 
 
 # ---------------------------------------------------------------------------
