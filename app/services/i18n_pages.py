@@ -243,6 +243,8 @@ PAGES = (
     ('pickup_hash', '取餐 #', 'Pickup #', '番号 #'),
     ('eta_badge', '預計 ', 'Ready ~', '完成予定 '),
     ('reorder', '再點一次', 'Order again', 'もう一度注文'),
+    ('reorder_expired_hint', '付款期限已過，原訂單已取消；重新下單會以目前菜單價格建立新訂單。', 'Payment expired and the original order was cancelled. Reordering creates a new order at current menu prices.', '支払い期限が切れたため、元の注文はキャンセルされました。再注文すると現在のメニュー価格で新しい注文が作成されます。'),
+    ('reorder_expired', '重新下單', 'Place new order', '新しく注文する'),
     ('paid_label', '實付：$', 'Paid: $', 'お支払い：$'),
     ('discount_summary_a', '總折扣折抵: -$', 'Discounts: -$', '割引：-$'),
     ('discount_summary_pts', '(扣除 {n} 點)', '({n} pts used)', '({n} pt 使用)'),
