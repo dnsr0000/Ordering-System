@@ -14,7 +14,7 @@ from app.models.user import User
 from app.services import coupon_service, line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
 from app.services.approval_service import permission_required
-from app.services.upload_paths import upload_file_path
+from app.services.upload_paths import MEMBER_PHOTO_RE, is_valid_member_photo, upload_file_path
 from app.sync import runtime as sync_runtime
 from app.utils import get_own, paginate, parse_birthday, safe_float, safe_int
 
@@ -175,3 +175,50 @@ def manage():
                            coupon_history_days=coupon_service.HISTORY_DAYS,
                            cfg=settings_service.get('member'), line_ready=line_service.messaging_enabled(),
                            ledger=ledger, names=names)
+
+
+@members_pro_bp.route('/admin/members/photo-audit', methods=['GET'], endpoint='photo_audit')
+@permission_required('members')
+def photo_audit():
+    """唯讀盤點目前店家的會員照片路徑與本機檔案；Hub 不保存照片，因此只顯示同步路徑紀錄。"""
+    member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
+    is_hub = sync_runtime.is_hub()
+    query = User.query.filter(User.photo_path != '').order_by(User.id.desc())
+    users, page, pages, total = paginate(query)
+    paths = [row[0] for row in User.query.with_entities(User.photo_path).filter(User.photo_path != '').all()]
+
+    files_readable = not is_hub
+    local_files = set()
+    if files_readable:
+        try:
+            with os.scandir(member_dir) as entries:
+                local_files = {entry.name for entry in entries
+                               if entry.is_file(follow_symlinks=False) and MEMBER_PHOTO_RE.fullmatch(entry.name)}
+        except OSError:
+            files_readable = False
+
+    rows = []
+    for user in users:
+        valid = is_valid_member_photo(user.photo_path)
+        if not valid:
+            status = 'invalid'
+        elif is_hub:
+            status = 'store_only'
+        elif not files_readable:
+            status = 'unavailable'
+        else:
+            status = 'present' if user.photo_path in local_files else 'missing'
+        rows.append({
+            'id': user.id,
+            'name': user.name,
+            'phone_last4': (user.phone or '')[-4:],
+            'filename': os.path.basename(user.photo_path) if valid else '',
+            'status': status,
+        })
+
+    present_count = sum(path in local_files for path in paths if is_valid_member_photo(path)) if files_readable else None
+    invalid_count = sum(not is_valid_member_photo(path) for path in paths)
+    missing_count = total - present_count - invalid_count if present_count is not None else None
+    return render_template('admin_member_photo_audit.html', rows=rows, page=page, pages=pages, total=total,
+                           present_count=present_count, missing_count=missing_count, invalid_count=invalid_count,
+                           is_hub=is_hub, files_readable=files_readable)

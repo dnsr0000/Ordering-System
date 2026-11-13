@@ -79,6 +79,47 @@ def test_tier_admin_and_recompute(app, admin_client, staff_client):
     assert _user(app, '0966100001')['tier'] is None
 
 
+def test_member_photo_audit_is_read_only_and_tenant_scoped(app, admin_client, staff_client, monkeypatch, tmp_path):
+    from app.models.tenant import Tenant
+
+    photo_dir = tmp_path / 'member'
+    photo_dir.mkdir()
+    (photo_dir / 'legacy_present.jpg').write_bytes(b'photo')
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER_MEMBER', str(photo_dir))
+    make_member(app, '舊照在本機', '0966100101', photo_path='legacy_present.jpg')
+    make_member(app, '舊照不在本機', '0966100102', photo_path='legacy_missing.jpg')
+    make_member(app, '沒有照片路徑', '0966100103', photo_path='')
+    with app.app_context():
+        other = Tenant(name='照片盤點隔離店', slug='photo-audit-isolation')
+        db.session.add(other)
+        db.session.flush()
+        db.session.add(User(tenant_id=other.id, name='其他店舊照', phone='0966100104', photo_path='foreign.jpg'))
+        db.session.commit()
+
+    response = admin_client.get('/admin/members/photo-audit')
+    assert response.status_code == 200
+    page = response.get_data(as_text=True)
+    assert '舊照在本機' in page and '本機找到' in page
+    assert '舊照不在本機' in page and '本機未找到' in page
+    assert '沒有照片路徑' not in page and '其他店舊照' not in page
+    assert '照片盤點隔離店' not in page
+    assert staff_client.get('/admin/members/photo-audit').status_code == 403
+    assert (photo_dir / 'legacy_present.jpg').read_bytes() == b'photo'
+
+
+def test_member_photo_audit_on_hub_does_not_report_store_files_missing(app, admin_client, monkeypatch):
+    import app.routes.members_pro as members_routes
+
+    make_member(app, 'Hub 照片路徑', '0966100105', photo_path='store_only.jpg')
+    make_member(app, 'Hub 無效路徑', '0966100106', photo_path='../../secret.jpg')
+    monkeypatch.setattr(members_routes.sync_runtime, 'is_hub', lambda: True)
+    page = admin_client.get('/admin/members/photo-audit').get_data(as_text=True)
+    assert 'Hub 不保存會員原始照片' in page
+    assert '請至門市端檢查' in page
+    assert 'Hub 無效路徑' in page and '無效路徑' in page
+    assert '本機未找到' not in page and '本機找到' not in page
+
+
 def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api):
     posts, _ = line_api
     store_settings('member', birthday_enabled=True, birthday_points=50)
