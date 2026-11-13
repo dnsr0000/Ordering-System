@@ -19,7 +19,7 @@ from tests.support import (
 
 
 def test_register_and_logout(app):
-    """註冊贈 20 點、上傳檔名一律改為隨機檔名 (防路徑穿越)、/logout 清除會員工作階段"""
+    """註冊贈 20 點、人臉照片不留存、/logout 清除會員工作階段"""
     c = app.test_client()
     c.get('/?shop=default')
     r = c.post('/register', data={'name': '陳大文', 'phone': '0912345678', 'pin': '2468', 'agree_privacy': '1',
@@ -29,8 +29,10 @@ def test_register_and_logout(app):
     with app.app_context():
         user = User.query.filter_by(phone='0912345678').first()
         assert user.points == 20
-        assert re.fullmatch(r'member_[0-9a-f]{16}\.jpg', user.photo_path)
+        assert user.photo_path == ''
+        assert user.feature is not None
         assert user.privacy_consent_version and user.privacy_consented_at and user.face_consented_at, '同意紀錄'
+    assert not [f for f in os.listdir(app.config['UPLOAD_FOLDER_MEMBER']) if f.startswith('member_')]
     assert c.post('/logout').status_code == 302
     with c.session_transaction() as sess:
         assert sess.get('user_id') is None

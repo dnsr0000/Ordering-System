@@ -1,11 +1,11 @@
 """Kiosk 會員：註冊、人臉登入、手機 + PIN 登入、訪客、登出 (線上端只提供手機 + PIN 登入與訪客)"""
-import os
 import re
-import uuid
+import os
+import tempfile
 
 from functools import wraps
 
-from flask import Blueprint, abort, current_app, flash, g, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, jsonify, redirect, render_template, request, url_for
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import AppError
@@ -14,7 +14,6 @@ from app.models.user import User
 from app.services import auth_throttle, cv_service, privacy_service
 from app.services.customer_session import close_customer_session, login_guest, login_member
 from app.services.cv_service import extract_feature, find_best_match_vectorized, save_and_fix_image
-from app.services.menu_service import remove_file_quietly
 from app.sync import runtime as sync_runtime
 from app.utils import WEAK_PIN_MESSAGE, get_json_dict, is_weak_pin, parse_birthday, validate_phone, validate_pin
 
@@ -52,15 +51,13 @@ def member_login_url():
     return url_for('auth.member_login') if sync_runtime.is_hub() else url_for('auth.face_login')
 
 
-def _member_photo_path(filename):
-    return os.path.join(current_app.config['UPLOAD_FOLDER_MEMBER'], filename)
-
-
-def _face_feature_from_upload(photo, filepath):
-    """儲存上傳照片並擷取人臉特徵；照片損毀拋出 AppError，沒有人臉回傳 None"""
-    if not save_and_fix_image(photo, filepath):
-        raise AppError('❌ 上傳的相片檔案已損壞或格式不支援，請上傳清晰的 JPG/PNG 圖片！')
-    return extract_feature(filepath)
+def _face_feature_from_upload(photo):
+    """照片只暫存於系統暫存目錄供特徵擷取，離開區塊後立即刪除。"""
+    with tempfile.TemporaryDirectory(prefix='member_face_') as temp_dir:
+        filepath = os.path.join(temp_dir, 'face.jpg')
+        if not save_and_fix_image(photo, filepath):
+            raise AppError('❌ 上傳的相片檔案已損壞或格式不支援，請上傳清晰的 JPG/PNG 圖片！')
+        return extract_feature(filepath)
 
 
 @auth_bp.route('/register', methods=['GET', 'POST'], endpoint='register')
@@ -112,24 +109,19 @@ def register():
         raise duplicate_phone
     birthday = parse_birthday(request.form)
 
-    filename, filepath, feature = '', None, None
+    feature = None
     if use_face:
-        # 隨機檔名：杜絕路徑穿越與可預測檔名
-        filename = f"member_{uuid.uuid4().hex[:16]}.jpg"
-        filepath = _member_photo_path(filename)
-        feature = _face_feature_from_upload(photo, filepath)
+        feature = _face_feature_from_upload(photo)
         if feature is None:
-            remove_file_quietly(filepath)
             raise AppError('⚠️ 照片未偵測到清晰人臉！請正對鏡頭並重新拍攝。')
 
         # 同一張臉不可用不同手機重複註冊 (否則每支號碼都能領註冊禮，也會讓刷臉登入進錯帳號)
         dup, _score = find_best_match_vectorized(feature, User.query.filter(User.feature.isnot(None)).all(),
                                                  threshold=DUPLICATE_FACE_THRESHOLD)
         if dup is not None:
-            remove_file_quietly(filepath)
             raise AppError('⚠️ 此人臉已註冊為本店會員，請直接使用「人臉辨識」或「手機 + PIN」登入；如需協助請洽櫃檯。', 409)
 
-    user = User(name=name[:100], phone=phone, photo_path=filename, feature=feature, points=20, birthday=birthday)
+    user = User(name=name[:100], phone=phone, photo_path='', feature=feature, points=20, birthday=birthday)
     if phone_verified:
         from datetime import datetime
         user.phone_verified_at = datetime.now()
@@ -145,8 +137,6 @@ def register():
         db.session.commit()
     except IntegrityError:  # 兩個人同時註冊同一支手機：後到的撞上唯一索引
         db.session.rollback()
-        if filepath:
-            remove_file_quietly(filepath)
         raise duplicate_phone
     login_member(user)
     return redirect(url_for('customer.customer_index'))
@@ -167,11 +157,7 @@ def face_login():
     photo = request.files.get('photo')
     if not photo:
         raise AppError('未接收到拍攝照片')
-    temp_path = _member_photo_path(f"temp_{uuid.uuid4().hex[:12]}.jpg")
-    try:
-        feature = _face_feature_from_upload(photo, temp_path)
-    finally:
-        remove_file_quietly(temp_path)
+    feature = _face_feature_from_upload(photo)
     if feature is None:
         raise AppError('未在畫面中偵測到清晰人臉，請正對鏡頭！')
 
