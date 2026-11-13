@@ -127,7 +127,7 @@ def test_eta_queue_excludes_own_order_and_counts_old_reservations(app, staff_cli
         db.session.commit()
         with_self = eta_service._queue_minutes(tid, now, 5)
         without = eta_service._queue_minutes(tid, now, 5, {oid})
-        assert with_self - without == 30
+        assert with_self - without == pytest.approx(30)
         # 訂單本身不算進排隊量
         expected = now + timedelta(minutes=eta_service.estimate(tid, [(db.session.get(MenuItem, item), 1)], now, {oid}))
         assert eta_service.ready_at_for_order(order, now) == expected

@@ -131,20 +131,28 @@ def _current_tenant(tenant_id=None):
 
 
 def _error_state(tenant_id=None):
-    return _last_error.setdefault(_current_tenant(tenant_id), {'at': 0.0, 'ok_at': 0.0, 'text': ''})
+    return _last_error.setdefault(_current_tenant(tenant_id),
+                                  {'at': 0.0, 'ok_at': 0.0, 'text': '', 'seq': 0, 'error_seq': 0, 'ok_seq': 0})
 
 
 def _gemini_state(tenant_id=None):
-    return _gemini_last.setdefault(_current_tenant(tenant_id), {'ok_at': 0.0, 'error_at': 0.0, 'error': '', 'model': ''})
+    return _gemini_last.setdefault(_current_tenant(tenant_id), {
+        'ok_at': 0.0, 'error_at': 0.0, 'error': '', 'model': '', 'seq': 0, 'error_seq': 0, 'ok_seq': 0,
+    })
+
+
+def _next_state_seq(state):
+    state['seq'] += 1
+    return state['seq']
 
 
 def last_ai_error(tenant_id=None) -> str:
     """這家店 (省略 = 目前店家) 最近一次雲端 AI 呼叫失敗的原因 (之後已成功過就回空字串)；
     給「AI 翻譯」等功能告訴使用者為什麼改用備援"""
     err, gem = _error_state(tenant_id), _gemini_state(tenant_id)
-    if err['at'] > err['ok_at']:
+    if err['error_seq'] > err['ok_seq']:
         return err['text']
-    return gem['error'] if gem['error_at'] > gem['ok_at'] else ''
+    return gem['error'] if gem['error_seq'] > gem['ok_seq'] else ''
 
 
 def clear_ai_error(tenant_id=None):
@@ -196,14 +204,16 @@ def cloud_generate(prompt, max_tokens=800, temperature=0.3, json_mode=False, int
                                        json_mode=json_mode, interactive=interactive, patient=patient, models=models,
                                        prefix=prefix, cred=cred if resolved.auto else None, deadline=deadline)
                 if text:
-                    _error_state()['ok_at'] = time.time()
+                    state = _error_state()
+                    state.update(ok_at=time.time(), ok_seq=_next_state_seq(state))
                     return text, 'gemini'
                 _note_ai_error(f"{resolved.label}：{_gemini_state()['error'] or '暫停呼叫中'}")
                 continue
             text = _call_other(cred, resolved, models, prompt, max_tokens, temperature, interactive, patient, prefix,
                                deadline=deadline)
             if text:
-                _error_state()['ok_at'] = time.time()
+                state = _error_state()
+                state.update(ok_at=time.time(), ok_seq=_next_state_seq(state))
                 return text, resolved.provider
         return None, ''
     finally:
@@ -217,7 +227,8 @@ def provider_names(providers):
 
 
 def _note_ai_error(text, tenant_id=None):
-    _error_state(tenant_id).update(at=time.time(), text=str(text)[:200])
+    state = _error_state(tenant_id)
+    state.update(at=time.time(), text=str(text)[:200], error_seq=_next_state_seq(state))
 
 
 def _time_left(deadline):
@@ -281,7 +292,9 @@ def _call_other(cred, resolved, models, prompt, max_tokens, temperature, interac
 
 
 def _note_error(status, detail, model):
-    _gemini_state().update(error_at=time.time(), error=f'{status} {detail}'.strip(), model=model)
+    state = _gemini_state()
+    state.update(error_at=time.time(), error=f'{status} {detail}'.strip(), model=model,
+                 error_seq=_next_state_seq(state))
 
 
 def _extract_text(payload):
@@ -370,7 +383,8 @@ def gemini_generate(prompt, max_tokens=800, temperature=0.3, api_key=None, json_
                     payload, text = None, ''
                 done(model, bool(text), started, payload if isinstance(payload, dict) else None)
                 if text:
-                    _gemini_state().update(ok_at=time.time(), model=model, error='')
+                    state = _gemini_state()
+                    state.update(ok_at=time.time(), model=model, error='', ok_seq=_next_state_seq(state))
                     return text
                 _note_error(status, '回應沒有內容', model)
                 break

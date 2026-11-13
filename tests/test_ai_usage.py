@@ -102,6 +102,7 @@ def test_usage_is_recorded_flushed_and_budget_stops_cloud_calls(app, store_setti
     tid = default_tenant_id(app)
     store_settings('ai', key1='sk-ant-budget', monthly_budget_usd=1)
     cred = lp.Credential(key='sk-ant-budget', source='settings:1')
+    monkeypatch.setattr(ai_service.time, 'time', lambda: 1_800_000_000.0)
     monkeypatch.setattr(lp, 'resolve', lambda c, force=False: _resolved('anthropic', ['claude-opus-5-5']))
     monkeypatch.setattr(lp, 'call_anthropic', lambda *a, **k: lp.Reply.of('好', {'input': 100_000, 'output': 20_000,
                                                                                    'cache_read': 50_000}))
