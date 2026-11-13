@@ -1,0 +1,136 @@
+<svg width="2200" height="1350" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" viewBox="0 0 2200 1350">
+<rect width="2200" height="1350" x="0" y="0" fill="#f8fafc"></rect>
+<path d="M18 0L1262 0A18 18 0 0 1 1280 18L1280 372A18 18 0 0 1 1262 390L18 390A18 18 0 0 1 0 372L0 18A18 18 0 0 1 18 0" transform="translate(411.5 91.5)" fill="#eff6ff" stroke="#60a5fa" stroke-width="3" class="zr0-cls-0"></path>
+<path d="M18 0L972 0A18 18 0 0 1 990 18L990 652A18 18 0 0 1 972 670L18 670A18 18 0 0 1 0 652L0 18A18 18 0 0 1 18 0" transform="translate(121.5 551.5)" fill="#f0fdf4" stroke="#4ade80" stroke-width="3" class="zr0-cls-0"></path>
+<path d="M18 0L832 0A18 18 0 0 1 850 18L850 652A18 18 0 0 1 832 670L18 670A18 18 0 0 1 0 652L0 18A18 18 0 0 1 18 0" transform="translate(1201.5 551.5)" fill="#f0fdf4" stroke="#4ade80" stroke-width="3" class="zr0-cls-0"></path>
+<text text-anchor="start" style="font: bold 24px sans-serif" xml:space="preserve" y="12" transform="translate(445 108)" fill="#1d4ed8">總部線上端 Hub</text>
+<text text-anchor="start" style="font: bold 24px sans-serif" xml:space="preserve" y="12" transform="translate(155 568)" fill="#15803d">門市分店 A Node｜離線可營運</text>
+<text text-anchor="start" style="font: bold 24px sans-serif" xml:space="preserve" y="12" transform="translate(1235 568)" fill="#15803d">門市分店 B Node｜設備配置同 A</text>
+<text text-anchor="start" style="font: 16px sans-serif" xml:space="preserve" y="8" transform="translate(420 500)" fill="#475569">同步由 Node 主動連 Hub：POST /push 上傳；GET /pull 長輪詢下載</text>
+<path d="M130 150L506.1 248.3" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.253,0.968,-0.968,-0.253,611.7092,329.5679)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M130 150L263.5 639.3" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.965,0.263,-0.263,-0.965,358.9788,736.7784)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M690 150L600 326.2" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.891,-0.455,0.455,-0.891,709.4908,410.694)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M690 150Q755.4 453.8 712.4 759.2" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.99,-0.14,0.14,-0.99,826.4718,861.6028)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M690 150Q980.5 540.3 1390.2 798.4" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.533,0.846,-0.846,-0.533,1532.4072,902.4601)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M1280 150L331.9 799.5" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.565,-0.825,0.825,-0.565,430.2508,903.5463)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M1820 150L335.5 940.4" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#475569" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.47,-0.883,0.883,-0.47,434.0279,1050.3693)" fill="#475569" fill-opacity="0.85" class="zr0-cls-2"></path>
+<path d="M570 265L896.4 314" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#2563eb" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.148,0.989,-0.989,-0.148,1018.1503,397.9415)" fill="#2563eb" fill-opacity="0.85" class="zr0-cls-3"></path>
+<path d="M570 385L896.4 336" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#2563eb" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.148,0.989,-0.989,0.148,1018.1503,420.9343)" fill="#2563eb" fill-opacity="0.85" class="zr0-cls-3"></path>
+<path d="M970 325L1324.6 274.3" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#b45309" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.141,0.99,-0.99,0.141,1464.1303,356.6754)" fill="#b45309" fill-opacity="0.85" class="zr0-cls-4"></path>
+<path d="M970 325L1324.6 375.7" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#059669" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.141,0.99,-0.99,-0.141,1464.1303,462.2004)" fill="#059669" fill-opacity="0.85" class="zr0-cls-5"></path>
+<path d="M280 700L626.9 811.5" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#16a34a" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.306,0.952,-0.952,-0.306,737.4472,916.0814)" fill="#16a34a" fill-opacity="0.85" class="zr0-cls-6"></path>
+<path d="M280 835L623.2 835" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#16a34a" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0,1,-1,0,733.6095,940.5621)" fill="#16a34a" fill-opacity="0.85" class="zr0-cls-6"></path>
+<path d="M280 970L626.9 858.5" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#16a34a" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.306,0.952,-0.952,0.306,737.4472,965.0429)" fill="#16a34a" fill-opacity="0.85" class="zr0-cls-6"></path>
+<path d="M700 835L949.5 835" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#b45309" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0,1,-1,0,1073.4497,940.5621)" fill="#b45309" fill-opacity="0.85" class="zr0-cls-4"></path>
+<path d="M1450 835L1709.5 835" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#b45309" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0,1,-1,0,1864.929,940.5621)" fill="#b45309" fill-opacity="0.85" class="zr0-cls-4"></path>
+<path d="M700 835Q898.9 654 956.6 398.2" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#16a34a" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.975,0.22,-0.22,0.975,1080.8361,485.6708)" fill="#16a34a" fill-opacity="0.85" class="zr0-cls-6"></path>
+<path d="M700 835L935.2 390.8" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#22c55e" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.884,0.468,-0.468,0.884,1058.5316,477.9314)" fill="#22c55e" fill-opacity="0.85" class="zr0-cls-7"></path>
+<path d="M970 325Q932.3 590 754.6 781" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#3b82f6" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.732,-0.681,0.681,-0.732,870.5169,884.3344)" fill="#3b82f6" fill-opacity="0.85" class="zr0-cls-8"></path>
+<path d="M1450 835Q1334.8 510 1037.4 356.6" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#16a34a" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.458,-0.889,0.889,0.458,1164.9714,442.32)" fill="#16a34a" fill-opacity="0.85" class="zr0-cls-6"></path>
+<path d="M1450 835Q1271.8 572.5 1028.2 371.4" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#22c55e" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.7 10L0 7.5L-6.7 10L0 0Z" transform="matrix(0.637,-0.771,0.771,0.637,1155.3709,457.7759)" fill="#22c55e" fill-opacity="0.85" class="zr0-cls-7"></path>
+<path d="M970 325Q1270.2 477.6 1420.1 771.6" transform="matrix(1.041,0,0,1.041,84.6154,70.9763)" fill="transparent" stroke="#3b82f6" stroke-width="1.9204545454545454" stroke-opacity="0.85" class="zr0-cls-1"></path>
+<path d="M0 0L6.6667 10L0 7.5L-6.6667 10L0 0Z" transform="matrix(-0.891,0.454,-0.454,-0.891,1563.5676,874.5216)" fill="#3b82f6" fill-opacity="0.85" class="zr0-cls-8"></path>
+<path d="M1 0A1 1 0 1 1 1 -0.01" transform="matrix(44,0,0,44,220,227.1893)" fill="#475569" class="zr0-cls-2"></path>
+<path d="M1 0A1 1 0 1 1 1 -0.01" transform="matrix(54,0,0,54,803.1953,227.1893)" fill="#475569" class="zr0-cls-2"></path>
+<path d="M1 0A1 1 0 1 1 1 -0.01" transform="matrix(48,0,0,48,1417.6331,227.1893)" fill="#475569" class="zr0-cls-2"></path>
+<path d="M1 0A1 1 0 1 1 1 -0.01" transform="matrix(48,0,0,48,1980,227.1893)" fill="#475569" class="zr0-cls-2"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(95,0,0,42.5,678.2249,346.9527)" fill="#1e3a8a" class="zr0-cls-9"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(95,0,0,42.5,678.2249,471.9231)" fill="#1e3a8a" class="zr0-cls-9"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(105,0,0,50,1094.7929,409.4379)" fill="#2563eb" class="zr0-cls-3"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(95,0,0,42.5,1532.1893,346.9527)" fill="#b45309" class="zr0-cls-4"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(95,0,0,42.5,1532.1893,471.9231)" fill="#059669" class="zr0-cls-5"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(90,0,0,41,376.213,799.9704)" fill="#15803d" class="zr0-cls-10"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(90,0,0,41,376.213,940.5621)" fill="#15803d" class="zr0-cls-10"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(90,0,0,41,376.213,1081.1538)" fill="#15803d" class="zr0-cls-10"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(110,0,0,50,813.6095,940.5621)" fill="#16a34a" class="zr0-cls-6"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(85,0,0,41,1136.4497,940.5621)" fill="#b45309" class="zr0-cls-4"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(100,0,0,46,1594.6746,940.5621)" fill="#16a34a" class="zr0-cls-6"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(85,0,0,41,1927.929,940.5621)" fill="#b45309" class="zr0-cls-4"></path>
+<path d="M-0.5 -1L0.5 -1A0.5 0.5 0 0 1 1 -0.5L1 0.5A0.5 0.5 0 0 1 0.5 1L-0.5 1A0.5 0.5 0 0 1 -1 0.5L-1 -0.5A0.5 0.5 0 0 1 -0.5 -1" transform="matrix(100,0,0,37,1594.6746,1122.8107)" fill="#86efac" class="zr0-cls-11"></path>
+<path d="M-16 -11l32 0l0 22l-32 0Z" transform="translate(220 227.1893)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" transform="translate(220 227.1893)" fill="#ffffff">顧客</text>
+<path d="M-48 -11l96 0l0 22l-96 0Z" transform="translate(803.1953 227.1893)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" transform="translate(803.1953 227.1893)" fill="#ffffff">店長／負責人</text>
+<path d="M-32 -11l64 0l0 22l-64 0Z" transform="translate(1417.6331 227.1893)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" transform="translate(1417.6331 227.1893)" fill="#ffffff">櫃檯人員</text>
+<path d="M-32 -11l64 0l0 22l-64 0Z" transform="translate(1980 227.1893)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" transform="translate(1980 227.1893)" fill="#ffffff">廚房人員</text>
+<path d="M-32 -22l64 0l0 44l-64 0Z" transform="translate(678.2249 346.9527)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="-11" transform="translate(678.2249 346.9527)" fill="#ffffff">線上點餐</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(678.2249 346.9527)" fill="#ffffff">網站</text>
+<path d="M-32 -22l64 0l0 44l-64 0Z" transform="translate(678.2249 471.9231)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="-11" transform="translate(678.2249 471.9231)" fill="#ffffff">總部管理</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(678.2249 471.9231)" fill="#ffffff">後台</text>
+<path d="M-49 -22l97.9 0l0 44l-97.9 0Z" transform="translate(1094.7929 409.4379)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="-11" transform="translate(1094.7929 409.4379)" fill="#ffffff">Hub 應用程式</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="11" transform="translate(1094.7929 409.4379)" fill="#ffffff">同步 API</text>
+<path d="M-43.8 -22l87.5 0l0 44l-87.5 0Z" transform="translate(1532.1893 346.9527)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="-11" transform="translate(1532.1893 346.9527)" fill="#ffffff">PostgreSQL</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(1532.1893 346.9527)" fill="#ffffff">總部資料庫</text>
+<path d="M-32 -11l64 0l0 22l-64 0Z" transform="translate(1532.1893 471.9231)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" transform="translate(1532.1893 471.9231)" fill="#ffffff">綠界金流</text>
+<path d="M-40 -22l80 0l0 44l-80 0Z" transform="translate(376.213 799.9704)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="-11" transform="translate(376.213 799.9704)" fill="#ffffff">自助點餐／</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="11" transform="translate(376.213 799.9704)" fill="#ffffff">桌邊 QR</text>
+<path d="M-35.2 -11l70.4 0l0 22l-70.4 0Z" transform="translate(376.213 940.5621)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" transform="translate(376.213 940.5621)" fill="#ffffff">POS 收銀</text>
+<path d="M-42.7 -22l85.4 0l0 44l-85.4 0Z" transform="translate(376.213 1081.1538)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="-11" transform="translate(376.213 1081.1538)" fill="#ffffff">廚房 KDS／</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(376.213 1081.1538)" fill="#ffffff">取餐核銷</text>
+<path d="M-64 -22l128 0l0 44l-128 0Z" transform="translate(813.6095 940.5621)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="-11" transform="translate(813.6095 940.5621)" fill="#ffffff">門市應用程式 A</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(813.6095 940.5621)" fill="#ffffff">原料／桌位／設備</text>
+<path d="M-40 -22l80 0l0 44l-80 0Z" transform="translate(1136.4497 940.5621)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="-11" transform="translate(1136.4497 940.5621)" fill="#ffffff">SQLite A</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(1136.4497 940.5621)" fill="#ffffff">本機資料庫</text>
+<path d="M-55.6 -11l111.2 0l0 22l-111.2 0Z" transform="translate(1594.6746 940.5621)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" transform="translate(1594.6746 940.5621)" fill="#ffffff">門市應用程式 B</text>
+<path d="M-40 -22l80 0l0 44l-80 0Z" transform="translate(1927.929 940.5621)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="-11" transform="translate(1927.929 940.5621)" fill="#ffffff">SQLite B</text>
+<text text-anchor="middle" style="font-size:16px;font-family:sans-serif;font-weight:bold;" y="11" transform="translate(1927.929 940.5621)" fill="#ffffff">本機資料庫</text>
+<path d="M-37.5 -22l75 0l0 44l-75 0Z" transform="translate(1594.6746 1122.8107)" fill="transparent" class="zr0-cls-12"></path>
+<text text-anchor="middle" style="font-size:15px;font-family:sans-serif;" xml:space="preserve" y="-11" transform="translate(1594.6746 1122.8107)" fill="#14532d">同 A 架構</text>
+<text text-anchor="middle" style="font-size:15px;font-family:sans-serif;" y="11" transform="translate(1594.6746 1122.8107)" fill="#14532d">可擴充多店</text>
+<path d="M-52 -32l104 0l0 32l-104 0Z" transform="matrix(0.507,-0.862,0.862,0.507,979.8504,730.1496)" fill="#f0fdf4" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" y="-22" transform="matrix(0.507,-0.862,0.862,0.507,979.8504,730.1496)" fill="#166534" fill-opacity="0.85">POST /push</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-10" transform="matrix(0.507,-0.862,0.862,0.507,979.8504,730.1496)" fill="#166534" fill-opacity="0.85">訂單／庫存／狀態</text>
+<path d="M-50.1 -32l100.2 0l0 32l-100.2 0Z" transform="matrix(0.468,-0.884,0.884,0.468,931.8273,707.0004)" fill="#f0fdf4" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" y="-22" transform="matrix(0.468,-0.884,0.884,0.468,931.8273,707.0004)" fill="#166534" fill-opacity="0.85">GET /pull</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" y="-10" transform="matrix(0.468,-0.884,0.884,0.468,931.8273,707.0004)" fill="#166534" fill-opacity="0.85">Node 主動長輪詢</text>
+<path d="M-64 -32l128 0l0 32l-128 0Z" transform="matrix(0.427,-0.904,0.904,0.427,1014.7446,664.1229)" fill="#eff6ff" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-22" transform="matrix(0.427,-0.904,0.904,0.427,1014.7446,664.1229)" fill="#1d4ed8" fill-opacity="0.85">回應下發</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-10" transform="matrix(0.427,-0.904,0.904,0.427,1014.7446,664.1229)" fill="#1d4ed8" fill-opacity="0.85">菜單／會員／線上訂單</text>
+<path d="M-40 -32l80 0l0 32l-80 0Z" transform="matrix(0.653,0.757,-0.757,0.653,1430.9109,643.6446)" fill="#f0fdf4" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" y="-22" transform="matrix(0.653,0.757,-0.757,0.653,1430.9109,643.6446)" fill="#166534" fill-opacity="0.85">POST /push</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-10" transform="matrix(0.653,0.757,-0.757,0.653,1430.9109,643.6446)" fill="#166534" fill-opacity="0.85">分店資料上傳</text>
+<path d="M-34 -32l68 0l0 32l-68 0Z" transform="matrix(0.673,0.74,-0.74,0.673,1395.5845,679.9277)" fill="#f0fdf4" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" xml:space="preserve" y="-22" transform="matrix(0.673,0.74,-0.74,0.673,1395.5845,679.9277)" fill="#166534" fill-opacity="0.85">GET /pull</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-10" transform="matrix(0.673,0.74,-0.74,0.673,1395.5845,679.9277)" fill="#166534" fill-opacity="0.85">長輪詢請求</text>
+<path d="M-64 -32l128 0l0 32l-128 0Z" transform="matrix(0.71,0.704,-0.704,0.71,1371.6978,601.7375)" fill="#eff6ff" fill-opacity="0.85" class="zr0-cls-0"></path>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-22" transform="matrix(0.71,0.704,-0.704,0.71,1371.6978,601.7375)" fill="#1d4ed8" fill-opacity="0.85">回應下發</text>
+<text text-anchor="middle" style="font-size:12px;font-family:sans-serif;" y="-10" transform="matrix(0.71,0.704,-0.704,0.71,1371.6978,601.7375)" fill="#1d4ed8" fill-opacity="0.85">菜單／會員／線上訂單</text>
+<path d="M-252 -5l503.9 0l0 38l-503.9 0Z" transform="translate(1100 23)" fill="rgb(0,0,0)" fill-opacity="0" stroke="#ccc" stroke-width="0" class="zr0-cls-13"></path>
+<text text-anchor="middle" style="font-size:28px;font-family:sans-serif;font-weight:bold;" xml:space="preserve" y="14" transform="translate(1100 23)" fill="#172554">餐飲點餐系統｜角色與 Hub / Node 架構</text>
+
+</svg>

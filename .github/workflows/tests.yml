@@ -14,7 +14,7 @@ concurrency:
 jobs:
   lint:
     name: 靜態檢查 (ruff) 與依賴漏洞稽核 (pip-audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -34,7 +34,7 @@ jobs:
 
   unit:
     name: pytest (SQLite, Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -64,7 +64,7 @@ jobs:
 
   postgres:
     name: pytest (PostgreSQL，線上端)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -103,5 +103,17 @@ jobs:
           python-version: '3.13'
           cache: pip
       - run: pip install -r requirements-dev.txt
-      - run: python -m playwright install --with-deps chromium
+      - name: Install Chromium and OS dependencies
+        timeout-minutes: 15
+        run: |
+          for attempt in 1 2 3; do
+            if python -m playwright install --with-deps chromium; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Playwright/apt install failed (attempt $attempt/3); retrying after a short delay."
+            sleep $((attempt * 15))
+          done
       - run: pytest -q -m e2e
