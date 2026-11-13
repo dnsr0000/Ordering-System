@@ -150,7 +150,8 @@ def test_labor_cost_ignores_forgotten_clock_out(app):
         ])
         db.session.commit()
         r = report_service.labor_cost(tid, datetime(2019, 10, 1), datetime(2019, 11, 1), 100000)
-        open_now = TimeClock(tenant_id=tid, staff_account_id=acc.id, clock_in=datetime.now() - timedelta(hours=2))
+        open_clock_in = datetime.now() - timedelta(hours=2)
+        open_now = TimeClock(tenant_id=tid, staff_account_id=acc.id, clock_in=open_clock_in)
         db.session.add(open_now)
         db.session.commit()
         t0 = datetime.combine(date.today(), datetime.min.time())
@@ -158,7 +159,7 @@ def test_labor_cost_ignores_forgotten_clock_out(app):
     assert r['labor_hours'] == 8 + 49
     review = {(x['clock_in'], x['counted']) for x in r['labor_review']}
     assert review == {(datetime(2019, 10, 2, 9), False), (datetime(2019, 10, 5, 9), True)}
-    if open_now.clock_in >= t0:   # 今天還在班的人照常算到現在
+    if open_clock_in >= t0:   # 今天還在班的人照常算到現在
         assert 1.9 < today['labor_hours'] < 2.2 and today['labor_review'] == []
 
 
