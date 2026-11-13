@@ -634,7 +634,8 @@ def my_orders():
         'delivery_status': o.delivery_status or '',
         'status': o.status_label,
         'status_code': o.status,
-        'can_reorder': o.status != OrderStatus.CANCELLED and any(not i.is_reward and not i.is_gift for i in o.items),
+        'can_reorder': (o.status != OrderStatus.CANCELLED or o.payment_status == 'expired')
+                   and any(not i.is_reward and not i.is_gift for i in o.items),
         'created_at': o.created_at.strftime('%Y-%m-%d %H:%M') if o.created_at else '',
         'items': [i.to_dict() for i in o.items],
     } for idx, o in enumerate(orders)])
