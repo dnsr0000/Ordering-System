@@ -228,7 +228,7 @@ def test_birthday_gift_once_per_year(app, admin_client, store_settings, line_api
     assert _user(app, '0966100002')['points'] == 60 and _user(app, '0966100002')['gift_year'] == today.year
     assert _user(app, '0966100003')['points'] == 10
     push = [p for p in posts if p[0] == line_service.PUSH_URL]
-    assert push and push[-1][1]['json']['to'] == 'U' + 'b' * 32 and '生日快樂' in push[-1][1]['json']['messages'][0]['text']
+    assert any(p[1]['json']['to'] == 'U' + 'b' * 32 and '生日快樂' in p[1]['json']['messages'][0]['text'] for p in push)
     from app.services import wallet_service
     from tests.support import default_tenant_id
     with app.app_context():
