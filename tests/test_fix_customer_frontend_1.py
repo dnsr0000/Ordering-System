@@ -107,6 +107,23 @@ const combo = menuItems.get(1).combos[0];
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
+test('逾時取消訂單說明原單已取消，並清楚標示重新下單', () => {
+    const previousStatusBadge = Kiosk.statusBadge;
+    Kiosk.statusBadge = () => '';
+    PAGE.ui.reorder_expired_hint = 'Payment expired; reordering creates a new order at current prices.';
+    PAGE.ui.reorder_expired = 'Place new order';
+    const orderHtml = checkout.orderCardHtml({
+        order_id: 77, user_order_no: 1, status: 'Cancelled', status_code: 'Cancelled', order_type: '內用',
+        pickup_number: 77, payment_status: 'expired', payment_url: '', payment_note: '',
+        can_reorder: true, items: [], points_used: 0, points_earned: 0, total_price: 50, created_at: '2026-11-14 12:00',
+    });
+    assert.ok(orderHtml.includes(PAGE.ui.reorder_expired_hint));
+    assert.ok(orderHtml.includes(PAGE.ui.reorder_expired));
+    assert.ok(!orderHtml.includes('order-pay'));
+    if (previousStatusBadge) Kiosk.statusBadge = previousStatusBadge;
+    else delete Kiosk.statusBadge;
+});
+
 test('R2-084：存檔裡的售完標記不沿用，以目前菜單為準', () => {
     assert.equal(cart.normalizeLine({ menu_item_id: 1, name: '漢堡', is_sold_out: true }).is_sold_out, false);
     assert.equal(cart.normalizeLine({ menu_item_id: 999, name: '已刪除' }).is_sold_out, true);

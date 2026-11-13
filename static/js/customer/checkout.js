@@ -394,7 +394,7 @@ export function orderTypeLabel(t) {
 }
 
 export function orderCardHtml(o) {
-    const ptsUsed = o.points_used || 0;
+    const ptsUsed = o.points_used || 0, expiredReorder = o.payment_status === 'expired';
     return html`
         <div class="card mb-3 border-secondary shadow-sm text-dark">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
@@ -412,7 +412,7 @@ export function orderCardHtml(o) {
                 </div>
                 <small class="text-muted">${o.created_at}</small>
             </div>
-            <div class="card-body p-3">
+            <div class="card-body p-3">${expiredReorder && o.can_reorder ? html`<p class="small text-warning mb-2 order-expired-hint">${ui.reorder_expired_hint || '付款期限已過，原訂單已取消；重新下單會以目前菜單價格建立新訂單。'}</p>` : ''}
                 <table class="table table-sm mb-2 align-middle">
                     <thead><tr class="text-muted"><th>${ui.th_item || '品項'}</th><th>${ui.th_qty || '數量'}</th><th>${ui.th_price || '單價'}</th><th>${ui.th_subtotal || '小計'}</th></tr></thead>
                     <tbody>
@@ -430,7 +430,7 @@ export function orderCardHtml(o) {
                         ${ui.discount_summary_a || '總折扣折抵: -$'}${Math.round(o.discount_amount || 0)} ${ptsUsed > 0 ? (ui.discount_summary_pts || '(扣除 {n} 點)').replace('{n}', ptsUsed) : ''}${ui.discount_summary_b || ' | 獲得紅利: +'}${o.points_earned} ${ui.points_unit || '點'}
                     </small>
                     <div class="d-flex align-items-center gap-2">
-                        ${o.can_reorder ? html`<button type="button" class="btn btn-sm btn-outline-success fw-bold order-reorder" data-action="reorder" data-id="${o.order_id}"><i class="bi bi-arrow-repeat me-1"></i>${ui.reorder || '再點一次'}</button>` : ''}
+                        ${o.can_reorder ? html`<button type="button" class="btn btn-sm btn-outline-success fw-bold order-reorder" data-action="reorder" data-id="${o.order_id}"><i class="bi bi-arrow-repeat me-1"></i>${ui[expiredReorder ? 'reorder_expired' : 'reorder'] || (expiredReorder ? '重新下單' : '再點一次')}</button>` : ''}
                         <div class="fw-bold text-danger fs-6">${ui.paid_label || '實付：$'}${Math.round(o.total_price)}</div>
                     </div>
                 </div>
