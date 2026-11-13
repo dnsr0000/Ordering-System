@@ -394,8 +394,7 @@ export function orderTypeLabel(t) {
 }
 
 export function orderCardHtml(o) {
-    const ptsUsed = o.points_used || 0;
-    const expiredReorder = o.payment_status === 'expired';
+    const ptsUsed = o.points_used || 0, expiredReorder = o.payment_status === 'expired';
     return html`
         <div class="card mb-3 border-secondary shadow-sm text-dark">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
@@ -413,8 +412,7 @@ export function orderCardHtml(o) {
                 </div>
                 <small class="text-muted">${o.created_at}</small>
             </div>
-            <div class="card-body p-3">
-                ${expiredReorder && o.can_reorder ? html`<p class="small text-warning mb-2 order-expired-hint">${ui.reorder_expired_hint || '付款期限已過，原訂單已取消；重新下單會以目前菜單價格建立新訂單。'}</p>` : ''}
+            <div class="card-body p-3">${expiredReorder && o.can_reorder ? html`<p class="small text-warning mb-2 order-expired-hint">${ui.reorder_expired_hint || '付款期限已過，原訂單已取消；重新下單會以目前菜單價格建立新訂單。'}</p>` : ''}
                 <table class="table table-sm mb-2 align-middle">
                     <thead><tr class="text-muted"><th>${ui.th_item || '品項'}</th><th>${ui.th_qty || '數量'}</th><th>${ui.th_price || '單價'}</th><th>${ui.th_subtotal || '小計'}</th></tr></thead>
                     <tbody>
