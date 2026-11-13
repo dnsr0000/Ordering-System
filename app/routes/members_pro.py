@@ -10,6 +10,7 @@ from flask_login import current_user
 from app.errors import AppError
 from app.extensions import db
 from app.models.member import MemberTier, WalletLedger
+from app.models.sync import SyncNode
 from app.models.user import User
 from app.services import coupon_service, line_service, settings_service, wallet_service
 from app.services.audit import record_staff_audit
@@ -180,12 +181,20 @@ def manage():
 @members_pro_bp.route('/admin/members/photo-audit', methods=['GET'], endpoint='photo_audit')
 @permission_required('members')
 def photo_audit():
-    """唯讀盤點目前店家的會員照片路徑與本機檔案；Hub 不保存照片，因此只顯示同步路徑紀錄。"""
+    """唯讀盤點目前店家的會員照片路徑、來源分店與本機檔案。"""
     member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
     is_hub = sync_runtime.is_hub()
+    is_node = sync_runtime.is_node()
     query = User.query.filter(User.photo_path != '').order_by(User.id.desc())
     users, page, pages, total = paginate(query)
-    paths = [row[0] for row in User.query.with_entities(User.photo_path).filter(User.photo_path != '').all()]
+    photo_records = User.query.with_entities(User.photo_path, User.photo_source_node_uuid) \
+        .filter(User.photo_path != '').all()
+    node_names = {}
+    local_node_uuid = None
+    if is_hub:
+        node_names = dict(SyncNode.query.with_entities(SyncNode.uuid, SyncNode.name).all())
+    elif is_node:
+        local_node_uuid = sync_runtime.local_node_uuid()
 
     files_readable = not is_hub
     local_files = set()
@@ -200,12 +209,26 @@ def photo_audit():
     rows = []
     for user in users:
         valid = is_valid_member_photo(user.photo_path)
+        source_uuid = user.photo_source_node_uuid
+        if is_hub:
+            source_name = (node_names.get(source_uuid, f'未知分店 ({source_uuid[-8:]})') if source_uuid
+                           else '來源未記錄')
+        elif is_node:
+            source_name = ('本門市' if source_uuid == local_node_uuid and local_node_uuid else
+                           f'其他分店 ({source_uuid[-8:]})' if source_uuid else '來源未記錄')
+        else:
+            source_name = '本機 (單機)'
+
         if not valid:
             status = 'invalid'
         elif is_hub:
-            status = 'store_only'
+            status = 'store_only' if source_uuid else 'source_unknown'
+        elif is_node and source_uuid and source_uuid != local_node_uuid:
+            status = 'other_store'
         elif not files_readable:
             status = 'unavailable'
+        elif is_node and not source_uuid:
+            status = 'present_unknown' if user.photo_path in local_files else 'source_unknown'
         else:
             status = 'present' if user.photo_path in local_files else 'missing'
         rows.append({
@@ -213,12 +236,20 @@ def photo_audit():
             'name': user.name,
             'phone_last4': (user.phone or '')[-4:],
             'filename': os.path.basename(user.photo_path) if valid else '',
+            'source_name': source_name,
             'status': status,
         })
 
-    present_count = sum(path in local_files for path in paths if is_valid_member_photo(path)) if files_readable else None
-    invalid_count = sum(not is_valid_member_photo(path) for path in paths)
-    missing_count = total - present_count - invalid_count if present_count is not None else None
+    valid_records = [(path, source) for path, source in photo_records if is_valid_member_photo(path)]
+    invalid_count = len(photo_records) - len(valid_records)
+    unknown_source_count = sum(not source for _, source in valid_records)
+    other_store_count = (sum(bool(source) and source != local_node_uuid for _, source in valid_records)
+                         if is_node else None)
+    local_records = [(path, source) for path, source in valid_records
+                     if not is_node or (local_node_uuid and source == local_node_uuid)]
+    present_count = sum(path in local_files for path, _ in local_records) if files_readable else None
+    missing_count = len(local_records) - present_count if present_count is not None else None
     return render_template('admin_member_photo_audit.html', rows=rows, page=page, pages=pages, total=total,
                            present_count=present_count, missing_count=missing_count, invalid_count=invalid_count,
-                           is_hub=is_hub, files_readable=files_readable)
+                           unknown_source_count=unknown_source_count, other_store_count=other_store_count,
+                           is_hub=is_hub, is_node=is_node, files_readable=files_readable)

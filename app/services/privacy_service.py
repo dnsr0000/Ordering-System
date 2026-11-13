@@ -70,9 +70,15 @@ def needs_consent(user):
 def withdraw_face(user):
     """撤回人臉辨識同意：刪除特徵值與照片 (其他分店與線上端經同步一併刪除特徵值)"""
     if user.photo_path:
-        remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
+        from app.sync import runtime as sync_runtime
+        local_node_uuid = sync_runtime.local_node_uuid()
+        if (sync_runtime.is_hub() and not user.photo_source_node_uuid) or (
+                not sync_runtime.is_hub() and (not sync_runtime.is_node() or not user.photo_source_node_uuid
+                                               or user.photo_source_node_uuid == local_node_uuid)):
+            remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], user.photo_path)
     user.feature = None
     user.photo_path = ''
+    user.photo_source_node_uuid = None
     user.face_consented_at = None
 
 

@@ -109,13 +109,21 @@ def test_member_photo_audit_is_read_only_and_tenant_scoped(app, admin_client, st
 
 def test_member_photo_audit_on_hub_does_not_report_store_files_missing(app, admin_client, monkeypatch):
     import app.routes.members_pro as members_routes
+    from app.models.sync import SyncNode
+    from tests.support import default_tenant_id
 
-    make_member(app, 'Hub 照片路徑', '0966100105', photo_path='store_only.jpg')
+    tid = default_tenant_id(app)
+    source_uuid = 'photo-origin-node'
+    with app.app_context():
+        db.session.add(SyncNode(tenant_id=tid, uuid=source_uuid, name='台南來源門市', token_hash='x' * 64))
+        db.session.commit()
+    make_member(app, 'Hub 照片路徑', '0966100105', photo_path='store_only.jpg', photo_source_node_uuid=source_uuid)
     make_member(app, 'Hub 無效路徑', '0966100106', photo_path='../../secret.jpg')
     monkeypatch.setattr(members_routes.sync_runtime, 'is_hub', lambda: True)
     page = admin_client.get('/admin/members/photo-audit').get_data(as_text=True)
     assert 'Hub 不保存會員原始照片' in page
-    assert '請至門市端檢查' in page
+    assert '台南來源門市' in page and '請至 台南來源門市 檢查' in page
+    assert '來源未記錄' in page
     assert 'Hub 無效路徑' in page and '無效路徑' in page
     assert '本機未找到' not in page and '本機找到' not in page
 

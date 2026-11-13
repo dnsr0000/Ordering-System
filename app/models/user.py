@@ -102,6 +102,7 @@ class User(TenantScoped, db.Model):
     phone = db.Column(db.String(50), nullable=False)
     pin_hash = db.Column(db.String(255), nullable=True)
     photo_path = db.Column(db.String(200), nullable=False, default='')
+    photo_source_node_uuid = db.Column(db.String(36), nullable=True)
     feature = db.Column(FeatureVector, nullable=True)
     points = db.Column(db.Integer, nullable=False, default=0)
     # 個資告知與同意 (個資法第 8 條告知、第 7 條同意的舉證)：同意的告知版本與時間；人臉辨識另行同意，可隨時撤回

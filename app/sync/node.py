@@ -27,9 +27,10 @@ from app.models.menu import MenuItem
 from app.models.order import Order
 from app.models.sync import SyncConflict
 from app.models.tenant import Tenant
+from app.models.user import User
 from app.services.event_bus import order_event_bus
 from app.services.points_service import recompute_points
-from app.services.upload_paths import is_valid_menu_image, upload_file_path
+from app.services.upload_paths import is_valid_member_photo, is_valid_menu_image, upload_file_path
 from app.sync import runtime, tracking
 from app.sync.engine import Applier, _decode_value, collect_changes, count_pending, merge_local_duplicate
 from app.sync.registry import BY_NAME, SPECS, references, synced_columns
@@ -38,6 +39,27 @@ logger = logging.getLogger(__name__)
 
 PUSH_SPECS = tuple(s for s in SPECS if s.direction != 'down')   # 總部設定只下發，不上傳
 PAGE = 500
+
+
+def _tag_local_member_photo_sources(tenant_id):
+    """把有實體照片、但尚無來源標記的舊會員照片認領為本分店照片。"""
+    node_uuid = runtime.local_node_uuid()
+    if not node_uuid:
+        return False
+    member_dir = current_app.config['UPLOAD_FOLDER_MEMBER']
+    changed = False
+    users = User.query.filter(User.tenant_id == tenant_id, User.photo_path != '',
+                              User.photo_source_node_uuid.is_(None)).yield_per(500)
+    for user in users:
+        if not is_valid_member_photo(user.photo_path):
+            continue
+        path = upload_file_path(member_dir, user.photo_path)
+        if path and os.path.isfile(path):
+            user.photo_source_node_uuid = node_uuid
+            changed = True
+    if changed:
+        db.session.commit()
+    return changed
 
 _HELLO_OK = 'sync_hello_verified'   # app.extensions：本行程已向線上端確認過分店身分
 SCHEMA_KEY = 'sync_schema'          # sync_state：上次記錄的本機同步結構 {資料表: [欄位]}
@@ -214,6 +236,7 @@ class NodeSync:
     # ---- 上傳 ----
     def push(self):
         tenant_id = self.tenant().id
+        _tag_local_member_photo_sources(tenant_id)
         self._sync_media(MEDIA_UP_KEY, self._try_upload)   # 先補傳先前上傳失敗的餐點圖片
         cursor = int(runtime.get_state('push_cursor', '-1') or -1)
         upto = tracking.current_rev(db.session)

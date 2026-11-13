@@ -454,6 +454,10 @@ class Applier:
                     if spec.name == 'user':
                         _repoint_referrals(self.tenant_id, existing.uuid, uuid)
                     existing.uuid = uuid  # 分店：本機那一筆改用線上的 uuid
+        if spec.name == 'user' and self.side == 'hub' and 'photo_path' in values:
+            old_path = existing.photo_path if existing is not None else ''
+            if values['photo_path'] != old_path:
+                values['photo_source_node_uuid'] = self.source_node_uuid if values['photo_path'] else None
         reason = self._rejected(spec, existing, values)
         if reason:
             self.conflict(spec, uuid, reason)
@@ -490,6 +494,14 @@ class Applier:
             elif values.get('role') == 'owner':
                 return '負責人帳號只能在線上端建立'
         return None
+
+    def _remove_local_member_photo(self, rel_path, source_node_uuid):
+        """同步照片路徑變更時，只由已知來源分店刪除本機照片。"""
+        if self.side != 'node' or not rel_path or not source_node_uuid:
+            return
+        from app.sync.runtime import local_node_uuid
+        if source_node_uuid == local_node_uuid():
+            remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], rel_path)
 
     @staticmethod
     def _owner_column_changed(existing, values, name):
@@ -713,10 +725,11 @@ class Applier:
             # 禮物卡作廢不可回退 (餘額已扣光)：較新的列 (同步前另一邊改了備註等) 不會把卡蓋回可用
             values = {**values, 'status': 'void', 'voided_at': obj.voided_at or values.get('voided_at')}
         old_photo = obj.photo_path if spec.name == 'user' else None
+        old_photo_source = obj.photo_source_node_uuid if spec.name == 'user' else None
         for name, value in values.items():
             setattr(obj, name, value)
-        if old_photo and old_photo != obj.photo_path:  # 照片已更換或撤回人臉同意：刪除本機舊照片
-            remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], old_photo)
+        if old_photo and old_photo != obj.photo_path:  # 照片已更換或撤回人臉同意：由來源分店刪除本機舊照片
+            self._remove_local_member_photo(old_photo, old_photo_source)
         self._after_change(spec, obj, created=False)
 
     def _clashes(self, spec, obj, values):
@@ -833,6 +846,7 @@ class Applier:
                 contributed.add(name)
             merged[name] = result
         old_photo = obj.photo_path if spec.name == 'user' else None
+        old_photo_source = obj.photo_source_node_uuid if spec.name == 'user' else None
         for name, result in merged.items():
             if hub and name not in contributed:
                 continue   # 線上端：保留既有值
@@ -846,8 +860,8 @@ class Applier:
             tracking.mark_rows(db.session, spec.model, spec.model.id == obj.id)
         else:
             obj.updated_at = values.get('updated_at') or obj.updated_at
-        if old_photo and old_photo != obj.photo_path:   # 本機舊照片已不再使用
-            remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], old_photo)
+        if old_photo and old_photo != obj.photo_path:   # 只刪除來源分店本機的舊照片
+            self._remove_local_member_photo(old_photo, old_photo_source)
         self._after_change(spec, obj, created=False)
 
     # ---- 封存 ----
@@ -1019,7 +1033,7 @@ class Applier:
             from app.services.privacy_service import _deidentify_member_records
             _deidentify_member_records(SimpleNamespace(id=target['id'], tenant_id=self.tenant_id, phone=target['phone']))
             if target['photo_path']:
-                remove_upload(current_app.config['UPLOAD_FOLDER_MEMBER'], target['photo_path'])
+                self._remove_local_member_photo(target['photo_path'], target['photo_source_node_uuid'])
         db.session.execute(sa.delete(table).where(table.c.uuid == row_uuid, table.c.tenant_id == self.tenant_id))
         self._id_cache.pop((table_name, row_uuid), None)
         self.result.applied += 1

@@ -9,11 +9,13 @@
     {% call page_header('會員照片盤點', 'bi-images', '唯讀盤點會員照片路徑與目前主機上的檔案；本頁不會刪除或修改照片。',
                         back_url=url_for('members_pro.manage'), back_label='返回會員名冊') %}{% endcall %}
     {% if is_hub %}
-    <div class="alert alert-info" role="status">Hub 不保存會員原始照片。以下是同步到 Hub 的路徑紀錄；請在門市端查看照片是否實際存在。</div>
+    <div class="alert alert-info" role="status">Hub 不保存會員原始照片。已知來源會列出分店；舊資料來源未知，請逐店確認。</div>
     {% elif not files_readable %}
-    <div class="alert alert-warning" role="status">無法讀取本機會員照片資料夾，檔案狀態與孤立檔案數暫不可用。</div>
+    <div class="alert alert-warning" role="status">無法讀取本機會員照片資料夾，檔案狀態暫不可用。</div>
+    {% elif is_node %}
+    <div class="alert alert-secondary" role="status">本機找到／未找到只統計來源為本門市的照片；來源未知及其他分店的照片不會標成遺失。</div>
     {% else %}
-    <div class="alert alert-secondary" role="status">狀態只代表目前這台主機。分店會員的照片可能保存在其他分店；「本機未找到」不代表照片已遺失。</div>
+    <div class="alert alert-secondary" role="status">狀態只代表目前這台主機；「本機未找到」不代表照片已遺失。</div>
     {% endif %}
     <div class="row g-3 mb-4">
         {{ stat_tile('資料庫照片路徑', total) }}
@@ -21,27 +23,32 @@
         {{ stat_tile('本機找到', present_count) }}
         {{ stat_tile('本機未找到', missing_count) }}
         {% endif %}
+        {% if is_hub or is_node %}{{ stat_tile('來源未記錄', unknown_source_count) }}{% endif %}
+        {% if is_node %}{{ stat_tile('其他分店來源', other_store_count) }}{% endif %}
         {% if invalid_count %}{{ stat_tile('無效路徑', invalid_count) }}{% endif %}
     </div>
     <section class="card card-custom p-4">
         <h2 class="h5 fw-bold mb-3">有照片路徑的會員</h2>
         <div class="table-responsive">
             <table class="table table-dark-custom align-middle">
-                <thead><tr class="text-white-50 small"><th>會員編號</th><th>會員</th><th>手機末四碼</th><th>照片檔名</th><th>狀態</th></tr></thead>
+                <thead><tr class="text-white-50 small"><th>會員編號</th><th>會員</th><th>手機末四碼</th><th>照片檔名</th><th>來源分店</th><th>狀態</th></tr></thead>
                 <tbody>
                     {% for row in rows %}
                     <tr>
                         <td>{{ row.id }}</td><td>{{ row.name }}</td><td>{{ row.phone_last4 }}</td>
-                        <td>{{ row.filename or '路徑格式不合法' }}</td>
+                        <td>{{ row.filename or '路徑格式不合法' }}</td><td>{{ row.source_name }}</td>
                         <td>
                             {% if row.status == 'present' %}<span class="badge bg-success">本機找到</span>
                             {% elif row.status == 'missing' %}<span class="badge bg-warning text-dark">本機未找到</span>
                             {% elif row.status == 'invalid' %}<span class="badge bg-danger">無效路徑</span>
                             {% elif row.status == 'unavailable' %}<span class="badge bg-secondary">無法檢查</span>
-                            {% else %}<span class="badge bg-info text-dark">請至門市端檢查</span>{% endif %}
+                            {% elif row.status == 'other_store' %}<span class="badge bg-info text-dark">其他分店保存</span>
+                            {% elif row.status == 'present_unknown' %}<span class="badge bg-success">本機找到，來源未知</span>
+                            {% elif row.status == 'source_unknown' %}<span class="badge bg-secondary">來源未記錄</span>
+                            {% else %}<span class="badge bg-info text-dark">請至 {{ row.source_name }} 檢查</span>{% endif %}
                         </td>
                     </tr>
-                    {% else %}<tr><td colspan="5" class="text-center text-white-50 py-4">沒有會員照片路徑紀錄</td></tr>{% endfor %}
+                    {% else %}<tr><td colspan="6" class="text-center text-white-50 py-4">沒有會員照片路徑紀錄</td></tr>{% endfor %}
                 </tbody>
             </table>
         </div>

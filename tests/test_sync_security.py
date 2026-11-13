@@ -139,7 +139,7 @@ def test_push_size_is_limited(env):
 
 
 def test_face_withdrawal_removes_photo_at_branch(env):
-    """會員在線上端撤回人臉同意：同步後分店本機的照片檔也刪除"""
+    """只在來源分店清理照片：Hub 能辨識來源，其他分店不刪除同名本機檔案"""
     from app.extensions import db
     from app.models.user import User
     from app.services.privacy_service import withdraw_face
@@ -151,9 +151,18 @@ def test_face_withdrawal_removes_photo_at_branch(env):
         db.session.add(User(name='撤回會員', phone='0955000009', photo_path=photo, points=0))
         db.session.commit()
     env.sync(env.a)
+    env.sync(env.b)
+    with env.hub.app_context():
+        hub_user = User.query.filter_by(phone='0955000009').first()
+        assert hub_user.photo_source_node_uuid == env.node_a_uuid
+    b_path = os.path.join(env.b.config['UPLOAD_FOLDER_MEMBER'], photo)
+    with open(b_path, 'wb') as fh:
+        fh.write(jpeg_bytes().read())
     with tenant_ctx(env.hub):
         withdraw_face(User.query.filter_by(phone='0955000009').first())
         db.session.commit()
+    env.sync(env.b)
+    assert os.path.exists(b_path), '非來源分店不可刪除同名本機檔案'
     env.sync(env.a)
     assert not os.path.exists(path)
 
