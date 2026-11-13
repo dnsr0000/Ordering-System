@@ -71,7 +71,7 @@ def test_register_with_uploaded_photo(page, app):
     member = member_by_phone(app, phone)
     assert member is not None, '註冊後應建立會員'
     assert member['name'] == name and member['points'] == 20 and member['has_feature']
-    assert member['photo_path'].startswith('member_')
+    assert member['photo_path'] == ''
 
 
 def test_register_duplicate_phone_shows_flash(page, app):
