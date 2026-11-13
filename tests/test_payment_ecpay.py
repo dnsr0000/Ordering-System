@@ -122,6 +122,37 @@ def test_notify_marks_paid_once_and_releases_order_to_branch(env):
     assert at_branch is not None and at_branch['items'] and at_branch['pickup'] > 0, '付款後送到分店 (含明細)'
 
 
+def test_second_successful_trade_for_order_is_flagged_for_refund(env, monkeypatch):
+    from app.models.order import Order
+    from app.models.payment import PaymentKind, PaymentRecord
+    from app.services import monitor_service, payment_ecpay
+
+    alerts = []
+    monkeypatch.setattr(monitor_service, 'alert', lambda message, **kwargs: alerts.append((message, kwargs)))
+    order = _online_order(env)
+    with env.hub.app_context():
+        order_row = Order.query.filter_by(uuid=order['uuid']).first()
+        first_form = payment_ecpay.build_payment_form(order_row, base_url='https://shop.example')
+        second_form = payment_ecpay.build_payment_form(order_row, base_url='https://shop.example')
+
+    hub = env.hub.test_client()
+    first = _signed(env.hub, _notify_params(order, MerchantTradeNo=first_form['MerchantTradeNo']))
+    second = _signed(env.hub, _notify_params(
+        order, MerchantTradeNo=second_form['MerchantTradeNo'], TradeNo='2410221234567891'))
+    assert hub.post('/payment/ecpay/notify', data=first).get_data(as_text=True) == '1|OK'
+    assert hub.post('/payment/ecpay/notify', data=second).get_data(as_text=True) == '1|OK'
+
+    with env.hub.app_context():
+        paid = Order.query.filter_by(uuid=order['uuid']).first()
+        sales = PaymentRecord.query.filter_by(order_id=paid.id, kind=PaymentKind.SALE).all()
+        assert paid.payment_status == 'paid'
+        assert paid.payment_trade_no == '2410221234567890'
+        assert paid.payment_ref == first_form['MerchantTradeNo']
+        assert len(sales) == 1
+    assert len(alerts) == 1 and '重複付款' in alerts[0][0]
+    assert alerts[0][1]['key'] == 'order-dup-pay-2410221234567891'
+
+
 def test_browser_return_does_not_touch_session(env):
     order = _online_order(env)
     browser = env.hub.test_client()
