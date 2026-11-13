@@ -55,12 +55,18 @@ def test_vectorized_face_match(app):
 
 
 def test_face_login_errors_and_temp_cleanup(app, monkeypatch):
-    """人臉登入：缺照片、沒有人臉 (使用真實偵測模型) 皆回 400，且暫存照片被刪除"""
+    """人臉登入：缺照片、沒有人臉皆回 400，且臨時影像會被刪除"""
     import os
 
     import app.routes.auth as auth_routes
-    from app.services.cv_service import extract_feature
-    monkeypatch.setattr(auth_routes, 'extract_feature', extract_feature)
+    temp_paths = []
+
+    def no_face(path):
+        temp_paths.append(path)
+        assert os.path.isfile(path)
+        return None
+
+    monkeypatch.setattr(auth_routes, 'extract_feature', no_face)
     c = app.test_client()
     c.get('/?shop=default')
     assert c.get('/face_login').status_code == 200
@@ -68,7 +74,7 @@ def test_face_login_errors_and_temp_cleanup(app, monkeypatch):
     assert r.status_code == 400 and r.get_json()['success'] is False
     r = c.post('/face_login', data={'photo': (jpeg_bytes(200, 200, (255, 255, 255)), 'blank.jpg')}, content_type='multipart/form-data')
     assert r.status_code == 400 and '人臉' in r.get_json()['message']
-    assert not [f for f in os.listdir(app.config['UPLOAD_FOLDER_MEMBER']) if f.startswith('temp_')]
+    assert len(temp_paths) == 1 and not os.path.exists(temp_paths[0])
 
 
 def test_feature_vectors_are_validated(app):
@@ -124,7 +130,13 @@ def test_member_photo_access(app, admin_client):
 def test_same_face_cannot_register_twice(app, monkeypatch):
     import app.routes.auth as auth_routes
     face = {'v': np.eye(128, dtype=np.float32)[7]}
-    monkeypatch.setattr(auth_routes, 'extract_feature', lambda _p: face['v'].copy())
+    temp_paths = []
+
+    def extract(path):
+        temp_paths.append(path)
+        return face['v'].copy()
+
+    monkeypatch.setattr(auth_routes, 'extract_feature', extract)
     c = app.test_client()
     c.get('/?shop=default')
 
@@ -134,11 +146,14 @@ def test_same_face_cannot_register_twice(app, monkeypatch):
                       content_type='multipart/form-data')
 
     assert register('0933150018').status_code == 302
+    assert not os.path.exists(temp_paths[-1])
     c.post('/logout')
     register('0933150019')
+    assert not os.path.exists(temp_paths[-1])
     assert_flash(c, '此人臉已註冊')
     face['v'] = np.eye(128, dtype=np.float32)[9]
     assert register('0933150020').status_code == 302
+    assert not os.path.exists(temp_paths[-1])
     with app.app_context():
         assert User.query.filter_by(phone='0933150019').count() == 0
         assert User.query.filter_by(phone='0933150020').count() == 1

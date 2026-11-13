@@ -17,6 +17,8 @@ def test_privacy_notice_and_admin_settings(app):
     page = c.get('/privacy?shop=default').get_data(as_text=True)
     for heading in ('蒐集者名稱', '蒐集之目的', '個人資料之類別', '利用之期間', '您的權利', '不提供個人資料之影響'):
         assert heading in page, heading
+    assert '新註冊照片於擷取特徵後立即刪除' in page
+    assert '先前保存的照片可能仍留在註冊門市' in page
     manager = login_staff(app, 'privacy_mgr', 'manager')
     staff = login_staff(app, 'privacy_staff', 'staff')
     assert staff.get('/admin/privacy').status_code == 403
