@@ -165,6 +165,121 @@ def test_member_applies_coupon_e2e20(app, page, demo):
     assert '實付：$100' in page.locator('#history-modal-body .card').first.inner_text()
 
 
+def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, monkeypatch):
+    from datetime import datetime
+    from uuid import uuid4
+
+    from app.extensions import db
+    from app.models.enums import OrderStatus
+    from app.models.menu import MenuItem
+    from app.models.order import Order
+    from app.models.sync import NodeStock, SyncNode
+    from tests.test_sync_hub_node import tenant_ctx
+
+    monkeypatch.setitem(app.config, 'SYNC_ROLE', 'hub')
+    monkeypatch.setitem(app.config, 'ONLINE_PAYMENT', True)
+    previous_nodes = []
+    node_id = node_uuid = None
+    previous_price = None
+    item_id = demo[XSS_ITEM]
+    try:
+        with tenant_ctx(app) as tenant:
+            previous_nodes = [(node.id, node.is_active) for node in SyncNode.query.filter_by(tenant_id=tenant.id).all()]
+            for existing in SyncNode.query.filter_by(tenant_id=tenant.id).all():
+                existing.is_active = False
+            node = SyncNode(tenant_id=tenant.id, name=f'E2E 逾時取餐店 {uuid4().hex[:8]}',
+                            token_hash=uuid4().hex * 2, last_seen_at=datetime.now())
+            db.session.add(node)
+            db.session.flush()
+            node_id, node_uuid = node.id, node.uuid
+            db.session.add(NodeStock(node_id=node.id, menu_item_id=item_id, stock=50))
+            db.session.commit()
+
+        client = app.test_client()
+        client.get('/?shop=default')
+        login = client.post('/phone_login', json={'phone': MEMBER_PHONE, 'pin': '2468'},
+                            headers={'X-Forwarded-For': '10.77.0.1'})
+        assert login.status_code == 200, login.get_data(as_text=True)
+        assert client.post('/pickup_node', data={'node_uuid': node_uuid}).status_code == 302
+        old_response = client.post('/submit_order', json={
+            'items': [{'menu_item_id': item_id, 'quantity': 1}], 'payment_method': 'Credit Card', 'order_type': '內用',
+        })
+        assert old_response.status_code == 200, old_response.get_data(as_text=True)
+        old_order_uuid = old_response.get_json()['order_uuid']
+
+        with tenant_ctx(app):
+            old_order = Order.query.filter_by(uuid=old_order_uuid).first()
+            assert old_order.payment_status == 'pending' and old_order.total_price == 99
+            old_order.payment_status = 'expired'
+            old_order.status = OrderStatus.CANCELLED
+            item = db.session.get(MenuItem, item_id)
+            previous_price = item.price
+            item.price = 129
+            db.session.commit()
+
+        browser_member_login(page)
+        page.goto('/?shop=default')
+        page.wait_for_load_state('networkidle')
+        page.locator('[data-action="my-orders"]').click()
+        page.locator('#historyModal.show').wait_for()
+        expired_card = page.locator('#history-modal-body .card').filter(has_text='付款期限已過')
+        expect(expired_card).to_contain_text('原訂單已取消')
+        expect(expired_card).to_contain_text('目前菜單價格')
+        expect(expired_card.locator('.order-reorder')).to_contain_text('重新下單')
+        expect(expired_card.locator('.order-pay')).to_have_count(0)
+        expired_card.locator('.order-reorder').click()
+        page.locator('#historyModal').wait_for(state='hidden')
+        expect(page.locator('#cart-count')).to_have_text('1')
+
+        open_cart(page)
+        expect(page.locator('#cart-items').get_by_text(XSS_ITEM, exact=True)).to_be_visible()
+        expect(page.locator('#cart-final')).to_have_text('129')
+
+        submitted_client_order_ids = []
+
+        def capture_checkout_request(request):
+            if request.url.endswith('/submit_order') and request.method == 'POST':
+                submitted_client_order_ids.append(request.post_data_json['client_order_id'])
+
+        def intercept_payment_page(route):
+            route.fulfill(status=200, content_type='text/html', body='<p id="payment-navigation-caught">Payment intercepted</p>')
+
+        page.on('request', capture_checkout_request)
+        page.route('**/pay/**', intercept_payment_page)
+        page.route('https://payment-stage.ecpay.com.tw/**', intercept_payment_page)
+        page.locator('[data-action="preview"]').click()
+        page.locator('#confirmModal.show').wait_for()
+        page.locator('[data-action="checkout"]').click(no_wait_after=True)
+        expect(page.locator('#payment-navigation-caught')).to_be_visible()
+        assert submitted_client_order_ids
+
+        with tenant_ctx(app):
+            new_order = Order.query.filter_by(client_order_id=submitted_client_order_ids[-1]).first()
+            assert new_order.payment_status == 'pending' and new_order.total_price == 129
+            assert new_order.uuid != old_order_uuid
+            new_order_id, new_order_uuid = new_order.id, new_order.uuid
+        mine = next(order for order in page.request.get('/my_orders').json() if order['order_id'] == new_order_id)
+        assert mine['payment_url'].endswith('/pay/' + new_order_uuid)
+        payment_page = page.request.get(mine['payment_url'])
+        assert payment_page.status == 200
+        assert 'https://payment-stage.ecpay.com.tw/Cashier/AioCheckOut/V5' in payment_page.text()
+    finally:
+        with tenant_ctx(app):
+            db.session.rollback()
+            if node_id is not None:
+                NodeStock.query.filter_by(node_id=node_id).delete(synchronize_session=False)
+                test_node = db.session.get(SyncNode, node_id)
+                if test_node:
+                    db.session.delete(test_node)
+            for existing_id, was_active in previous_nodes:
+                existing = db.session.get(SyncNode, existing_id)
+                if existing:
+                    existing.is_active = was_active
+            if previous_price is not None:
+                db.session.get(MenuItem, item_id).price = previous_price
+            db.session.commit()
+
+
 def test_combo_order_with_side_customization(app, page, demo):
     page.goto('/?shop=default')
     page.get_by_role('button', name=re.compile('訪客直接點餐')).click()
