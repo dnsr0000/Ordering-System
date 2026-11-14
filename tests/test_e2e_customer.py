@@ -165,9 +165,8 @@ def test_member_applies_coupon_e2e20(app, page, demo):
     assert '實付：$100' in page.locator('#history-modal-body .card').first.inner_text()
 
 
-@pytest.mark.parametrize('send_server_notification', [True, False], ids=['server-notify', 'browser-return-fallback'])
-def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, monkeypatch, live_url,
-                                                               send_server_notification):
+@pytest.mark.parametrize('payment_flow', ['server-notify-success', 'browser-return-success', 'browser-return-failure'])
+def test_expired_online_order_recovery_payment_result(app, page, demo, monkeypatch, live_url, payment_flow):
     from datetime import datetime
     from uuid import uuid4
 
@@ -272,8 +271,11 @@ def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, 
 
         from tests.test_payment_ecpay import _notify_params, _signed
         notification = _signed(app, _notify_params(
-            {'uuid': new_order_uuid, 'total': 129}, MerchantTradeNo=payment_ref, TradeNo=f'E2E{uuid4().hex[:16]}'))
-        if send_server_notification:
+            {'uuid': new_order_uuid, 'total': 129}, MerchantTradeNo=payment_ref, TradeNo=f'E2E{uuid4().hex[:16]}',
+            RtnCode='0' if payment_flow == 'browser-return-failure' else '1',
+            RtnMsg='交易失敗' if payment_flow == 'browser-return-failure' else '交易成功'))
+        paid = payment_flow != 'browser-return-failure'
+        if payment_flow == 'server-notify-success':
             notify_response = page.request.post('/payment/ecpay/notify', form=notification)
             assert notify_response.status == 200 and notify_response.text() == '1|OK'
             page.goto('/payment/return/' + new_order_uuid)
@@ -300,22 +302,34 @@ def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, 
             page.route('https://payment-stage.ecpay.com.tw/**',
                        lambda route: route.fulfill(status=200, content_type='text/html', body=gateway_html))
             page.goto('https://payment-stage.ecpay.com.tw/browser-return')
-            expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
+            expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid' if paid else 'pending')
             assert browser_return_headers and 'cookie' not in browser_return_headers[-1]
             assert server_notifications == []
 
-        repeated_result = page.request.post('/payment/ecpay/result', form=notification)
-        assert repeated_result.status == 200
+        if paid:
+            repeated_result = page.request.post('/payment/ecpay/result', form=notification)
+            assert repeated_result.status == 200
+        else:
+            retry_link = page.locator('#payment-result a[href$="/pay/' + new_order_uuid + '"]')
+            expect(retry_link).to_be_visible()
+
         paid_order = next(order for order in page.request.get('/my_orders').json()
                           if order['order_id'] == new_order_id)
-        assert paid_order['payment_status'] == 'paid' and paid_order['payment_url'] == ''
-        expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
+        expected_status = 'paid' if paid else 'pending'
+        assert paid_order['payment_status'] == expected_status
+        assert paid_order['payment_url'] == ('' if paid else f'/pay/{new_order_uuid}')
+        expect(page.locator('#payment-result')).to_have_attribute('data-status', expected_status)
         from app.models.payment import PaymentKind, PaymentRecord
         with tenant_ctx(app):
             paid_order_row = db.session.get(Order, new_order_id)
             sales = PaymentRecord.query.filter_by(order_id=new_order_id, kind=PaymentKind.SALE).all()
-            assert len(sales) == 1
-            assert User.query.filter_by(phone=MEMBER_PHONE).first().points == points_before + paid_order_row.points_earned
+            member_points = User.query.filter_by(phone=MEMBER_PHONE).first().points
+            if paid:
+                assert len(sales) == 1
+                assert member_points == points_before + paid_order_row.points_earned
+            else:
+                assert len(sales) == 0 and paid_order_row.points_earned > 0
+                assert member_points == points_before
     finally:
         with tenant_ctx(app):
             db.session.rollback()
