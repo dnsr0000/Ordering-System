@@ -15,6 +15,23 @@
     <div class="row g-3">
         <section class="col-lg-6">
             <div class="card-custom rounded-3 p-4 h-100">
+                <h2 class="h5 fw-bold text-info"><i class="bi bi-person-lines-fill me-2"></i>平台聯絡方式</h2>
+                <p class="small text-white-50">Email 與電話皆選填，未驗證且不作為登入或帳號復原方式。</p>
+                <form method="POST" action="{{ url_for('tenants.update_contact') }}">
+                    {{ csrf() }}
+                    <div class="mb-2">
+                        <label class="form-label small" for="tenant-contact-email">聯絡 Email（選填）</label>
+                        <input class="form-control form-control-sm" id="tenant-contact-email" name="contact_email" type="email"
+                               maxlength="254" autocomplete="email" value="{{ tenant.contact_email or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small" for="tenant-contact-phone">聯絡電話（選填）</label>
+                        <input class="form-control form-control-sm" id="tenant-contact-phone" name="contact_phone" type="tel"
+                               maxlength="40" autocomplete="tel" value="{{ tenant.contact_phone or '' }}">
+                    </div>
+                    <button class="btn btn-outline-info btn-sm fw-bold" type="submit">儲存聯絡方式</button>
+                </form>
+                <hr class="border-secondary">
                 <h2 class="h5 fw-bold text-info"><i class="bi bi-download me-2"></i>匯出本店資料</h2>
                 <p class="small text-white-50">資料包包含營運 Excel、不含金鑰的設定 JSON，以及分店基本資料；不含登入憑證、人臉資料、照片或封存檔，也不能用來還原系統。</p>
                 <a class="btn btn-warning fw-bold" href="{{ url_for('tenants.export_bundle') }}">

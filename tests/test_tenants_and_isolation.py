@@ -8,10 +8,10 @@ from app.models.coupon import Coupon, UserCoupon
 from app.models.menu import ComboOption, MenuItem, ModifierOption
 from app.models.order import Order
 from app.models.tenant import Tenant
-from app.models.user import RewardSetting, User
+from app.models.user import RewardSetting, StaffAuditLog, User
 from app.services.reward_service import get_or_create_reward_setting
 from tests.support import default_tenant_id
-from tests.support import login_staff
+from tests.support import get_or_create_tenant, login_staff
 
 
 def test_tenant_register(app):
@@ -44,6 +44,47 @@ def test_tenant_registration_accepts_optional_contact(app):
     platform = login_staff(app, f'platform-{slug}', role='owner', tenant_id=default_tenant_id(app))
     platform_page = platform.get('/admin/tenants').get_data(as_text=True)
     assert 'owner@example.test' in platform_page and '+886 912-345-678' in platform_page
+
+
+def test_owner_can_update_optional_tenant_contact(app):
+    slug = f'contact-edit-{uuid.uuid4().hex[:8]}'
+    tenant_id = get_or_create_tenant(app, slug)
+    username = f'owner-{slug}'
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        tenant.contact_email, tenant.contact_phone = 'old@example.test', '0912345678'
+        db.session.commit()
+    owner = login_staff(app, username, role='owner', tenant_id=tenant_id)
+
+    page = owner.get('/admin/tenant/account')
+    assert 'old@example.test' in page.get_data(as_text=True)
+    updated = owner.post('/admin/tenant/account/contact', data={
+        'contact_email': 'new@example.test', 'contact_phone': '+886 987-654-321',
+    })
+    assert updated.status_code == 302
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        assert (tenant.contact_email, tenant.contact_phone) == ('new@example.test', '+886 987-654-321')
+        audit = StaffAuditLog.query.filter_by(tenant_id=tenant_id, action_type='TENANT_CONTACT_UPDATE').one()
+        assert 'new@example.test' not in audit.details and '+886 987-654-321' not in audit.details
+
+    manager = login_staff(app, f'manager-{slug}', role='manager', tenant_id=tenant_id)
+    assert manager.post('/admin/tenant/account/contact', data={
+        'contact_email': 'manager@example.test', 'contact_phone': '',
+    }).status_code == 403
+    invalid = owner.post('/admin/tenant/account/contact', data={
+        'contact_email': 'not-an-email', 'contact_phone': '',
+    }, follow_redirects=True)
+    assert invalid.status_code == 200 and '聯絡 Email 格式不正確' in invalid.get_data(as_text=True)
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        assert (tenant.contact_email, tenant.contact_phone) == ('new@example.test', '+886 987-654-321')
+    cleared = owner.post('/admin/tenant/account/contact', data={'contact_email': '', 'contact_phone': ''})
+    assert cleared.status_code == 302
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        assert not tenant.contact_email and not tenant.contact_phone
+        assert StaffAuditLog.query.filter_by(tenant_id=tenant_id, action_type='TENANT_CONTACT_UPDATE').count() == 2
 
 
 def test_shop_entry(app):
