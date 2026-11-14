@@ -55,9 +55,9 @@ def test_store_login_page_links_to_tenant_reactivation(app):
     response = app.test_client().get('/admin')
     assert response.status_code == 200
     html = response.get_data(as_text=True)
-    assert 'id="tenant-reactivate-link"' in html
-    assert 'href="/tenant/reactivate"' in html
-    assert '店家已停用？恢復店家' in html
+    assert 'id="tenant-recovery-link"' in html
+    assert 'href="/tenant/recovery"' in html
+    assert '忘記密碼／恢復店家' in html
 
 
 def test_owner_close_request_suspends_without_deleting_and_platform_can_restore(app):
@@ -110,7 +110,7 @@ def test_owner_can_self_reactivate_pending_closure(app):
     closed = owner.post('/admin/tenant/account/close-request', data={
         'current_password': 'StaffPass!2026', 'reason': '自行恢復測試', 'confirm': '1',
     })
-    assert closed.status_code == 200 and 'tenant/reactivate' in closed.get_data(as_text=True)
+    assert closed.status_code == 200 and 'tenant/recovery' in closed.get_data(as_text=True)
 
     page = owner.get('/tenant/reactivate', query_string={'slug': slug})
     assert page.status_code == 200 and slug in page.get_data(as_text=True)

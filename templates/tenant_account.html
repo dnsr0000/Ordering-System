@@ -16,7 +16,7 @@
         <section class="col-lg-6">
             <div class="card-custom rounded-3 p-4 h-100">
                 <h2 class="h5 fw-bold text-info"><i class="bi bi-person-lines-fill me-2"></i>平台聯絡方式</h2>
-                <p class="small text-white-50">Email 與電話皆選填，未驗證且不作為登入或帳號復原方式。</p>
+                <p class="small text-white-50">Email 與電話皆選填，更新時不需驗證；帳號復原時會先寄送一次性驗證碼確認可使用。</p>
                 <form method="POST" action="{{ url_for('tenants.update_contact') }}">
                     {{ csrf() }}
                     <div class="mb-2">
