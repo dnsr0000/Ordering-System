@@ -10,9 +10,13 @@ from tests.support import get_or_create_tenant, login_staff
 
 
 def _recovery_code(message):
-    match = re.search(r'(?<!\d)(\d{6})(?!\d)', message)
+    match = re.search(r'帳號復原驗證碼：(\d{6})(?!\d)', message)
     assert match, message
     return match.group(1)
+
+
+def test_recovery_code_extraction_ignores_digits_in_tenant_name():
+    assert _recovery_code('【店家 297499】帳號復原驗證碼：123456，10 分鐘內有效') == '123456'
 
 
 def test_owner_resets_password_after_email_code(app, monkeypatch):
@@ -34,7 +38,7 @@ def test_owner_resets_password_after_email_code(app, monkeypatch):
         'slug': slug, 'username': username, 'purpose': 'reset_password', 'channel': 'email',
     }, follow_redirects=True)
     assert started.status_code == 200 and '若資料相符' in started.get_data(as_text=True)
-    assert len(sent) == 1 and sent[0][1] == ['owner@example.test']
+    assert len(sent) == 1 and sent[0][0] == tenant_id and sent[0][1] == ['owner@example.test']
     code = _recovery_code(sent[0][3])
     with app.app_context():
         recovery = TenantRecoveryCode.query.filter_by(tenant_id=tenant_id, staff_account_id=
@@ -53,6 +57,51 @@ def test_owner_resets_password_after_email_code(app, monkeypatch):
         owner = StaffAccount.query.filter_by(username=username).one()
         assert owner.check_password('RecoveredPassword!2026')
         assert TenantRecoveryCode.query.filter_by(tenant_id=tenant_id).one().consumed_at is not None
+
+
+def test_recovery_email_uses_platform_smtp_when_tenant_smtp_missing(app, monkeypatch):
+    slug = f'recover-platform-smtp-{uuid.uuid4().hex[:8]}'
+    tenant_id = get_or_create_tenant(app, slug)
+    username = f'owner-{slug}'
+    login_staff(app, username, role='owner', tenant_id=tenant_id)
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        tenant.contact_email = 'owner@example.test'
+        db.session.commit()
+        platform_tenant_id = Tenant.query.filter_by(slug='default').one().id
+    deliveries = []
+    monkeypatch.setattr(mail_service, 'is_configured', lambda tid=None: tid == platform_tenant_id)
+    monkeypatch.setattr(mail_service, 'send_mail', lambda tid, recipients, subject, body, attachments=():
+                        deliveries.append((tid, recipients, subject, body)))
+
+    response = app.test_client().post('/tenant/recovery/send', data={
+        'slug': slug, 'username': username, 'purpose': 'reset_password', 'channel': 'email',
+    }, follow_redirects=True)
+    assert response.status_code == 200 and '若資料相符' in response.get_data(as_text=True)
+    assert len(deliveries) == 1 and deliveries[0][0] == platform_tenant_id
+    assert deliveries[0][1] == ['owner@example.test']
+
+
+def test_recovery_email_is_not_created_without_any_smtp(app, monkeypatch):
+    slug = f'recover-no-smtp-{uuid.uuid4().hex[:8]}'
+    tenant_id = get_or_create_tenant(app, slug)
+    username = f'owner-{slug}'
+    login_staff(app, username, role='owner', tenant_id=tenant_id)
+    with app.app_context():
+        tenant = db.session.get(Tenant, tenant_id)
+        tenant.contact_email = 'owner@example.test'
+        db.session.commit()
+    email_sent = []
+    monkeypatch.setattr(mail_service, 'is_configured', lambda tenant_id=None: False)
+    monkeypatch.setattr(mail_service, 'send_mail', lambda *args, **kwargs: email_sent.append(args))
+
+    response = app.test_client().post('/tenant/recovery/send', data={
+        'slug': slug, 'username': username, 'purpose': 'reset_password', 'channel': 'email',
+    }, follow_redirects=True)
+    assert response.status_code == 200 and '若資料相符' in response.get_data(as_text=True)
+    assert email_sent == []
+    with app.app_context():
+        assert TenantRecoveryCode.query.filter_by(tenant_id=tenant_id).count() == 0
 
 
 def test_owner_reactivates_self_closed_tenant_with_sms_code(app, monkeypatch):
@@ -142,6 +191,9 @@ def test_sending_new_recovery_code_invalidates_previous_code(app, monkeypatch):
     monkeypatch.setattr(mail_service, 'is_configured', lambda tenant_id=None: True)
     monkeypatch.setattr(mail_service, 'send_mail', lambda tid, recipients, subject, body, attachments=():
                         sent.append(body))
+    from app.services import tenant_recovery_service
+    codes = iter((123456, 654321))
+    monkeypatch.setattr(tenant_recovery_service.secrets, 'randbelow', lambda upper_bound: next(codes))
     client = app.test_client()
     request_data = {'slug': slug, 'username': username, 'purpose': 'reset_password', 'channel': 'email'}
     client.post('/tenant/recovery/send', data=request_data)
@@ -154,7 +206,6 @@ def test_sending_new_recovery_code_invalidates_previous_code(app, monkeypatch):
     client.post('/tenant/recovery/send', data=request_data)
     new_code = _recovery_code(sent[-1])
     assert new_code != old_code
-    from app.services import tenant_recovery_service
     with app.app_context():
         tenant = db.session.get(Tenant, tenant_id)
         owner = StaffAccount.query.filter_by(tenant_id=tenant_id, username=username).one()

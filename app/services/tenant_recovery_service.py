@@ -34,12 +34,27 @@ def _channel_ready(tenant_id, channel):
     return mail_service.is_configured(tenant_id) if channel == 'email' else sms_service.is_enabled(tenant_id)
 
 
+def _email_sender_tenant_id(tenant_id):
+    if mail_service.is_configured(tenant_id):
+        return tenant_id
+    from app.models.tenant import Tenant
+    from app.tenant_context import tenant_bypass
+    with tenant_bypass():
+        platform_tenant = Tenant.query.filter_by(slug='default').first()
+    if platform_tenant is not None and platform_tenant.id != tenant_id \
+            and mail_service.is_configured(platform_tenant.id):
+        return platform_tenant.id
+    return None
+
+
 def send_code(tenant, staff, purpose, channel, ip=''):
     """Send a rate-limited code; return False when contact or delivery channel is unavailable."""
     if purpose not in ('reset_password', 'reactivate') or channel not in ('email', 'sms'):
         return False
     destination = contact_value(tenant, channel)
-    if not destination or not _channel_ready(tenant.id, channel):
+    sender_tenant_id = _email_sender_tenant_id(tenant.id) if channel == 'email' else tenant.id
+    channel_ready = sender_tenant_id is not None if channel == 'email' else _channel_ready(tenant.id, channel)
+    if not destination or not channel_ready:
         return False
 
     now = datetime.now()
@@ -67,7 +82,7 @@ def send_code(tenant, staff, purpose, channel, ip=''):
     body = f'【{tenant.name}】帳號復原驗證碼：{code}，10 分鐘內有效，請勿提供給他人。'
     try:
         if channel == 'email':
-            mail_service.send_mail(tenant.id, [destination], f'{tenant.name} 帳號復原驗證碼', body)
+            mail_service.send_mail(sender_tenant_id, [destination], f'{tenant.name} 帳號復原驗證碼', body)
         else:
             sms_service.send_sms(tenant.id, destination, body)
     except AppError as exc:

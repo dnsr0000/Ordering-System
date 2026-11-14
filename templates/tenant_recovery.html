@@ -4,7 +4,7 @@
 <main class="container py-5" style="max-width: 600px">
     <section class="card-custom rounded-3 p-4">
         <h1 class="h4 fw-bold"><i class="bi bi-key text-info me-2"></i>店家帳號復原</h1>
-        <p class="small text-white-50">聯絡方式是選填資料。若店家、負責人及已設定聯絡方式相符且寄送通道可用，系統會寄送 10 分鐘有效的一次性驗證碼；若無法收取，請聯絡平台管理者。</p>
+        <p class="small text-white-50">聯絡方式是選填資料。符合條件時，系統會寄送 10 分鐘有效的一次性驗證碼。Email 優先使用店家的 SMTP，未設定時改用平台 SMTP；兩者都未設定時不會寄出，請聯絡平台管理者。</p>
         {% if recovery_step == 'verify' %}
         <form method="POST" action="{{ url_for('tenants.recovery_complete') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
