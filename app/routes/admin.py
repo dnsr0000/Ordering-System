@@ -261,18 +261,26 @@ def tenant_register():
     shop_name = request.form.get('shop_name', '').strip()
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '')
+    contact_email = (request.form.get('contact_email') or '').strip().lower()
+    contact_phone = (request.form.get('contact_phone') or '').strip()
     slug = re.sub(r'[^a-z0-9-]+', '-', request.form.get('slug', '').strip().lower()).strip('-')
     if not shop_name or not username or len(password) < 10 or not slug:
         raise AppError('請填妥資料；密碼至少 10 個字元。')
     if len(shop_name) > 120 or len(slug) > 80 or len(username) > MAX_USERNAME_LEN:
         raise AppError(f'店名最多 120 字、網址代號最多 80 字、負責人帳號最多 {MAX_USERNAME_LEN} 字。')
+    if contact_email and (len(contact_email) > 254 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', contact_email)):
+        raise AppError('聯絡 Email 格式不正確。')
+    if contact_phone and (len(contact_phone) > 40 or not re.fullmatch(r'[0-9+().\-\s]{6,40}', contact_phone)
+                          or sum(char.isdigit() for char in contact_phone) < 6):
+        raise AppError('聯絡電話格式不正確。')
     if Tenant.query.filter_by(slug=slug).first():
         raise AppError('店家網址代號已被使用。', 409)
     if StaffAccount.query.filter_by(username=username).first():
         raise AppError('員工帳號已被使用。', 409)
 
     try:
-        tenant = Tenant(name=shop_name, slug=slug, is_active=True)
+        tenant = Tenant(name=shop_name, slug=slug, contact_email=contact_email or None,
+                contact_phone=contact_phone or None, is_active=True)
         db.session.add(tenant)
         db.session.flush()
         g.tenant, g.tenant_id = tenant, tenant.id
