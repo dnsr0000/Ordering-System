@@ -7,6 +7,7 @@
 """
 import io
 import json
+import re
 import zipfile
 from datetime import datetime, timedelta
 
@@ -122,6 +123,24 @@ def account():
     closure_request = (TenantClosureRequest.query.filter_by(tenant_id=g.tenant_id, status='pending')
                        .order_by(TenantClosureRequest.requested_at.desc()).first())
     return render_template('tenant_account.html', tenant=g.tenant, closure_request=closure_request)
+
+
+@tenants_bp.route('/admin/tenant/account/contact', methods=['POST'], endpoint='update_contact')
+@role_required('owner')
+def update_contact():
+    email = (request.form.get('contact_email') or '').strip().lower()
+    phone = (request.form.get('contact_phone') or '').strip()
+    if email and (len(email) > 254 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email)):
+        raise AppError('聯絡 Email 格式不正確。', 400)
+    if phone and (len(phone) > 40 or not re.fullmatch(r'[0-9+().\-\s]{6,40}', phone)
+                  or sum(char.isdigit() for char in phone) < 6):
+        raise AppError('聯絡電話格式不正確。', 400)
+    g.tenant.contact_email = email or None
+    g.tenant.contact_phone = phone or None
+    record_staff_audit('TENANT_CONTACT_UPDATE', details='Owner updated optional tenant contact details')
+    db.session.commit()
+    flash('店家聯絡方式已更新。', 'success')
+    return redirect(url_for('tenants.account'))
 
 
 @tenants_bp.route('/admin/tenant/account/export', endpoint='export_bundle')

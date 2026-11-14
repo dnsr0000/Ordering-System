@@ -64,6 +64,7 @@ ACTION_LABELS = {
     'TENANT_TOGGLE': ('店家啟用 / 停用', 'bg-danger'),
     'TENANT_CLOSE_REQUEST': ('店家申請關閉', 'bg-danger'),
     'TENANT_CLOSE_RESCINDED': ('店家自行恢復', 'bg-success'),
+    'TENANT_CONTACT_UPDATE': ('店家聯絡資料更新', 'bg-secondary'),
     'TENANT_DATA_EXPORT': ('匯出店家資料', 'bg-warning text-dark'),
     'AUDIT_EXPORT': ('匯出稽核紀錄', 'bg-secondary'),
 }
