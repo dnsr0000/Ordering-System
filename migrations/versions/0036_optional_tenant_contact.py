@@ -15,12 +15,10 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('tenant', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('contact_email', sa.String(length=254), nullable=True))
-        batch_op.add_column(sa.Column('contact_phone', sa.String(length=40), nullable=True))
+    op.add_column('tenant', sa.Column('contact_email', sa.String(length=254), nullable=True))
+    op.add_column('tenant', sa.Column('contact_phone', sa.String(length=40), nullable=True))
 
 
 def downgrade():
-    with op.batch_alter_table('tenant', schema=None) as batch_op:
-        batch_op.drop_column('contact_phone')
-        batch_op.drop_column('contact_email')
+    op.drop_column('tenant', 'contact_phone')
+    op.drop_column('tenant', 'contact_email')
