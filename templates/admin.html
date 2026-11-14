@@ -42,8 +42,8 @@
                 </button>
             </form>
 
-            <a id="tenant-reactivate-link" href="{{ url_for('tenants.reactivate') }}" class="btn btn-outline-info w-100 mb-3">
-                <i class="bi bi-arrow-counterclockwise me-1"></i>店家已停用？恢復店家
+            <a id="tenant-recovery-link" href="{{ url_for('tenants.recovery') }}" class="btn btn-outline-info w-100 mb-3">
+                <i class="bi bi-key me-1"></i>忘記密碼／恢復店家
             </a>
             {% if config.ALLOW_TENANT_REGISTER %}<a href="{{ url_for('admin.tenant_register') }}" class="btn btn-outline-warning w-100 mb-3">建立新店家帳號</a>{% endif %}
 

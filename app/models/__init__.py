@@ -1,4 +1,4 @@
-from app.models.tenant import StaffAccount, StaffSession, Tenant, TenantClosureRequest
+from app.models.tenant import StaffAccount, StaffSession, Tenant, TenantClosureRequest, TenantRecoveryCode
 from app.models.mixins import TenantScoped, SyncMixin
 from app.models.user import (
     User, AdminLog, StaffAuditLog, CustomerLog, RewardSetting, RewardRedemption, PrivacySetting,
@@ -30,7 +30,8 @@ from app.models.sync import (
 )
 
 __all__ = [
-    'Tenant', 'TenantClosureRequest', 'StaffAccount', 'StaffSession', 'TenantScoped', 'SyncMixin', 'User', 'AdminLog',
+    'Tenant', 'TenantClosureRequest', 'TenantRecoveryCode', 'StaffAccount', 'StaffSession', 'TenantScoped', 'SyncMixin',
+    'User', 'AdminLog',
     'StaffAuditLog', 'CustomerLog',
     'RewardSetting', 'RewardRedemption', 'PrivacySetting', 'MenuItem', 'ComboOption', 'ComboOptionItem', 'ModifierOption',
     'Order', 'OrderItem', 'DailyCounter', 'Coupon', 'UserCoupon', 'AuthThrottle', 'DiningTable',

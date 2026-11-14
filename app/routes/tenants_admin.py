@@ -269,3 +269,114 @@ def reactivate():
     response = complete_staff_login(owner)
     flash('店家已恢復，並已登入管理後台。', 'success')
     return response
+
+
+def _recovery_context(slug, username):
+    with tenant_bypass():
+        tenant = Tenant.query.filter_by(slug=slug).first() if slug else None
+        owner = (StaffAccount.query.filter_by(tenant_id=tenant.id, username=username, role='owner',
+                                              is_active=True, deleted_at=None).first()
+                 if tenant is not None else None)
+        closure = (TenantClosureRequest.query.filter_by(tenant_id=tenant.id, status='pending',
+                                                        requested_by_staff_id=owner.id).first()
+                   if tenant is not None and owner is not None else None)
+    return tenant, owner, closure
+
+
+def _recovery_allowed(tenant, owner, closure, purpose):
+    if tenant is None or owner is None or tenant.slug == 'default':
+        return False
+    if purpose == 'reset_password':
+        return tenant.is_active
+    if purpose == 'reactivate':
+        return not tenant.is_active and closure is not None
+    return False
+
+
+def _recovery_return(slug, username, purpose, channel):
+    return redirect(url_for('tenants.recovery', slug=slug, username=username, purpose=purpose,
+                            channel=channel, step='verify'))
+
+
+@tenants_bp.route('/tenant/recovery', methods=['GET'], endpoint='recovery')
+def recovery():
+    slug = (request.args.get('slug') or '').strip().lower()[:80]
+    username = (request.args.get('username') or '').strip()[:120]
+    purpose = request.args.get('purpose') if request.args.get('purpose') in ('reset_password', 'reactivate') else ''
+    channel = request.args.get('channel') if request.args.get('channel') in ('email', 'sms') else ''
+    step = 'verify' if request.args.get('step') == 'verify' else 'request'
+    with tenant_bypass():
+        display_tenant = Tenant.query.filter_by(slug=slug).first() if slug else None
+        display_tenant = display_tenant or Tenant.query.filter_by(slug='default').first()
+    if display_tenant is not None:
+        _use_tenant(display_tenant, remember=False)
+    return render_template('tenant_recovery.html', slug=slug, username=username,
+                           purpose=purpose, channel=channel, recovery_step=step)
+
+
+@tenants_bp.route('/tenant/recovery/send', methods=['POST'], endpoint='recovery_send')
+@limiter.limit('5/hour', methods=['POST'], key_func=ip_key)
+def recovery_send():
+    slug = (request.form.get('slug') or '').strip().lower()[:80]
+    username = (request.form.get('username') or '').strip()[:120]
+    purpose = request.form.get('purpose') or ''
+    channel = request.form.get('channel') or ''
+    tenant, owner, closure = _recovery_context(slug, username)
+    if _recovery_allowed(tenant, owner, closure, purpose):
+        from app.services import tenant_recovery_service
+        tenant_recovery_service.send_code(tenant, owner, purpose, channel, request.remote_addr or '')
+    flash('若資料相符且聯絡方式已設定、發送通道可用，驗證碼已寄出；若收不到，請聯絡平台管理者。', 'info')
+    return _recovery_return(slug, username, purpose, channel)
+
+
+@tenants_bp.route('/tenant/recovery/complete', methods=['POST'], endpoint='recovery_complete')
+@limiter.limit('10/minute', methods=['POST'], key_func=ip_key)
+def recovery_complete():
+    slug = (request.form.get('slug') or '').strip().lower()[:80]
+    username = (request.form.get('username') or '').strip()[:120]
+    purpose = request.form.get('purpose') or ''
+    channel = request.form.get('channel') or ''
+    new_password = request.form.get('new_password') or ''
+    confirm_password = request.form.get('confirm_password') or ''
+    if len(new_password) < 10 or new_password != confirm_password:
+        flash('新密碼至少 10 個字元，且兩次輸入必須相同。', 'danger')
+        return _recovery_return(slug, username, purpose, channel)
+
+    tenant, owner, closure = _recovery_context(slug, username)
+    if not _recovery_allowed(tenant, owner, closure, purpose):
+        flash('復原資料無效或已過期，請重新申請或聯絡平台管理者。', 'danger')
+        return _recovery_return(slug, username, purpose, channel)
+    _use_tenant(tenant, remember=False)
+    from app.services import tenant_recovery_service
+    recovery_code = tenant_recovery_service.verify_code(tenant, owner, purpose, channel, request.form.get('code'))
+    if recovery_code is None:
+        flash('驗證碼無效、已過期或嘗試次數過多。', 'danger')
+        return _recovery_return(slug, username, purpose, channel)
+    if owner.totp_enabled:
+        from app.services import security_service
+        if not security_service.verify_second_factor(owner, (request.form.get('totp_code') or '').strip()):
+            db.session.commit()
+            flash('兩步驟驗證碼不正確。', 'danger')
+            return _recovery_return(slug, username, purpose, channel)
+    if not tenant_recovery_service.consume_code(recovery_code):
+        db.session.rollback()
+        flash('驗證碼已使用或過期，請重新申請。', 'danger')
+        return _recovery_return(slug, username, purpose, channel)
+
+    owner.set_password(new_password)
+    from app.services import security_service
+    security_service.logout_everywhere(owner, '透過聯絡方式復原帳號')
+    if purpose == 'reactivate':
+        tenant.is_active = True
+        closure.status = 'owner_reactivated'
+        closure.resolved_at = datetime.now()
+        closure.resolved_by_username = owner.username
+        closure.resolution_note = 'Owner recovered account via verified contact'
+    record_staff_audit('TENANT_ACCOUNT_RECOVERY', tenant_id=tenant.id, as_system=True,
+                       details=f'owner {owner.username} recovered account ({purpose}, {channel})')
+    db.session.commit()
+    _use_tenant(tenant, remember=True)
+    from app.routes.admin import complete_staff_login
+    response = complete_staff_login(owner)
+    flash('帳號復原完成，已登入管理後台。', 'success')
+    return response

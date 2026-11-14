@@ -40,6 +40,27 @@ class TenantClosureRequest(db.Model):
     __table_args__ = (db.Index('ix_tenant_closure_status_requested', 'status', 'requested_at'),)
 
 
+class TenantRecoveryCode(db.Model):
+    """One-time contact verification for owner password reset or self-closure recovery; never synchronized."""
+    __tablename__ = 'tenant_recovery_code'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    staff_account_id = db.Column(db.Integer, db.ForeignKey('staff_account.id', ondelete='CASCADE'), nullable=False,
+                                 index=True)
+    purpose = db.Column(db.String(20), nullable=False)  # reset_password / reactivate
+    channel = db.Column(db.String(10), nullable=False)  # email / sms
+    contact_hash = db.Column(db.String(64), nullable=False)
+    code_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    consumed_at = db.Column(db.DateTime, nullable=True)
+    ip_address = db.Column(db.String(50), nullable=False, default='')
+
+    __table_args__ = (db.Index('ix_tenant_recovery_code_owner_created', 'tenant_id', 'staff_account_id', 'created_at'),)
+
+
 class StaffAccount(CreatedAtMixin, UserMixin, SyncMixin, db.Model):
     """
     員工 / 後台帳號 (Flask-Login 的登入主體)。

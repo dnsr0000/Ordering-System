@@ -6,7 +6,7 @@
         <i class="bi bi-pause-circle text-warning display-4"></i>
         <h1 class="h4 fw-bold mt-3">已送出「{{ tenant_name }}」關閉申請</h1>
         <p class="text-white-50">店家已停用，資料仍會保留，不會自動刪除。若要撤回申請，可由負責人驗證後自行恢復。</p>
-        <a class="btn btn-warning fw-bold" href="{{ url_for('tenants.reactivate', slug=tenant_slug) }}">恢復店家</a>
+        <a class="btn btn-warning fw-bold" href="{{ url_for('tenants.recovery', slug=tenant_slug, purpose='reactivate') }}">驗證聯絡方式並恢復店家</a>
     </section>
 </main>
 {% endblock %}

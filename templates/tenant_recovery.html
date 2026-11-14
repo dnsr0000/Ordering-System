@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}店家帳號復原{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 600px">
+    <section class="card-custom rounded-3 p-4">
+        <h1 class="h4 fw-bold"><i class="bi bi-key text-info me-2"></i>店家帳號復原</h1>
+        <p class="small text-white-50">聯絡方式是選填資料。若店家、負責人及已設定聯絡方式相符且寄送通道可用，系統會寄送 10 分鐘有效的一次性驗證碼；若無法收取，請聯絡平台管理者。</p>
+        {% if recovery_step == 'verify' %}
+        <form method="POST" action="{{ url_for('tenants.recovery_complete') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="slug" value="{{ slug }}">
+            <input type="hidden" name="username" value="{{ username }}">
+            <input type="hidden" name="purpose" value="{{ purpose }}">
+            <input type="hidden" name="channel" value="{{ channel }}">
+            <div class="mb-3">
+                <label class="form-label" for="recovery-code">Email／簡訊驗證碼</label>
+                <input class="form-control" id="recovery-code" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-new-password">新密碼（至少 10 個字元）</label>
+                <input class="form-control" id="recovery-new-password" name="new_password" type="password"
+                       minlength="10" autocomplete="new-password" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-confirm-password">再次輸入新密碼</label>
+                <input class="form-control" id="recovery-confirm-password" name="confirm_password" type="password"
+                       minlength="10" autocomplete="new-password" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-totp">兩步驟驗證碼（若帳號已啟用）</label>
+                <input class="form-control" id="recovery-totp" name="totp_code" inputmode="numeric" autocomplete="one-time-code">
+            </div>
+            <button class="btn btn-success fw-bold" type="submit">驗證並復原帳號</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('tenants.recovery_send') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="form-label" for="recovery-slug">店家代號</label>
+                <input class="form-control" id="recovery-slug" name="slug" value="{{ slug }}" maxlength="80" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-username">負責人帳號</label>
+                <input class="form-control" id="recovery-username" name="username" value="{{ username }}"
+                       maxlength="120" autocomplete="username" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-purpose">復原項目</label>
+                <select class="form-select" id="recovery-purpose" name="purpose" required>
+                    <option value="reset_password"{% if purpose == 'reset_password' %} selected{% endif %}>忘記密碼</option>
+                    <option value="reactivate"{% if purpose == 'reactivate' %} selected{% endif %}>恢復自己申請關閉的店家</option>
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="recovery-channel">驗證方式</label>
+                <select class="form-select" id="recovery-channel" name="channel" required>
+                    <option value="email"{% if channel == 'email' %} selected{% endif %}>Email</option>
+                    <option value="sms"{% if channel == 'sms' %} selected{% endif %}>簡訊</option>
+                </select>
+            </div>
+            <button class="btn btn-outline-info fw-bold" type="submit">寄送驗證碼</button>
+        </form>
+        {% endif %}
+        <a class="d-block mt-3 small text-white-50" href="{{ url_for('admin.admin_dashboard') }}">返回店家登入</a>
+    </section>
+</main>
+{% endblock %}
