@@ -51,6 +51,15 @@ def test_owner_export_bundle_is_tenant_scoped_and_excludes_secrets(app):
         assert StaffAuditLog.query.filter_by(tenant_id=own_id, action_type='TENANT_DATA_EXPORT').count() == 1
 
 
+def test_store_login_page_links_to_tenant_reactivation(app):
+    response = app.test_client().get('/admin')
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    assert 'id="tenant-reactivate-link"' in html
+    assert 'href="/tenant/reactivate"' in html
+    assert '店家已停用？恢復店家' in html
+
+
 def test_owner_close_request_suspends_without_deleting_and_platform_can_restore(app):
     slug = f'lifecycle-close-{uuid.uuid4().hex[:8]}'
     tenant_id = get_or_create_tenant(app, slug)
