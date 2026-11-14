@@ -30,7 +30,10 @@
                 <td class="fw-bold text-white">{{ t.name }}{% if t.is_default %} <span class="badge bg-info text-dark">預設 / 平台</span>{% endif %}</td>
                 {# 不做成連結：已登入的平台管理者在同一個瀏覽器開店家入口，看到的一律是自己 (預設) 店家 #}
                 <td>{{ t.slug }}<div class="small text-white-50 user-select-all">{{ url_for('customer.tenant_storefront', tenant_slug=t.slug, _external=True) }}</div></td>
-                <td><span class="badge {{ 'bg-success' if t.is_active else 'bg-danger' }}">{{ '啟用' if t.is_active else '已停用' }}</span></td>
+                <td>
+                    <span class="badge {{ 'bg-success' if t.is_active else 'bg-danger' }}">{{ '啟用' if t.is_active else '已停用' }}</span>
+                    {% if t.close_request %}<div class="small text-warning mt-1">店家關閉申請：{{ t.close_request.requested_by_username }}<br>{{ t.close_request.reason or '未提供原因' }}</div>{% endif %}
+                </td>
                 <td class="small text-white-50">{{ t.created_at.strftime('%Y-%m-%d') if t.created_at else '' }}</td>
                 <td>{{ t.staff }}</td>
                 <td>{{ t.members }}</td>

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}店家已停用{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 640px">
+    <section class="card-custom rounded-3 p-4 text-center">
+        <i class="bi bi-pause-circle text-warning display-4"></i>
+        <h1 class="h4 fw-bold mt-3">已送出「{{ tenant_name }}」關閉申請</h1>
+        <p class="text-white-50">店家已停用，資料仍會保留，不會自動刪除。平台管理者可重新啟用或聯絡你處理後續事宜。</p>
+        <a class="btn btn-outline-light" href="/">返回首頁</a>
+    </section>
+</main>
+{% endblock %}
