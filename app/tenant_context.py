@@ -97,7 +97,7 @@ def install_tenant_context(app):
         # 綠界的伺服器通知與跨站 POST 回傳也不解析店家：不可寫 session (會蓋掉顧客原本的登入 Cookie)
         if request.endpoint in ('static', 'health.healthz', 'payment.ecpay_notify', 'payment.ecpay_result',
                                 'table_pay.notify', 'table_pay.result', 'reservations.deposit_notify',
-                                'reservations.deposit_result') \
+                                'reservations.deposit_result', 'tenants.reactivate') \
                 or request.blueprint in ('sync_api', 'api_v1') \
                 or request.path.rstrip('/') == '/tenant/register':
             return None

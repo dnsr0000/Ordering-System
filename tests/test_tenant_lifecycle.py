@@ -91,3 +91,53 @@ def test_owner_close_request_suspends_without_deleting_and_platform_can_restore(
         request = TenantClosureRequest.query.filter_by(tenant_id=tenant_id).one()
         assert tenant.is_active is True and request.status == 'resolved'
         assert db.session.get(MenuItem, item_id) is not None
+
+
+def test_owner_can_self_reactivate_pending_closure(app):
+    slug = f'lifecycle-self-reactivate-{uuid.uuid4().hex[:8]}'
+    tenant_id = get_or_create_tenant(app, slug)
+    username = f'owner-{slug}'
+    owner = login_staff(app, username, role='owner', tenant_id=tenant_id)
+    closed = owner.post('/admin/tenant/account/close-request', data={
+        'current_password': 'StaffPass!2026', 'reason': '自行恢復測試', 'confirm': '1',
+    })
+    assert closed.status_code == 200 and 'tenant/reactivate' in closed.get_data(as_text=True)
+
+    page = owner.get('/tenant/reactivate', query_string={'slug': slug})
+    assert page.status_code == 200 and slug in page.get_data(as_text=True)
+    recovery_data = {'slug': slug, 'username': username, 'current_password': 'StaffPass!2026'}
+    rejected = owner.post('/tenant/reactivate', data={**recovery_data, 'current_password': 'wrong-password'})
+    assert rejected.status_code == 401
+    with app.app_context():
+        from app.models.tenant import Tenant
+        assert db.session.get(Tenant, tenant_id).is_active is False
+
+    restored = owner.post('/tenant/reactivate', data=recovery_data)
+    assert restored.status_code == 302
+    assert owner.get('/admin').status_code == 200
+    with app.app_context():
+        from app.models.tenant import Tenant
+        tenant = db.session.get(Tenant, tenant_id)
+        request = TenantClosureRequest.query.filter_by(tenant_id=tenant_id).one()
+        assert tenant.is_active is True and request.status == 'owner_reactivated'
+        assert request.resolved_by_username == username
+
+
+def test_owner_cannot_self_reactivate_platform_disabled_tenant(app):
+    slug = f'lifecycle-platform-disabled-{uuid.uuid4().hex[:8]}'
+    tenant_id = get_or_create_tenant(app, slug)
+    username = f'owner-{slug}'
+    owner = login_staff(app, username, role='owner', tenant_id=tenant_id)
+    with app.app_context():
+        from app.models.tenant import Tenant
+        db.session.get(Tenant, tenant_id).is_active = False
+        db.session.commit()
+
+    response = owner.post('/tenant/reactivate', data={
+        'slug': slug, 'username': username, 'current_password': 'StaffPass!2026',
+    })
+    assert response.status_code == 401
+    with app.app_context():
+        from app.models.tenant import Tenant
+        assert db.session.get(Tenant, tenant_id).is_active is False
+        assert TenantClosureRequest.query.filter_by(tenant_id=tenant_id).count() == 0
