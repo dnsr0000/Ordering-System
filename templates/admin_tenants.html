@@ -27,7 +27,9 @@
             <tbody>
             {% for t in tenants %}
             <tr class="tenant-row {{ 'opacity-50' if not t.is_active }}" data-slug="{{ t.slug }}">
-                <td class="fw-bold text-white">{{ t.name }}{% if t.is_default %} <span class="badge bg-info text-dark">預設 / 平台</span>{% endif %}</td>
+                <td class="fw-bold text-white">{{ t.name }}{% if t.is_default %} <span class="badge bg-info text-dark">預設 / 平台</span>{% endif %}
+                    {% if t.contact_email or t.contact_phone %}<div class="small fw-normal text-white-50">{{ t.contact_email }}{% if t.contact_email and t.contact_phone %} · {% endif %}{{ t.contact_phone }}</div>{% endif %}
+                </td>
                 {# 不做成連結：已登入的平台管理者在同一個瀏覽器開店家入口，看到的一律是自己 (預設) 店家 #}
                 <td>{{ t.slug }}<div class="small text-white-50 user-select-all">{{ url_for('customer.tenant_storefront', tenant_slug=t.slug, _external=True) }}</div></td>
                 <td>

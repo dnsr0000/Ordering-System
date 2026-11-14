@@ -73,6 +73,7 @@ def tenant_overview(days=30):
         n, total, _last = orders.get(t.id, (0, 0, None))
         out.append({
             'id': t.id, 'name': t.name, 'slug': t.slug, 'is_active': bool(t.is_active), 'created_at': t.created_at,
+            'contact_email': t.contact_email or '', 'contact_phone': t.contact_phone or '',
             'is_default': t.slug == 'default', 'staff': staff.get(t.id, 0), 'members': members.get(t.id, 0),
             'nodes': nodes.get(t.id, {'count': 0, 'online': 0, 'last_seen': None}),
             'close_request': close_requests.get(t.id),

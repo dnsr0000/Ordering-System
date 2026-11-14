@@ -1,5 +1,6 @@
 """多店家：註冊新店家、店家入口網址、跨店資料隔離 (他店資料一律 404 且不被修改)"""
 import threading
+import uuid
 from urllib.parse import urlparse
 
 from app.extensions import db
@@ -10,6 +11,7 @@ from app.models.tenant import Tenant
 from app.models.user import RewardSetting, User
 from app.services.reward_service import get_or_create_reward_setting
 from tests.support import default_tenant_id
+from tests.support import login_staff
 
 
 def test_tenant_register(app):
@@ -21,8 +23,27 @@ def test_tenant_register(app):
     with app.app_context():
         t2 = Tenant.query.filter_by(slug='branch-two').first()
         assert t2 is not None
+        assert not t2.contact_email and not t2.contact_phone
         assert ModifierOption.query.filter_by(tenant_id=t2.id).count() >= 2
         assert RewardSetting.query.filter_by(tenant_id=t2.id).first() is not None
+
+
+def test_tenant_registration_accepts_optional_contact(app):
+    slug = f'optional-contact-{uuid.uuid4().hex[:8]}'
+    c = app.test_client()
+    response = c.post('/tenant/register', data={
+        'shop_name': '選填聯絡方式測試店', 'slug': slug, 'username': f'owner-{slug}',
+        'password': 'OptionalContactPass!2026', 'contact_email': 'owner@example.test',
+        'contact_phone': '+886 912-345-678',
+    })
+    assert response.status_code == 302, response.get_data(as_text=True)
+    with app.app_context():
+        tenant = Tenant.query.filter_by(slug=slug).first()
+        assert tenant.contact_email == 'owner@example.test'
+        assert tenant.contact_phone == '+886 912-345-678'
+    platform = login_staff(app, f'platform-{slug}', role='owner', tenant_id=default_tenant_id(app))
+    platform_page = platform.get('/admin/tenants').get_data(as_text=True)
+    assert 'owner@example.test' in platform_page and '+886 912-345-678' in platform_page
 
 
 def test_shop_entry(app):

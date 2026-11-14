@@ -15,6 +15,8 @@ class Tenant(CreatedAtMixin, SyncMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     slug = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    contact_email = db.Column(db.String(254), nullable=True)
+    contact_phone = db.Column(db.String(40), nullable=True)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     # 桌位 QR code 使用的門市網址 (顧客手機連店內 Wi-Fi 時能開啟的網址，例如 http://192.168.1.10:5000)
     table_qr_base_url = db.Column(db.String(200), nullable=False, default='', server_default='')
