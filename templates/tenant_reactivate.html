@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}恢復已停用店家{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
+{% block content %}
+<main class="container py-5" style="max-width: 560px">
+    <section class="card-custom rounded-3 p-4">
+        <h1 class="h4 fw-bold"><i class="bi bi-arrow-counterclockwise text-success me-2"></i>恢復已停用店家</h1>
+        <p class="text-white-50 small">僅能恢復負責人提出、且尚待平台處理的關閉申請。驗證成功後店家會重新啟用並登入管理後台。</p>
+        <form method="POST" action="{{ url_for('tenants.reactivate') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="mb-3">
+                <label class="form-label" for="reactivate-slug">店家代號</label>
+                <input class="form-control" id="reactivate-slug" name="slug" value="{{ tenant_slug }}" maxlength="80" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="reactivate-owner">負責人帳號</label>
+                <input class="form-control" id="reactivate-owner" name="username" autocomplete="username" maxlength="120" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="reactivate-password">目前密碼</label>
+                <input class="form-control" id="reactivate-password" name="current_password" type="password"
+                       autocomplete="current-password" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="reactivate-totp">兩步驟驗證碼 (若帳號已啟用)</label>
+                <input class="form-control" id="reactivate-totp" name="totp_code" inputmode="numeric" autocomplete="one-time-code">
+            </div>
+            <button class="btn btn-success fw-bold" type="submit">驗證並恢復店家</button>
+        </form>
+    </section>
+</main>
+{% endblock %}

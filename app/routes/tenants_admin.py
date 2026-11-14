@@ -15,7 +15,7 @@ from flask_login import current_user, logout_user
 from sqlalchemy import func
 
 from app.errors import AppError
-from app.extensions import db
+from app.extensions import db, ip_key, limiter
 from app.models.enums import OrderStatus
 from app.models.order import Order
 from app.models.sync import SyncNode
@@ -24,7 +24,7 @@ from app.models.user import User
 from app.services.audit import record_staff_audit
 from app.services import excel_service, settings_service
 from app.services.report_service import REVENUE_STATUSES
-from app.tenant_context import tenant_bypass
+from app.tenant_context import _use_tenant, tenant_bypass
 from app.utils import platform_admin_required, role_required, safe_int
 
 tenants_bp = Blueprint('tenants', __name__)
@@ -188,6 +188,64 @@ def close_request():
     record_staff_audit('TENANT_CLOSE_REQUEST', details=f'租戶關閉申請 #{closure.id}；原因：{reason or "未提供"}')
     db.session.commit()
     tenant_name = tenant.name
+    tenant_slug = tenant.slug
     logout_user()
     session.clear()
-    return render_template('tenant_closed.html', tenant_name=tenant_name)
+    return render_template('tenant_closed.html', tenant_name=tenant_name, tenant_slug=tenant_slug)
+
+
+@tenants_bp.route('/tenant/reactivate', methods=['GET', 'POST'], endpoint='reactivate')
+@limiter.limit('5/hour', methods=['POST'], key_func=ip_key)
+def reactivate():
+    """Owner can restore only a tenant suspended by its own pending closure request."""
+    slug = (request.values.get('slug') or '').strip().lower()[:80]
+    username = (request.form.get('username') or '').strip()[:120]
+    password = request.form.get('current_password') or ''
+    with tenant_bypass():
+        target = Tenant.query.filter_by(slug=slug).first() if slug else None
+        fallback_tenant = Tenant.query.filter_by(slug='default').first() if target is None else None
+    display_tenant = target or fallback_tenant
+    if display_tenant is not None:
+        _use_tenant(display_tenant, remember=False)
+    if request.method == 'GET':
+        return render_template('tenant_reactivate.html', tenant_slug=slug)
+
+    if target is not None:
+        _use_tenant(target, remember=False)
+        owner = StaffAccount.query.filter_by(tenant_id=target.id, username=username, role='owner',
+                                             is_active=True, deleted_at=None).first()
+        closure = TenantClosureRequest.query.filter_by(tenant_id=target.id, status='pending').first()
+    else:
+        owner = closure = None
+
+    if owner is None:
+        from app.services.auth_throttle import spend_hash_time
+        spend_hash_time(password)
+        password_ok = False
+    else:
+        password_ok = owner.check_password(password)
+    valid_request = (target is not None and target.slug != 'default' and not target.is_active
+                     and closure is not None and owner is not None and password_ok)
+    if not valid_request:
+        flash('店家代號、負責人帳號或密碼無效，或沒有可恢復的待處理關閉申請。', 'danger')
+        return render_template('tenant_reactivate.html', tenant_slug=slug), 401
+
+    if owner.totp_enabled:
+        from app.services import security_service
+        if not security_service.verify_second_factor(owner, (request.form.get('totp_code') or '').strip()):
+            flash('店家代號、負責人帳號或驗證碼無效。', 'danger')
+            return render_template('tenant_reactivate.html', tenant_slug=slug), 401
+
+    target.is_active = True
+    closure.status = 'owner_reactivated'
+    closure.resolved_at = datetime.now()
+    closure.resolved_by_username = owner.username
+    closure.resolution_note = 'Owner self-reactivated the tenant'
+    record_staff_audit('TENANT_CLOSE_RESCINDED', tenant_id=target.id, as_system=True,
+                       details=f'店家負責人 {owner.username} 驗證後自行恢復店家')
+    db.session.commit()
+    _use_tenant(target, remember=True)
+    from app.routes.admin import complete_staff_login
+    response = complete_staff_login(owner)
+    flash('店家已恢復，並已登入管理後台。', 'success')
+    return response
