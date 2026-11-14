@@ -12,6 +12,7 @@
   docs/DEPLOY.txt        線上端 Docker 部署、門市 Windows 部署、同步設定、線上付款、外部服務、上線前檢查、本機模擬線上端
   docs/SYNC.txt          門市 ↔ 線上端同步的設計與合併規則
   docs/SECURITY.txt      角色權限與安全設計
+  docs/SAAS_ARCHITECTURE.txt 免費多租戶 SaaS 架構、租戶生命週期與實作階段
   docs/API.txt           API 摘要 (對外 API 完整說明在系統內的 /developers)
   docs/DEVELOPMENT.txt   測試、專案結構、開發慣例
   docs/MANUAL_TEST.txt   人工實測步驟 (全功能，每項含步驟與預期結果)
