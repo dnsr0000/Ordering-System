@@ -269,10 +269,18 @@ def test_push_only_campaign_failure_pauses_and_partial_counts(app, monkeypatch, 
 
         result = line_service.MulticastResult(1)
         result.error = '後面的批次失敗'
-        monkeypatch.setattr(line_service, 'multicast_text', lambda tenant_id, ids, text: result)
+        sent_line_ids = []
+
+        def partial_multicast(tenant_id, ids, text):
+            sent_line_ids.extend(ids)
+            return result
+
+        monkeypatch.setattr(line_service, 'multicast_text', partial_multicast)
         assert marketing_service.run_campaign(c) == 1
         sends = CampaignSend.query.filter_by(campaign_id=c.id).all()
-        assert [s.user_id for s in sends] == [users[0].id]
+        assert len(sent_line_ids) == 2
+        expected_user_id = next(user.id for user in users if user.line_user_id == sent_line_ids[0])
+        assert [s.user_id for s in sends] == [expected_user_id]
         assert db.session.get(MarketingCampaign, c.id).status == 'done'
         assert any('部分' in a for a in alerts)
 

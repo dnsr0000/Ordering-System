@@ -165,7 +165,9 @@ def test_member_applies_coupon_e2e20(app, page, demo):
     assert '實付：$100' in page.locator('#history-modal-body .card').first.inner_text()
 
 
-def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, monkeypatch):
+@pytest.mark.parametrize('send_server_notification', [True, False], ids=['server-notify', 'browser-return-fallback'])
+def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, monkeypatch, live_url,
+                                                               send_server_notification):
     from datetime import datetime
     from uuid import uuid4
 
@@ -174,6 +176,7 @@ def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, 
     from app.models.menu import MenuItem
     from app.models.order import Order
     from app.models.sync import NodeStock, SyncNode
+    from app.models.user import User
     from tests.test_sync_hub_node import tenant_ctx
 
     monkeypatch.setitem(app.config, 'SYNC_ROLE', 'hub')
@@ -210,6 +213,8 @@ def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, 
         with tenant_ctx(app):
             old_order = Order.query.filter_by(uuid=old_order_uuid).first()
             assert old_order.payment_status == 'pending' and old_order.total_price == 99
+            old_order_id = old_order.id
+            points_before = User.query.filter_by(phone=MEMBER_PHONE).first().points
             old_order.payment_status = 'expired'
             old_order.status = OrderStatus.CANCELLED
             item = db.session.get(MenuItem, item_id)
@@ -222,7 +227,8 @@ def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, 
         page.wait_for_load_state('networkidle')
         page.locator('[data-action="my-orders"]').click()
         page.locator('#historyModal.show').wait_for()
-        expired_card = page.locator('#history-modal-body .card').filter(has_text='付款期限已過')
+        expired_card = page.locator('#history-modal-body .card').filter(
+            has=page.locator(f'.order-reorder[data-id="{old_order_id}"]'))
         expect(expired_card).to_contain_text('原訂單已取消')
         expect(expired_card).to_contain_text('目前菜單價格')
         expect(expired_card.locator('.order-reorder')).to_contain_text('重新下單')
@@ -267,13 +273,49 @@ def test_expired_online_order_can_reorder_and_open_new_payment(app, page, demo, 
         from tests.test_payment_ecpay import _notify_params, _signed
         notification = _signed(app, _notify_params(
             {'uuid': new_order_uuid, 'total': 129}, MerchantTradeNo=payment_ref, TradeNo=f'E2E{uuid4().hex[:16]}'))
-        notify_response = page.request.post('/payment/ecpay/notify', form=notification)
-        assert notify_response.status == 200 and notify_response.text() == '1|OK'
+        if send_server_notification:
+            notify_response = page.request.post('/payment/ecpay/notify', form=notification)
+            assert notify_response.status == 200 and notify_response.text() == '1|OK'
+            page.goto('/payment/return/' + new_order_uuid)
+        else:
+            from html import escape
+
+            result_inputs = ''.join(
+                f'<input type="hidden" name="{escape(str(name), quote=True)}" value="{escape(str(value), quote=True)}">'
+                for name, value in notification.items())
+            result_action = escape(f'{live_url}/payment/ecpay/result', quote=True)
+            gateway_html = ('<!doctype html><meta charset="utf-8">'
+                            f'<form id="ecpay-result" method="post" action="{result_action}">{result_inputs}</form>'
+                            '<script>document.getElementById("ecpay-result").submit()</script>')
+            browser_return_headers = []
+            server_notifications = []
+
+            def capture_payment_requests(request):
+                if request.url.endswith('/payment/ecpay/result'):
+                    browser_return_headers.append(request.headers)
+                elif request.url.endswith('/payment/ecpay/notify'):
+                    server_notifications.append(request.url)
+
+            page.on('request', capture_payment_requests)
+            page.route('https://payment-stage.ecpay.com.tw/**',
+                       lambda route: route.fulfill(status=200, content_type='text/html', body=gateway_html))
+            page.goto('https://payment-stage.ecpay.com.tw/browser-return')
+            expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
+            assert browser_return_headers and 'cookie' not in browser_return_headers[-1]
+            assert server_notifications == []
+
+        repeated_result = page.request.post('/payment/ecpay/result', form=notification)
+        assert repeated_result.status == 200
         paid_order = next(order for order in page.request.get('/my_orders').json()
                           if order['order_id'] == new_order_id)
         assert paid_order['payment_status'] == 'paid' and paid_order['payment_url'] == ''
-        page.goto('/payment/return/' + new_order_uuid)
         expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
+        from app.models.payment import PaymentKind, PaymentRecord
+        with tenant_ctx(app):
+            paid_order_row = db.session.get(Order, new_order_id)
+            sales = PaymentRecord.query.filter_by(order_id=new_order_id, kind=PaymentKind.SALE).all()
+            assert len(sales) == 1
+            assert User.query.filter_by(phone=MEMBER_PHONE).first().points == points_before + paid_order_row.points_earned
     finally:
         with tenant_ctx(app):
             db.session.rollback()
