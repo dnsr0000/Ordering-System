@@ -288,6 +288,9 @@ def tenant_register():
         owner.set_password(password)
         db.session.add(owner)
         seed_tenant_defaults(tenant.id)
+        created_by = current_user.username if current_user.is_authenticated else owner.username
+        record_staff_audit('TENANT_REGISTER', tenant_id=tenant.id, as_system=True,
+                   details=f'建立店家「{tenant.name}」({tenant.slug})；負責人 {owner.username}；建立者 {created_by}')
         db.session.commit()
     except IntegrityError:   # 兩人同時以同一個代號 / 帳號註冊：先查後插之間被搶先
         db.session.rollback()

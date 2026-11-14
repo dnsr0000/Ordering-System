@@ -7,7 +7,7 @@ from app.extensions import db
 from app.models.coupon import Coupon, UserCoupon
 from app.models.menu import ComboOption, MenuItem, ModifierOption
 from app.models.order import Order
-from app.models.tenant import Tenant
+from app.models.tenant import StaffAccount, Tenant
 from app.models.user import RewardSetting, StaffAuditLog, User
 from app.services.reward_service import get_or_create_reward_setting
 from tests.support import default_tenant_id
@@ -44,6 +44,29 @@ def test_tenant_registration_accepts_optional_contact(app):
     platform = login_staff(app, f'platform-{slug}', role='owner', tenant_id=default_tenant_id(app))
     platform_page = platform.get('/admin/tenants').get_data(as_text=True)
     assert 'owner@example.test' in platform_page and '+886 912-345-678' in platform_page
+
+
+def test_tenant_registration_audits_success_and_conflicts_are_atomic(app):
+    slug = f'signup-audit-{uuid.uuid4().hex[:8]}'
+    username = f'owner-{slug}'
+    client = app.test_client()
+    data = {'shop_name': '建店稽核測試', 'slug': slug, 'username': username, 'password': 'SignupAuditPass!2026'}
+    created = client.post('/tenant/register', data=data)
+    assert created.status_code == 302
+    with app.app_context():
+        tenant = Tenant.query.filter_by(slug=slug).one()
+        tenant_id = tenant.id
+        assert StaffAuditLog.query.filter_by(tenant_id=tenant_id, action_type='TENANT_REGISTER').count() == 1
+
+    json_headers = {'Accept': 'application/json'}
+    duplicate_slug = client.post('/tenant/register', data={**data, 'username': f'{username}-other'}, headers=json_headers)
+    assert duplicate_slug.status_code == 409
+    duplicate_username = client.post('/tenant/register', data={**data, 'slug': f'{slug}-other'}, headers=json_headers)
+    assert duplicate_username.status_code == 409
+    with app.app_context():
+        assert Tenant.query.filter_by(slug=f'{slug}-other').count() == 0
+        assert StaffAccount.query.filter_by(username=f'{username}-other').count() == 0
+        assert Tenant.query.filter_by(slug=slug).count() == 1
 
 
 def test_owner_can_update_optional_tenant_contact(app):
