@@ -176,6 +176,7 @@ def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, 
     from app.models.menu import MenuItem
     from app.models.order import Order
     from app.models.sync import NodeStock, SyncNode
+    from app.models.user import User
     from tests.test_sync_hub_node import tenant_ctx
 
     monkeypatch.setitem(app.config, 'SYNC_ROLE', 'hub')
@@ -213,6 +214,7 @@ def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, 
             old_order = Order.query.filter_by(uuid=old_order_uuid).first()
             assert old_order.payment_status == 'pending' and old_order.total_price == 99
             old_order_id = old_order.id
+            points_before = User.query.filter_by(phone=MEMBER_PHONE).first().points
             old_order.payment_status = 'expired'
             old_order.status = OrderStatus.CANCELLED
             item = db.session.get(MenuItem, item_id)
@@ -302,14 +304,18 @@ def test_expired_online_order_can_reorder_and_complete_payment(app, page, demo, 
             assert browser_return_headers and 'cookie' not in browser_return_headers[-1]
             assert server_notifications == []
 
+        repeated_result = page.request.post('/payment/ecpay/result', form=notification)
+        assert repeated_result.status == 200
         paid_order = next(order for order in page.request.get('/my_orders').json()
                           if order['order_id'] == new_order_id)
         assert paid_order['payment_status'] == 'paid' and paid_order['payment_url'] == ''
         expect(page.locator('#payment-result')).to_have_attribute('data-status', 'paid')
         from app.models.payment import PaymentKind, PaymentRecord
         with tenant_ctx(app):
+            paid_order_row = db.session.get(Order, new_order_id)
             sales = PaymentRecord.query.filter_by(order_id=new_order_id, kind=PaymentKind.SALE).all()
             assert len(sales) == 1
+            assert User.query.filter_by(phone=MEMBER_PHONE).first().points == points_before + paid_order_row.points_earned
     finally:
         with tenant_ctx(app):
             db.session.rollback()
