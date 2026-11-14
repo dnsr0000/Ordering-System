@@ -55,6 +55,7 @@ FEATURE_PAGES = (
     ('H 維運', '系統監控', 'system.status', 'bi-activity', '健康狀態、錯誤紀錄、備份、時鐘誤差', None),
     ('H 維運', '稽核紀錄', 'audit.index', 'bi-shield-check', '員工操作稽核與登入日誌：分頁、篩選、匯出 Excel', None),
     ('H 維運', '店家管理 (平台管理者)', 'tenants.index', 'bi-buildings', '這台主機上所有店家的狀態、分店連線、訂單量；停用 / 啟用店家', ('owner',)),
+    ('H 維運', '店家資料匯出與關閉', 'tenants.account', 'bi-box-arrow-down', '下載本店營運資料；申請停用並保留資料', ('owner',)),
 )
 
 

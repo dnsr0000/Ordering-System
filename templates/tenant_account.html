@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf %}
+{% block title %}店家資料匯出與關閉{{ ui.title_sep }}{{ ui.site_name }}{% endblock %}
+{% block body_class %}admin-page{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">{% endblock %}
+{% block content %}
+<main class="container py-4" id="tenantAccountPage">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div>
+            <h1 class="h4 fw-bold mb-1"><i class="bi bi-box-arrow-down me-2 text-info"></i>店家資料匯出與關閉</h1>
+            <div class="small text-white-50">{{ tenant.name }} ({{ tenant.slug }})</div>
+        </div>
+        <a class="btn btn-outline-light btn-sm" href="{{ url_for('settings_admin.index') }}">回系統設定</a>
+    </div>
+    <div class="row g-3">
+        <section class="col-lg-6">
+            <div class="card-custom rounded-3 p-4 h-100">
+                <h2 class="h5 fw-bold text-info"><i class="bi bi-download me-2"></i>匯出本店資料</h2>
+                <p class="small text-white-50">資料包包含營運 Excel、不含金鑰的設定 JSON，以及分店基本資料；不含登入憑證、人臉資料、照片或封存檔，也不能用來還原系統。</p>
+                <a class="btn btn-warning fw-bold" href="{{ url_for('tenants.export_bundle') }}">
+                    <i class="bi bi-file-zip me-1"></i>下載本店資料包 (.zip)
+                </a>
+            </div>
+        </section>
+        <section class="col-lg-6">
+            <div class="card-custom rounded-3 p-4 h-100">
+                <h2 class="h5 fw-bold text-danger"><i class="bi bi-pause-circle me-2"></i>申請關閉店家</h2>
+                {% if closure_request %}
+                <div class="alert alert-warning mb-0">關閉申請已送出，店家目前已停用；資料會保留。請聯絡平台管理者處理或恢復。</div>
+                {% elif tenant.slug == 'default' %}
+                <div class="alert alert-info mb-0">平台預設店家不能由此關閉。</div>
+                {% elif not tenant.is_active %}
+                <div class="alert alert-warning mb-0">店家目前已停用，資料仍保留；請聯絡平台管理者處理。</div>
+                {% else %}
+                <p class="small text-white-50">送出後會立即停用登入、點餐與分店同步；資料不會刪除，平台管理者可重新啟用。</p>
+                <form method="POST" action="{{ url_for('tenants.close_request') }}"
+                      data-confirm="確定申請關閉此店家？系統會立即停用店家，但保留資料供平台後續處理。">
+                    {{ csrf() }}
+                    <div class="mb-2">
+                        <label class="form-label small" for="close-current-password">目前密碼</label>
+                        <input class="form-control form-control-sm" id="close-current-password" name="current_password"
+                               type="password" autocomplete="current-password" required>
+                    </div>
+                    {% if current_user.totp_enabled %}
+                    <div class="mb-2">
+                        <label class="form-label small" for="close-totp-code">兩步驟驗證碼</label>
+                        <input class="form-control form-control-sm" id="close-totp-code" name="totp_code"
+                               inputmode="numeric" autocomplete="one-time-code" required>
+                    </div>
+                    {% endif %}
+                    <div class="mb-2">
+                        <label class="form-label small" for="close-reason">關閉原因 (選填)</label>
+                        <textarea class="form-control form-control-sm" id="close-reason" name="reason" maxlength="300" rows="2"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="close-confirm" name="confirm" value="1" required>
+                        <label class="form-check-label small" for="close-confirm">我了解店家會立即停用，但資料不會刪除。</label>
+                    </div>
+                    <button class="btn btn-outline-danger fw-bold" type="submit">申請關閉並停用店家</button>
+                </form>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+</main>
+{% endblock %}

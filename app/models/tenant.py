@@ -20,6 +20,24 @@ class Tenant(CreatedAtMixin, SyncMixin, db.Model):
     table_qr_base_url = db.Column(db.String(200), nullable=False, default='', server_default='')
 
 
+class TenantClosureRequest(db.Model):
+    """Owner-initiated, non-destructive closure request; platform may restore the tenant."""
+    __tablename__ = 'tenant_closure_request'
+
+    id = db.Column(db.Integer, primary_key=True)
+    tenant_id = db.Column(db.Integer, db.ForeignKey('tenant.id', ondelete='CASCADE'), nullable=False, index=True)
+    requested_by_staff_id = db.Column(db.Integer, nullable=True)  # Keep history if the staff account is later removed.
+    requested_by_username = db.Column(db.String(120), nullable=False, default='')
+    reason = db.Column(db.String(300), nullable=False, default='')
+    status = db.Column(db.String(20), nullable=False, default='pending')
+    requested_at = db.Column(db.DateTime, nullable=False, default=datetime.now)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+    resolved_by_username = db.Column(db.String(120), nullable=False, default='')
+    resolution_note = db.Column(db.String(300), nullable=False, default='')
+
+    __table_args__ = (db.Index('ix_tenant_closure_status_requested', 'status', 'requested_at'),)
+
+
 class StaffAccount(CreatedAtMixin, UserMixin, SyncMixin, db.Model):
     """
     員工 / 後台帳號 (Flask-Login 的登入主體)。

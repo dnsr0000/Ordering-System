@@ -5,9 +5,13 @@
   預設店家 (平台管理者所屬) 不可停用。每次切換寫入稽核 (TENANT_TOGGLE)。
 - 建立新店家沿用 /tenant/register (平台管理者登入後不受 ALLOW_TENANT_REGISTER 限制)。
 """
+import io
+import json
+import zipfile
 from datetime import datetime, timedelta
 
-from flask import Blueprint, current_app, flash, g, redirect, render_template, url_for
+from flask import Blueprint, current_app, flash, g, redirect, render_template, request, send_file, session, url_for
+from flask_login import current_user, logout_user
 from sqlalchemy import func
 
 from app.errors import AppError
@@ -15,9 +19,10 @@ from app.extensions import db
 from app.models.enums import OrderStatus
 from app.models.order import Order
 from app.models.sync import SyncNode
-from app.models.tenant import StaffAccount, Tenant
+from app.models.tenant import StaffAccount, Tenant, TenantClosureRequest
 from app.models.user import User
 from app.services.audit import record_staff_audit
+from app.services import excel_service, settings_service
 from app.services.report_service import REVENUE_STATUSES
 from app.tenant_context import tenant_bypass
 from app.utils import platform_admin_required, role_required, safe_int
@@ -40,6 +45,11 @@ def tenant_overview(days=30):
                  .filter(StaffAccount.deleted_at.is_(None)).group_by(StaffAccount.tenant_id).all()}   # 不含已刪除的帳號
         members = _counts(User)
         node_rows = SyncNode.query.all()
+        closure_rows = (TenantClosureRequest.query.filter_by(status='pending')
+                        .order_by(TenantClosureRequest.requested_at.desc()).all())
+        close_requests = {}
+        for request_row in closure_rows:
+            close_requests.setdefault(request_row.tenant_id, request_row)
         # 與店家報表的營業額同一口徑 (report_service.is_revenue)：未取消且已收款 (或免付款)
         order_rows = (db.session.query(Order.tenant_id, func.count(), func.coalesce(func.sum(Order.total_price), 0),
                                        func.max(Order.created_at))
@@ -65,6 +75,7 @@ def tenant_overview(days=30):
             'id': t.id, 'name': t.name, 'slug': t.slug, 'is_active': bool(t.is_active), 'created_at': t.created_at,
             'is_default': t.slug == 'default', 'staff': staff.get(t.id, 0), 'members': members.get(t.id, 0),
             'nodes': nodes.get(t.id, {'count': 0, 'online': 0, 'last_seen': None}),
+            'close_request': close_requests.get(t.id),
             'orders': n, 'revenue': total, 'last_order_at': last_any.get(t.id),
         })
     return out
@@ -91,7 +102,92 @@ def toggle(tenant_id):
     if target.slug == 'default' or target.id == g.tenant_id:
         raise AppError('預設店家 (平台管理者所屬) 不可停用', 409)
     target.is_active = not target.is_active
+    if target.is_active:
+        pending = TenantClosureRequest.query.filter_by(tenant_id=target.id, status='pending').all()
+        for closure in pending:
+            closure.status = 'resolved'
+            closure.resolved_at = datetime.now()
+            closure.resolved_by_username = current_user.username
+            closure.resolution_note = '平台管理者重新啟用店家'
     record_staff_audit('TENANT_TOGGLE', details=f"{'啟用' if target.is_active else '停用'}店家「{target.name}」({target.slug})")
     db.session.commit()
     flash(f"已{'啟用' if target.is_active else '停用'}店家「{target.name}」", 'success' if target.is_active else 'warning')
     return redirect(url_for('tenants.index'))
+
+
+@tenants_bp.route('/admin/tenant/account', endpoint='account')
+@role_required('owner')
+def account():
+    closure_request = (TenantClosureRequest.query.filter_by(tenant_id=g.tenant_id, status='pending')
+                       .order_by(TenantClosureRequest.requested_at.desc()).first())
+    return render_template('tenant_account.html', tenant=g.tenant, closure_request=closure_request)
+
+
+@tenants_bp.route('/admin/tenant/account/export', endpoint='export_bundle')
+@role_required('owner')
+def export_bundle():
+    tenant = g.tenant
+    workbook = excel_service.generate_excel_export(
+        ['MenuItem', 'User', 'UserCoupon', 'Coupon', 'Order', 'OrderItem', 'Analytics'])
+    settings = settings_service.export_all(tenant_id=tenant.id, include_secrets=False, allow_owner_only=True)
+    branches = [{'uuid': node.uuid, 'name': node.name, 'is_active': bool(node.is_active),
+                 'accepts_online_orders': bool(node.accepts_online_orders),
+                 'last_seen_at': node.last_seen_at.isoformat() if node.last_seen_at else None}
+                for node in SyncNode.query.order_by(SyncNode.id).all()]
+    generated_at = datetime.now().isoformat(timespec='seconds')
+    manifest = {
+        'version': 1,
+        'generated_at': generated_at,
+        'tenant': {'id': tenant.id, 'name': tenant.name, 'slug': tenant.slug},
+        'files': ['business_data.xlsx', 'settings.json', 'branches.json'],
+        'excluded': ['credentials and secret settings', 'face data and photos', 'archived records', 'system-wide backup'],
+        'restorable': False,
+    }
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
+        archive.writestr('settings.json', json.dumps(settings, ensure_ascii=False, indent=2, default=str))
+        archive.writestr('branches.json', json.dumps(branches, ensure_ascii=False, indent=2))
+        archive.writestr('business_data.xlsx', workbook.getvalue())
+        archive.writestr('README.txt', '本資料包供店家匯出與保存，不可用於系統還原。金鑰、登入憑證、人臉資料、照片與封存檔不包含在內。')
+    record_staff_audit('TENANT_DATA_EXPORT', details='下載本店營運資料包 (不含金鑰、人臉資料、照片與封存檔)')
+    db.session.commit()
+    bundle.seek(0)
+    return send_file(bundle, mimetype='application/zip', as_attachment=True,
+                     download_name=f'{tenant.slug}_tenant_export_{datetime.now():%Y%m%d_%H%M%S}.zip')
+
+
+@tenants_bp.route('/admin/tenant/account/close-request', methods=['POST'], endpoint='close_request')
+@role_required('owner')
+def close_request():
+    tenant = g.tenant
+    if tenant.slug == 'default':
+        raise AppError('平台預設店家不能申請關閉。', 409)
+    if not tenant.is_active:
+        raise AppError('此店家已停用；請聯絡平台管理者處理。', 409)
+    if not current_user.check_password(request.form.get('current_password') or ''):
+        raise AppError('目前密碼不正確。', 403)
+    if current_user.totp_enabled:
+        from app.services import security_service
+        if not security_service.verify_second_factor(current_user, (request.form.get('totp_code') or '').strip()):
+            raise AppError('兩步驟驗證碼不正確。', 403)
+    if request.form.get('confirm') != '1':
+        raise AppError('請確認申請關閉此店家。', 400)
+    if TenantClosureRequest.query.filter_by(tenant_id=tenant.id, status='pending').first():
+        raise AppError('此店家已有待處理的關閉申請。', 409)
+
+    reason = (request.form.get('reason') or '').strip()
+    if len(reason) > 300:
+        raise AppError('關閉原因最多 300 字。', 400)
+    username = current_user.username
+    closure = TenantClosureRequest(tenant_id=tenant.id, requested_by_staff_id=current_user.id,
+                                   requested_by_username=username, reason=reason)
+    db.session.add(closure)
+    tenant.is_active = False
+    db.session.flush()
+    record_staff_audit('TENANT_CLOSE_REQUEST', details=f'租戶關閉申請 #{closure.id}；原因：{reason or "未提供"}')
+    db.session.commit()
+    tenant_name = tenant.name
+    logout_user()
+    session.clear()
+    return render_template('tenant_closed.html', tenant_name=tenant_name)

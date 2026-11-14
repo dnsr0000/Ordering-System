@@ -62,6 +62,8 @@ ACTION_LABELS = {
     'SETTINGS_EXPORT': ('匯出系統設定', 'bg-secondary'),
     'SETTINGS_IMPORT': ('匯入系統設定', 'bg-warning text-dark'),
     'TENANT_TOGGLE': ('店家啟用 / 停用', 'bg-danger'),
+    'TENANT_CLOSE_REQUEST': ('店家申請關閉', 'bg-danger'),
+    'TENANT_DATA_EXPORT': ('匯出店家資料', 'bg-warning text-dark'),
     'AUDIT_EXPORT': ('匯出稽核紀錄', 'bg-secondary'),
 }
 
