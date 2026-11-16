@@ -3,6 +3,6 @@
 -r requirements.txt
 
 # ---- 人臉辨識 (app/services/cv_service.py：YuNet 偵測 + SFace 特徵；模型檔啟動時自動下載到 models/) ----
-numpy==2.5.3
+numpy==2.5.4
 # 只用 cv2.imread 與 YuNet / SFace 人臉模型，不需要視窗功能：headless 版在伺服器 / 容器內不需 GUI 函式庫 (libGL 等)
 opencv-python-headless==5.0.0.93
