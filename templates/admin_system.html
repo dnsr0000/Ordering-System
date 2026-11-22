@@ -21,6 +21,13 @@
         {% call stat_tile('角色', {'standalone': '單機', 'hub': '線上端', 'node': '分店'}.get(health.role, health.role)) %}
             {% if health.role == 'node' %}<div class="small text-white-50">最後同步：{{ health.sync_last_ok or '-' }}{% if health.sync_last_error %}<br><span class="text-danger">{{ health.sync_last_error[:80] }}</span>{% endif %}</div>{% endif %}
         {% endcall %}
+        {% call stat_tile('SMTP / 帳號復原', '可寄送' if health.recovery_smtp_configured else '未設定',
+                          'text-success' if health.recovery_smtp_configured else 'text-warning', col='col-12 col-md-6') %}
+            <div class="small text-white-50">
+                {% if health.smtp_configured %}本店 SMTP 已設定，復原優先使用本店。{% elif health.recovery_smtp_source == '平台預設店家' %}本店未設定，復原使用平台 SMTP。{% else %}本店與平台 SMTP 都未設定。{% endif %}
+                <a href="{{ url_for('settings_admin.edit', key='smtp') }}">設定或測試</a>
+            </div>
+        {% endcall %}
         {% set ai = health.ai %}
         {% set usable = ai.providers | selectattr('models') | list %}
         {% call stat_tile('AI：雲端服務 (依序備援)', '未設定金鑰' if not ai.providers else (usable | length ~ ' / ' ~ ai.providers | length ~ ' 組可用'),

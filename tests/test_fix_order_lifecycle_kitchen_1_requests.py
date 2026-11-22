@@ -127,9 +127,12 @@ def test_void_unpaid_item_scales_discount_and_respects_zero_multiplier(app):
         tier_id = tier.id
     uid = make_member(app, 'OLKR 會員', '0955498001', tier_id=tier_id)
     # 小計 3000，折扣 600 (促銷)，應付 2400，訂單上記的贈點 24 點 (結帳後等級才改為 0 倍)
-    oid, (ia, _) = _order(app, user_id=uid, total_price=2400, discount_amount=600, promotion_discount=600,
-                          points_earned=24, status='Pending', payment_status='unpaid',
-                          items=[(a, 'OLKR 牛肉麵', 2000, 1), (b, 'OLKR 滷味', 1000, 1)])
+    oid, item_ids = _order(app, user_id=uid, total_price=2400, discount_amount=600, promotion_discount=600,
+                           points_earned=24, status='Pending', payment_status='unpaid',
+                           items=[(a, 'OLKR 牛肉麵', 2000, 1), (b, 'OLKR 滷味', 1000, 1)])
+    with app.app_context():
+        ia = db.session.scalar(db.select(OrderItem.id).where(OrderItem.id.in_(item_ids),
+                                                             OrderItem.menu_item_id == a))
     with tenant_request(app, tid):
         result = order_lifecycle.void_item(tid, ia, 1, '客人不要了')
         db.session.commit()
