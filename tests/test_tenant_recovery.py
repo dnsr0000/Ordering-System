@@ -40,10 +40,13 @@ def test_owner_resets_password_after_email_code(app, monkeypatch):
     assert started.status_code == 200 and '若資料相符' in started.get_data(as_text=True)
     assert len(sent) == 1 and sent[0][0] == tenant_id and sent[0][1] == ['owner@example.test']
     code = _recovery_code(sent[0][3])
+    assert code not in started.get_data(as_text=True)
+    assert 'owner@example.test' not in started.get_data(as_text=True)
     with app.app_context():
         recovery = TenantRecoveryCode.query.filter_by(tenant_id=tenant_id, staff_account_id=
                                                        StaffAccount.query.filter_by(username=username).one().id).one()
         assert recovery.code_hash != code and recovery.contact_hash
+        assert 'owner@example.test' not in recovery.contact_hash
 
     result = client.post('/tenant/recovery/complete', data={
         'slug': slug, 'username': username, 'purpose': 'reset_password', 'channel': 'email',
