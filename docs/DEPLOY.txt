@@ -462,6 +462,8 @@
 
 7. 寄信 (SMTP)、錯誤通知、定期報表
    - SMTP：Gmail 請開啟兩步驟驗證後建立「應用程式密碼」(smtp.gmail.com、587、STARTTLS)。
+  - 多租戶 owner 帳號復原的 Email 優先使用該店家的 SMTP；若該店未設定，才使用平台預設店家的 SMTP。平台 SMTP 僅作復原 fallback，
+    不會改變一般店家報表、收據或通知的租戶寄信設定。兩者都未設定時不會建立驗證碼，請由平台管理者協助。
    - 監控：可填 Webhook (Discord / Slack / Google Chat)、Email、LINE；系統錯誤、印表機離線、發票開立失敗、
      原料低於安全量、主機時鐘誤差過大時通知 (同一事件 10 分鐘內只通知一次)。
    - Sentry (選用)：.env 設 SENTRY_DSN 並 pip install "sentry-sdk[flask]"，未預期錯誤會送到 Sentry，事件帶 request_id
