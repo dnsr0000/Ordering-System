@@ -136,6 +136,24 @@ def test_health_counts(app):
     with app.app_context():
         h = maintenance_service.health(default_tenant_id(app))
     assert h['db_ok'] is True and h['revision'] and {'invoice_pending', 'print_failed', 'refund_manual'} <= set(h)
+    assert {'smtp_configured', 'recovery_smtp_configured', 'recovery_smtp_source'} <= set(h)
+
+
+def test_health_reports_platform_recovery_smtp_fallback(app, monkeypatch):
+    from app.models.tenant import Tenant
+    with app.app_context():
+        tenant = Tenant(name='Health shop', slug='health-shop')
+        db.session.add(tenant)
+        db.session.commit()
+        tenant_id = tenant.id
+        platform_id = Tenant.query.filter_by(slug='default').one().id
+    from app.services import mail_service
+    monkeypatch.setattr(mail_service, 'is_configured', lambda tenant_id=None: tenant_id == platform_id)
+    with app.app_context():
+        h = maintenance_service.health(tenant_id)
+    assert h['smtp_configured'] is False
+    assert h['recovery_smtp_configured'] is True
+    assert h['recovery_smtp_source'] == '平台預設店家'
 
 
 # ---------------------------------------------------------------------------

@@ -136,6 +136,7 @@ def health(tenant_id):
     from app.models.payment import Invoice, InvoiceStatus, Refund
     from app.models.printing import PrintJob
     from app.sync import runtime as sync_runtime
+    from app.services import mail_service, tenant_recovery_service
     info = {'dialect': db.engine.dialect.name, 'role': sync_runtime.role(), 'db_ok': True, 'db_size': None,
             'disk_free': None, 'revision': ''}
     try:
@@ -155,6 +156,10 @@ def health(tenant_id):
     info['print_failed'] = PrintJob.query.filter(PrintJob.status == 'failed').count()
     info['print_queued'] = PrintJob.query.filter(PrintJob.status == 'queued').count()
     info['refund_manual'] = Refund.query.filter(Refund.status.in_(('manual', 'failed'))).count()
+    info['smtp_configured'] = mail_service.is_configured(tenant_id)
+    recovery_sender = tenant_recovery_service._email_sender_tenant_id(tenant_id)
+    info['recovery_smtp_configured'] = recovery_sender is not None
+    info['recovery_smtp_source'] = '本店' if recovery_sender == tenant_id else ('平台預設店家' if recovery_sender else '')
     from app.services.cv_service import face_status
     info['face_ok'], info['face_reason'] = face_status()
     if sync_runtime.is_node():
